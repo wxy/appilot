@@ -1,0 +1,23 @@
+# Claude session memory
+.remember/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Flutter / Dart
+build/
+.dart_tool/
+.packages
+pubspec.lock
+
+# Dependencies
+app/.dart_tool/
+app/build/
+engine/.dart_tool/
+engine/build/
