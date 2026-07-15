@@ -21,6 +21,7 @@ export function TrackingPage() {
   const [note, setNote] = useState("");
   const [entries, setEntries] = useState<StatEntry[]>([]);
   const [submitted, setSubmitted] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const stats = (window as any).appilot?.stats;
 
@@ -29,18 +30,24 @@ export function TrackingPage() {
   }, []);
 
   const handleSubmit = async () => {
+    setSaveError("");
     if (views === "" && likes === "" && comments === "") return;
-    const list = await stats.save({
-      views: Number(views) || 0,
-      likes: Number(likes) || 0,
-      comments: Number(comments) || 0,
-      note,
-      permalink,
-    });
-    setEntries(list || []);
-    setSubmitted(true);
-    setTimeout(() => setSubmitted(false), 2000);
-    setPermalink(""); setViews(""); setLikes(""); setComments(""); setNote("");
+    if (!stats) { setSaveError("Stats API not available. Please restart the app."); return; }
+    try {
+      const list = await stats.save({
+        views: Number(views) || 0,
+        likes: Number(likes) || 0,
+        comments: Number(comments) || 0,
+        note,
+        permalink,
+      });
+      setEntries(list || []);
+      setSubmitted(true);
+      setTimeout(() => setSubmitted(false), 2000);
+      setPermalink(""); setViews(""); setLikes(""); setComments(""); setNote("");
+    } catch (e: any) {
+      setSaveError(e.message || "Failed to save stats");
+    }
   };
 
   // Chart data: last 14 entries
@@ -92,6 +99,9 @@ export function TrackingPage() {
           <button onClick={handleSubmit} disabled={views === "" && likes === "" && comments === ""} className={btnPrimary}>
             {submitted ? "Saved ✓" : "Submit Stats"}
           </button>
+          {saveError && (
+            <p className="text-sm text-red-600 dark:text-red-400 mt-2">{saveError}</p>
+          )}
         </div>
       </div>
 
