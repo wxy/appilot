@@ -1,7 +1,7 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-15（Phase 0 UI 简化 — 单项目单平台流程）
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-16（Phase 0 UI 简化 + 技术栈切换 Electron/React/TS）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
 > 本文档定义 Appilot 的**用户界面**：Phase 0 最小闭环 UI（§8.0）和完整 UI 愿景（§8.1–§8.8）。Phase 0 仅实现简化版——单仓库、单平台（Twitter）、无收件箱。
 

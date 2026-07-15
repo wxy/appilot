@@ -60,21 +60,24 @@ Phase 0 数据库表（仅 5 张）:
 
 | # | 任务 | 估时 | 依赖 | 验收标准 |
 |---|------|------|------|----------|
-| 0.1 | Flutter 项目脚手架（`app/` + `engine/` 包结构 + Riverpod + GoRouter 骨架） | 1d | - | `flutter run` 跑起空白窗口，路由跳转正常 |
-| 0.2 | drift Schema 建表 + Migration 框架（5 张表：projects/posts/post_analytics/ai_config/ai_actions） | 1.5d | 0.1 | 表创建成功，migration 测试跑通 |
-| 0.3 | 主题系统（明暗色跟随系统 + 基础组件风格） | 0.5d | 0.1 | 系统切换深色模式，应用跟随 |
-| 0.4 | 错误处理基础（分层异常 + 日志记录到文件，不含脱敏框架） | 1d | 0.1 | API 调用失败时日志中有完整堆栈 + 用户可读错误提示 |
-| 0.5 | GitHub Repo Analyzer（单公开仓库：connectGitHubPublicRepo + summarize + extractHighlights） | 2.5d | 0.1 | 输入 github.com/flutter/flutter → 展示 README 摘要 + 技术栈 + 文件树 |
-| 0.6 | AIProvider 接口 + OpenAI 兼容 Provider 实现 | 1.5d | 0.1 | 用真实 API Key 跑通 `chat()`，验证 `lastUsage` 返回 token 数 |
-| 0.7 | AI 配置 UI（Provider URL + API Key + Model Name，存 ai_config 表） | 1d | 0.2, 0.6 | 配置保存后重启应用仍有效 |
-| 0.8 | AI Engine（analyzeProduct + generateTweet，单仓库上下文组装） | 2d | 0.5, 0.6 | 连接仓库后点击"分析"→ AI 返回产品摘要；点击"生成推文"→ AI 返回 280 字符以内推文 |
-| 0.9 | 项目设置向导 UI（输入项目名 + 仓库 URL → 连接 → 展示 AI 分析结果） | 1.5d | 0.5, 0.8 | 输入 github.com/user/repo 后能看到 AI 提取的特性列表和产品摘要 |
-| 0.10 | Composer 推文编辑器（展示 AI 生成的草稿 + 用户编辑 + 重新生成 + 草稿保存/加载） | 1.5d | 0.8 | 编辑后关闭重开，草稿仍在（手动保存模式） |
-| 0.11 | Twitter Web Intent 跳转（URL 构建 + 系统浏览器打开） | 0.5d | 0.10 | 点击按钮后浏览器打开 twitter.com 且文案已预填 |
-| 0.12 | 帖子 URL 回填 + 手动统计登记表单（浏览/点赞/评论数 + 备注 + 时间戳） | 1d | 0.2, 0.11 | 提交后 `post_analytics` 表新增一条 source=manual 记录，`posts` 表更新 permalink |
-| 0.13 | 单帖子趋势折线图（使用手动填报数据，按时间展示） | 1d | 0.12 | 连续填报 3 次后图表显示 3 个数据点的折线，浏览量/点赞/评论分三条线 |
-| 0.14 | AI 用量展示（每次 AI 调用后在 UI 显示消耗 token 数 + 预估费用；ai_actions 表累计统计） | 0.5d | 0.8 | 生成推文后显示"本次消耗 1,247 tokens，约 $0.02" |
-| 0.15 | Phase 0 整体验收（端到端走通 + 录屏） | 1d | 全部 | 演示：输入 github.com/user/repo → AI 分析 → 生成推文 → 跳转 Twitter → 回填 URL → 手动填统计 → 看趋势图 |
+| 0.1 | **Electron + React 项目脚手架**：npm workspace（`packages/desktop/` + `packages/engine/`）+ Electron Forge/Vite + React 18 + TypeScript + Tailwind CSS + shadcn/ui + Zustand + React Router (Hash) | 1.5d | - | `npm run start` 跑起 Electron 窗口，Hash 路由跳转正常，Tailwind 暗色模式切换可用 |
+| 0.2 | **drizzle-orm Schema 建表 + Migration**：5 张表（projects/posts/post_analytics/ai_config/ai_actions），better-sqlite3 连接，drizzle-kit migration 自动生成 | 1.5d | 0.1 | 表创建成功，`npx drizzle-kit generate` + `npx drizzle-kit migrate` 跑通 |
+| 0.3 | **错误处理基础**：分层异常类 + 文件日志（`electron-log` 或 winston，按天滚动，保留 14 天到 `~/.appilot/logs/`） | 1d | 0.1 | 故意抛一个异常，验证日志文件中有完整堆栈 + 用户可读错误提示 |
+| 0.4 | **GitHub Repo Analyzer**：`connectGitHubPublicRepo(url)` — octokit 读取 README/文件树/最近 10 次提交 + simple-git clone 到临时目录提取 git log。限频感知：429 → 提示用户 + 缓存降级 | 2.5d | 0.1 | 输入 `github.com/facebook/react` → UI 展示 README 摘要 + 文件树 + 最近 10 次提交 |
+| 0.5 | **AIProvider + OpenAI 兼容实现**：`openai` npm 包（支持自定义 baseURL，兼容 Ollama/DeepSeek/Groq）。`chat()` + `validateConnection()` + `lastUsage` | 1.5d | 0.1 | 用真实 API Key 跑通 `chat()`，验证 `lastUsage` 返回 token 数和费用 |
+| 0.6 | **AI 配置 UI**：设置页表单（Provider URL + API Key + Model），保存到 electron-store + ai_config 表。"测试连接"按钮调用 validateConnection | 1d | 0.2, 0.5 | 配置保存后重启应用仍有效；"测试连接"显示成功/失败 |
+| 0.7 | **AI Engine**：`analyzeProduct(projectId)` + `generateTweet({projectId, stage})`。单仓库上下文组装 → System Prompt → AI 调用 | 2d | 0.4, 0.5 | 连接仓库 → 点击"分析" → AI 返回产品摘要；点击"生成推文" → AI 返回 < 280 字符推文 |
+| 0.8 | **Context Builder**：`buildContext(projectId)` → 组装 System Prompt（README + 技术栈 + 最近提交 + 特性列表 + 风格要求） | 1d | 0.4 | 检查发送给 AI 的 System Prompt 包含产品名/技术栈/提交/特性/风格要求 |
+| 0.9 | **项目设置向导 UI**：React 组件——Step 1 AI API 配置 → Step 2 输入项目名 + GitHub URL → "连接并分析"→ 展示 AI 分析结果（产品摘要/特性/技术栈/最近提交） | 1.5d | 0.4, 0.7 | 输入 github.com/user/repo 后看到 AI 提取的特性列表和产品摘要，可编辑 |
+| 0.10 | **Composer 推文编辑器**：React 组件——AI 生成的草稿展示（字符计数 [xxx/280]）+ 编辑 + "AI 重新生成"按钮 + 语气选项 + 草稿手动保存/加载 | 1.5d | 0.7, 0.2 | 保存草稿后关闭重开，点击"加载草稿"内容恢复 |
+| 0.11 | **Twitter Web Intent 跳转**：构建 `twitter.com/intent/tweet?text=...` URL，Electron `shell.openExternal()` 打开系统浏览器 | 0.5d | 0.10 | 点击"在 Twitter 上发布"→ 系统浏览器打开 Twitter 且文案预填 |
+| 0.12 | **Content Store**：`saveDraft()` / `loadDraft()` / `listDrafts()` — drizzle-orm 读写 posts 表（status=draft） | 1d | 0.2 | 保存草稿 → posts 表有 status=draft 记录 → 加载后内容完全恢复 |
+| 0.13 | **帖子 URL 回填 + 手动统计登记**：posts 表 permalink 字段 + 手动统计表单 UI（浏览/点赞/评论 + 备注 + 日期）+ drizzle-orm 写入 post_analytics (source=manual) | 1.5d | 0.2, 0.11 | 提交后 post_analytics 表新增 source=manual 记录，列表可见 |
+| 0.14 | **Analytics Engine + 趋势折线图**：`submitManualStats()` + `watchTrend()` + Recharts/ECharts 折线图（浏览量/点赞/评论三条线） | 2d | 0.13 | 连续提交 3 条统计后图表显示 3 个 data point 折线，三条线颜色不同有图例 |
+| 0.15 | **AI 用量展示**：每次 AI 调用后 UI 显示消耗；设置页"本月累计"从 ai_actions 表聚合 | 1d | 0.7, 0.2 | 生成推文后显示"本次消耗 1,247 tokens，约 $0.02"；设置页有累计统计 |
+| 0.16 | **Phase 0 整体验收**：端到端走通 + 录屏 | 1d | 全部 | 录屏：输入 GitHub 公开仓库 URL → AI 分析 → 生成推文 → 跳转 Twitter → 回填 URL → 提交 3 次统计 → 趋势图 |
+
+小计：**约 20.5 天**（含 3.5 天 buffer，实际核心编码约 17 天）
 
 小计：**约 17 天**（含 2 天 buffer），实际编码约 15 天。
 

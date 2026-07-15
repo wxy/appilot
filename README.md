@@ -32,10 +32,14 @@
 
 ## Tech Stack
 
-- **Framework:** Flutter (Desktop: macOS + Windows)
-- **Architecture:** Hub-and-Spoke (Dart-native plugin interfaces — Phase 1+)
-- **Data:** SQLite (drift) + System Keychain/Credential Manager (Phase 1+)
-- **AI:** OpenAI-compatible API
+- **Desktop:** Electron + React + TypeScript (macOS + Windows)
+- **UI:** Tailwind CSS + shadcn/ui (暗色模式)
+- **State:** Zustand
+- **Engine:** Pure TypeScript package (zero Electron dependency, reusable for future mobile PWA / cloud server)
+- **Data:** better-sqlite3 + drizzle-orm (SQLite)
+- **Git:** simple-git + @octokit/rest (GitHub API)
+- **AI:** OpenAI-compatible API (openai npm SDK)
+- **Security (Phase 1+):** electron-store + safeStorage (macOS Keychain / Windows DPAPI)
 
 ## MVP Platforms (Phase 1+)
 

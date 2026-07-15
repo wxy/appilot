@@ -1,7 +1,7 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-15（Phase 0 简化 — 标注哪些基础设施推迟）
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-16（技术栈切换为 Electron/Node.js/TypeScript）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
 > 本文档定义 Appilot 的**横切关注点**：错误处理与韧性、国际化、后台策略、安全模型、项目文件结构。标注了 **Phase 0 简化版** vs **完整版**的差异。
 
@@ -90,17 +90,18 @@
 
 ### 12.0 Phase 0：最小安全（无 OAuth、无凭据管理）
 
-- AI API Key 存储在本地 SQLite（`ai_config.api_key` 明文），后续 Phase 1 迁移到系统 Keychain
+- AI API Key 通过 **electron-store** 持久化（明文 JSON 文件存储），Phase 1 迁移到 **safeStorage** 加密
 - 无 OAuth Token（Phase 0 仅使用 Twitter Web Intent，不涉及平台 OAuth 授权）
 - 草稿和历史记录存储在本地 SQLite（不加密）
 - GitHub 公开仓库读取不需要 Token
+- Electron 安全最佳实践：`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`，renderer 通过 `contextBridge` 暴露有限 API
 
 ### 12.1 Phase 1+：基础加密
 
-- OAuth Token 存储在系统原生 Keychain（macOS）/ Credential Manager（Windows）
-- API Key 从 SQLite 迁移到 Keychain 存储
+- OAuth Token 通过 **safeStorage** 加密存储（macOS Keychain / Windows DPAPI）
+- API Key 从 electron-store 明文迁移到 safeStorage 加密
 - 草稿和历史记录存储在本地 SQLite（不加密）
-- 不存储明文密码（使用 OAuth 2.0 授权码流程）
+- 不存储明文密码（使用 OAuth 2.0 授权码流程，Electron BrowserWindow 处理）
 
 ### 12.2 安全升级路径
 
@@ -116,113 +117,100 @@
 
 ```
 appilot/
-├── app/                          # Flutter 应用 (UI)
-│   ├── lib/
-│   │   ├── main.dart
-│   │   ├── app.dart
-│   │   ├── features/
-│   │   │   ├── setup/            # 项目设置向导（AI 配置 + 仓库连接）
-│   │   │   ├── composer/         # 推文编辑器（AI 生成 + 编辑 + Web Intent）
-│   │   │   ├── tracking/         # 帖子追踪（回填 URL + 手动统计 + 趋势图）
-│   │   │   └── settings/         # 基础设置（AI API 配置、仓库 URL）
-│   │   ├── shared/
-│   │   │   ├── widgets/          # 共享 UI 组件
-│   │   │   └── theme/            # 主题（明暗色）
-│   │   └── router.dart
-│   └── pubspec.yaml
-├── engine/                       # Core Engine (Dart package)
-│   ├── lib/
-│   │   ├── repo_analyzer.dart        # Phase 0: 仅 GitHub 公开仓库
-│   │   ├── content_store.dart        # Phase 0: 草稿保存/加载
-│   │   ├── analytics_engine.dart     # Phase 0: 仅手动填报
-│   │   ├── ai/
-│   │   │   ├── ai_engine.dart        # Phase 0: 产品摘要 + 推文生成
-│   │   │   ├── ai_provider.dart      # OpenAI 兼容 Provider
-│   │   │   ├── ai_config.dart        # 配置模型
-│   │   │   └── context_builder.dart  # 单仓库上下文组装
-│   │   └── database/
-│   │       ├── database.dart         # drift 数据库实例
-│   │       └── tables/               # 5 张表定义
-│   └── pubspec.yaml
+├── packages/
+│   ├── desktop/                    # Electron 桌面应用
+│   │   ├── src/
+│   │   │   ├── main/               # Electron Main Process
+│   │   │   │   ├── index.ts        #   应用入口、BrowserWindow 创建
+│   │   │   │   └── store.ts        #   electron-store 初始化
+│   │   │   ├── preload/
+│   │   │   │   └── index.ts        #   contextBridge（暴露 engine API 给 renderer）
+│   │   │   └── renderer/           # React UI
+│   │   │       ├── index.html
+│   │   │       ├── main.tsx        #   React 入口
+│   │   │       ├── App.tsx         #   根组件 + 路由
+│   │   │       ├── features/
+│   │   │       │   ├── setup/      #   项目设置向导
+│   │   │       │   ├── composer/   #   推文编辑器
+│   │   │       │   ├── tracking/   #   帖子追踪
+│   │   │       │   └── settings/   #   基础设置
+│   │   │       ├── components/     #   共享 UI 组件 (shadcn/ui)
+│   │   │       └── stores/         #   Zustand stores
+│   │   ├── package.json
+│   │   └── electron-builder.yml    #   打包配置
+│   └── engine/                     # 纯 TypeScript 包（零 Electron 依赖）
+│       ├── src/
+│       │   ├── repo-analyzer.ts    #   Phase 0: 仅 GitHub 公开仓库
+│       │   ├── content-store.ts    #   Phase 0: 草稿保存/加载
+│       │   ├── analytics-engine.ts #   Phase 0: 仅手动填报
+│       │   ├── database/
+│       │   │   ├── schema.ts       #   drizzle-orm Schema 定义（5 张表）
+│       │   │   └── index.ts        #   better-sqlite3 连接 + migration
+│       │   ├── ai/
+│       │   │   ├── ai-engine.ts    #   Phase 0: 产品摘要 + 推文生成
+│       │   │   ├── ai-provider.ts  #   OpenAI 兼容 Provider
+│       │   │   ├── ai-config.ts    #   配置模型
+│       │   │   └── context-builder.ts # 单仓库上下文组装
+│       │   └── index.ts            #   统一导出
+│       ├── package.json
+│       └── tsconfig.json
 ├── docs/
-│   └── superpowers/specs/            # 设计文档
+│   └── superpowers/specs/          # 设计文档
+├── package.json                    # npm workspace root
 └── README.md
 ```
 
 **Phase 0 不存在的目录（Phase 1+ 添加）：**
-- `app/lib/features/inbox/` — Phase 1
-- `app/lib/shared/i18n/` — Phase 1
-- `engine/lib/plugin_registry.dart` — Phase 1
-- `engine/lib/task_scheduler.dart` — Phase 1
-- `engine/lib/event_bus.dart` — Phase 1
-- `engine/lib/post_queue.dart` — Phase 1
-- `engine/lib/credential_vault.dart` — Phase 1
-- `engine/lib/project_registry.dart` — Phase 1
-- `engine/lib/ai/reply_rules.dart` — Phase 5
-- `plugins/` — Phase 1
+- `packages/desktop/src/renderer/features/inbox/` — Phase 1
+- `packages/desktop/src/renderer/i18n/` — Phase 1
+- `packages/engine/src/plugin-registry.ts` — Phase 1
+- `packages/engine/src/task-scheduler.ts` — Phase 1
+- `packages/engine/src/event-bus.ts` — Phase 1
+- `packages/engine/src/post-queue.ts` — Phase 1
+- `packages/engine/src/credential-vault.ts` — Phase 1
+- `packages/engine/src/project-registry.ts` — Phase 1
+- `packages/engine/src/ai/reply-rules.ts` — Phase 5
+- `packages/plugins/` — Phase 1
+- `packages/server/` — 云端中转（独立项目，Phase 5+）
 
 ### 14.1 完整文件结构（Phase 5 完成后）
 
 ```
 appilot/
-├── app/
-│   ├── lib/
-│   │   ├── main.dart
-│   │   ├── app.dart
-│   │   ├── features/
-│   │   │   ├── composer/         # 发布编辑器
-│   │   │   ├── inbox/            # 统一收件箱（Phase 1+）
-│   │   │   ├── analytics/        # 统计仪表盘
-│   │   │   └── settings/         # 设置/插件管理
-│   │   ├── shared/
-│   │   │   ├── widgets/          # 共享 UI 组件
-│   │   │   ├── theme/            # 主题
-│   │   │   └── i18n/             # 国际化 ARB 文件（Phase 1+）
-│   │   └── router.dart
-│   └── pubspec.yaml
-├── engine/
-│   ├── lib/
-│   │   ├── plugin_registry.dart      # Phase 1+
-│   │   ├── task_scheduler.dart       # Phase 1+
-│   │   ├── event_bus.dart            # Phase 1+
-│   │   ├── post_queue.dart           # Phase 1+
-│   │   ├── content_store.dart
-│   │   ├── analytics_engine.dart
-│   │   ├── credential_vault.dart     # Phase 1+
-│   │   ├── repo_analyzer.dart
-│   │   ├── project_registry.dart     # Phase 1+
-│   │   ├── ai/
-│   │   │   ├── ai_engine.dart
-│   │   │   ├── ai_provider.dart
-│   │   │   ├── ai_config.dart
-│   │   │   ├── context_builder.dart
-│   │   │   └── reply_rules.dart      # Phase 5
-│   └── pubspec.yaml
-├── plugins/                      # 平台插件（Phase 1+）
-│   ├── plugin_interface/
-│   │   └── lib/platform_plugin.dart
-│   ├── twitter/
-│   ├── reddit/
-│   ├── discord/
-│   └── youtube/
+├── packages/
+│   ├── desktop/                    # Electron 桌面应用（全功能）
+│   │   ├── src/main/               # Electron Main Process
+│   │   ├── src/preload/
+│   │   └── src/renderer/           # React UI（composer/inbox/analytics/settings）
+│   ├── engine/                     # 纯 TypeScript 包（零依赖特定平台）
+│   │   └── src/                    # 全部 Engine 组件
+│   ├── plugins/                    # 平台插件（npm workspace packages）
+│   │   ├── plugin-interface/       # Plugin 接口定义
+│   │   ├── plugin-twitter/
+│   │   ├── plugin-reddit/
+│   │   ├── plugin-discord/
+│   │   └── plugin-youtube/
+│   └── server/                     # 云端中转（Phase 5+，独立可选项目）
 ├── docs/
-│   └── superpowers/specs/
+├── package.json                    # npm workspace root
 └── README.md
 ```
 
 ### 桌面端技术风险与缓解
 
-| 依赖能力 | Phase 0 需要？ | 核心度 | Flutter 桌面成熟度 | 风险 | 缓解策略 |
-|----------|:---:|--------|---------------------|------|----------|
-| HTTP 客户端 (dio) | ✅ | 🔴 核心 | 成熟 | 无显著风险 | — |
-| SQLite (drift) | ✅ | 🔴 核心 | 成熟 | 无显著风险 | — |
-| GitHub REST API（公开） | ✅ | 🔴 核心 | N/A（HTTP） | 60 req/h 未认证限制 | 提示用户"提供 PAT 可提升至 5,000 req/h" |
-| 安全存储 (Keychain/Credential Manager) | ❌ Phase 1+ | 🔴 核心 | 中等 | `keychain_rs`/`win32_cred` 可能在 macOS 大版本升级后不兼容 | Phase 1 优先使用 `flutter_secure_storage`；若不可行，回退到加密 SQLite |
-| OAuth Loopback Server | ❌ Phase 1+ | 🔴 核心 | 良好 | Windows 防火墙可能拦截 127.0.0.1 | Phase 1 必须同时在 Windows 验证；备选自定义 URL Scheme |
-| 系统托盘 | ❌ Phase 1+ | 🟡 增强 | 中等 | `system_tray` 包维护不活跃 | Phase 0 普通窗口运行即可 |
-| 开机自启动 | ❌ Phase 1+ | 🟢 非核心 | 一般 | macOS 需 Login Items 权限 | Phase 1 实现，若受阻可降级 |
+| 依赖能力 | Phase 0 需要？ | 核心度 | 成熟度 | 风险 | 缓解策略 |
+|----------|:---:|--------|--------|------|----------|
+| Electron BrowserWindow | ✅ | 🔴 核心 | 成熟 | 无显著风险（Chromium 120+ 内嵌，macOS/Windows 一致） | — |
+| better-sqlite3 | ✅ | 🔴 核心 | 成熟 | 原生 C++ addon，需在 Electron 环境下重新编译 | 使用 `electron-rebuild` 或 `@electron/rebuild` 自动处理 |
+| GitHub REST API（公开） | ✅ | 🔴 核心 | N/A（HTTP） | 60 req/h 未认证限制 | 提示用户提供 PAT（5,000 req/h） |
+| simple-git | ✅ | 🔴 核心 | 成熟 | 依赖系统 git CLI，Windows 上需安装 Git for Windows | 应用启动时检查 git 是否可用，不可用时给出下载链接 |
+| octokit | ✅ | 🟡 | 成熟 | GitHub 官方 SDK，无显著风险 | — |
+| 系统托盘 (Tray API) | ❌ Phase 1+ | 🟡 | **一等公民 API** | 无风险 | Electron Tray API 成熟稳定 |
+| 自动更新 (electron-updater) | ❌ Phase 1+ | 🟡 | **一等公民** | S3/GitHub Releases 托管更新 | 10 万+ Star，Slack/VS Code/Discord 等千万级应用验证 |
+| OAuth (BrowserWindow) | ❌ Phase 1+ | 🔴 | **零成本** | 无风险 | Electron BrowserWindow 直接打开授权页→监听 redirect URI→自动解析 code |
+| 安全存储 (safeStorage) | ❌ Phase 1+ | 🔴 | 良好 | macOS Keychain / Windows DPAPI | Electron 原生加密 API |
 
-**核心原则**：Phase 0 仅依赖 HTTP 客户端 + SQLite，均为 Flutter 桌面成熟方案，零平台特定风险。系统托盘、OAuth、安全存储均推迟到 Phase 1。
+**核心原则**：Phase 0 仅依赖 Electron BrowserWindow + better-sqlite3 + simple-git + octokit + fetch，全部为生产级成熟方案。
 
 ---
 

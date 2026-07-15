@@ -1,14 +1,16 @@
 # Appilot 实施方案
 
-> 状态：已更新 | 日期：2026-07-15（基于 Phase 0 最小闭环设计重写）
+> 状态：已更新 | 日期：2026-07-16（技术栈切换为 Electron/Node.js/TypeScript，任务拆解同步更新）
 > 关联设计：[设计文档集](../README.md) | 姊妹文件：[构建计划](./appilot-build-plan.md)
 >
 > 本文档是 [构建计划](./appilot-build-plan.md) 的**任务级展开**，提供每 Phase 的具体任务拆解、估时、依赖和验收标准。
 >
-> ⚠️ **与旧方案的关键差异**（2026-07-15 重写）：
-> - Phase 0 从"手动模式 + 无 AI"（22 天）改为"GitHub 公开仓库 → AI 推文生成 → Twitter Web Intent → 手动统计 → 趋势图"最小闭环（约 17 天）
-> - AI 基础设施（AIProvider、AI Engine、Repo Analyzer）前移到 Phase 0
-> - 多仓库、本地仓库、OAuth、Inbox、运营仪表盘、推广计划生成全部推迟到 Phase 1+
+> 技术栈：**Electron + React + TypeScript**（桌面），**better-sqlite3 + drizzle-orm**（数据），**Zustand**（状态管理），**Tailwind CSS + shadcn/ui**（UI）
+>
+> ⚠️ **与旧方案的关键差异**（2026-07-16 更新）：
+> - 技术栈从 Flutter/Dart 切换为 Electron/Node.js/TypeScript
+> - Phase 0 从"手动模式 + 无 AI"改为"GitHub 公开仓库 → AI 推文生成 → Twitter Web Intent → 手动统计 → 趋势图"最小闭环
+> - AI 基础设施前移到 Phase 0；多仓库、OAuth、Inbox、仪表盘推迟到 Phase 1+
 > - Product Hunt 已彻底移除
 
 ---

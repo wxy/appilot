@@ -1,9 +1,9 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-15（新增 §19 Phase 0 简化评审 + 审核意见落地 + P1-4 崩溃上报决策统一）
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-16（新增 §19 Phase 0 简化评审 + §20 技术栈选型决策 + 审核意见落地）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
-> 本文档记录 Appilot 设计过程中的**历次评审发现与决策**：P0/P1/P2 风险项及其落地状态、二次复核记录、Phase 0 简化评审。
+> 本文档记录 Appilot 设计过程中的**历次评审发现与决策**：P0/P1/P2 风险项及其落地状态、二次复核记录、Phase 0 简化评审、技术栈选型决策。
 
 
 ## 16. 设计评审与改进建议 (2026-07-14)
@@ -142,3 +142,52 @@
 | Phase 2–5 | 不变 | 不变（范围未调整） | — |
 
 **关键原则**：完整设计保留作为产品愿景，Phase 0 仅实现最小子集。架构通过接口抽象预留扩展空间，但不提前实现。
+
+---
+
+## 20. 技术栈选型决策（2026-07-16）
+
+> 经过三轮技术选型讨论，决定将技术栈从 Flutter/Dart 切换为 Electron/Node.js/TypeScript。
+
+### 20.1 决策背景
+
+原设计选定 Flutter/Dart，理由是"四平台一套代码"。但随着需求澄清——桌面端做重活、移动端仅做监控（PWA 可行）、云端可选中转——跨平台对等性不再是核心约束。重新评估后，发现 Electron 对 Appilot 的核心需求（GitHub API、OAuth 授权、系统托盘、自动更新）有更成熟的原生方案。
+
+### 20.2 关键决策因素
+
+| 因素 | 结论 |
+|------|------|
+| **团队技能** | 对 Node.js/TypeScript 熟悉，Dart 从未接触过。95 天项目不值得先花 2 周学新语言 |
+| **OAuth** | Electron BrowserWindow → 零自建 HTTP server，比 Flutter loopback 方案简单一个数量级 |
+| **系统托盘/自动更新** | Electron 一等公民 API（Tray、electron-updater），Flutter 靠第三方小包维护 |
+| **Git/GitHub 操作** | simple-git + octokit（官方 SDK），Flutter 只能 FFI 调 libgit2 或 child_process |
+| **UI 组件生态** | shadcn/ui + Tailwind CSS → 暗色模式一个 class，设计语言参考 Apple/Google 规范 |
+| **Engine 可复用性** | engine/ 作为纯 TypeScript 包，未来可直接被云端 Node.js 服务和 PWA 移动端复用 |
+| **包体积/内存** | Electron ~120MB / ~200MB ——桌面开发者工具场景下用户无感知 |
+
+### 20.3 拒绝的替代方案
+
+| 方案 | 拒绝理由 |
+|------|----------|
+| **Tauri + PWA + Go** | Rust 学习曲线高（2-3 周上手），三门语言维护成本大，移动端仍在实验阶段 |
+| **Flutter + Dart** | 团队不熟悉 Dart；系统托盘/自动更新/OAuth 均为自建方案，Phase 1 踩坑风险高 |
+| **SwiftUI + WinUI** | 两套独立代码库，solo 开发者维护成本翻倍 |
+
+### 20.4 最终技术栈
+
+```
+桌面:  Electron + React 18 + TypeScript
+UI:    Tailwind CSS + shadcn/ui
+状态:  Zustand
+数据:  better-sqlite3 + drizzle-orm
+Git:   simple-git + @octokit/rest
+AI:    openai (npm SDK, 兼容 OpenAI/DeepSeek/Groq/Ollama)
+安全:  electron-store (Phase 0) → safeStorage (Phase 1+)
+```
+
+### 20.5 设计文档影响
+
+- 所有 Dart 代码示例 → TypeScript 翻译（`abstract class` → `interface`、`Future<T>` → `Promise<T>`、`Stream<T>` → `AsyncIterable<T>`、命名参数 → options object）
+- `pubspec.yaml` → `package.json`，drift → drizzle-orm，Riverpod → Zustand，GoRouter → React Router (Hash)
+- 项目结构从 Flutter monorepo → npm workspace（packages/desktop、packages/engine）
+- 技术风险表更新：OAuth loopback server 风险消除，新增 better-sqlite3 原生 addon 编译风险

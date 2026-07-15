@@ -1,7 +1,7 @@
 # Appilot 设计文档
 
 > 状态：设计阶段 | 作者：@xingyuwang
-> 当前版本：2026-07-15 第五次修订（Phase 0 最小闭环简化 + 审核意见落地）
+> 当前版本：2026-07-16 第六次修订（技术栈切换 Electron/Node.js/TypeScript + Phase 0 最小闭环）
 
 ## 文档索引
 
