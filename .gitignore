@@ -6,18 +6,20 @@
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 
-# Flutter / Dart
-build/
-.dart_tool/
-.packages
-pubspec.lock
-
 # Dependencies
-app/.dart_tool/
-app/build/
-engine/.dart_tool/
-engine/build/
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+out/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
