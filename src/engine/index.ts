@@ -19,3 +19,7 @@ export {
 // Logging (Task 0.3)
 export { initLogger, getLogger, log } from "./logger.js";
 export type { Logger, LogLevel } from "./logger.js";
+
+// Repo Analyzer (Task 0.4)
+export { RepoAnalyzer } from "./repo-analyzer.js";
+export type { RepoIndex, RepoSummary, FeatureHighlight, CommitInfo } from "./repo-analyzer.js";
