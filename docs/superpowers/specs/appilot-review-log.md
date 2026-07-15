@@ -1,9 +1,9 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-16（新增 §19 Phase 0 简化评审 + §20 技术栈选型决策 + 审核意见落地）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
-> 本文档记录 Appilot 设计过程中的**历次评审发现与决策**：P0/P1/P2 风险项及其落地状态、二次复核记录。
+> 本文档记录 Appilot 设计过程中的**历次评审发现与决策**：P0/P1/P2 风险项及其落地状态、二次复核记录、Phase 0 简化评审、技术栈选型决策。
 
 
 ## 16. 设计评审与改进建议 (2026-07-14)
@@ -86,5 +86,108 @@
 
 ### 18.3 待决策事项（需要产品/工程决策，非单纯文档修复）
 
-- **P1-4 崩溃上报**：已纳入 Phase 5（AI 增强模式），理由：崩溃上报（Sentry 桌面 SDK）与错误处理框架的分层日志是同一批基础设施投入，可在 Phase 5 统一补齐，不阻塞 Phase 0–4 的核心功能交付。
+- **P1-4 崩溃上报**：✅ 已决议，纳入 Phase 1（实施方案 Day 0 决策）。评审记录 §18.3 原文"纳入 Phase 5"与实施方案不一致——**2026-07-15 统一为 Phase 1**。理由：崩溃上报与 CI 基线共用同一批基础设施投入，边际成本低；且 Phase 0–2 代码量最大，越早接入越有价值。
 - **P1-7 多账号管理**：已于 2.3 节明确排除（"验证阶段单账号即可满足自用需求，多账号留待社区反馈后评估"），`accounts` 表已是多行设计，仅需 UI/Engine 层暴露，届时成本很低。
+
+---
+
+## 19. Phase 0 最小闭环简化评审（2026-07-15）
+
+> 本次评审的背景：经过完整设计复盘，发现当前 Phase 0 范围过大（试图同时交付 7 个子系统，约 35–40 天），失去了"纵向切片"的可行性。决定收缩到最小闭环，优先验证核心假设。
+
+### 19.1 简化决策
+
+| # | 决策 | 理由 |
+|---|------|------|
+| S-1 | **仅 GitHub 公开仓库**（单仓库） | 零认证、标准 API。本地仓库和私有仓库推迟到 Phase 1 |
+| S-2 | **仅 Twitter Web Intent**（零 OAuth） | 不需要 Credential Vault、不需要 Plugin 接口。浏览器预填跳转即可验证"AI→文案→发布"链路 |
+| S-3 | **仅手动填报统计**（零 URL 回填自动提取） | 去掉 headless browser / oEmbed / 页面解析的复杂度。用户粘贴 URL + 手动输入数字 |
+| S-4 | **不做 Inbox / 回复辅助** | 无自动发布则无自动回复。Inbox 价值在 Tier 1/2 阶段才体现 |
+| S-5 | **不做 运营仪表盘 / 多项目** | 先有数据再谈分析。单帖子趋势折线图是最小可用统计 |
+| S-6 | **不做 Task Scheduler / Event Bus / Post Queue** | 无定时任务、无自动发布、无多平台。直接函数调用即可 |
+| S-7 | **不做 i18n / 系统托盘 / 崩溃上报** | Phase 0 仅英文 + 普通窗口。基础设施完整版在 Phase 1 一次补齐 |
+| S-8 | **Schema 收缩到 5 张表** | projects / posts / post_analytics / ai_config / ai_actions。其余 7 张表推迟到 Phase 1+ |
+| S-9 | **publishMode/trackingMode 改为运行时动态计算** | 原设计为静态 getter，无法表达"同一插件因凭据等级提升而升档"。新增 `currentPublishMode()`/`currentTrackingMode()` 动态方法，基于已连接 Credential 类型计算（见 §5.1） |
+
+### 19.2 审核意见落地核对
+
+以下来自 2026-07-15 全面设计审核报告（5 类 20+ 个问题），已在本次修订中落地：
+
+| # | 问题 | 落地 |
+|---|------|------|
+| R-1 | 实施方案过时（与构建计划脱节） | 构建计划 Phase 0 已重写；实施方案标注为"待重写" |
+| R-2 | Phase 0 范围过大（纵向切片失效） | Phase 0 从 35-40 天收缩到约 17 天 |
+| R-3 | `publishMode`/`trackingMode` 编译期静态 getter | 改为运行时动态方法 `currentPublishMode()`/`currentTrackingMode()` |
+| R-4 | 推广计划缺少持久化 Schema | Phase 0 不做推广计划生成（用户手动选阶段），表推迟到 Phase 1 |
+| R-5 | "零外部 API 依赖"表述不准确 | 改为"零平台 API Key/OAuth 依赖"，GitHub 公开 API 为 HTTP 请求非平台凭据 |
+| R-6 | GitHub 公开 API 60 req/h 限频未设计 | Repo Analyzer 增加限频感知 + 提示 PAT 升级 + 缓存降级策略 |
+| R-7 | Task Scheduler 并发模型（Isolate + drift）未澄清 | Phase 0 不引入 Isolate，所有操作为主线程同步/异步 |
+| R-8 | i18n 在 Phase 0 和 Phase 1 重复 | Phase 0 仅英文硬编码；Phase 1 建 ARB 框架 |
+| R-9 | Content Store 定位问题（Engine vs UI 感知） | 明确"30s 自动保存由 Composer UI 层触发，Content Store 只暴露 saveDraft()/loadDraft()" |
+| R-10 | 通知机制跨平台实现未设计 | Phase 0 不需要通知（无后台任务）；Phase 1 确定方案 |
+| R-11 | Schema JSON 字段 / ai_product_summary 缓存过期 | 增加 `ai_summary_generated_at` 字段；Phase 0 Schema 仅 5 张表 |
+| R-12 | PR 建议对非 GitHub 仓库 UX 不完整 | Phase 0 不涉及（PR 建议推迟）；Phase 1 补充 |
+| R-13 | 数据导出/备份设计缺失 | Phase 1 补充 |
+| R-14 | AI 上下文窗口管理缺失 | Phase 0 单仓库 + 精简 System Prompt，暂不超限；Phase 1 加入 context 预算管理 |
+| R-15 | 文档日期笔误（2025 vs 2026） | 保留原始文档的初次编写日期，修订日期更新为 2026-07-15 |
+| R-16 | 部分开放问题可关闭（OAuth 回调/#5、分发/#6、测试/#7） | 已标记为"已决议"或"已纳入 Phase 1" |
+| R-17 | 崩溃上报 Phase 5 vs Phase 1 矛盾 | 统一为 Phase 1（实施方案 Day 0 决策 + 评审记录 §18.3 同步修正） |
+
+### 19.3 简化后的工时估算
+
+| Phase | 原估算 | 新估算 | 变化 |
+|-------|--------|--------|------|
+| Phase 0 | 35–40 天（范围过大） | **约 17 天** | 收缩到最小闭环 |
+| Phase 1 | 29 天 | 约 25 天（基于 Phase 0 已有基础叠加） | 部分工作 Phase 0 已完成 |
+| Phase 2–5 | 不变 | 不变（范围未调整） | — |
+
+**关键原则**：完整设计保留作为产品愿景，Phase 0 仅实现最小子集。架构通过接口抽象预留扩展空间，但不提前实现。
+
+---
+
+## 20. 技术栈选型决策（2026-07-16）
+
+> 经过三轮技术选型讨论，决定将技术栈从 Flutter/Dart 切换为 Electron/Node.js/TypeScript。
+
+### 20.1 决策背景
+
+原设计选定 Flutter/Dart，理由是"四平台一套代码"。但随着需求澄清——桌面端做重活、移动端仅做监控（PWA 可行）、云端可选中转——跨平台对等性不再是核心约束。重新评估后，发现 Electron 对 Appilot 的核心需求（GitHub API、OAuth 授权、系统托盘、自动更新）有更成熟的原生方案。
+
+### 20.2 关键决策因素
+
+| 因素 | 结论 |
+|------|------|
+| **团队技能** | 对 Node.js/TypeScript 熟悉，Dart 从未接触过。95 天项目不值得先花 2 周学新语言 |
+| **OAuth** | Electron BrowserWindow → 零自建 HTTP server，比 Flutter loopback 方案简单一个数量级 |
+| **系统托盘/自动更新** | Electron 一等公民 API（Tray、electron-updater），Flutter 靠第三方小包维护 |
+| **Git/GitHub 操作** | simple-git + octokit（官方 SDK），Flutter 只能 FFI 调 libgit2 或 child_process |
+| **UI 组件生态** | shadcn/ui + Tailwind CSS → 暗色模式一个 class，设计语言参考 Apple/Google 规范 |
+| **Engine 可复用性** | engine/ 作为纯 TypeScript 包，未来可直接被云端 Node.js 服务和 PWA 移动端复用 |
+| **包体积/内存** | Electron ~120MB / ~200MB ——桌面开发者工具场景下用户无感知 |
+
+### 20.3 拒绝的替代方案
+
+| 方案 | 拒绝理由 |
+|------|----------|
+| **Tauri + PWA + Go** | Rust 学习曲线高（2-3 周上手），三门语言维护成本大，移动端仍在实验阶段 |
+| **Flutter + Dart** | 团队不熟悉 Dart；系统托盘/自动更新/OAuth 均为自建方案，Phase 1 踩坑风险高 |
+| **SwiftUI + WinUI** | 两套独立代码库，solo 开发者维护成本翻倍 |
+
+### 20.4 最终技术栈
+
+```
+桌面:  Electron + React 18 + TypeScript
+UI:    Tailwind CSS + shadcn/ui
+状态:  Zustand
+数据:  better-sqlite3 + drizzle-orm
+Git:   simple-git + @octokit/rest
+AI:    openai (npm SDK, 兼容 OpenAI/DeepSeek/Groq/Ollama)
+安全:  electron-store (Phase 0) → safeStorage (Phase 1+)
+```
+
+### 20.5 设计文档影响
+
+- 所有 Dart 代码示例 → TypeScript 翻译（`abstract class` → `interface`、`Future<T>` → `Promise<T>`、`Stream<T>` → `AsyncIterable<T>`、命名参数 → options object）
+- `pubspec.yaml` → `package.json`，drift → drizzle-orm，Riverpod → Zustand，GoRouter → React Router (Hash)
+- 项目结构从 Flutter monorepo → npm workspace（packages/desktop、packages/engine）
+- 技术风险表更新：OAuth loopback server 风险消除，新增 better-sqlite3 原生 addon 编译风险

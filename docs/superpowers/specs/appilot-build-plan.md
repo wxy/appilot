@@ -1,61 +1,120 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-15（Phase 0 最小闭环重写 + 审核意见落地）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
-> 本文档是 Appilot 的**构建计划**：Phase 0～5 的交付清单、产出标准和依赖关系。任务级拆解见实施方案（待重写）。
+> 本文档是 Appilot 的**构建计划**：Phase 0～5 的交付清单、产出标准和依赖关系。任务级拆解见 [实施方案](./appilot-implementation-plan.md)。
 
 
 ## 13. 构建计划
 
 **策略：纵向切片，每阶段产出可交互的完整应用。**
 
-### Phase 0: AI 优先 + 手动发布（最先交付，详见第 17 节）
+### Phase 0: 最小闭环验证 — "代码→文案→发布→追踪"（12–15 天，优先交付）
+
+> **目标**：验证 Appilot 的核心假设——"AI 读取代码仓库后生成的推广文案，比开发者自己写的更好/更快"。
+> **策略**：仅 GitHub 公开仓库 + 仅 Twitter Web Intent + 仅手动统计填报。零 OAuth、零后台调度、零多平台。
+> **产出**：输入一个 GitHub 公开仓库 URL → AI 生成产品摘要和推文 → 一键跳转 Twitter 发布 → 回填 URL 填写数据 → 看趋势图。
 
 ```
-零外部平台 API 依赖（仅需 AI API），验证"连接仓库 → AI 分析 → 生成推广计划 → 发布 → 回填 URL → 自动追踪"核心工作流:
-  ✓ 全局 AI API 配置 (AIProvider 接口 + OpenAI 兼容实现 + 本地模型 Ollama/LM Studio 选项 + AI 数据出境提示)
-  ✓ 项目管理 UI（添加项目：名称、项目状态(预热中/已发布/维护中)、多仓库连接、仓库角色分配）
-  ✓ Repo Analyzer (跨仓库文件读取 + git log + GitHub API + 代码结构扫描 + 发布渠道/项目链接自动识别 + README 完整性检查)
-  ✓ AI 产品理解 (跨仓库自动提取特性、亮点、发布渠道、官网/社区链接，生成产品摘要；支持预热阶段基于代码进度的推测)
-  ✓ AI README 完善建议 (对比仓库内容与 Appilot 已知信息 → 生成 PR 建议 → 用户确认 → 创建 PR 或复制内容)
-  ✓ AI 推广计划生成 (建议发布阶段、目标平台、推广频率 → 用户审阅确认)
-  ✓ AI 多平台文案生成 (按 Twitter/Reddit/Discord/YouTube 格式自动适配，仓库上下文驱动)
-  ✓ AI 辅助 Composer 编辑器（文案草稿呈现 + 用户逐平台审阅修改 + 语气微调）
-  ✓ 跨平台发布清单（Checklist）：逐平台标记"已手动发布"并回填帖子 URL
-  ✓ Web Intent 快捷发布：Twitter/X、Reddit 等有预填链接的平台一键跳转
-  ✓ URL 回填自动提取：用户粘贴帖子 URL → 程序访问公开页面提取互动数据（优先 .json / oEmbed 等轻量方式，失败则降级为手动填报表单）
-  ✓ AI 回复辅助（根据评论内容 + 仓库上下文生成个性化回复建议）
-  ✓ 到期提醒（reminder 任务类型）+ 手动填报降级兜底
-  ✓ 完整 SQLite Schema 设计与 migration 框架搭建（drift，覆盖 projects/status/distribution_platforms/links、project_repos/repo_role、project_metrics/download_count/revenue/dev_cost/ai_cost、pr_suggestions、posts/publish_mode/project_id、post_analytics/source(url_backfill/api/manual)、reminders、accounts、interactions、content_templates、ai_config、ai_actions）
-  ✓ 运营总览仪表盘（开发进度卡片、推广概览、开发活跃度、收入与成本手动登记、快速操作入口）
-  ✓ 基础设施：i18n / 错误处理 / 主题 / 系统托盘
+Phase 0 交付清单（仅以下内容）:
+  ✓ AI API 配置（OpenAI 兼容 URL + Key，存 SQLite）
+  ✓ GitHub 公开仓库连接（输入 URL → 读取 README/文件树/最近 10 次提交）
+  ✓ 仓库摘要展示（项目名、技术栈、关键特性、最近提交列表）
+  ✓ AI 产品摘要在 UI 中展示并可编辑
+  ✓ AI Twitter 推文生成（280 字符 + hashtags，仓库上下文驱动）
+  ✓ 推文草稿编辑器（用户审阅修改 + AI 重新生成 + 保存/加载草稿）
+  ✓ Twitter Web Intent 一键跳转（系统浏览器打开，预填文案）
+  ✓ 帖子 URL 回填 + 手动统计登记表单（浏览/点赞/评论数 + 备注 + 时间戳）
+  ✓ 单帖子趋势折线图（基于手动填报数据，按时间展示浏览/点赞/评论变化）
+  ✓ 基础设置页（AI API 配置、GitHub 仓库 URL、项目名称）
+  ✓ 错误处理基础（API 调用失败提示 + 日志记录）
+  ✓ 主题（明暗色跟随系统）
 
-产出: 仅需一个 AI API（可用本地模型替代），零平台 API Key 依赖，"连接仓库 → AI 生成推广计划 → 发布 → 追踪"全链路可用
+Phase 0 明确不做的（保留完整设计供后续 Phase 参考）:
+  ✗ 本地仓库 / 私有仓库 / 多仓库（Phase 1+）
+  ✗ Reddit / Discord / YouTube 任何形式接入（Phase 2/3）
+  ✗ OAuth / Credential Vault / Token 管理（Phase 1）
+  ✗ URL 回填自动提取（headless browser / oEmbed / 页面解析）（Phase 1）
+  ✗ Inbox / AI 回复建议（Phase 1）
+  ✗ 推广计划生成（Phase 0 用户手动选择推广阶段）
+  ✗ README 完整性检查 / PR 建议（Phase 1）
+  ✗ 运营总览仪表盘（Phase 1）
+  ✗ 多项目支持（Phase 4）
+  ✗ 内容模板（Phase 3）
+  ✗ 系统托盘 / 后台轮询 / Task Scheduler / Event Bus / Post Queue（Phase 1+）
+  ✗ Plugin 接口抽象（Twitter Web Intent 硬编码 URL 构建）（Phase 1+）
+  ✗ i18n（仅英文）（Phase 1）
+  ✗ 崩溃上报（Phase 1）
+  ✗ 自动更新 / 签名公证（Phase 1 末）
+
+Phase 0 数据库表（仅 5 张）:
+  projects（仅 github_public 来源，单仓库）
+  posts（仅 Twitter，publish_mode 固定 web_intent）
+  post_analytics（source 固定 manual）
+  ai_config（单行全局配置）
+  ai_actions（AI 调用审计日志）
 ```
 
-### Phase 1: 核心体验闭环（Twitter + 基础设施完备）— 在 Phase 0 基础上叠加自动化
+**Phase 0 任务估算（12–15 天）：**
+
+| # | 任务 | 估时 | 依赖 | 验收标准 |
+|---|------|------|------|----------|
+| 0.1 | **Electron + React 项目脚手架**：npm workspace（`packages/desktop/` + `packages/engine/`）+ Electron Forge/Vite + React 18 + TypeScript + Tailwind CSS + shadcn/ui + Zustand + React Router (Hash) | 1.5d | - | `npm run start` 跑起 Electron 窗口，Hash 路由跳转正常，Tailwind 暗色模式切换可用 |
+| 0.2 | **drizzle-orm Schema 建表 + Migration**：5 张表（projects/posts/post_analytics/ai_config/ai_actions），better-sqlite3 连接，drizzle-kit migration 自动生成 | 1.5d | 0.1 | 表创建成功，`npx drizzle-kit generate` + `npx drizzle-kit migrate` 跑通 |
+| 0.3 | **错误处理基础**：分层异常类 + 文件日志（`electron-log` 或 winston，按天滚动，保留 14 天到 `~/.appilot/logs/`） | 1d | 0.1 | 故意抛一个异常，验证日志文件中有完整堆栈 + 用户可读错误提示 |
+| 0.4 | **GitHub Repo Analyzer**：`connectGitHubPublicRepo(url)` — octokit 读取 README/文件树/最近 10 次提交 + simple-git clone 到临时目录提取 git log。限频感知：429 → 提示用户 + 缓存降级 | 2.5d | 0.1 | 输入 `github.com/facebook/react` → UI 展示 README 摘要 + 文件树 + 最近 10 次提交 |
+| 0.5 | **AIProvider + OpenAI 兼容实现**：`openai` npm 包（支持自定义 baseURL，兼容 Ollama/DeepSeek/Groq）。`chat()` + `validateConnection()` + `lastUsage` | 1.5d | 0.1 | 用真实 API Key 跑通 `chat()`，验证 `lastUsage` 返回 token 数和费用 |
+| 0.6 | **AI 配置 UI**：设置页表单（Provider URL + API Key + Model），保存到 electron-store + ai_config 表。"测试连接"按钮调用 validateConnection | 1d | 0.2, 0.5 | 配置保存后重启应用仍有效；"测试连接"显示成功/失败 |
+| 0.7 | **AI Engine**：`analyzeProduct(projectId)` + `generateTweet({projectId, stage})`。单仓库上下文组装 → System Prompt → AI 调用 | 2d | 0.4, 0.5 | 连接仓库 → 点击"分析" → AI 返回产品摘要；点击"生成推文" → AI 返回 < 280 字符推文 |
+| 0.8 | **Context Builder**：`buildContext(projectId)` → 组装 System Prompt（README + 技术栈 + 最近提交 + 特性列表 + 风格要求） | 1d | 0.4 | 检查发送给 AI 的 System Prompt 包含产品名/技术栈/提交/特性/风格要求 |
+| 0.9 | **项目设置向导 UI**：React 组件——Step 1 AI API 配置 → Step 2 输入项目名 + GitHub URL → "连接并分析"→ 展示 AI 分析结果（产品摘要/特性/技术栈/最近提交） | 1.5d | 0.4, 0.7 | 输入 github.com/user/repo 后看到 AI 提取的特性列表和产品摘要，可编辑 |
+| 0.10 | **Composer 推文编辑器**：React 组件——AI 生成的草稿展示（字符计数 [xxx/280]）+ 编辑 + "AI 重新生成"按钮 + 语气选项 + 草稿手动保存/加载 | 1.5d | 0.7, 0.2 | 保存草稿后关闭重开，点击"加载草稿"内容恢复 |
+| 0.11 | **Twitter Web Intent 跳转**：构建 `twitter.com/intent/tweet?text=...` URL，Electron `shell.openExternal()` 打开系统浏览器 | 0.5d | 0.10 | 点击"在 Twitter 上发布"→ 系统浏览器打开 Twitter 且文案预填 |
+| 0.12 | **Content Store**：`saveDraft()` / `loadDraft()` / `listDrafts()` — drizzle-orm 读写 posts 表（status=draft） | 1d | 0.2 | 保存草稿 → posts 表有 status=draft 记录 → 加载后内容完全恢复 |
+| 0.13 | **帖子 URL 回填 + 手动统计登记**：posts 表 permalink 字段 + 手动统计表单 UI（浏览/点赞/评论 + 备注 + 日期）+ drizzle-orm 写入 post_analytics (source=manual) | 1.5d | 0.2, 0.11 | 提交后 post_analytics 表新增 source=manual 记录，列表可见 |
+| 0.14 | **Analytics Engine + 趋势折线图**：`submitManualStats()` + `watchTrend()` + Recharts/ECharts 折线图（浏览量/点赞/评论三条线） | 2d | 0.13 | 连续提交 3 条统计后图表显示 3 个 data point 折线，三条线颜色不同有图例 |
+| 0.15 | **AI 用量展示**：每次 AI 调用后 UI 显示消耗；设置页"本月累计"从 ai_actions 表聚合 | 1d | 0.7, 0.2 | 生成推文后显示"本次消耗 1,247 tokens，约 $0.02"；设置页有累计统计 |
+| 0.16 | **Phase 0 整体验收**：端到端走通 + 录屏 | 1d | 全部 | 录屏：输入 GitHub 公开仓库 URL → AI 分析 → 生成推文 → 跳转 Twitter → 回填 URL → 提交 3 次统计 → 趋势图 |
+
+小计：**约 20.5 天**（含 3.5 天 buffer，实际核心编码约 17 天）
+
+小计：**约 17 天**（含 2 天 buffer），实际编码约 15 天。
+
+> ⚠️ **与旧方案的关键差异**：旧 Phase 0（22 天，2026-07-14 方案）包含多仓库、AI 推广计划、跨平台清单、URL 回填自动提取、运营仪表盘、系统托盘等。新 Phase 0 严格收缩到最小闭环，工时从 22 天降到约 17 天，但可独立验证核心价值。
+
+### Phase 1: Twitter 全自动 + 基础设施完备 — 在 Phase 0 最小闭环上叠加（约 25 天）
+
+> **Phase 0 已有**：单 GitHub 公开仓库连接 + AI 推文生成 + Twitter Web Intent + 手动统计 + 趋势图 + 基础错误处理 + 主题。
+> **Phase 1 新增**：将手动流程升级为全自动 + 补齐基础设施，让应用从"原型验证"进入"可安全分发的桌面应用"。
 
 ```
-基础设施 (一次性建立):
-  ✓ Flutter 项目脚手架 + Engine + Plugin 接口定义
-  ✓ i18n 框架完善 (flutter_localizations + ARB, 中英双语)
-  ✓ 错误处理框架 (分层异常 + 日志脱敏 + 用户可读消息)
-  ✓ 暗色/亮色主题完善
-  ✓ 凭据安全存储 (系统 Keychain/Credential Manager)
-  ✓ OAuth 通用回调服务器 (Engine 层 OAuthCallbackServer，统一方案)
+基础设施 (一次性建立，基于 Phase 0 扩展):
+  ✓ 升级 Repo Analyzer: 新增本地仓库 (connectLocalRepo) + GitHub 私有仓库 (connectGitHubPrivateRepo + PAT) 支持
+  ✓ Credential Vault (系统 Keychain/Credential Manager 安全存储)
+  ✓ OAuth 通用回调服务器 (Engine 层 OAuthCallbackServer，loopback HTTP server 方案，Windows 兼容性验证)
+  ✓ Plugin 接口定义 + Plugin Registry (Phase 0 硬编码的 Twitter Web Intent 迁移为 Plugin 实现)
+  ✓ Task Scheduler (定时轮询 + 启动追赶 + 即时发布)
+  ✓ Event Bus + Post Queue
+  ✓ i18n 框架 (react-i18next + JSON, 中英双语骨架；Phase 0 仅英文)
+  ✓ 错误处理框架增强 (分层异常 + 日志脱敏 + 用户可读消息 + 诊断包导出)
   ✓ 系统托盘 + 应用自启动
-  ✓ CI 基线 (GitHub Actions: lint + test + build)
+  ✓ CI 基线 (GitHub Actions: lint + test + build，macOS + Windows)
+  ✓ 单元测试/集成测试基线 (Mock Plugin 用于关键路径测试)
   ✓ macOS Developer ID 签名 + 公证 (+ Windows 代码签名，最低优先级)
   ✓ 自动更新框架
+  ✓ 崩溃上报 opt-in 接入 (Sentry 桌面 SDK)
 
 功能 (Twitter 端到端):
-  ✓ Twitter Plugin 完整实现 (OAuth + 文本/图片发布 + 拉取互动) + 用量预算熔断
-  ✓ Composer 编辑器增强 (融入 Twitter 平台特性：字数计数、hashtag 建议、图片预览)
-  ✓ 统一收件箱 (真实 Twitter 数据 + AI 回复建议 — AI Engine 和 Repo Analyzer 已在 Phase 0 就位)
-  ✓ 基础统计面板 (帖子级数据，合并 URL 回填与 API 拉取两种来源)
+  ✓ Twitter Plugin 完整实现 (OAuth 自动发布 + 拉取互动 + 用量预算熔断)
+  ✓ 推广计划生成 (AI 根据 Release 节奏建议阶段/频率，Phase 0 为手动选择)
+  ✓ 多仓库支持 (appSource/website/docs 角色分配)
+  ✓ URL 回填自动提取 (Reddit .json + YouTube oEmbed，headless browser 方案评估)
+  ✓ 统一收件箱 (真实 Twitter 互动 + AI 回复建议)
+  ✓ 运营总览仪表盘 (开发进度/推广概览/下载量/AI 费用统计)
+  ✓ README 完整性检查 + PR 建议生成
 
-产出: 仅支持 Twitter，但"项目连接 → AI 推广计划 → 发布→追踪→回复"全链路可用，AI 优先贯穿全流程
+产出: 仅支持 Twitter，但"项目连接 → AI 推广计划 → 自动发布→追踪→回复→仪表盘"全链路可用
 ```
 
 ### Phase 2: Reddit + Discord
