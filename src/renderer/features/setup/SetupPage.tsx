@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useProject } from "../../stores/project";
 
 interface AnalysisResult {
   name: string;
@@ -21,6 +22,7 @@ export function SetupPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
 
+  const { setRepoUrl: saveRepoUrl, setProjectName: saveProjectName, setAnalysisResult } = useProject();
   const ai = (window as any).appilot?.ai;
 
   const handleAnalyze = async () => {
@@ -30,6 +32,9 @@ export function SetupPage() {
       const data = await ai.analyzeProduct(repoUrl.trim());
       setResult(data);
       if (!projectName) setProjectName(data.name || "");
+      saveRepoUrl(repoUrl.trim());
+      saveProjectName(projectName || data.name || "");
+      setAnalysisResult(data);
     } catch (e: any) {
       setError(e.message || "Analysis failed. Check the repo URL and try again.");
     } finally { setLoading(false); }
