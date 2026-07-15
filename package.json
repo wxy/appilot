@@ -8,8 +8,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/schema.test.ts && tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts",
-    "test:ci": "tsx tests/schema.test.ts && tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts"
+    "test": "tsx tests/schema.test.ts && tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts",
+    "test:ci": "tsx tests/schema.test.ts && tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",

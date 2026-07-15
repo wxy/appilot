@@ -53,13 +53,39 @@ export function registerIpcHandlers() {
     return provider.validateConnection();
   });
 
+  // ── AI Engine (Task 0.7) ──
+  ipcMain.handle("ai:analyzeProduct", async (_event, repoUrl: string) => {
+    const s = await getStore();
+    const provider = new AIProvider({
+      baseURL: s.get("aiProviderUrl"),
+      apiKey: s.get("aiApiKey"),
+      model: s.get("aiModel"),
+    });
+    const { RepoAnalyzer } = await import("../engine/repo-analyzer");
+    const { AIEngine } = await import("../engine/ai/ai-engine");
+
+    const analyzer = new RepoAnalyzer();
+    const engine = new AIEngine(analyzer, provider);
+    return engine.analyzeProduct(repoUrl);
+  });
+
+  ipcMain.handle("ai:generateTweet", async (_event, repoUrl: string, stage: string) => {
+    const s = await getStore();
+    const provider = new AIProvider({
+      baseURL: s.get("aiProviderUrl"),
+      apiKey: s.get("aiApiKey"),
+      model: s.get("aiModel"),
+    });
+    const { RepoAnalyzer } = await import("../engine/repo-analyzer");
+    const { AIEngine } = await import("../engine/ai/ai-engine");
+
+    const analyzer = new RepoAnalyzer();
+    const engine = new AIEngine(analyzer, provider);
+    return engine.generateTweet(repoUrl, stage as any);
+  });
+
   // ── Database (placeholder) ──
   ipcMain.handle("db:query", async () => {
     throw new Error("Database not yet wired to IPC");
-  });
-
-  // ── AI Chat (placeholder — Task 0.7) ──
-  ipcMain.handle("ai:chat", async () => {
-    throw new Error("AI Engine not yet wired to IPC");
   });
 }
