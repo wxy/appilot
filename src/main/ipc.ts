@@ -66,7 +66,9 @@ export function registerIpcHandlers() {
 
     const analyzer = new RepoAnalyzer();
     const engine = new AIEngine(analyzer, provider);
-    return engine.analyzeProduct(repoUrl);
+    const result = await engine.analyzeProduct(repoUrl);
+    if (provider.lastUsage) trackAiUsage(provider.lastUsage.totalTokens, provider.lastUsage.estimatedCost);
+    return result;
   });
 
   ipcMain.handle("ai:generateTweet", async (_event, repoUrl: string, stage: string) => {
@@ -81,8 +83,39 @@ export function registerIpcHandlers() {
 
     const analyzer = new RepoAnalyzer();
     const engine = new AIEngine(analyzer, provider);
-    return engine.generateTweet(repoUrl, stage as any);
+    const result = await engine.generateTweet(repoUrl, stage as any);
+    if (provider.lastUsage) trackAiUsage(provider.lastUsage.totalTokens, provider.lastUsage.estimatedCost);
+    return result;
   });
+
+  // ── Analytics / Stats (Task 0.13/0.14) ──
+  ipcMain.handle("stats:save", async (_event, entry: { views: number; likes: number; comments: number; note: string; permalink: string }) => {
+    const s = await getStore();
+    const entries: any[] = s.get("stats") || [];
+    entries.push({ ...entry, date: new Date().toISOString() });
+    s.set("stats", entries);
+    return entries;
+  });
+
+  ipcMain.handle("stats:list", async () => {
+    const s = await getStore();
+    return s.get("stats") || [];
+  });
+
+  ipcMain.handle("stats:aiUsage", async () => {
+    const s = await getStore();
+    return s.get("aiUsage") || { calls: 0, totalTokens: 0, estimatedCost: 0 };
+  });
+
+  // Track AI usage after each call
+  const trackAiUsage = async (tokens: number, cost: number) => {
+    const s = await getStore();
+    const usage: any = s.get("aiUsage") || { calls: 0, totalTokens: 0, estimatedCost: 0 };
+    usage.calls += 1;
+    usage.totalTokens += tokens;
+    usage.estimatedCost += cost;
+    s.set("aiUsage", usage);
+  };
 
   // ── Content Store / Drafts (Task 0.10/0.12) ──
   ipcMain.handle("draft:save", async (_event, content: string) => {

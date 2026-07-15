@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useProject } from "../../stores/project";
 
 const stages = [
@@ -15,6 +16,7 @@ const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 
 
 export function ComposerPage() {
   const { repoUrl, projectName } = useProject();
+  const navigate = useNavigate();
   const [stage, setStage] = useState("launch");
   const [tweet, setTweet] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -51,6 +53,8 @@ export function ComposerPage() {
   const handleTweet = () => {
     const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweet)}`;
     (window as any).appilot?.openExternal(url);
+    // Navigate to Tracking so user can paste the tweet URL and log stats
+    setTimeout(() => navigate("/tracking"), 500);
   };
 
   const handleCopy = async () => {

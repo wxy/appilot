@@ -4,6 +4,7 @@ import { useTheme } from "./stores/theme";
 import { cn } from "./lib/utils";
 import { SetupPage } from "./features/setup/SetupPage";
 import { ComposerPage } from "./features/composer/ComposerPage";
+import { TrackingPage } from "./features/tracking/TrackingPage";
 
 /* ── Layout ── */
 
@@ -139,10 +140,6 @@ const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 
 
 /* ── Placeholder pages ── */
 
-function TrackingPage() {
-  return <PlaceholderPage title="Post Tracking" desc="Paste tweet URLs, enter stats, and see trend charts." comingIn="Task 0.13" />;
-}
-
 function PlaceholderPage({ title, desc, comingIn }: { title: string; desc: string; comingIn: string }) {
   return (
     <div className="p-10 max-w-2xl mx-auto">
@@ -269,7 +266,41 @@ function SettingsPage() {
         </div>
       </div>
 
+      {/* AI Usage */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
+        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">AI Usage</h3>
+        </div>
+        <div className="p-6">
+          <AIUsageStats />
+        </div>
+      </div>
+
       <p className="text-[11px] text-zinc-400 dark:text-zinc-500">Appilot v0.1.0 · Phase 0 MVP</p>
+    </div>
+  );
+}
+
+function AIUsageStats() {
+  const [usage, setUsage] = useState<{ calls: number; totalTokens: number; estimatedCost: number } | null>(null);
+  useEffect(() => {
+    (window as any).appilot?.stats?.aiUsage().then(setUsage).catch(() => {});
+  }, []);
+  if (!usage) return <p className="text-sm text-zinc-400">Loading...</p>;
+  return (
+    <div className="grid grid-cols-3 gap-4">
+      <div className="text-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/50">
+        <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">{usage.calls}</p>
+        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">API Calls</p>
+      </div>
+      <div className="text-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/50">
+        <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">{(usage.totalTokens / 1000).toFixed(1)}K</p>
+        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">Tokens</p>
+      </div>
+      <div className="text-center p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/50">
+        <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">${usage.estimatedCost.toFixed(4)}</p>
+        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">Est. Cost</p>
+      </div>
     </div>
   );
 }
