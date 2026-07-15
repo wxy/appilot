@@ -183,6 +183,9 @@ function SettingsPage() {
       if (c?.providerUrl) setProviderUrl(c.providerUrl);
       if (c?.apiKey) setApiKey(c.apiKey);
       if (c?.model) setModel(c.model);
+      // Reverse-map saved config to preset
+      const match = AI_PRESETS.find((p) => p.url === c?.providerUrl && p.model === c?.model);
+      if (match) setPreset(match.label);
     }).catch(() => {});
   }, []);
 
@@ -283,9 +286,11 @@ function SettingsPage() {
 
 function AIUsageStats() {
   const [usage, setUsage] = useState<{ calls: number; totalTokens: number; estimatedCost: number } | null>(null);
+  const [loadErr, setLoadErr] = useState(false);
   useEffect(() => {
-    (window as any).appilot?.stats?.aiUsage().then(setUsage).catch(() => {});
+    (window as any).appilot?.stats?.aiUsage().then(setUsage).catch(() => setLoadErr(true));
   }, []);
+  if (loadErr) return <p className="text-sm text-zinc-400">Usage data unavailable</p>;
   if (!usage) return <p className="text-sm text-zinc-400">Loading...</p>;
   return (
     <div className="grid grid-cols-3 gap-4">

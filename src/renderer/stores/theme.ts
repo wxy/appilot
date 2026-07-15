@@ -10,9 +10,7 @@ interface ThemeState {
 }
 
 function getSystemTheme(): "light" | "dark" {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function applyTheme(resolved: "light" | "dark") {
@@ -24,15 +22,15 @@ export const useTheme = create<ThemeState>((set, get) => {
   const resolved = initial === "system" ? getSystemTheme() : initial;
   applyTheme(resolved);
 
-  window
-    .matchMedia("(prefers-color-scheme: dark)")
-    .addEventListener("change", () => {
-      if (get().theme === "system") {
-        const sys = getSystemTheme();
-        applyTheme(sys);
-        set({ resolved: sys });
-      }
-    });
+  const mql = window.matchMedia("(prefers-color-scheme: dark)");
+  const onChange = () => {
+    if (get().theme === "system") {
+      const sys = getSystemTheme();
+      applyTheme(sys);
+      set({ resolved: sys });
+    }
+  };
+  mql.addEventListener("change", onChange);
 
   return {
     theme: initial,
@@ -44,11 +42,20 @@ export const useTheme = create<ThemeState>((set, get) => {
       set({ theme, resolved });
     },
     toggle: () => {
-      const r = get().resolved;
-      const next = r === "dark" ? "light" : "dark";
-      applyTheme(next);
-      localStorage.setItem("appilot-theme", next);
-      set({ theme: next, resolved: next });
+      const { theme, resolved } = get();
+      if (theme === "system") {
+        // From system: pick explicit opposite of current system preference
+        const next = resolved === "dark" ? "light" : "dark";
+        applyTheme(next);
+        localStorage.setItem("appilot-theme", next);
+        set({ theme: next, resolved: next });
+      } else {
+        // From explicit: toggle to the other explicit
+        const next = resolved === "dark" ? "light" : "dark";
+        applyTheme(next);
+        localStorage.setItem("appilot-theme", next);
+        set({ theme: next, resolved: next });
+      }
     },
   };
 });

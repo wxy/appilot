@@ -11,7 +11,20 @@ import log from "electron-log";
 import type { Logger } from "@engine/logger";
 import { initLogger } from "@engine/logger";
 import path from "path";
+import fs from "fs";
 import { app } from "electron";
+
+function cleanupOldLogs(logsDir: string, maxDays: number) {
+  try {
+    if (!fs.existsSync(logsDir)) return;
+    const cutoff = Date.now() - maxDays * 86400000;
+    for (const file of fs.readdirSync(logsDir)) {
+      const filePath = path.join(logsDir, file);
+      const stat = fs.statSync(filePath);
+      if (stat.mtimeMs < cutoff) fs.unlinkSync(filePath);
+    }
+  } catch { /* best-effort, don't crash on cleanup failure */ }
+}
 
 export function setupLogger(): Logger {
   // Configure file logging path
@@ -21,11 +34,11 @@ export function setupLogger(): Logger {
       : path.join(app.getPath("userData"), "logs");
 
   log.transports.file.resolvePathFn = () => path.join(logsDir, "main.log");
-  log.transports.file.maxSize = 0; // disable size-based rotation — use daily
-  log.transports.file.archiveLogFn = (oldFile) => {
-    // Keep 14 days of archived logs
-    const stats = log.transports.file.getFile();
-    // electron-log handles daily rotation internally; old files are auto-cleaned
+  log.transports.file.maxSize = 0; // daily rotation via electron-log schedule
+  log.transports.file.resolvePathFn = () => {
+    // Auto-cleanup: remove logs older than 14 days
+    cleanupOldLogs(logsDir, 14);
+    return path.join(logsDir, "main.log");
   };
 
   // Console in dev mode, file always

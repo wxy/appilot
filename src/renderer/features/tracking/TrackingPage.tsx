@@ -41,7 +41,7 @@ export function TrackingPage() {
         note,
         permalink,
       });
-      setEntries(list || []);
+      setEntries(list?.length ? list : entries);
       setSubmitted(true);
       setTimeout(() => setSubmitted(false), 2000);
       setPermalink(""); setViews(""); setLikes(""); setComments(""); setNote("");
