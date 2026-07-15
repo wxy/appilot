@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from "electron";
 import path from "path";
 import { registerIpcHandlers } from "./ipc";
+import { setupLogger } from "./logger";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -33,6 +34,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  setupLogger();
   registerIpcHandlers();
   createWindow();
 });

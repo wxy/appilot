@@ -8,14 +8,15 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/schema.test.ts",
-    "test:ci": "tsx tests/schema.test.ts"
+    "test": "tsx tests/schema.test.ts && tsx tests/errors.test.ts",
+    "test:ci": "tsx tests/schema.test.ts && tsx tests/errors.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "drizzle-orm": "^0.45.2",
+    "electron-log": "^5.4.4",
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
