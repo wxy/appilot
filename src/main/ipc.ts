@@ -84,6 +84,18 @@ export function registerIpcHandlers() {
     return engine.generateTweet(repoUrl, stage as any);
   });
 
+  // ── Content Store / Drafts (Task 0.10/0.12) ──
+  ipcMain.handle("draft:save", async (_event, content: string) => {
+    const s = await getStore();
+    s.set("draft", { content, savedAt: new Date().toISOString() });
+    return true;
+  });
+
+  ipcMain.handle("draft:load", async () => {
+    const s = await getStore();
+    return s.get("draft") || null;
+  });
+
   // ── Database (placeholder) ──
   ipcMain.handle("db:query", async () => {
     throw new Error("Database not yet wired to IPC");

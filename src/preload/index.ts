@@ -18,4 +18,9 @@ contextBridge.exposeInMainWorld("appilot", {
     analyzeProduct: (repoUrl: string): Promise<any> => ipcRenderer.invoke("ai:analyzeProduct", repoUrl),
     generateTweet: (repoUrl: string, stage: string): Promise<any> => ipcRenderer.invoke("ai:generateTweet", repoUrl, stage),
   },
+
+  draft: {
+    save: (content: string): Promise<boolean> => ipcRenderer.invoke("draft:save", content),
+    load: (): Promise<{ content: string; savedAt: string } | null> => ipcRenderer.invoke("draft:load"),
+  },
 });

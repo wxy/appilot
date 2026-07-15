@@ -3,6 +3,7 @@ import { Routes, Route, Link, useLocation } from "react-router-dom";
 import { useTheme } from "./stores/theme";
 import { cn } from "./lib/utils";
 import { SetupPage } from "./features/setup/SetupPage";
+import { ComposerPage } from "./features/composer/ComposerPage";
 
 /* ── Layout ── */
 
@@ -138,9 +139,6 @@ const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 
 
 /* ── Placeholder pages ── */
 
-function ComposerPage() {
-  return <PlaceholderPage title="Tweet Composer" desc="AI-generated tweet drafts, ready for you to edit and publish." comingIn="Task 0.10" />;
-}
 function TrackingPage() {
   return <PlaceholderPage title="Post Tracking" desc="Paste tweet URLs, enter stats, and see trend charts." comingIn="Task 0.13" />;
 }
