@@ -43,7 +43,7 @@ export function SetupPage() {
   return (
     <div className="p-8 max-w-2xl mx-auto">
       <h2 className="text-xl font-semibold mb-2">Project Setup</h2>
-      <p className="text-sm text-muted-foreground mb-6">
+      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6">
         Connect a GitHub repository and let AI analyze it to generate promotion content.
       </p>
 
@@ -88,7 +88,7 @@ export function SetupPage() {
 
       {/* Loading */}
       {loading && (
-        <div className="mb-8 p-8 border-2 border-dashed rounded-lg text-center text-sm text-muted-foreground animate-pulse">
+        <div className="mb-8 p-8 border-2 border-dashed rounded-lg text-center text-sm text-zinc-500 dark:text-zinc-400 animate-pulse">
           Analyzing repository...
         </div>
       )}
@@ -99,7 +99,7 @@ export function SetupPage() {
           {/* Product card */}
           <div className="p-6 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
             <h3 className="text-lg font-semibold mb-1">{result.name}</h3>
-            <p className="text-sm text-muted-foreground mb-3">{result.tagline}</p>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">{result.tagline}</p>
             {result.description && (
               <p className="text-sm mb-3">{result.description}</p>
             )}
@@ -118,7 +118,7 @@ export function SetupPage() {
             )}
 
             {result.audience && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
                 Target audience: {result.audience}
               </p>
             )}
@@ -159,7 +159,7 @@ export function SetupPage() {
 
       {/* Empty state */}
       {!result && !loading && !error && (
-        <div className="p-8 border-2 border-dashed rounded-lg text-center text-sm text-muted-foreground">
+        <div className="p-8 border-2 border-dashed rounded-lg text-center text-sm text-zinc-500 dark:text-zinc-400">
           <p>Enter a GitHub public repository URL above and click "Connect & Analyze".</p>
           <p className="mt-1 text-xs">
             Make sure your AI API is configured in{" "}

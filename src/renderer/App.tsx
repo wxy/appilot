@@ -21,7 +21,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       <aside className="w-56 border-r flex flex-col bg-zinc-50 dark:bg-zinc-900">
         <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <h1 className="text-sm font-semibold tracking-tight">Appilot</h1>
-          <p className="text-xs text-muted-foreground">Phase 0 MVP</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">Phase 0 MVP</p>
         </div>
         <nav className="flex-1 p-2 space-y-1">
           {navItems.map((item) => (
@@ -55,7 +55,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       <main className="flex-1 overflow-auto">{children}</main>
 
       {/* Status bar */}
-      <div className="fixed bottom-0 left-0 right-0 h-6 bg-zinc-100 dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex items-center px-3 text-[11px] text-muted-foreground">
+      <div className="fixed bottom-0 left-0 right-0 h-6 bg-zinc-100 dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex items-center px-3 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span>Appilot v0.1.0</span>
         <span className="mx-2">·</span>
         <span>Electron {typeof navigator !== "undefined" ? navigator.userAgent.match(/Electron\/([\d.]+)/)?.[1] || "dev" : "dev"}</span>
@@ -68,8 +68,8 @@ function ComposerPage() {
   return (
     <div className="p-8 max-w-2xl mx-auto">
       <h2 className="text-xl font-semibold mb-2">Tweet Composer</h2>
-      <p className="text-muted-foreground mb-6">AI-generated tweet drafts, ready for you to edit and publish.</p>
-      <div className="p-8 border-2 border-dashed rounded-lg text-center text-muted-foreground text-sm">
+      <p className="text-zinc-500 dark:text-zinc-400 mb-6">AI-generated tweet drafts, ready for you to edit and publish.</p>
+      <div className="p-8 border-2 border-dashed rounded-lg text-center text-zinc-500 dark:text-zinc-400 text-sm">
         Composer coming in Task 0.10
       </div>
     </div>
@@ -80,16 +80,26 @@ function TrackingPage() {
   return (
     <div className="p-8 max-w-2xl mx-auto">
       <h2 className="text-xl font-semibold mb-2">Post Tracking</h2>
-      <p className="text-muted-foreground mb-6">Paste tweet URLs, enter stats, and see trend charts.</p>
-      <div className="p-8 border-2 border-dashed rounded-lg text-center text-muted-foreground text-sm">
+      <p className="text-zinc-500 dark:text-zinc-400 mb-6">Paste tweet URLs, enter stats, and see trend charts.</p>
+      <div className="p-8 border-2 border-dashed rounded-lg text-center text-zinc-500 dark:text-zinc-400 text-sm">
         Tracking coming in Task 0.13
       </div>
     </div>
   );
 }
 
+const AI_PRESETS = [
+  { label: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o" },
+  { label: "OpenAI (Mini)", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  { label: "DeepSeek", url: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { label: "Groq", url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
+  { label: "Ollama (Local)", url: "http://localhost:11434/v1", model: "llama3" },
+  { label: "Custom", url: "", model: "" },
+];
+
 function SettingsPage() {
   const { theme, setTheme } = useTheme();
+  const [preset, setPreset] = useState("OpenAI");
   const [providerUrl, setProviderUrl] = useState("https://api.openai.com/v1");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("gpt-4o");
@@ -107,6 +117,15 @@ function SettingsPage() {
       }
     }).catch(() => {});
   }, []);
+
+  const handlePresetChange = (label: string) => {
+    setPreset(label);
+    const p = AI_PRESETS.find((p) => p.label === label);
+    if (p && p.label !== "Custom") {
+      setProviderUrl(p.url);
+      setModel(p.model);
+    }
+  };
 
   const handleSave = async () => {
     try {
@@ -146,10 +165,19 @@ function SettingsPage() {
         <h3 className="text-sm font-semibold mb-4 text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">AI API</h3>
         <div className="space-y-4">
           <div>
+            <label className="block text-sm font-medium mb-1">Provider</label>
+            <select value={preset} onChange={(e) => handlePresetChange(e.target.value)}
+              className={inputClass}>
+              {AI_PRESETS.map((p) => (
+                <option key={p.label} value={p.label}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="block text-sm font-medium mb-1">Provider URL</label>
             <input type="text" value={providerUrl} onChange={(e) => setProviderUrl(e.target.value)}
               className={inputClass} placeholder="https://api.openai.com/v1" />
-            <p className="text-[11px] text-muted-foreground mt-1">
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
               Also supports DeepSeek, Groq, Ollama (http://localhost:11434/v1)
             </p>
           </div>
@@ -193,7 +221,7 @@ function SettingsPage() {
       </section>
 
       <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
           Appilot v0.1.0 · Phase 0 MVP · Electron + React + TypeScript + Tailwind CSS
         </p>
       </div>
