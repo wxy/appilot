@@ -17,7 +17,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit
+      - run: npm run typecheck
 
   lint:
     name: Lint
@@ -32,7 +32,7 @@ jobs:
       - run: npx eslint src/ --ext .ts,.tsx 2>&1 || echo "⚠️ ESLint not yet configured — skipping"
 
   test:
-    name: Schema Test
+    name: Schema & Error Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,8 +43,11 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # Platform build — only on master push (expensive: macOS 10x, Windows 2x).
+  # PRs are gated by typecheck + test above.
   build:
-    name: Build (macOS + Windows)
+    name: Build (${{ matrix.os }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     strategy:
       matrix:
         os: [macos-latest, windows-latest]
