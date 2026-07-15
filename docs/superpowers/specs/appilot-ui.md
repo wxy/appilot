@@ -1,9 +1,9 @@
-# AppPost — MVP 设计文档
+# Appilot — MVP 设计文档
 
 
-> 所属：[AppPost MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
-> 姊妹文件：[产品规格](./apppost-product.md) · [架构设计](./apppost-architecture.md) · [UI 设计](./apppost-ui.md) · [构建计划](./apppost-build-plan.md) · [横切关注点](./apppost-cross-cutting.md) · [评审记录](./apppost-review-log.md)
-> 本文档定义 AppPost 的**用户界面**：首次使用流程、推广计划视图、主窗口布局、发布编辑器、收件箱和统计仪表盘的 ASCII 原型。
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
+> 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
+> 本文档定义 Appilot 的**用户界面**：首次使用流程、推广计划视图、主窗口布局、发布编辑器、收件箱和统计仪表盘的 ASCII 原型。
 
 
 ## 8. UI 设计
@@ -18,7 +18,7 @@
 │ 模型:    [gpt-4o ▼]                              │
 │                                                   │
 │ 💡 推荐使用本地模型 (Ollama) 以避免数据出境        │
-│ ⚠️ 无 AI 时 AppPost 降级为"发布清单 + 追踪工作台"， │
+│ ⚠️ 无 AI 时 Appilot 降级为"发布清单 + 追踪工作台"， │
 │    核心功能（代码→文案/计划/回复）不可用            │
 │                                                   │
 │ [连接并继续 →]  [跳过，稍后配置 →]                 │
@@ -99,7 +99,7 @@
 │ │ +[![Direct Download](badge-dl.png)](url)     │   │
 │ └──────────────────────────────────────────────┘   │
 │                                                    │
-│ 💡 AI 解释: 用户在 AppPost 中已确认 App Store 和   │
+│ 💡 AI 解释: 用户在 Appilot 中已确认 App Store 和   │
 │    官网下载两个发布渠道，但 README 仅展示了         │
 │    Google Play。补齐后用户在 README 中就能找到      │
 │    所有下载方式。                                  │
@@ -193,7 +193,7 @@
 
 ```
 ┌────────────────────────────────────────────────┐
-│  AppPost — MyApp                   [系统托盘 ▼] [− □ ×]│
+│  Appilot — MyApp                   [系统托盘 ▼] [− □ ×]│
 ├────────┬───────────────────────────────────────┤
 │        │                                       │
 │  总览   │  ┌─────────────────────────────────┐  │
@@ -305,7 +305,7 @@
   ├─ 快速发布...        → 打开简化版发布弹窗
   ├─ 检查新互动 (12)    → 有未读时显示数字
   ├─ ────────────
-  └─ 退出 AppPost
+  └─ 退出 Appilot
 ```
 
 ---

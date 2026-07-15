@@ -1,9 +1,9 @@
-# AppPost — MVP 设计文档
+# Appilot — MVP 设计文档
 
 
-> 所属：[AppPost MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
-> 姊妹文件：[产品规格](./apppost-product.md) · [架构设计](./apppost-architecture.md) · [UI 设计](./apppost-ui.md) · [构建计划](./apppost-build-plan.md) · [横切关注点](./apppost-cross-cutting.md) · [评审记录](./apppost-review-log.md)
-> 本文档定义 AppPost 的**横切关注点**：错误处理与韧性、国际化、后台策略、安全模型、项目文件结构。
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
+> 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
+> 本文档定义 Appilot 的**横切关注点**：错误处理与韧性、国际化、后台策略、安全模型、项目文件结构。
 
 
 ## 9. 错误处理与韧性
@@ -33,9 +33,9 @@
 
 ### 9.3 日志策略（全面可追踪）
 
-由于 AppPost 作为桌面工具需要社区用户参与测试反馈，日志不仅是调试工具，更是收集用户反馈时定位问题的关键依据。
+由于 Appilot 作为桌面工具需要社区用户参与测试反馈，日志不仅是调试工具，更是收集用户反馈时定位问题的关键依据。
 
-- **文件日志**：`~/.apppost/logs/` 下按天滚动（`apppost-2026-07-14.log`），保留 14 天
+- **文件日志**：`~/.appilot/logs/` 下按天滚动（`appilot-2026-07-14.log`），保留 14 天
 - **日志分级与覆盖范围**：
 
 | 级别 | 记录内容 |
@@ -45,7 +45,7 @@
 | WARN | 重试操作（API 限频重试、网络恢复重试）、AI 返回空内容、URL 提取降级、仓库扫描跳过超大文件 |
 | ERROR | 所有异常堆栈、API 调用失败、数据库操作失败、OAuth 授权失败、插件加载失败 |
 
-- **用户操作审计日志**：单独记录到 `~/.apppost/logs/audit.log`，包含 AI 操作（输入上下文摘要、输出内容摘要）、平台发布操作、PR 创建操作，用于用户自查"AI 帮我做了什么事"
+- **用户操作审计日志**：单独记录到 `~/.appilot/logs/audit.log`，包含 AI 操作（输入上下文摘要、输出内容摘要）、平台发布操作、PR 创建操作，用于用户自查"AI 帮我做了什么事"
 - **日志不含凭据**：Token、密码、API Key 自动脱敏（替换为 `[REDACTED]`）
 - **近期日志面板**：设置页内嵌"日志查看器"，用户可在应用内直接查看最近 200 条日志，无需找到文件路径
 - **导出诊断包**：一键打包 `logs/` + 系统信息（OS 版本、Flutter 版本、已安装插件列表）+ 数据库统计（表行数、最后迁移版本），不含凭据和用户数据，生成 ZIP 供反馈 Bug 时使用
@@ -101,7 +101,7 @@
 ## 14. 项目文件结构
 
 ```
-apppost/
+appilot/
 ├── app/                          # Flutter 应用 (UI)
 │   ├── lib/
 │   │   ├── main.dart
@@ -146,7 +146,7 @@ apppost/
 ├── docs/
 │   └── superpowers/
 │       └── specs/
-│           └── 2025-07-14-apppost-mvp-design.md
+│           └── 2025-07-14-appilot-mvp-design.md
 └── README.md
 ```
 

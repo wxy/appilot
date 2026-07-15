@@ -1,4 +1,4 @@
-# AppPost 实施方案
+# Appilot 实施方案
 
 > ⚠️ **已过时，待重写。** 此方案基于 2026-07-14 第二次修订的设计文档编写，此后设计经历了重大变更：
 > - 移除 Product Hunt
@@ -152,7 +152,7 @@
 | 3.1 | Product Hunt 只读 API 接入（client-only token，投票数/评论数追踪） | 1.5d | Phase 0 (AnalyticsEngine) | 能拉到自己产品页的真实投票数 |
 | 3.2 | PH 辅助模式 UI（AI 生成发布文案 + 手动提交引导链接） | 1.5d | 3.1, 1.13 | 点击"生成 PH 文案"后得到可直接使用的文案，并引导打开 producthunt.com |
 | 3.3 | PH 商用授权状态检查（若 Day 0 邮件已获批，接入写权限；若未获批，明确锁定为只读+手动模式，UI 提示原因） | 0.5d | Day 0.1 | UI 上有清晰的状态提示，不让用户以为"应该能自动发布却发布失败" |
-| 3.4 | YouTube 用户自助 API Key 设置向导（对应 18.2 节的共享配额风险修复：**不用 AppPost 内置 Key**） | 1.5d | Phase 0 | 用户跟着向导在自己的 Google Cloud 账号下拿到 Key 并粘贴进设置页 |
+| 3.4 | YouTube 用户自助 API Key 设置向导（对应 18.2 节的共享配额风险修复：**不用 Appilot 内置 Key**） | 1.5d | Phase 0 | 用户跟着向导在自己的 Google Cloud 账号下拿到 Key 并粘贴进设置页 |
 | 3.5 | YouTube 只读追踪（`videos.list`/`commentThreads.list`，views/likes/comments） | 1.5d | 3.4 | 能拉到自己视频的真实播放量/点赞/评论 |
 | 3.6 | YouTube OAuth 上传实现（`videos.insert`） | 2d | 1.3（复用 OAuthCallbackServer） | 从应用内直接上传一个测试视频到 YouTube 成功 |
 | 3.7 | YouTube 配额监控与预警（默认 10,000 单位/天，`videos.insert` 消耗 1600/次） | 1.5d | 3.6 | 手动模拟接近配额上限，UI 提前给出预警而不是等到失败 |
@@ -172,7 +172,7 @@
 |---|------|------|------|----------|
 | 4.1 | 统计仪表盘增强（跨平台对比柱状图/趋势折线图，区分 `source = api` / `manual`） | 3d | 全部平台插件 | 能看到"过去 30 天各平台浏览量对比"图表 |
 | 4.2 | 插件管理界面（安装/启用/禁用/配置 + 能力声明展示，展示每个插件当前的 publishMode/trackingMode） | 2.5d | Phase 1~3 全部插件 | 能在界面上看到"Reddit：Tier1 只读追踪 / Twitter：Tier2 全自动"这类清晰标注 |
-| 4.3 | 社区插件加载机制（`~/.apppost/plugins/` 动态加载 + 版本校验） | 3d | Phase 0 (Plugin Registry) | 手写一个符合接口的第三方插件包，放入目录后能被识别加载 |
+| 4.3 | 社区插件加载机制（`~/.appilot/plugins/` 动态加载 + 版本校验） | 3d | Phase 0 (Plugin Registry) | 手写一个符合接口的第三方插件包，放入目录后能被识别加载 |
 | 4.4 | 插件加载失败隔离测试（故意放一个损坏的插件包，验证不影响其他插件） | 1d | 4.3 | 损坏插件报错但应用其他功能正常 |
 | 4.5 | Phase 4 整体验收 | 1d | 上述全部 | 演示"安装一个自制插件 + 查看跨平台统计对比图" |
 

@@ -1,9 +1,9 @@
-# AppPost — MVP 设计文档
+# Appilot — MVP 设计文档
 
 
-> 所属：[AppPost MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
-> 姊妹文件：[产品规格](./apppost-product.md) · [架构设计](./apppost-architecture.md) · [UI 设计](./apppost-ui.md) · [构建计划](./apppost-build-plan.md) · [横切关注点](./apppost-cross-cutting.md) · [评审记录](./apppost-review-log.md)
-> 本文档记录 AppPost 设计过程中的**历次评审发现与决策**：P0/P1/P2 风险项及其落地状态、二次复核记录。
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
+> 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
+> 本文档记录 Appilot 设计过程中的**历次评审发现与决策**：P0/P1/P2 风险项及其落地状态、二次复核记录。
 
 
 ## 16. 设计评审与改进建议 (2026-07-14)
@@ -16,7 +16,7 @@
 |---|------|------|------|
 | P0-1 | **Twitter/X API 按量付费 + Tier 0 URL 回填的 JS 渲染障碍** | Twitter 推文页面重度 JS 渲染，简单 HTTP GET 无法提取浏览/点赞/回复数；若 Tier 0 追踪手段不可用，用户仍需手动填报 | Phase 1 Twitter Plugin 调研阶段评估两个方案：(a) 轻量 headless browser（如 `flutter_inappwebview` 后台加载推文页面后提取 DOM 数据）; (b) 接受降级，Tier 0 仅提供 URL 记录 + 手动填报表单。方案 (a) 的资源开销和稳定性需要在技术验证中确认 |
 | P0-2 | **Twitter/X API 已是按量付费（credit-based），无稳定免费额度** | "自用优先"的成本假设不成立；统一收件箱要持续拉取 mentions/comments，加上发布、AI 生成前的上下文查询，都会产生持续费用 | 在 Phase 1 前明确月度预算上限，Task Scheduler 增加"用量预算熔断"（超预算自动降频/暂停），并在设置页展示实时用量/剩余额度 |
-| P0-3 | **OAuth 桌面回调实现方式未定义** | 4 个插件中 3 个依赖 OAuth（Twitter/Reddit/YouTube），Discord 走 Bot/Webhook，若不统一方案，后期改造成本随插件数线性增长 | Phase 1 基础设施阶段确定统一方案：优先用**本地 loopback HTTP server**（跨平台兼容性最好，Reddit/Google/Twitter 官方示例均支持），封装为 Engine 层通用 `OAuthCallbackServer`，插件复用而非各自实现。注意 Windows 防火墙可能拦截 `127.0.0.1` 入站连接，Phase 1 需同时在 Windows 上验证可行性；若不可行，备选方案为自定义 URL Scheme（`apppost://oauth/callback`） |
+| P0-3 | **OAuth 桌面回调实现方式未定义** | 4 个插件中 3 个依赖 OAuth（Twitter/Reddit/YouTube），Discord 走 Bot/Webhook，若不统一方案，后期改造成本随插件数线性增长 | Phase 1 基础设施阶段确定统一方案：优先用**本地 loopback HTTP server**（跨平台兼容性最好，Reddit/Google/Twitter 官方示例均支持），封装为 Engine 层通用 `OAuthCallbackServer`，插件复用而非各自实现。注意 Windows 防火墙可能拦截 `127.0.0.1` 入站连接，Phase 1 需同时在 Windows 上验证可行性；若不可行，备选方案为自定义 URL Scheme（`appilot://oauth/callback`） |
 | P0-4 | **AI 内容出境与"本地优先/凭据不离开设备"原则表述冲突** | 第 1.3 节宣称"凭据不离开用户设备"，但 6.4 节 AI Engine 会把产品描述、草稿正文、用户评论原文发送给第三方 OpenAI 兼容 API，用户可能误解隐私边界 | 明确区分"凭据"（永不出境）与"内容"（辅助模式下会出境，需用户显式同意）；设置页增加"AI 数据处理说明"和一键切换本地模型（Ollama/LM Studio）选项，默认高亮本地方案 |
 | P0-5 | **完全缺失测试策略与 CI** | 插件化架构（Engine + 4 插件 + AI Engine）没有自动化测试和 CI 门槛，Phase 2/3 新增插件时极易破坏既有功能 | Phase 1 交付物中加入：Engine/Plugin 接口的单元测试基线、Mock Plugin 用于 Composer/Inbox 集成测试、GitHub Actions CI（lint + test + build）跑通后才能合并 |
 | P0-6 | **缺失打包签名、公证与自动更新方案** | 桌面应用没有此能力等于无法安全分发；macOS 未公证会被 Gatekeeper 拦截，用户信任度和可用性都受损 | Phase 1 末尾必须产出可安装、可自动更新的签名包（至少 macOS Developer ID 签名 + 公证），否则后续阶段的"可交互完整应用"目标名不副实 |
@@ -81,7 +81,7 @@
 1. ✅ **Schema 重复定义** — `ai_config`/`ai_actions` 此前在 6.8 与 7.1 两处重复绘制 ER 图，已将 6.8 改为文字引用 7.1，避免后续修改两处不同步。
 2. ✅ **Analytics Engine 缺少接口定义** — 3.1 架构图与 5.2 都引用了 `AnalyticsEngine.submitManualStats()`，但第 4 节 Core Engine 组件里此前没有像其余组件一样给出对应设计小节；已新增 4.7 补齐（`recordApiStats` / `submitManualStats` / `watchTrend` / `extractFromPublicUrl`）。
 3. ✅ **Task Scheduler 任务类型未同步新增的到期提醒** — 4.2 的任务类型列表已补充 `reminderCheck`，对应 Phase 0 引入的 `reminders` 表。
-4. ✅ **Tier 1"免费 API Key"在多用户分发场景下的共享配额风险（新发现）** — 若按 1.1 节路线图开源分发，"AppPost 自带 Key"会被所有安装共享，配额会远早于预期耗尽甚至触发平台封禁；已在 17.1 补充说明：默认走"用户自助申请 + 引导式设置向导"，"AppPost 自带 Key"仅作自用阶段临时方案。
+4. ✅ **Tier 1"免费 API Key"在多用户分发场景下的共享配额风险（新发现）** — 若按 1.1 节路线图开源分发，"Appilot 自带 Key"会被所有安装共享，配额会远早于预期耗尽甚至触发平台封禁；已在 17.1 补充说明：默认走"用户自助申请 + 引导式设置向导"，"Appilot 自带 Key"仅作自用阶段临时方案。
 5. ⚠️ **`publishMode`/`trackingMode` 建模为编译期静态 getter，无法表达"同一插件因用户凭据等级提升而升档"** — 例如用户后续购买 Twitter 付费额度后，理应让同一个 Twitter 插件从 Tier 0（webIntent/manualEntry）切换到 Tier 2（apiAuto），而不需要实现两个插件类。当前接口把这两个属性定义成固定 getter，语义上暗示编译期不变；建议后续实现阶段改为运行时按已连接的 `Credential` 类型/账号状态计算（如 `Future<PublishMode> currentPublishMode()`）。本轮先记录为待办，未改动第 5.1 节伪代码接口，避免在未与工程团队确认前过度设计。
 
 ### 18.3 待决策事项（需要产品/工程决策，非单纯文档修复）

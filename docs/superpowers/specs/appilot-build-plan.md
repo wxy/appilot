@@ -1,9 +1,9 @@
-# AppPost — MVP 设计文档
+# Appilot — MVP 设计文档
 
 
-> 所属：[AppPost MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
-> 姊妹文件：[产品规格](./apppost-product.md) · [架构设计](./apppost-architecture.md) · [UI 设计](./apppost-ui.md) · [构建计划](./apppost-build-plan.md) · [横切关注点](./apppost-cross-cutting.md) · [评审记录](./apppost-review-log.md)
-> 本文档是 AppPost 的**构建计划**：Phase 0～5 的交付清单、产出标准和依赖关系。任务级拆解见实施方案（待重写）。
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-14
+> 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
+> 本文档是 Appilot 的**构建计划**：Phase 0～5 的交付清单、产出标准和依赖关系。任务级拆解见实施方案（待重写）。
 
 
 ## 13. 构建计划
@@ -18,7 +18,7 @@
   ✓ 项目管理 UI（添加项目：名称、项目状态(预热中/已发布/维护中)、多仓库连接、仓库角色分配）
   ✓ Repo Analyzer (跨仓库文件读取 + git log + GitHub API + 代码结构扫描 + 发布渠道/项目链接自动识别 + README 完整性检查)
   ✓ AI 产品理解 (跨仓库自动提取特性、亮点、发布渠道、官网/社区链接，生成产品摘要；支持预热阶段基于代码进度的推测)
-  ✓ AI README 完善建议 (对比仓库内容与 AppPost 已知信息 → 生成 PR 建议 → 用户确认 → 创建 PR 或复制内容)
+  ✓ AI README 完善建议 (对比仓库内容与 Appilot 已知信息 → 生成 PR 建议 → 用户确认 → 创建 PR 或复制内容)
   ✓ AI 推广计划生成 (建议发布阶段、目标平台、推广频率 → 用户审阅确认)
   ✓ AI 多平台文案生成 (按 Twitter/Reddit/Discord/YouTube 格式自动适配，仓库上下文驱动)
   ✓ AI 辅助 Composer 编辑器（文案草稿呈现 + 用户逐平台审阅修改 + 语气微调）
@@ -85,7 +85,7 @@
   ✓ 多产品宏观仪表盘（全部项目卡片总览、跨项目合计指标）
   ✓ 收入与成本追踪增强（自动从 ai_actions 聚合 AI 成本，手动登记开发成本和收入）
   ✓ 插件管理界面
-  ✓ 社区插件加载机制 (~/.apppost/plugins/)
+  ✓ 社区插件加载机制 (~/.appilot/plugins/)
 ```
 
 ### Phase 5: AI 增强模式
@@ -96,7 +96,7 @@
   ✓ AI 全自动代理模式 (含安全约束：频率上限、敏感词过滤、人工随时接管)
   ✓ AI 发布策略优化 (根据代码变更节奏 + 历史互动数据优化发布时机和内容)
   ✓ AI 回复建议增强 (多轮对话上下文 + 用户历史互动偏好)
-  ✓ AI 推广效果分析 — **内容效果反馈闭环**：将历史帖子的互动数据（浏览量、点赞、评论数、评论情感）作为下次生成的额外上下文注入 System Prompt（如"你上次为 Twitter 生成的帖子获得 2.3K 浏览和 142 个赞，表现最好的标签是 #indiedev 和 #flutter，文案风格偏向技术干货类更受欢迎"），AI 据此持续优化文案质量。这是 AppPost 相比通用 AI 助手的核心护城河
+  ✓ AI 推广效果分析 — **内容效果反馈闭环**：将历史帖子的互动数据（浏览量、点赞、评论数、评论情感）作为下次生成的额外上下文注入 System Prompt（如"你上次为 Twitter 生成的帖子获得 2.3K 浏览和 142 个赞，表现最好的标签是 #indiedev 和 #flutter，文案风格偏向技术干货类更受欢迎"），AI 据此持续优化文案质量。这是 Appilot 相比通用 AI 助手的核心护城河
   ✓ AI 竞品差异化分析 — 基于项目技术栈和功能特性，搜索相似项目并建议差异化角度
   ✓ 投入产出分析（ROI）— 基于 project_metrics 表中的收入/成本数据，自动计算每个产品的盈亏平衡和投资回报率
   ✓ 全面错误处理覆盖
