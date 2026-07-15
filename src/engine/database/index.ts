@@ -5,40 +5,30 @@ import path from "path";
 import fs from "fs";
 
 let db: ReturnType<typeof drizzle> | null = null;
+let sqlite: Database.Database | null = null;
 
-/**
- * Create or return a singleton database connection.
- * Phase 0: dbPath = ~/.appilot/data/appilot.db
- *
- * The Engine runs in Electron's main process. All DB access goes through
- * this single connection — the renderer process accesses it via IPC handlers.
- */
 export function createDatabase(dbPath: string) {
   if (db) return db;
 
-  // Ensure parent directory exists
   const dir = path.dirname(dbPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  const sqlite = new Database(dbPath);
+  sqlite = new Database(dbPath);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
+  sqlite.pragma("busy_timeout = 5000");
 
   db = drizzle(sqlite, { schema });
   return db;
 }
 
-/** Get the current db instance (throws if not initialized) */
 export function getDatabase() {
   if (!db) throw new Error("Database not initialized. Call createDatabase() first.");
   return db;
 }
 
-/** Close and reset the connection (for testing) */
+/** Close connection and reset references. Safe to call multiple times. */
 export function closeDatabase() {
-  if (db) {
-    db = null;
-  }
+  if (sqlite) { sqlite.close(); sqlite = null; }
+  db = null;
 }

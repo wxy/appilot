@@ -8,7 +8,6 @@
 import type { RepoAnalyzer, RepoSummary, FeatureHighlight } from "../repo-analyzer";
 import type { AIProvider, ChatMessage } from "./ai-provider";
 import { buildContext, type UserPreferences } from "./context-builder";
-import { EngineError, ApiError } from "../errors";
 import { log } from "../logger";
 
 export interface ProductSummary {
@@ -127,9 +126,8 @@ export class AIEngine {
     // Trim to a reasonable max
     const body = raw.trim().slice(0, 300);
 
-    // Extract hashtags
-    const hashtagRegex = /#\w+/g;
-    const hashtags = body.match(hashtagRegex)?.map((h) => h.toLowerCase()) || [];
+    const hashtagRegex = /(?:^|\s)(#\w+)/g;
+    const hashtags = [...body.matchAll(hashtagRegex)].map((m) => m[1].toLowerCase());
 
     return {
       platform: "twitter",

@@ -175,13 +175,12 @@ export class RepoAnalyzer {
 
   private async fetchReadme(owner: string, repo: string): Promise<string> {
     try {
-      const { data } = await this.octokit.rest.repos.getReadme({ owner, repo });
-      this.updateRateLimit(data as any);
+      const { data, headers } = await this.octokit.rest.repos.getReadme({ owner, repo });
+      this.updateRateLimit({ headers } as any);
       return Buffer.from(data.content, "base64").toString("utf-8");
     } catch (err: any) {
-      if (err.status === 404) return ""; // no README
-      this.handleApiError(err);
-      return "";
+      if (err.status === 404) return "";
+      throw this.handleApiError(err);
     }
   }
 
@@ -191,13 +190,13 @@ export class RepoAnalyzer {
     branch: string,
   ): Promise<string[]> {
     try {
-      const { data } = await this.octokit.rest.git.getTree({
+      const { data, headers } = await this.octokit.rest.git.getTree({
         owner,
         repo,
         tree_sha: branch,
         recursive: "1",
       });
-      this.updateRateLimit(data as any);
+      this.updateRateLimit({ headers } as any);
       // Filter to depth ≤ 4, skip node_modules/.git/build/dist
       const skipDirs = ["node_modules", ".git", "build", "dist", "vendor", "__pycache__", ".next"];
       return data.tree
@@ -209,10 +208,9 @@ export class RepoAnalyzer {
           return !skipDirs.includes(topDir);
         })
         .map((item) => `${item.type === "tree" ? "📁" : "📄"} ${item.path}`)
-        .slice(0, 200); // cap at 200 entries
+        .slice(0, 200);
     } catch (err: any) {
-      this.handleApiError(err);
-      return [];
+      throw this.handleApiError(err);
     }
   }
 
@@ -222,13 +220,13 @@ export class RepoAnalyzer {
     branch: string,
   ): Promise<CommitInfo[]> {
     try {
-      const { data } = await this.octokit.rest.repos.listCommits({
+      const { data, headers } = await this.octokit.rest.repos.listCommits({
         owner,
         repo,
         sha: branch,
         per_page: 10,
       });
-      this.updateRateLimit(data as any);
+      this.updateRateLimit({ headers } as any);
       return data.map((c) => ({
         sha: c.sha.slice(0, 7),
         message: c.commit.message.split("\n")[0].slice(0, 100),
@@ -236,8 +234,7 @@ export class RepoAnalyzer {
         date: c.commit.author?.date || "",
       }));
     } catch (err: any) {
-      this.handleApiError(err);
-      return [];
+      throw this.handleApiError(err);
     }
   }
 
@@ -274,7 +271,6 @@ export class RepoAnalyzer {
   }
 
   private detectLicense(tree: string[], readme: string): string | null {
-    const treeStr = tree.join(" ").toLowerCase();
     const licensePatterns: [RegExp, string][] = [
       [/MIT|MIT License/i, "MIT"],
       [/Apache|Apache License/i, "Apache-2.0"],
