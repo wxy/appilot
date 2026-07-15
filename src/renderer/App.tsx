@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Routes, Route, Link, useLocation } from "react-router-dom";
 import { useTheme } from "./stores/theme";
 import { cn } from "./lib/utils";
@@ -100,27 +101,112 @@ function TrackingPage() {
 
 function SettingsPage() {
   const { theme, setTheme } = useTheme();
+  const [providerUrl, setProviderUrl] = useState("https://api.openai.com/v1");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("gpt-4o");
+  const [testing, setTesting] = useState(false);
+  const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
+  const [statusMsg, setStatusMsg] = useState("");
+
+  // Load saved config on mount
+  useEffect(() => {
+    (window as any).appilot?.ai?.getConfig().then((c: any) => {
+      if (c) {
+        setProviderUrl(c.providerUrl || "");
+        setApiKey(c.apiKey || "");
+        setModel(c.model || "");
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    try {
+      await (window as any).appilot?.ai?.saveConfig({ providerUrl, apiKey, model });
+      setStatus("success");
+      setStatusMsg("Saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e: any) {
+      setStatus("error");
+      setStatusMsg(e.message || "Save failed");
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setStatus("idle");
+    try {
+      const ok = await (window as any).appilot?.ai?.testConnection({ providerUrl, apiKey, model });
+      setStatus(ok ? "success" : "error");
+      setStatusMsg(ok ? "Connection successful" : "Connection failed — check URL and API key");
+    } catch (e: any) {
+      setStatus("error");
+      setStatusMsg(e.message || "Connection error");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const inputClass = "w-full px-3 py-2 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:focus:ring-zinc-600";
+
   return (
     <div className="p-8 max-w-2xl mx-auto">
       <h2 className="text-xl font-semibold mb-6">Settings</h2>
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Theme</label>
-          <select
-            value={theme}
-            onChange={(e) => setTheme(e.target.value as "light" | "dark" | "system")}
-            className="px-3 py-2 rounded-md border bg-white dark:bg-zinc-900 text-sm"
-          >
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-            <option value="system">System</option>
-          </select>
+
+      {/* AI Configuration */}
+      <section className="mb-8">
+        <h3 className="text-sm font-semibold mb-4 text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">AI API</h3>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Provider URL</label>
+            <input type="text" value={providerUrl} onChange={(e) => setProviderUrl(e.target.value)}
+              className={inputClass} placeholder="https://api.openai.com/v1" />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Also supports DeepSeek, Groq, Ollama (http://localhost:11434/v1)
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">API Key</label>
+            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+              className={inputClass} placeholder="sk-..." />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Model</label>
+            <input type="text" value={model} onChange={(e) => setModel(e.target.value)}
+              className={inputClass} placeholder="gpt-4o" />
+          </div>
+          <div className="flex gap-3 items-center">
+            <button onClick={handleSave}
+              className="px-4 py-2 text-sm rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:opacity-90 transition-opacity">
+              Save
+            </button>
+            <button onClick={handleTest} disabled={testing}
+              className="px-4 py-2 text-sm rounded-md border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors disabled:opacity-50">
+              {testing ? "Testing..." : "Test Connection"}
+            </button>
+            {status !== "idle" && (
+              <span className={`text-sm ${status === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                {statusMsg}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="pt-4 border-t">
-          <p className="text-xs text-muted-foreground">
-            Appilot v0.1.0 · Phase 0 MVP · Electron + React + TypeScript + Tailwind CSS
-          </p>
-        </div>
+      </section>
+
+      {/* Theme */}
+      <section className="mb-8">
+        <h3 className="text-sm font-semibold mb-4 text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">Appearance</h3>
+        <select value={theme} onChange={(e) => setTheme(e.target.value as "light" | "dark" | "system")}
+          className="px-3 py-2 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm">
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+          <option value="system">System</option>
+        </select>
+      </section>
+
+      <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">
+        <p className="text-xs text-muted-foreground">
+          Appilot v0.1.0 · Phase 0 MVP · Electron + React + TypeScript + Tailwind CSS
+        </p>
       </div>
     </div>
   );
