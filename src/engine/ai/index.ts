@@ -1,2 +1,2 @@
-// AI module — Task 0.5-0.8
-export {};
+export { AIProvider } from "./ai-provider.js";
+export type { ChatMessage, TokenUsage, AIProviderConfig } from "./ai-provider.js";

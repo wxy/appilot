@@ -23,3 +23,7 @@ export type { Logger, LogLevel } from "./logger.js";
 // Repo Analyzer (Task 0.4)
 export { RepoAnalyzer } from "./repo-analyzer.js";
 export type { RepoIndex, RepoSummary, FeatureHighlight, CommitInfo } from "./repo-analyzer.js";
+
+// AI (Task 0.5)
+export { AIProvider } from "./ai/ai-provider.js";
+export type { ChatMessage, TokenUsage, AIProviderConfig } from "./ai/ai-provider.js";
