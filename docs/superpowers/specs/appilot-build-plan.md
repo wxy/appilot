@@ -3,7 +3,7 @@
 
 > 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-15（Phase 0 最小闭环重写 + 审核意见落地）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
-> 本文档是 Appilot 的**构建计划**：Phase 0～5 的交付清单、产出标准和依赖关系。任务级拆解待实施方案重写（当前实施方案已过时）。
+> 本文档是 Appilot 的**构建计划**：Phase 0～5 的交付清单、产出标准和依赖关系。任务级拆解见 [实施方案](./2026-07-14-apppost-implementation-plan.md)。
 
 
 ## 13. 构建计划
