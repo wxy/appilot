@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Routes, Route, Link, useLocation } from "react-router-dom";
 import { useTheme } from "./stores/theme";
 import { cn } from "./lib/utils";
+import { SetupPage } from "./features/setup/SetupPage";
 
 function Layout({ children }: { children: React.ReactNode }) {
   const { resolved, toggle } = useTheme();
@@ -58,18 +59,6 @@ function Layout({ children }: { children: React.ReactNode }) {
         <span>Appilot v0.1.0</span>
         <span className="mx-2">·</span>
         <span>Electron {typeof navigator !== "undefined" ? navigator.userAgent.match(/Electron\/([\d.]+)/)?.[1] || "dev" : "dev"}</span>
-      </div>
-    </div>
-  );
-}
-
-function SetupPage() {
-  return (
-    <div className="p-8 max-w-2xl mx-auto">
-      <h2 className="text-xl font-semibold mb-2">Project Setup</h2>
-      <p className="text-muted-foreground mb-6">Configure AI API and connect your GitHub repository to get started.</p>
-      <div className="p-8 border-2 border-dashed rounded-lg text-center text-muted-foreground text-sm">
-        Setup wizard coming in Task 0.9
       </div>
     </div>
   );
