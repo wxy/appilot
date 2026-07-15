@@ -15,5 +15,7 @@ contextBridge.exposeInMainWorld("appilot", {
     getConfig: (): Promise<AIConfig> => ipcRenderer.invoke("ai:getConfig"),
     saveConfig: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:saveConfig", config),
     testConnection: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:testConnection", config),
+    analyzeProduct: (repoUrl: string): Promise<any> => ipcRenderer.invoke("ai:analyzeProduct", repoUrl),
+    generateTweet: (repoUrl: string, stage: string): Promise<any> => ipcRenderer.invoke("ai:generateTweet", repoUrl, stage),
   },
 });

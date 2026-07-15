@@ -24,6 +24,10 @@ export type { Logger, LogLevel } from "./logger.js";
 export { RepoAnalyzer } from "./repo-analyzer.js";
 export type { RepoIndex, RepoSummary, FeatureHighlight, CommitInfo } from "./repo-analyzer.js";
 
-// AI (Task 0.5)
+// AI (Task 0.5-0.8)
 export { AIProvider } from "./ai/ai-provider.js";
 export type { ChatMessage, TokenUsage, AIProviderConfig } from "./ai/ai-provider.js";
+export { AIEngine } from "./ai/ai-engine.js";
+export type { ProductSummary, PromotionStage, GeneratedPost } from "./ai/ai-engine.js";
+export { buildContext } from "./ai/context-builder.js";
+export type { AIContext, UserPreferences } from "./ai/context-builder.js";
