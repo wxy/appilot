@@ -18,7 +18,7 @@
 
 | 文件 | 内容 |
 |------|------|
-| [实施方案](./superpowers/specs/2026-07-14-apppost-implementation-plan.md) | 任务拆解、工时估算、执行规范、风险登记表（2026-07-15 已基于 Phase 0 最小闭环设计重写） ✅ |
+| [实施方案](./superpowers/specs/appilot-implementation-plan.md) | 任务拆解、工时估算、执行规范、风险登记表（2026-07-15 已基于 Phase 0 最小闭环设计重写） ✅ |
 
 ## 原始文件
 

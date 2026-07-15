@@ -103,7 +103,7 @@
 ├─────────────────────────────────────────────────────┤
 │                   Data Layer                         │
 │  ┌────────────────┐  ┌────────────────────────────┐  │
-│  │  SQLite (drift)│  │  System Keychain / Cred Mgr│  │
+│  │ SQLite (better-sqlite3 + drizzle) │ safeStorage (Keychain/DPAPI) │  │
 │  └────────────────┘  └────────────────────────────┘  │
 └─────────────────────────────────────────────────────┘
 ```
@@ -307,7 +307,7 @@ class MissingInfo {
 ```
 Phase 0 AI 上下文组装流程（单仓库 → AI Engine）:
   1. 读取仓库 README.md → 提取产品描述、安装说明
-  2. 从 package.json / pubspec.yaml / Cargo.toml 等 → 提取技术栈和依赖
+  2. 从 package.json / Cargo.toml / go.mod 等 → 提取技术栈和依赖
   3. git log --since="14 天前" → 提取最近提交摘要（最多 10 条）
   4. 扫描目录结构 → 识别主要功能模块（src/lib/app 等）
   5. 读取 CHANGELOG.md（如存在）→ 提取版本更新内容

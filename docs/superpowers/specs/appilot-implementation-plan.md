@@ -37,14 +37,14 @@
 
 | Phase | 内容 | 预估工作日 | 累计工作日 | 关键产出（演示标准） |
 |-------|------|-----------|-----------|----------------------|
-| Phase 0 | 最小闭环验证 | 17 | 17 | 输入 GitHub 公开仓库 URL → AI 生成推文 → Twitter Web Intent 跳转 → 回填 URL 手动填统计 → 看趋势图 |
-| Phase 1 | Twitter 全自动 + 基础设施完备 | 25 | 42 | Twitter OAuth 自动发布 + 拉取回复 + AI 回复建议；多仓库支持；i18n/CI/签名/自动更新/崩溃上报全部跑通 |
-| Phase 2 | Reddit + Discord | 17 | 59 | 三平台（Twitter/Reddit/Discord）可在 Composer 中同时勾选发布，Inbox 聚合三平台互动 |
-| Phase 3 | YouTube | 13.5 | 72.5 | YouTube API 上传 + 配额监控，四平台全部接入 |
-| Phase 4 | 统计与插件生态 | 10.5 | 83 | 跨平台统计对比图；多产品宏观仪表盘；社区插件动态加载 |
-| Phase 5 | AI 增强模式 | 12.5 | 95.5 | 半自动规则回复、全自动代理模式、内容效果反馈闭环 |
+| Phase 0 | 最小闭环验证 | 20.5 | 20.5 | 输入 GitHub 公开仓库 URL → AI 生成推文 → Twitter Web Intent 跳转 → 回填 URL 手动填统计 → 看趋势图 |
+| Phase 1 | Twitter 全自动 + 基础设施完备 | 23 | 43.5 | Twitter OAuth 自动发布 + 拉取回复 + AI 回复建议；多仓库支持；i18n/CI/签名/electron-updater/崩溃上报全部跑通 |
+| Phase 2 | Reddit + Discord | 17 | 60.5 | 三平台（Twitter/Reddit/Discord）可在 Composer 中同时勾选发布，Inbox 聚合三平台互动 |
+| Phase 3 | YouTube | 13.5 | 74 | YouTube API 上传 + 配额监控，四平台全部接入 |
+| Phase 4 | 统计与插件生态 | 12 | 86 | 跨平台统计对比图；多产品宏观仪表盘；社区插件动态加载 |
+| Phase 5 | AI 增强模式 | 12.5 | 98.5 | 半自动规则回复、全自动代理模式、内容效果反馈闭环 |
 
-**总计约 95.5 个工作日 ≈ 19 周 ≈ 4.5 个月**（全职 solo，不含 buffer）。建议整体预留 **15~20% buffer**（约 14–19 天），主要用于吸收：Windows 环境验证反复、平台 API 审批等待、Flutter 桌面端小众问题排查。
+**总计约 98.5 个工作日 ≈ 20 周 ≈ 5 个月**（全职 solo，不含 buffer）。建议整体预留 **15~20% buffer**（约 15–20 天），主要用于吸收：平台 API 审批等待、AI Prompt 调优迭代、better-sqlite3 原生 addon 编译问题排查。
 
 ---
 
@@ -68,9 +68,9 @@
 
 | # | 任务 | 估时 | 依赖 | 验收标准 |
 |---|------|------|------|----------|
-| 0.1 | **Flutter 项目脚手架**：`app/` + `engine/` 包结构 + Riverpod + GoRouter 骨架 + 基础主题（明暗色跟随系统） | 1.5d | - | `flutter run` 跑起空白窗口，路由跳转正常，系统深色模式切换时应用跟随 |
-| 0.2 | **drift Schema 建表 + Migration 框架**：5 张表（`projects` / `posts` / `post_analytics` / `ai_config` / `ai_actions`），字段与 [架构设计 §7.0](./appilot-architecture.md#70-phase-0-最小-schema5-张表) 一致 | 1.5d | 0.1 | 所有表创建成功，`Database` 类编译通过，migration 测试跑通（模拟 v1→v2 新增字段） |
-| 0.3 | **错误处理基础**：分层异常类（`AppException` → `EngineException` / `ApiException`）+ 文件日志记录到 `~/.appilot/logs/`（按天滚动，保留 14 天） | 1d | 0.1 | 故意抛一个 API 异常，验证日志文件中有完整堆栈 + 用户可读错误提示 |
+| 0.1 | **Electron + React 项目脚手架**：npm workspace root + `packages/desktop/`（Electron Forge + Vite + React 18 + TS）+ `packages/engine/`（纯 TS 包）+ Tailwind CSS + shadcn/ui + Zustand + React Router (Hash) | 1.5d | - | `npm run start` 跑起 Electron 窗口，Hash 路由跳转正常，系统暗色模式切换时应用跟随 |
+| 0.2 | **drizzle-orm Schema 建表 + Migration**：5 张表（`projects` / `posts` / `post_analytics` / `ai_config` / `ai_actions`），字段与 [架构设计 §7.0](./appilot-architecture.md#70-phase-0-最小-schema5-张表) 一致。better-sqlite3 连接，drizzle-kit 自动生成 migration | 1.5d | 0.1 | 所有表创建成功，`npx drizzle-kit generate` + `npx drizzle-kit migrate` 跑通 |
+| 0.3 | **错误处理基础**：分层异常类（`AppError` → `EngineError` / `ApiError`）+ `electron-log` 记录到 `~/.appilot/logs/`（按天滚动，保留 14 天） | 1d | 0.1 | 故意抛一个异常，验证日志文件中有完整堆栈 + 用户可读错误提示 |
 | 0.4 | **GitHub Repo Analyzer**：`connectGitHubPublicRepo(String url)` → 读取 README.md + 目录树（最大深度 4 层）+ 最近 10 次提交 + 从 package.json/pubspec.yaml 等提取技术栈。限频感知：429 响应时提示用户 + 降级为缓存 | 3d | 0.1 | 输入 `github.com/flutter/flutter`，UI 展示 README 摘要 + 技术栈（Dart）+ 文件树 + 最近 10 次提交列表。触发限频时出现提示"API 频率限制已达上限" |
 | 0.5 | **AIProvider 接口 + OpenAI 兼容实现**：`AIProvider.chat(messages)` + `validateConnection()` + `lastUsage`（TokenUsage）。支持用户自定义 `base_url` 和 `api_key`。Phase 0 不处理 API Key 安全存储（明文存 `ai_config` 表） | 1.5d | 0.1 | 用真实 API Key（或本地 Ollama URL）跑通 `chat()`，验证 `lastUsage` 返回 token 数和预估费用 |
 | 0.6 | **AI 配置 UI**：设置页表单（Provider URL + API Key + Model Name），保存到 `ai_config` 表，支持"测试连接"按钮 | 1d | 0.2, 0.5 | 配置保存后关闭应用重开，配置仍有效。"测试连接"按钮能显示成功/失败 |
@@ -79,7 +79,7 @@
 | 0.9 | **项目设置向导 UI**：Step 1 配置 AI API（复用 0.6 组件）→ Step 2 输入项目名 + GitHub 仓库 URL → 点击"连接并分析"→ 展示 AI 分析结果（产品摘要、技术栈、关键特性、最近提交） | 2d | 0.4, 0.7 | 输入 `github.com/user/repo` 后能看到 AI 提取的特性列表和产品摘要，可编辑摘要文本 |
 | 0.10 | **Composer 推文编辑器**：展示 AI 生成的推文草稿（含字符计数 [xxx/280]）+ 用户编辑 + "AI 重新生成"按钮 + "修改语气"选项（更正式/更轻松/更技术）+ 草稿手动保存/加载（调用 ContentStore） | 1.5d | 0.7, 0.2 | 编辑推文后点击"保存草稿"，关闭重开点击"加载草稿"，内容恢复 |
 | 0.11 | **Twitter Web Intent 跳转**：构建 `https://twitter.com/intent/tweet?text=${Uri.encodeComponent(tweetText)}` URL，调用系统浏览器打开。不需要 Plugin 抽象——直接硬编码 URL 构建 | 0.5d | 0.10 | 点击"在 Twitter 上发布"按钮后系统浏览器打开 Twitter 且文案已预填 |
-| 0.12 | **Content Store**：`saveDraft(projectId, content)` / `loadDraft(projectId)` / `listDrafts(projectId)`。实现为 Engine 组件，UI 层通过 Riverpod provider 调用。不在此组件内启动自动保存计时器（由 UI 层监听空闲超时后调用 `saveDraft`） | 1d | 0.2 | 保存一条草稿后查询 `posts` 表（status=draft）有一条记录，加载草稿后内容完全恢复 |
+| 0.12 | **Content Store**：`saveDraft()` / `loadDraft()` / `listDrafts()` — drizzle-orm 读写 posts 表（status=draft）。实现为 engine/ 纯函数，UI 层通过 Zustand action 调用。不在此组件内启动自动保存计时器（由 UI 层监听空闲超时后调用 `saveDraft`） | 1d | 0.2 | 保存一条草稿后查询 `posts` 表（status=draft）有一条记录，加载草稿后内容完全恢复 |
 | 0.13 | **帖子 URL 回填 + 手动统计登记**：`posts` 表增加 `permalink` 字段，用户粘贴 URL 后回填。手动统计表单（浏览/点赞/评论数 + 备注 + 日期时间），提交后写入 `post_analytics`（source=manual） | 1.5d | 0.2, 0.11 | 提交一条统计后，`post_analytics` 表新增一条 source=manual 记录，列表中可见 |
 | 0.14 | **Analytics Engine + 趋势折线图**：`submitManualStats(entry)` → 写入 `post_analytics`。`watchTrend(postId)` → 返回历史快照 Stream。UI 使用 `fl_chart` 绘制浏览量/点赞/评论三条折线（x 轴=时间，y 轴=数值） | 2d | 0.13 | 连续提交 3 条统计记录后，趋势图显示 3 个 data point 的折线，三条线颜色不同，有图例 |
 | 0.15 | **AI 用量展示**：每次调用 AI 后在 UI 底部/Toast 显示"本次消耗 1,247 tokens，约 $0.02"。设置页展示"本月累计"（从 `ai_actions` 表聚合 `SUM(prompt_tokens)、SUM(completion_tokens)、SUM(estimated_cost)` ） | 1d | 0.7, 0.2 | 生成推文后显示消耗统计，设置页能看到本月累计 tokens 和费用 |
@@ -91,17 +91,18 @@
 
 ---
 
-## 4. Phase 1 任务拆解：Twitter 全自动 + 基础设施完备（25 天）
+## 4. Phase 1 任务拆解：Twitter 全自动 + 基础设施完备（约 23 天）
 
-> Phase 0 已有：单 GitHub 公开仓库连接 + AI 推文生成 + Twitter Web Intent + 手动统计 + 趋势图 + 基础错误处理 + 主题。
-> Phase 1 新增：Twitter OAuth 全自动 + 多仓库 + 本地/私有仓库 + Inbox + AI 回复 + 运营仪表盘 + 全量基础设施（CI/i18n/签名/自动更新/崩溃上报）。
+> Phase 0 已有：单 GitHub 公开仓库连接 + AI 推文生成 + Twitter Web Intent + 手动统计 + 趋势图 + 基础错误处理 + Tailwind 主题。
+> Phase 1 新增：Twitter OAuth 全自动 + 多仓库 + 本地/私有仓库 + Inbox + AI 回复 + 运营仪表盘 + 全量基础设施（CI/i18n/签名/electron-updater/崩溃上报/safeStorage）。
+> ⚠️ Electron 消除了 Flutter 方案的 OAuth loopback server 自建需求——BrowserWindow 原生处理 OAuth 回调，省掉约 3 天工期。
 
 | # | 任务 | 估时 | 依赖 | 验收标准 |
 |---|------|------|------|----------|
-| 1.1 | **Credential Vault**：macOS Keychain / Windows Credential Manager 封装。API Key 从 `ai_config` 表迁移到 Keychain 存储。`read(key)` / `write(key, value)` / `delete(key)` | 2d | Phase 0 | 存入一个 Token，重启应用后仍能读出且未落盘明文 |
-| 1.2 | **OAuth 通用回调服务器**：Engine 层 `OAuthCallbackServer`，本地 loopback HTTP server（`http://127.0.0.1:<port>/callback`）。封装为通用组件，插件复用而非各自实现 | 2d | 1.1 | 用任意 OAuth 测试应用能收到授权回调并解析出 code |
-| 1.3 | **Windows 环境验证**：验证 loopback 是否被防火墙拦截，若不可行切换为自定义 URL Scheme（`appilot://oauth/callback`） | 1d + 1d（备选，风险预留） | 1.2 | 在 Windows 机器/VM 上跑通一次完整 OAuth 回调 |
-| 1.4 | **Plugin 接口定义**：`PlatformPlugin` 抽象类（完整接口见 [架构设计 §5.1](./appilot-architecture.md#51-核心接口)）+ Plugin Registry（发现、验证、加载、生命周期）。将 Phase 0 硬编码的 Twitter Web Intent 迁移为 Plugin 实现 | 2d | Phase 0 | Mock Plugin 能被 Registry 加载并声明能力；Twitter Plugin 能替代 Phase 0 硬编码的 Web Intent URL 构建 |
+| 1.1 | **Credential Vault**：`safeStorage` 加密存储封装（macOS Keychain / Windows DPAPI）。API Key 从 electron-store 明文迁移到 safeStorage 加密。`read(key)` / `write(key, value)` / `delete(key)` | 1.5d | Phase 0 | 存入一个 Token，重启应用后仍能读出且加密落盘 |
+| 1.2 | **Electron OAuth 流程封装**：`BrowserWindow` 打开授权页 → 监听 `redirect_uri` → 自动解析 `code`。封装为 Engine 层 `OAuthClient` 通用模块（插件复用而非各自实现 BrowserWindow）。**零自建 HTTP server**——Electron 原生处理 | 1d | 1.1 | 用任意 OAuth 测试应用验证完整授权流程（打开→授权→回调→解析 token） |
+| 1.3 | ~~**Windows 环境验证**~~ → **不需要**：Electron BrowserWindow 内嵌 Chromium，OAuth 流程在 macOS/Windows 行为一致，无需单独验证防火墙问题 | — | — | — |
+| 1.4 | **Plugin 接口定义**：`PlatformPlugin` interface（完整定义见 [架构设计 §5.1](./appilot-architecture.md#51-核心接口)）+ Plugin Registry（发现、验证、加载、生命周期）。将 Phase 0 硬编码的 Twitter Web Intent 迁移为 Plugin 实现。Plugin 作为 npm workspace package 加载 | 2d | Phase 0 | Mock Plugin 能被 Registry 加载并声明能力；Twitter Plugin 能替代 Phase 0 硬编码的 Web Intent URL 构建 |
 | 1.5 | **Twitter Plugin — OAuth 授权**：复用 OAuthCallbackServer，实现 Twitter OAuth 2.0 授权码流程。`accounts` 表新增 Twitter 账号记录 | 2d | 1.2, 1.4 | 点击"连接 Twitter"后完成授权，`accounts` 表新增一条 platform=twitter 记录 |
 | 1.6 | **Twitter Plugin — 自动发布**：`publish()` 实现（文本+图片）。`publishMode` 从 Phase 0 的固定 `webIntent` 升级为运行时动态 `currentPublishMode()`（OAuth 有效时 = apiAuto） | 2d | 1.5 | 从 Composer 发布一条真实推文，`PostResult.success = true`，`publish_mode = api_auto` |
 | 1.7 | **Twitter Plugin — 互动追踪**：`fetchNewInteractions()` / `getStats()` 实现。`trackingMode` 从 Phase 0 的固定 `manualEntry` 升级为运行时动态 `currentTrackingMode()` | 2d | 1.5 | 能拉到自己刚发的推文的回复列表和统计数据（浏览/点赞/转发数） |
@@ -114,9 +115,9 @@
 | 1.14 | **Inbox 统一收件箱**：列表 UI + 筛选（未回复/评论/@提及）+ 平台筛选 + AI 回复建议集成。Phase 0 无 Inbox，Phase 1 从零搭建 | 2d | 1.7, 1.13 | Inbox 显示 Twitter 真实回复，可按状态筛选，点击回复后弹出 AI 建议草稿 |
 | 1.15 | **运营总览仪表盘**：开发进度卡片（最近 Release + 提交活跃度）+ 推广概览（已发帖子数/推广阶段/总互动数）+ AI 费用统计（从 ai_actions 聚合）+ 下载量/收入手动登记（project_metrics 表新增） | 2.5d | 1.6, 1.7, 1.11 | 仪表盘展示真实的项目开发状态和推广数据 |
 | 1.16 | **README 完整性检查 + PR 建议**：`checkReadmeCompleteness(projectId)` + `generateReadmePRs(projectId)` + "创建 GitHub PR" 功能（需 PAT 有 repo 权限） | 2d | 1.11 | AI 发现 README 缺失信息→生成 diff→用户确认→通过 GitHub API 创建 PR |
-| 1.17 | **Task Scheduler**：本地 `Timer` 实现（Phase 1 不引入 Isolate，drift 操作在主线程）。定时轮询 Twitter 互动（默认 5 分钟）+ 启动追赶 + 即时发布 + Release 监控（每 30 分钟检查新 tag） | 2d | 1.7, 1.1 | 发布一条推文后 5 分钟内自动拉取到新互动并出现在 Inbox |
+| 1.17 | **Task Scheduler**：`node-cron` 或 `setInterval` 实现（Electron 主进程运行）。定时轮询 Twitter 互动（默认 5 分钟）+ 启动追赶 + 即时发布 + Release 监控（每 30 分钟检查新 tag）。better-sqlite3 同步 API，无需担心并发问题 | 1.5d | 1.7, 1.1 | 发布一条推文后 5 分钟内自动拉取到新互动并出现在 Inbox |
 | 1.18 | **Event Bus + Post Queue**：Event Bus（Plugin→UI 订阅）+ Post Queue（每平台独立队列、失败重试 3 次指数退避、限频暂停 + 跨平台防刷屏最小间隔） | 2d | 1.4, 1.17 | 同时发布到 3 个平台（Phase 2 的 Reddit/Discord 到位后验证），一个失败不影响其余 |
-| 1.19 | **i18n 框架**：`flutter_localizations` + ARB 文件骨架（中英双语），所有硬编码英文字符串迁移到 `AppLocalizations` | 2d | Phase 0 | 切换系统语言为中文，UI 文案随之切换（哪怕初始只有 50% 翻译覆盖） |
+| 1.19 | **i18n 框架**：`react-i18next` + JSON 翻译文件（中英双语），所有硬编码英文字符串迁移到 `useTranslation()` hook | 2d | Phase 0 | 切换系统语言为中文，UI 文案随之切换（哪怕初始只有 50% 翻译覆盖） |
 | 1.20 | **CI 基线**：GitHub Actions（lint + test + build，macOS + Windows）。PR 提交后自动跑，失败阻止合并 | 1.5d | Phase 0 | PR 提交后自动跑 CI，lint/test 失败时 PR 不可合并 |
 | 1.21 | **测试基线**：Engine/Plugin 接口单元测试 + Mock Plugin 用于 Composer/Inbox 集成测试 + 覆盖率报告 | 2d | 1.20 | 关键路径（发布、拉取互动、AI 生成）有测试覆盖，覆盖率 ≥ 60% |
 | 1.22 | **macOS Developer ID 签名 + 公证** | 1.5d | 1.20 | 构建产物在全新 Mac 上双击可直接打开，无 Gatekeeper 警告 |
@@ -125,9 +126,9 @@
 | 1.25 | **URL 回填自动提取**：Reddit `.json` 后缀方案 + YouTube oEmbed 方案 + Twitter headless browser 方案评估（仅评估可行性，不确定实现） | 1.5d | 1.4 | Reddit URL 回填后自动提取到 upvote 数和评论数（无需 API Key）；Twitter headless browser 方案输出评估报告 |
 | 1.26 | **Phase 1 整体验收**：端到端演示 + 录屏存档 | 1d | 上述全部 | 录屏演示：多仓库连接 → AI 推广计划 → Twitter OAuth 自动发布 → Inbox 收到回复 → AI 回复建议 → 仪表盘数据更新 → CI 构建通过 |
 
-小计：**48 天**（任务涉及大量并行工作——基础设施与功能可同期推进；实际并行后约 **25 个工作日**）
+小计：**约 45 天**（任务涉及大量并行工作——基础设施与功能可同期推进；实际并行后约 **23 个工作日**。Electron OAuth 省掉约 3 天 vs Flutter 方案）
 
-> ⚠️ **Phase 1 范围警告**：上述任务列表覆盖了原设计中 Phase 1–4 的部分工作（多仓库、Inbox、仪表盘、README PR 等），因为 Phase 0 已将 AI 基础设施前移。执行时可根据实际进度调整——如果 Phase 1 耗时远超 25 天，可将 1.16（README PR 建议）、1.18（Event Bus/Post Queue 完整实现）、1.25（URL 回填自动提取）推迟到 Phase 2。
+> ⚠️ **Phase 1 范围警告**：上述任务列表覆盖了多仓库、Inbox、仪表盘、README PR 等。执行时可根据实际进度调整——如果 Phase 1 耗时远超 23 天，可将 1.16（README PR 建议）、1.18（Event Bus/Post Queue 完整实现）、1.25（URL 回填自动提取）推迟到 Phase 2。
 
 ---
 
@@ -138,7 +139,7 @@
 
 | # | 任务 | 估时 | 依赖 | 验收标准 |
 |---|------|------|------|----------|
-| 2.1 | **Reddit Plugin — OAuth 授权**：复用 OAuthCallbackServer + Credential Vault。installed app 类型，只读或读写授权 | 1.5d | Phase 1 (OAuth/Vault) | 授权后能拉到自己账号基本信息 |
+| 2.1 | **Reddit Plugin — OAuth 授权**：复用 Electron BrowserWindow OAuth 流程（Phase 1.2）+ Credential Vault。installed app 类型，只读或读写授权 | 1.5d | Phase 1 (OAuth/Vault) | 授权后能拉到自己账号基本信息 |
 | 2.2 | **Reddit Plugin — 自动发布**：`publish()` 文本/链接发布。`currentPublishMode()`: OAuth 有效 → apiAuto，未授权 → webIntent（预填 submit 链接） | 1.5d | 2.1 | 已授权自动发布成功；未授权走预填跳转，两条路径都能验证 |
 | 2.3 | **Reddit Plugin — 互动追踪**：免费只读 API（100 QPM/OAuth client）。拉取 upvote 数/评论数/评论正文。`currentTrackingMode()`: 已授权 → apiReadOnly | 1.5d | 2.1 | Inbox 看到 Reddit 帖子的真实评论 |
 | 2.4 | **Reddit 合规清理任务**：定期（每 24 小时）比对远端删除状态 → 被远端删除的内容在 48h 内级联清除本地缓存（`interactions` 表中对应行删除）。Task Scheduler 新增 `redditComplianceCheck` 任务类型 | 2d | 2.3 | 模拟远端删除一条评论，合规任务运行后本地对应数据行被删除 |
@@ -219,10 +220,10 @@
 | **Phase 0: GitHub 公开 API 限频（60 req/h）** | 短时间内多次刷仓库分析触发 429 | 提示用户提供 PAT（5,000 req/h）；降级使用缓存；设置页展示剩余请求数 |
 | **Phase 0: AI Prompt 调优耗时超预期** | 推文生成质量差、不符合 280 字符限制 | 缩小范围——Phase 0 先支持"首发公告"一种推广阶段，减少 Prompt 变量；后续 Phase 补充 |
 | **Phase 1: Twitter API 付费成本超预期** | 1.8 用量熔断频繁触发 | 降低轮询频率（5→15 分钟）、减少自动拉取范围，评估是否值得付费升级额度 |
-| **Phase 1: Windows OAuth loopback 被防火墙拦截** | 1.3 验证失败 | 切换到自定义 URL Scheme 方案（已在设计文档 P0-3 中预留备选） |
+| ~~**Phase 1: Windows OAuth loopback**~~ | **已消除** — Electron BrowserWindow 内嵌 Chromium，OAuth 在 macOS/Windows 行为一致，无防火墙问题 | — |
 | **Phase 1: Phase 1 范围过大（25 天并行后仍可能超）** | Phase 1 实际耗时超估算 30%+ | 将 1.16（README PR）、1.18（Event Bus 完整实现）、1.25（URL 回填）推迟到 Phase 2 |
 | **YouTube 配额在追踪场景下不够（多视频频繁轮询）** | 3.4 日消耗接近上限 | 降低轮询频率；优先 `commentThreads.list`（1 单位）而非 `videos.list`；提示用户申请配额提升 |
-| **Flutter 桌面端小众问题（Windows/macOS 兼容性）** | 系统托盘、Keychain、OAuth loopback 等在某平台不可用 | 优先保证 macOS 可用，Windows 作为 known issue 记录；Phase 0 不依赖这些特性 |
+| **better-sqlite3 原生 addon 编译问题** | `npm install` 时报错，Electron 版本与 Node.js 版本不匹配 | 使用 `@electron/rebuild` 自动重建原生模块；Phase 0 CI 中加入 macOS + Windows 构建验证 |
 | **全职 solo 进度落后预期** | 单个 Phase 实际耗时超估算 30%+ | 优先保证 Phase 0–2（最小闭环 + 核心三平台），Phase 4–5 可视情况延后或简化 |
 
 ---
