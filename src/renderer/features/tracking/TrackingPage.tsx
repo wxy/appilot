@@ -96,9 +96,14 @@ export function TrackingPage() {
             <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
               className={inputClass} placeholder="e.g. 'Someone asked about Windows support'" />
           </div>
-          <button onClick={handleSubmit} disabled={views === "" && likes === "" && comments === ""} className={btnPrimary}>
-            {submitted ? "Saved ✓" : "Submit Stats"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={handleSubmit} className={btnPrimary}>
+              {submitted ? "Saved ✓" : "Submit Stats"}
+            </button>
+            {views === "" && likes === "" && comments === "" && (
+              <span className="text-xs text-amber-600 dark:text-amber-400">← Fill at least one metric above</span>
+            )}
+          </div>
           {saveError && (
             <p className="text-sm text-red-600 dark:text-red-400 mt-2">{saveError}</p>
           )}
