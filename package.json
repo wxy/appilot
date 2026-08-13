@@ -8,14 +8,12 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/schema.test.ts && tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts",
-    "test:ci": "tsx tests/schema.test.ts && tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts"
+    "test": "tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts",
+    "test:ci": "tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",
-    "better-sqlite3": "^12.11.1",
     "clsx": "^2.1.0",
-    "drizzle-orm": "^0.45.2",
     "electron-log": "^5.4.4",
     "electron-store": "^11.0.2",
     "openai": "^6.47.0",
@@ -23,17 +21,14 @@
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0",
     "recharts": "^3.9.2",
-    "simple-git": "^3.36.0",
     "tailwind-merge": "^2.6.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.0",
-    "drizzle-kit": "^0.31.10",
     "electron": "^43.1.1",
     "electron-vite": "latest",
     "postcss": "^8.5.0",

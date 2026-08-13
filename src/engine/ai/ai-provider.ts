@@ -48,7 +48,8 @@ export interface AIProviderConfig {
 export class AIProvider {
   private client: OpenAI;
   private config: AIProviderConfig;
-  lastUsage: TokenUsage | null = null;
+  /** Accumulated usage across all chat() calls on this provider instance. */
+  totalUsage: TokenUsage | null = null;
 
   constructor(config: AIProviderConfig) {
     this.config = config;
@@ -72,15 +73,14 @@ export class AIProvider {
 
       const usage = response.usage;
       if (usage) {
-        this.lastUsage = {
-          promptTokens: usage.prompt_tokens,
-          completionTokens: usage.completion_tokens,
-          totalTokens: usage.total_tokens,
-          estimatedCost: estimateCost(
-            this.config.model,
-            usage.prompt_tokens,
-            usage.completion_tokens,
-          ),
+        const prev = this.totalUsage;
+        this.totalUsage = {
+          promptTokens: (prev?.promptTokens ?? 0) + usage.prompt_tokens,
+          completionTokens: (prev?.completionTokens ?? 0) + usage.completion_tokens,
+          totalTokens: (prev?.totalTokens ?? 0) + usage.total_tokens,
+          estimatedCost:
+            (prev?.estimatedCost ?? 0) +
+            estimateCost(this.config.model, usage.prompt_tokens, usage.completion_tokens),
         };
       }
 

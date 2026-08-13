@@ -19,20 +19,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npx eslint src/ --ext .ts,.tsx 2>&1 || echo "⚠️ ESLint not yet configured — skipping"
-
   test:
-    name: Schema & Error Test
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

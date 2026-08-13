@@ -29,7 +29,7 @@ function createWindow() {
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    mainWindow.loadURL("http://localhost:5173");
+    mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 }
 

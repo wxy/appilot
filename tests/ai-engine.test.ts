@@ -3,6 +3,7 @@
  */
 
 import { buildContext, type UserPreferences } from "../src/engine/ai/context-builder";
+import { parseAnalysisResponse } from "../src/engine/ai/ai-engine";
 import type { RepoSummary, FeatureHighlight } from "../src/engine/repo-analyzer";
 
 let errors = 0;
@@ -68,6 +69,35 @@ const hashtags = mockTweet.match(/#\w+/g)?.map((h) => h.toLowerCase()) || [];
 assert(hashtags.length >= 4, "tweet parsing: extracts hashtags");
 assert(mockTweet.length <= 280 || mockTweet.includes("280"), "tweet parsing: reasonable length");
 assert(mockTweet.includes("github.com"), "tweet parsing: includes link");
+
+// 6. AI analysis response parsing
+const analysis1 = parseAnalysisResponse(
+  "TAGLINE: A zero-config test runner\nDESCRIPTION: Run tests fast with no setup.\nFEATURES:\n- Zero config\n- Parallel execution\n- TypeScript support"
+);
+assert(analysis1.tagline === "A zero-config test runner", "analysis parse: extracts tagline");
+assert(analysis1.description === "Run tests fast with no setup.", "analysis parse: extracts description");
+assert(analysis1.features.length === 3, "analysis parse: extracts 3 features");
+assert(analysis1.features[0] === "Zero config", "analysis parse: feature text correct");
+
+// 7. Parser tolerance — lowercase labels, bullet styles, stray text
+const analysis2 = parseAnalysisResponse(
+  "Here is the analysis:\ntagline: lightweight tool\ndescription: does one thing well\nfeatures:\n* first\n• second\n- third"
+);
+assert(analysis2.tagline === "lightweight tool", "analysis parse: lowercase tagline label");
+assert(analysis2.features.length === 3, "analysis parse: mixed bullet styles");
+
+// 8. Parser caps features at 6 and ignores empty bullets
+const analysis3 = parseAnalysisResponse(
+  "FEATURES:\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n-"
+);
+assert(analysis3.features.length === 6, "analysis parse: caps at 6 features");
+assert(analysis3.features[5] === "f", "analysis parse: 6th feature correct");
+assert(!analysis3.features.includes("g"), "analysis parse: drops 7th feature");
+
+// 9. Empty / malformed response degrades gracefully
+const analysis4 = parseAnalysisResponse("");
+assert(analysis4.features.length === 0, "analysis parse: empty response → no features");
+assert(analysis4.tagline === undefined, "analysis parse: empty response → no tagline");
 
 console.log(`\n${errors === 0 ? "🎉 All AI engine tests passed!" : `❌ ${errors} test(s) failed`}`);
 process.exit(errors > 0 ? 1 : 0);

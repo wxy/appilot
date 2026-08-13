@@ -1,11 +1,6 @@
 // @appilot/engine — Core engine logic (pure TypeScript, zero Electron/React dependency)
 export const ENGINE_VERSION = "0.1.0";
 
-// Database (Task 0.2)
-export { createDatabase, getDatabase, closeDatabase } from "./database/index.js";
-export * as schema from "./database/schema.js";
-export { runMigrations } from "./database/migrate.js";
-
 // Error handling (Task 0.3)
 export {
   AppError,

@@ -7,6 +7,7 @@ interface ThemeState {
   resolved: "light" | "dark";
   setTheme: (theme: Theme) => void;
   toggle: () => void;
+  syncFromSystem: () => void;
 }
 
 function getSystemTheme(): "light" | "dark" {
@@ -22,16 +23,6 @@ export const useTheme = create<ThemeState>((set, get) => {
   const resolved = initial === "system" ? getSystemTheme() : initial;
   applyTheme(resolved);
 
-  const mql = window.matchMedia("(prefers-color-scheme: dark)");
-  const onChange = () => {
-    if (get().theme === "system") {
-      const sys = getSystemTheme();
-      applyTheme(sys);
-      set({ resolved: sys });
-    }
-  };
-  mql.addEventListener("change", onChange);
-
   return {
     theme: initial,
     resolved,
@@ -42,19 +33,19 @@ export const useTheme = create<ThemeState>((set, get) => {
       set({ theme, resolved });
     },
     toggle: () => {
-      const { theme, resolved } = get();
-      if (theme === "system") {
-        // From system: pick explicit opposite of current system preference
-        const next = resolved === "dark" ? "light" : "dark";
-        applyTheme(next);
-        localStorage.setItem("appilot-theme", next);
-        set({ theme: next, resolved: next });
-      } else {
-        // From explicit: toggle to the other explicit
-        const next = resolved === "dark" ? "light" : "dark";
-        applyTheme(next);
-        localStorage.setItem("appilot-theme", next);
-        set({ theme: next, resolved: next });
+      // Toggle between light/dark. If currently "system", this picks the
+      // explicit opposite of the resolved system preference.
+      const { resolved } = get();
+      const next = resolved === "dark" ? "light" : "dark";
+      applyTheme(next);
+      localStorage.setItem("appilot-theme", next);
+      set({ theme: next, resolved: next });
+    },
+    syncFromSystem: () => {
+      if (get().theme === "system") {
+        const sys = getSystemTheme();
+        applyTheme(sys);
+        set({ resolved: sys });
       }
     },
   };
