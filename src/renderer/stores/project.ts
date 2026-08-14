@@ -1,5 +1,16 @@
 import { create } from "zustand";
 
+export interface KeywordEntry {
+  language: string;
+  keyword: string;
+  rationale: string;
+}
+
+export interface SubmissionKeywordsEntry {
+  language: string;
+  text: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -7,6 +18,12 @@ export interface Project {
   productType: "ios" | "macos" | null;
   bundleId: string | null;
   trackId: string | null;
+  trackName: string | null;
+  artworkUrl: string | null;
+  supportedLanguages: { code: string; name: string }[];
+  storeLinks: { country: string; name: string; platform: "ios" | "macos" | "unknown"; url: string }[];
+  trackedKeywords: KeywordEntry[];
+  submissionKeywords: SubmissionKeywordsEntry[];
   createdAt: string;
 }
 
@@ -18,6 +35,23 @@ interface ProjectState {
   addByFolder: (localPath: string) => Promise<Project>;
   select: (id: string) => void;
   remove: (id: string) => Promise<void>;
+  updateTrackedKeywords: (id: string, keywords: KeywordEntry[]) => void;
+  updateSubmissionKeywords: (id: string, submission: SubmissionKeywordsEntry[]) => void;
+}
+
+/** Normalize persisted projects, tolerating legacy shapes. */
+function normalizeProject(p: any): Project {
+  return {
+    ...p,
+    supportedLanguages: p.supportedLanguages || [],
+    storeLinks: p.storeLinks || [],
+    trackedKeywords: (p.trackedKeywords || p.keywords || []).map((k: any) => ({
+      language: k.language || "unknown",
+      keyword: k.keyword,
+      rationale: k.rationale || "",
+    })),
+    submissionKeywords: p.submissionKeywords || [],
+  };
 }
 
 export const useProject = create<ProjectState>((set, get) => ({
@@ -28,9 +62,10 @@ export const useProject = create<ProjectState>((set, get) => ({
   load: async () => {
     set({ loading: true });
     try {
-      const projects = await (window as any).appilot.projects.list();
+      const raw = (await (window as any).appilot.projects.list()) || [];
+      const projects = raw.map(normalizeProject);
       set({
-        projects: projects || [],
+        projects,
         currentProjectId: get().currentProjectId || projects?.[0]?.id || null,
       });
     } finally {
@@ -39,8 +74,16 @@ export const useProject = create<ProjectState>((set, get) => ({
   },
 
   addByFolder: async (localPath) => {
-    const project = await (window as any).appilot.projects.add(localPath);
-    set((s) => ({ projects: [...s.projects, project], currentProjectId: project.id }));
+    const project = normalizeProject(await (window as any).appilot.projects.add(localPath));
+    set((s) => {
+      const exists = s.projects.some((p) => p.id === project.id);
+      return {
+        projects: exists
+          ? s.projects.map((p) => (p.id === project.id ? project : p))
+          : [...s.projects, project],
+        currentProjectId: project.id,
+      };
+    });
     return project;
   },
 
@@ -55,5 +98,17 @@ export const useProject = create<ProjectState>((set, get) => ({
         currentProjectId: s.currentProjectId === id ? projects[0]?.id ?? null : s.currentProjectId,
       };
     });
+  },
+
+  updateTrackedKeywords: (id, keywords) => {
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? { ...p, trackedKeywords: keywords } : p)),
+    }));
+  },
+
+  updateSubmissionKeywords: (id, submission) => {
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? { ...p, submissionKeywords: submission } : p)),
+    }));
   },
 }));

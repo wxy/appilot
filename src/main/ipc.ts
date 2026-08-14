@@ -1,4 +1,5 @@
 import { ipcMain, shell, safeStorage, dialog } from "electron";
+import path from "path";
 import { log } from "../engine/logger";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
@@ -43,6 +44,25 @@ async function getStore() {
   return store;
 }
 
+function normalizeLocalPath(localPath: unknown): string {
+  if (typeof localPath !== "string" || !localPath.trim()) return "";
+  try {
+    return path.resolve(localPath);
+  } catch {
+    return localPath.trim();
+  }
+}
+
+/** Keep only the most recent project for each local path. */
+function dedupeProjects(projects: any[]): any[] {
+  const byPath = new Map<string, any>();
+  for (const project of projects) {
+    const key = normalizeLocalPath(project?.localPath) || `id:${project?.id ?? Math.random()}`;
+    byPath.set(key, project);
+  }
+  return [...byPath.values()];
+}
+
 export function registerIpcHandlers() {
   // ── Shell ──
   ipcMain.handle("shell:openExternal", (_event, url: string) => {
@@ -61,22 +81,87 @@ export function registerIpcHandlers() {
 
   ipcMain.handle("projects:list", async () => {
     const s = await getStore();
-    return s.get("projects") || [];
+    const raw: any[] = s.get("projects") || [];
+    const projects = dedupeProjects(raw);
+    if (projects.length !== raw.length) {
+      s.set("projects", projects);
+    }
+    return projects;
   });
 
   ipcMain.handle("projects:add", async (_event, localPath: string) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
-    const project = {
-      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      name: localPath.split("/").pop() || localPath,
-      localPath,
-      productType: null,
-      bundleId: null,
-      trackId: null,
-      createdAt: new Date().toISOString(),
-    };
-    projects.push(project);
+    const normalizedPath = normalizeLocalPath(localPath);
+    const existingIndex = projects.findIndex(
+      (p: any) => normalizeLocalPath(p.localPath) === normalizedPath,
+    );
+
+    const project: {
+      id: string;
+      name: string;
+      localPath: string;
+      productType: "ios" | "macos" | null;
+      bundleId: string | null;
+      trackId: string | null;
+      trackName: string | null;
+      artworkUrl: string | null;
+      supportedLanguages: { code: string; name: string }[];
+      storeLinks: { country: string; name: string; platform: "ios" | "macos" | "unknown"; url: string }[];
+      trackedKeywords: { language: string; keyword: string; rationale: string }[];
+      submissionKeywords: { language: string; text: string }[];
+      createdAt: string;
+    } = existingIndex >= 0
+      ? { ...projects[existingIndex] }
+      : {
+          id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          name: localPath.split("/").pop() || localPath,
+          localPath,
+          productType: null,
+          bundleId: null,
+          trackId: null,
+          trackName: null,
+          artworkUrl: null,
+          supportedLanguages: [],
+          storeLinks: [],
+          trackedKeywords: [],
+          submissionKeywords: [],
+          createdAt: new Date().toISOString(),
+        };
+
+    // Auto-analyze: detect product type, discover App Store link, resolve bundleId.
+    try {
+      const {
+        detectApplePlatform,
+        detectLocalizedLanguages,
+        discoverAppStoreLinks,
+        languageDisplayName,
+        lookupApp,
+        localizedStoreLinks,
+      } = await import("../engine/app-store-discovery");
+      project.productType = detectApplePlatform(localPath);
+      const languages = detectLocalizedLanguages(localPath);
+      project.supportedLanguages = languages.map((code) => ({ code, name: languageDisplayName(code) }));
+      const discovery = discoverAppStoreLinks(localPath);
+      if (discovery) {
+        project.trackId = discovery.trackId;
+        project.storeLinks = localizedStoreLinks(discovery.links);
+        const meta = await lookupApp(discovery.trackId);
+        if (meta) {
+          project.bundleId = meta.bundleId;
+          project.trackName = meta.trackName;
+          project.artworkUrl = meta.artworkUrl;
+        }
+      }
+    } catch (err: any) {
+      log.warn(`Project analysis failed for ${localPath}: ${err.message}`);
+    }
+
+    if (existingIndex >= 0) {
+      projects[existingIndex] = project;
+    } else {
+      projects.push(project);
+    }
     s.set("projects", projects);
     return project;
   });
@@ -86,6 +171,53 @@ export function registerIpcHandlers() {
     const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
     s.set("projects", projects);
     return true;
+  });
+
+  ipcMain.handle("projects:generateKeywords", async (_event, projectId: string, language: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+    if (!language) throw new Error("Missing language");
+
+    const { AIProvider } = await import("../engine/ai/ai-provider");
+    const provider = new AIProvider({
+      baseURL: s.get("aiProviderUrl"),
+      apiKey: decryptApiKey(s.get("aiApiKey")),
+      model: s.get("aiModel"),
+    });
+    const { generateKeywords } = await import("../engine/ai/keyword-suggester");
+    const { readRepoDescription } = await import("../engine/app-store-discovery");
+
+    const description = readRepoDescription(project.localPath);
+    const result = await generateKeywords(provider, {
+      name: project.trackName || project.name,
+      description,
+      productType: project.productType || "unknown",
+      language,
+      uiLanguage: "zh-Hans",
+    });
+    return result;
+  });
+
+  ipcMain.handle("projects:saveTrackedKeywords", async (_event, projectId: string, trackedKeywords: any[]) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+    project.trackedKeywords = trackedKeywords;
+    s.set("projects", projects);
+    return project;
+  });
+
+  ipcMain.handle("projects:saveSubmissionKeywords", async (_event, projectId: string, submissionKeywords: any[]) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+    project.submissionKeywords = submissionKeywords;
+    s.set("projects", projects);
+    return project;
   });
 
   // ── AI Config ──

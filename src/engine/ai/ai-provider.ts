@@ -30,7 +30,7 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "claude-3-opus": { input: 0.015, output: 0.075 },
   "claude-3-sonnet": { input: 0.003, output: 0.015 },
   "claude-3-haiku": { input: 0.00025, output: 0.00125 },
-  "deepseek-chat": { input: 0.00014, output: 0.00028 },
+  "deepseek-v4-flash": { input: 0.00014, output: 0.00028 },
 };
 
 function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
@@ -43,6 +43,22 @@ export interface AIProviderConfig {
   baseURL: string;
   apiKey: string;
   model: string;
+}
+
+export type ThinkingEffort = "disabled" | "low" | "medium" | "high" | "max";
+
+function deepSeekThinkingParams(
+  baseURL: string,
+  effort: ThinkingEffort,
+): Record<string, unknown> {
+  if (!baseURL.includes("deepseek")) return {};
+  if (effort === "disabled") {
+    return { thinking: { type: "disabled" } };
+  }
+  return {
+    thinking: { type: "enabled" },
+    reasoning_effort: effort,
+  };
 }
 
 export class AIProvider {
@@ -61,15 +77,43 @@ export class AIProvider {
 
   async chat(
     messages: ChatMessage[],
-    opts?: { temperature?: number; maxTokens?: number },
+    opts?: { temperature?: number; maxTokens?: number; thinking?: ThinkingEffort },
   ): Promise<string> {
-    try {
-      const response = await this.client.chat.completions.create({
-        model: this.config.model,
-        messages,
-        temperature: opts?.temperature ?? 0.7,
-        max_tokens: opts?.maxTokens ?? 2000,
-      });
+    const isDeepSeek = this.config.baseURL.includes("deepseek");
+    const thinkingEffort: ThinkingEffort = opts?.thinking ?? (isDeepSeek ? "low" : "disabled");
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let response: OpenAI.Chat.Completions.ChatCompletion;
+      try {
+        response = await this.client.chat.completions.create({
+          model: this.config.model,
+          messages,
+          temperature: opts?.temperature ?? 0.7,
+          max_tokens: opts?.maxTokens ?? 2000,
+          ...deepSeekThinkingParams(this.config.baseURL, thinkingEffort),
+        } as any);
+      } catch (err: any) {
+        if (err instanceof EngineError || err instanceof ApiError) throw err;
+        const status = err.status || err.response?.status;
+        const message = err.message || "Unknown AI API error";
+        if (status === 401 || status === 403) {
+          throw new ApiError(`AI API authentication failed: ${message}`, "AI_AUTH_ERROR", {
+            statusCode: status,
+            retryable: false,
+          });
+        }
+        if (status === 429) {
+          throw new ApiError(`AI API rate limited: ${message}`, "AI_RATE_LIMIT", {
+            statusCode: 429,
+            retryable: true,
+          });
+        }
+        throw new ApiError(`AI API error: ${message}`, "AI_API_ERROR", {
+          statusCode: status || 0,
+          retryable: status ? status >= 500 : true,
+        });
+      }
 
       const usage = response.usage;
       if (usage) {
@@ -85,32 +129,17 @@ export class AIProvider {
       }
 
       const content = response.choices[0]?.message?.content;
-      if (!content) {
-        throw new EngineError("AI returned empty response", "AI_EMPTY_RESPONSE");
+      if (content) return content;
+
+      log.warn(
+        `AI returned empty content (attempt ${attempt}/${maxAttempts}, finish_reason=${response.choices[0]?.finish_reason})`,
+      );
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
       }
-      return content;
-    } catch (err: any) {
-      if (err instanceof EngineError || err instanceof ApiError) throw err;
-      // OpenAI SDK wraps errors
-      const status = err.status || err.response?.status;
-      const message = err.message || "Unknown AI API error";
-      if (status === 401 || status === 403) {
-        throw new ApiError(`AI API authentication failed: ${message}`, "AI_AUTH_ERROR", {
-          statusCode: status,
-          retryable: false,
-        });
-      }
-      if (status === 429) {
-        throw new ApiError(`AI API rate limited: ${message}`, "AI_RATE_LIMIT", {
-          statusCode: 429,
-          retryable: true,
-        });
-      }
-      throw new ApiError(`AI API error: ${message}`, "AI_API_ERROR", {
-        statusCode: status || 0,
-        retryable: status ? status >= 500 : true,
-      });
     }
+
+    throw new EngineError("AI returned empty response", "AI_EMPTY_RESPONSE");
   }
 
   async validateConnection(): Promise<boolean> {
@@ -120,7 +149,8 @@ export class AIProvider {
         model: this.config.model,
         messages: [{ role: "user", content: "ping" }],
         max_tokens: 1,
-      });
+        ...deepSeekThinkingParams(this.config.baseURL, "disabled"),
+      } as any);
       log.info(`AI connection validated: ${this.config.model} @ ${this.config.baseURL}`);
       return true;
     } catch (err: any) {

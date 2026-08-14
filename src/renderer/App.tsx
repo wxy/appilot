@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Routes, Route, Link, useLocation, Navigate } from "react-router-dom";
+import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
 import { useTheme } from "./stores/theme";
 import { useProject } from "./stores/project";
 import { cn } from "./lib/utils";
@@ -63,7 +63,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       <aside className="w-60 flex flex-col bg-white dark:bg-zinc-900 border-r border-zinc-200/60 dark:border-zinc-800/60">
         {/* Brand */}
         <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800/60">
-          <div className="flex items-center gap-2.5">
+          <Link to="/" className="flex items-center gap-2.5" title="返回首页">
             <div className="w-7 h-7 rounded-lg bg-amber-500 flex items-center justify-center">
               <span className="text-white text-xs font-bold">A</span>
             </div>
@@ -71,7 +71,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               <h1 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Appilot</h1>
               <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">你的副驾驶</p>
             </div>
-          </div>
+          </Link>
         </div>
 
         {/* Project switcher */}
@@ -184,6 +184,85 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 /* ── Pages ── */
 
+function HomePage() {
+  const { projects, select, addByFolder } = useProject();
+  const navigate = useNavigate();
+  const [adding, setAdding] = useState(false);
+
+  const handleAdd = async () => {
+    setAdding(true);
+    try {
+      const folder = await (window as any).appilot?.dialog?.selectFolder();
+      if (folder) {
+        await addByFolder(folder);
+        navigate("/overview");
+      }
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const openProject = (id: string) => {
+    select(id);
+    navigate("/overview");
+  };
+
+  return (
+    <div className="p-10 max-w-3xl mx-auto">
+      <h2 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
+        欢迎回来，副驾驶待命中
+      </h2>
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        选择一个项目开始，或接入一个新的应用仓库。
+      </p>
+
+      {projects.length > 0 && (
+        <div className="mt-10">
+          <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-3">你的项目</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => openProject(p.id)}
+                className="flex items-center gap-3 px-4 py-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-left shadow-sm hover:border-amber-500/50 transition-colors"
+              >
+                {p.artworkUrl ? (
+                  <img
+                    src={p.artworkUrl}
+                    alt=""
+                    className="w-10 h-10 rounded-xl border border-zinc-200 dark:border-zinc-800 object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center shrink-0">
+                    <span className="text-amber-500">⌖</span>
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                    {p.trackName || p.name}
+                  </p>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
+                    {p.productType === "ios" ? "iOS" : p.productType === "macos" ? "macOS" : "未识别"}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-10 rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+          接入一个本地应用仓库，让副驾驶识别产品并建议关键词。
+        </p>
+        <button onClick={handleAdd} disabled={adding} className={btnPrimary}>
+          {adding ? "正在分析..." : "＋ 添加项目"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OverviewPage() {
   const { projects, currentProjectId } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
@@ -197,15 +276,120 @@ function OverviewPage() {
     );
   }
 
+  const languages = project.supportedLanguages || [];
+  const storeLinks = project.storeLinks || [];
+  const storeGroups = [
+    { label: "macOS", links: storeLinks.filter((l) => l.platform === "macos") },
+    { label: "iOS", links: storeLinks.filter((l) => l.platform === "ios") },
+    { label: "其他", links: storeLinks.filter((l) => l.platform === "unknown") },
+  ].filter((g) => g.links.length > 0);
+
   return (
     <div className="p-10 max-w-2xl mx-auto">
-      <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-1">{project.name}</h2>
-      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-8">
-        {project.localPath}
-      </p>
+      {/* App identity */}
+      <div className="flex items-center gap-4 mb-8">
+        {project.artworkUrl ? (
+          <img
+            src={project.artworkUrl}
+            alt=""
+            className="w-16 h-16 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm object-cover"
+          />
+        ) : (
+          <div className="w-16 h-16 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
+            <span className="text-amber-500 text-xl">⌖</span>
+          </div>
+        )}
+        <div className="min-w-0">
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+            {project.trackName || project.name}
+          </h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
+            {project.localPath}
+          </p>
+        </div>
+      </div>
+
+      {/* Detected metadata */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
+        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">识别结果</h3>
+        </div>
+        <div className="p-6 grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
+          <Field label="产品类型" value={project.productType === "ios" ? "iOS" : project.productType === "macos" ? "macOS" : "未识别"} />
+          <Field label="商店名称" value={project.trackName || project.name} />
+        </div>
+      </div>
+
+      {/* Supported languages */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
+        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            支持语言（{languages.length}）
+          </h3>
+        </div>
+        <div className="p-5 flex flex-wrap gap-2">
+          {languages.length === 0 ? (
+            <p className="text-sm text-zinc-400 dark:text-zinc-500">未识别</p>
+          ) : (
+            languages.map((l) => (
+              <span
+                key={l.code}
+                className="inline-flex items-center px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300"
+              >
+                {l.name}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Store links */}
+      {storeLinks.length > 0 && (
+        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
+          <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店链接</h3>
+          </div>
+          <div className="p-4">
+            {storeGroups.map((group) => (
+              <div key={group.label} className="mb-4 last:mb-0">
+                <p className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                  {group.label}
+                </p>
+                <div className="space-y-1">
+                  {group.links.map((link) => (
+                    <button
+                      key={link.url}
+                      onClick={() => (window as any).appilot?.openExternal(link.url)}
+                      className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+                    >
+                      <span className="text-zinc-800 dark:text-zinc-200">{link.name} App Store</span>
+                      <span className="text-xs text-amber-600 dark:text-amber-400">打开 ↗</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <p className="px-1 pt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+              链接按地区定向；页面语言会跟随你设备语言，在应用支持的语言内自动切换。
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
         总览（副驾驶简报）将在 Phase A 后续步骤实现
       </div>
+    </div>
+  );
+}
+
+function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mb-1">{label}</p>
+      <p className={cn("text-zinc-800 dark:text-zinc-200 truncate", mono && "font-mono")}>
+        {value}
+      </p>
     </div>
   );
 }
@@ -310,12 +494,239 @@ function ManageProjectsPage() {
   );
 }
 
+/* ── Keywords (tracking vs submission, one AI request per language) ── */
+
+interface KeywordSuggestion {
+  keyword: string;
+  rationale: string;
+}
+
+interface KeywordGeneration {
+  tracking: KeywordSuggestion[];
+  submission: string[];
+}
+
+function KeywordsPage() {
+  const { projects, currentProjectId, updateTrackedKeywords, updateSubmissionKeywords } = useProject();
+  const project = projects.find((p) => p.id === currentProjectId);
+  const [activeLang, setActiveLang] = useState<string>("");
+  const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
+  const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
+  const [error, setError] = useState("");
+
+  if (!project) {
+    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
+  }
+
+  const languages = project.supportedLanguages || [];
+  const currentLang = languages.some((l) => l.code === activeLang) ? activeLang : (languages[0]?.code || "");
+  const tracked = (project.trackedKeywords || []).filter((k) => k.language === currentLang);
+  const savedSubmission = (project.submissionKeywords || []).find((s) => s.language === currentLang);
+  const submissionText = submissionDrafts[currentLang] ?? savedSubmission?.text ?? "";
+  const charCount = submissionText.length;
+  const currentLoading = loadingLangs.has(currentLang);
+
+  const generateOne = async (lang: string): Promise<{ lang: string; gen: KeywordGeneration | null }> => {
+    try {
+      const gen: KeywordGeneration = await (window as any).appilot.projects.generateKeywords(project.id, lang);
+      return { lang, gen };
+    } catch (e: any) {
+      setError(e.message || "关键词生成失败。请先在设置里配置 AI。");
+      return { lang, gen: null };
+    }
+  };
+
+  const applyGenerations = async (results: { lang: string; gen: KeywordGeneration | null }[]) => {
+    const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
+    let trackedNext = [...(latest?.trackedKeywords || [])];
+    let submissionNext = [...(latest?.submissionKeywords || [])];
+    const drafts: Record<string, string> = {};
+
+    for (const r of results) {
+      if (!r.gen) continue;
+      const existingKeys = new Set(trackedNext.filter((k) => k.language === r.lang).map((k) => k.keyword));
+      const additions = r.gen.tracking
+        .filter((s) => !existingKeys.has(s.keyword))
+        .map((s) => ({ language: r.lang, keyword: s.keyword, rationale: s.rationale }));
+      trackedNext = [...trackedNext, ...additions];
+
+      const submissionText = r.gen.submission.join(",").trim();
+      drafts[r.lang] = submissionText;
+      if (submissionText) {
+        submissionNext = submissionNext.filter((s) => s.language !== r.lang);
+        submissionNext.push({ language: r.lang, text: submissionText });
+      }
+    }
+
+    if (results.some((r) => r.gen)) {
+      const savedTracked = await (window as any).appilot.projects.saveTrackedKeywords(project.id, trackedNext);
+      const savedSubmission = await (window as any).appilot.projects.saveSubmissionKeywords(project.id, submissionNext);
+      updateTrackedKeywords(project.id, savedTracked.trackedKeywords);
+      updateSubmissionKeywords(project.id, savedSubmission.submissionKeywords);
+    }
+    setSubmissionDrafts((prev) => ({ ...prev, ...drafts }));
+  };
+
+  const handleGenerate = async (lang: string) => {
+    setError("");
+    setLoadingLangs((prev) => new Set(prev).add(lang));
+    const result = await generateOne(lang);
+    await applyGenerations([result]);
+    setLoadingLangs((prev) => {
+      const next = new Set(prev);
+      next.delete(lang);
+      return next;
+    });
+  };
+
+  const handleGenerateAll = async () => {
+    setError("");
+    const langs = languages.map((l) => l.code);
+    setLoadingLangs(new Set(langs));
+    const results = await Promise.all(langs.map((lang) => generateOne(lang)));
+    await applyGenerations(results);
+    setLoadingLangs(new Set());
+  };
+
+  const removeTracked = async (kw: string) => {
+    const next = (project.trackedKeywords || []).filter((k) => !(k.language === currentLang && k.keyword === kw));
+    const saved = await (window as any).appilot.projects.saveTrackedKeywords(project.id, next);
+    updateTrackedKeywords(project.id, saved.trackedKeywords);
+  };
+
+  const saveSubmission = async () => {
+    const next = [
+      ...(project.submissionKeywords || []).filter((s) => s.language !== currentLang),
+      { language: currentLang, text: submissionText },
+    ];
+    const saved = await (window as any).appilot.projects.saveSubmissionKeywords(project.id, next);
+    updateSubmissionKeywords(project.id, saved.submissionKeywords);
+    setSubmissionDrafts((prev) => {
+      const copy = { ...prev };
+      delete copy[currentLang];
+      return copy;
+    });
+  };
+
+  return (
+    <div className="p-10 max-w-3xl mx-auto">
+      <div className="flex items-start justify-between gap-4 mb-8">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">关键词</h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+            跟踪关键词模拟用户搜索；商店关键词用于提交，每语言 ≤100 字符。
+          </p>
+        </div>
+        <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
+          {loadingLangs.size > 0 ? "生成中..." : "为所有语言生成"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
+          {error}
+        </div>
+      )}
+
+      {languages.length === 0 ? (
+        <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2 mb-6">
+            {languages.map((l) => (
+              <button
+                key={l.code}
+                onClick={() => setActiveLang(l.code)}
+                className={cn(
+                  "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+                  l.code === currentLang
+                    ? "bg-amber-50 dark:bg-amber-500/10 border-amber-500/50 text-amber-700 dark:text-amber-400 font-medium"
+                    : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                )}
+              >
+                {l.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="space-y-6">
+            {/* Tracking keywords */}
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">跟踪关键词（{tracked.length}）</h3>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">模拟用户会搜索的词，用于跟踪排名，不限制数量。</p>
+                </div>
+                <button onClick={() => handleGenerate(currentLang)} disabled={currentLoading} className={btnPrimary}>
+                  {currentLoading ? "生成中..." : "AI 生成"}
+                </button>
+              </div>
+              <div className="p-4">
+                {tracked.length === 0 ? (
+                  <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">暂无关键词，点击「AI 生成」。</p>
+                ) : (
+                  <div className="space-y-1">
+                    {tracked.map((k) => (
+                      <div key={k.keyword} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+                        <div className="min-w-0">
+                          <span className="text-sm font-mono text-zinc-800 dark:text-zinc-200">{k.keyword}</span>
+                          {k.rationale && <span className="text-xs text-zinc-400 dark:text-zinc-500 ml-2">{k.rationale}</span>}
+                        </div>
+                        <button
+                          onClick={() => removeTracked(k.keyword)}
+                          className="shrink-0 text-zinc-400 hover:text-red-500 text-xs"
+                          title="移除"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Submission keywords */}
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+                <div className="flex items-center justify-between gap-4">
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店关键词（提交字段）</h3>
+                  <span className={cn("text-xs font-mono", charCount > 100 ? "text-red-500 dark:text-red-400" : "text-zinc-400 dark:text-zinc-500")}>
+                    {charCount}/100
+                  </span>
+                </div>
+              </div>
+              <div className="p-5 space-y-3">
+                <div className="flex gap-2">
+                  <input
+                    value={submissionText}
+                    onChange={(e) => setSubmissionDrafts((prev) => ({ ...prev, [currentLang]: e.target.value }))}
+                    placeholder="kw1,kw2,kw3"
+                    className={inputClass}
+                  />
+                  <button onClick={saveSubmission} className={btnPrimary}>保存</button>
+                </div>
+                <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                  逗号分隔、无空格；这是提交到 App Store 的字段，总长需 ≤100 字符。
+                </p>
+                {charCount > 100 && (
+                  <p className="text-xs text-red-600 dark:text-red-400">已超过 100 字符，请精简后再保存。</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ── Settings Page (沿用，Phase A 暂不动) ── */
 
 const AI_PRESETS = [
   { label: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o" },
   { label: "OpenAI (Mini)", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-  { label: "DeepSeek", url: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { label: "DeepSeek", url: "https://api.deepseek.com", model: "deepseek-v4-flash" },
   { label: "Groq", url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
   { label: "Ollama (Local)", url: "http://localhost:11434/v1", model: "llama3" },
   { label: "Custom", url: "", model: "" },
@@ -434,9 +845,9 @@ export function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Navigate to="/overview" replace />} />
+        <Route path="/" element={<HomePage />} />
         <Route path="/overview" element={<OverviewPage />} />
-        <Route path="/keywords" element={<PlaceholderPage title="关键词排名" desc="跟踪每个关键词在各商店的排名。" />} />
+        <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/assets" element={<PlaceholderPage title="素材中心" desc="文案、海报方向、视频脚本。" />} />
         <Route path="/repo" element={<PlaceholderPage title="仓库动态" desc="新 Release 检测与 AI 重审。" />} />
         <Route path="/reviews" element={<PlaceholderPage title="评论洞察" desc="用户评论聚类与洞察。" />} />

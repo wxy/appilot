@@ -56,11 +56,11 @@ assert(localProvider.baseURL.includes("11434"), "local provider: ollama URL");
 
 // 5. Provider with DeepSeek
 const dsProvider = new AIProvider({
-  baseURL: "https://api.deepseek.com/v1",
+  baseURL: "https://api.deepseek.com",
   apiKey: "sk-ds-test",
-  model: "deepseek-chat",
+  model: "deepseek-v4-flash",
 });
-assert(dsProvider.model === "deepseek-chat", "deepseek provider: model");
+assert(dsProvider.model === "deepseek-v4-flash", "deepseek provider: model");
 
 console.log(`\n${errors === 0 ? "🎉 All AI provider tests passed!" : `❌ ${errors} test(s) failed`}`);
 process.exit(errors > 0 ? 1 : 0);

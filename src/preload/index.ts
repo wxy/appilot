@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld("appilot", {
     list: (): Promise<any[]> => ipcRenderer.invoke("projects:list"),
     add: (localPath: string): Promise<any> => ipcRenderer.invoke("projects:add", localPath),
     remove: (id: string): Promise<boolean> => ipcRenderer.invoke("projects:remove", id),
+    generateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language),
+    saveTrackedKeywords: (projectId: string, trackedKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveTrackedKeywords", projectId, trackedKeywords),
+    saveSubmissionKeywords: (projectId: string, submissionKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveSubmissionKeywords", projectId, submissionKeywords),
   },
 
   ai: {
