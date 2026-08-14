@@ -11,6 +11,19 @@ contextBridge.exposeInMainWorld("appilot", {
   version: "0.1.0",
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
 
+  dialog: {
+    selectFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:selectFolder"),
+  },
+
+  projects: {
+    list: (): Promise<any[]> => ipcRenderer.invoke("projects:list"),
+    add: (localPath: string): Promise<any> => ipcRenderer.invoke("projects:add", localPath),
+    remove: (id: string): Promise<boolean> => ipcRenderer.invoke("projects:remove", id),
+    generateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language),
+    saveTrackedKeywords: (projectId: string, trackedKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveTrackedKeywords", projectId, trackedKeywords),
+    saveSubmissionKeywords: (projectId: string, submissionKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveSubmissionKeywords", projectId, submissionKeywords),
+  },
+
   ai: {
     getConfig: (): Promise<AIConfig> => ipcRenderer.invoke("ai:getConfig"),
     saveConfig: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:saveConfig", config),
