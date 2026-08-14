@@ -12,6 +12,14 @@ function Layout({ children }: { children: React.ReactNode }) {
   const { resolved, toggle } = useTheme();
   const location = useLocation();
 
+  // Keep "system" theme in sync with OS preference, with proper cleanup.
+  useEffect(() => {
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => useTheme.getState().syncFromSystem();
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+
   const navItems = [
     { to: "/", label: "Setup", icon: SetupIcon },
     { to: "/composer", label: "Composer", icon: ComposeIcon },
@@ -137,25 +145,6 @@ function MoonIcon() {
 const inputClass = "w-full px-3.5 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-900 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:focus:border-indigo-400 transition-shadow";
 const btnPrimary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm shadow-indigo-500/25 hover:shadow-indigo-500/30 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed";
 const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
-
-/* ── Placeholder pages ── */
-
-function PlaceholderPage({ title, desc, comingIn }: { title: string; desc: string; comingIn: string }) {
-  return (
-    <div className="p-10 max-w-2xl mx-auto">
-      <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">{title}</h2>
-      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-8">{desc}</p>
-      <div className="flex flex-col items-center justify-center py-16 border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-2xl bg-white dark:bg-zinc-900/50">
-        <div className="w-12 h-12 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center mb-3">
-          <svg className="w-6 h-6 text-zinc-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </div>
-        <p className="text-sm text-zinc-400 dark:text-zinc-500 font-medium">{comingIn}</p>
-      </div>
-    </div>
-  );
-}
 
 /* ── Settings Page ── */
 

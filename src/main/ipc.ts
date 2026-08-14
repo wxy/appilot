@@ -1,8 +1,28 @@
-import { ipcMain, shell } from "electron";
+import { ipcMain, shell, safeStorage } from "electron";
 import { log } from "../engine/logger";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
 let store: any = null;
+
+/**
+ * Phase 0: encrypt the AI API key at rest using Electron safeStorage
+ * (macOS Keychain / Windows DPAPI). Falls back to plaintext if unavailable.
+ */
+function encryptApiKey(key: string): string {
+  if (!key) return "";
+  if (!safeStorage.isEncryptionAvailable()) return key;
+  return safeStorage.encryptString(key).toString("base64");
+}
+
+function decryptApiKey(stored: string): string {
+  if (!stored) return "";
+  if (!safeStorage.isEncryptionAvailable()) return stored;
+  try {
+    return safeStorage.decryptString(Buffer.from(stored, "base64"));
+  } catch {
+    return stored; // legacy plaintext value written before encryption
+  }
+}
 
 async function getStore() {
   if (!store) {
@@ -34,7 +54,7 @@ export function registerIpcHandlers() {
     const s = await getStore();
     return {
       providerUrl: s.get("aiProviderUrl"),
-      apiKey: s.get("aiApiKey"),
+      apiKey: decryptApiKey(s.get("aiApiKey")),
       model: s.get("aiModel"),
     };
   });
@@ -42,7 +62,7 @@ export function registerIpcHandlers() {
   ipcMain.handle("ai:saveConfig", async (_event, config: { providerUrl: string; apiKey: string; model: string }) => {
     const s = await getStore();
     s.set("aiProviderUrl", config.providerUrl);
-    s.set("aiApiKey", config.apiKey);
+    s.set("aiApiKey", encryptApiKey(config.apiKey));
     s.set("aiModel", config.model);
     return true;
   });
@@ -63,7 +83,7 @@ export function registerIpcHandlers() {
     const { AIProvider } = await import("../engine/ai/ai-provider");
     const provider = new AIProvider({
       baseURL: s.get("aiProviderUrl"),
-      apiKey: s.get("aiApiKey"),
+      apiKey: decryptApiKey(s.get("aiApiKey")),
       model: s.get("aiModel"),
     });
     try {
@@ -71,7 +91,7 @@ export function registerIpcHandlers() {
       const { AIEngine } = await import("../engine/ai/ai-engine");
       const engine = new AIEngine(new RepoAnalyzer(), provider);
       const result = await engine.analyzeProduct(repoUrl);
-      if (provider.lastUsage) trackAiUsage(provider.lastUsage.totalTokens, provider.lastUsage.estimatedCost);
+      if (provider.totalUsage) trackAiUsage(provider.totalUsage.totalTokens, provider.totalUsage.estimatedCost);
       return result;
     } catch (err: any) {
       log.error(`analyzeProduct failed: ${err.message}`, { repoUrl, errorCode: err.code });
@@ -84,7 +104,7 @@ export function registerIpcHandlers() {
     const { AIProvider } = await import("../engine/ai/ai-provider");
     const provider = new AIProvider({
       baseURL: s.get("aiProviderUrl"),
-      apiKey: s.get("aiApiKey"),
+      apiKey: decryptApiKey(s.get("aiApiKey")),
       model: s.get("aiModel"),
     });
     try {
@@ -92,7 +112,7 @@ export function registerIpcHandlers() {
       const { AIEngine } = await import("../engine/ai/ai-engine");
       const engine = new AIEngine(new RepoAnalyzer(), provider);
       const result = await engine.generateTweet(repoUrl, stage as any);
-      if (provider.lastUsage) trackAiUsage(provider.lastUsage.totalTokens, provider.lastUsage.estimatedCost);
+      if (provider.totalUsage) trackAiUsage(provider.totalUsage.totalTokens, provider.totalUsage.estimatedCost);
       return result;
     } catch (err: any) {
       log.error(`generateTweet failed: ${err.message}`, { repoUrl, stage, errorCode: err.code });
@@ -141,8 +161,4 @@ export function registerIpcHandlers() {
     return s.get("draft") || null;
   });
 
-  // ── Database (placeholder) ──
-  ipcMain.handle("db:query", async () => {
-    throw new Error("Database not yet wired to IPC");
-  });
 }

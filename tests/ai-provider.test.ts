@@ -25,7 +25,7 @@ const provider = new AIProvider({
 
 assert(provider.model === "gpt-4o", "constructor: model stored");
 assert(provider.baseURL === "https://api.openai.com/v1", "constructor: baseURL stored");
-assert(provider.lastUsage === null, "constructor: lastUsage starts null");
+assert(provider.totalUsage === null, "constructor: totalUsage starts null");
 
 // 2. ChatMessage type
 const messages: ChatMessage[] = [

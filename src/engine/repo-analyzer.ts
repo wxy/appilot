@@ -2,18 +2,14 @@
  * Repo Analyzer — Phase 0: single GitHub public repo.
  *
  * Uses @octokit/rest (unauthenticated, 60 req/h) for README, file tree,
- * and recent commits. Falls back to simple-git for local `git log` detail.
+ * and recent commits.
  *
  * Phase 1+ adds: connectLocalRepo, connectGitHubPrivateRepo, multi-repo analysis.
  */
 
 import { Octokit } from "@octokit/rest";
-import { simpleGit, SimpleGit } from "simple-git";
 import { ApiError, EngineError, apiErrorFromStatus } from "./errors";
 import { log } from "./logger";
-import path from "path";
-import os from "os";
-import fs from "fs";
 
 // ── Types ──
 

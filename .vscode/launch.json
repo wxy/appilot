@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Main Process",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron-vite",
+      "runtimeArgs": ["dev", "--sourcemap", "--inspect", "9229"],
+      "console": "integratedTerminal",
+      "autoAttachChildProcesses": true,
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
+    }
+  ]
+}

@@ -33,13 +33,12 @@ export function setupLogger(): Logger {
       ? path.join(app.getPath("home"), "Library", "Logs", "appilot")
       : path.join(app.getPath("userData"), "logs");
 
-  log.transports.file.resolvePathFn = () => path.join(logsDir, "main.log");
-  log.transports.file.maxSize = 0; // daily rotation via electron-log schedule
-  log.transports.file.resolvePathFn = () => {
-    // Auto-cleanup: remove logs older than 14 days
-    cleanupOldLogs(logsDir, 14);
-    return path.join(logsDir, "main.log");
-  };
+  // One-time cleanup at startup: remove logs older than 14 days.
+  cleanupOldLogs(logsDir, 14);
+
+  // Daily rotation via a date-stamped filename (a new file each day).
+  const dateStr = new Date().toISOString().slice(0, 10);
+  log.transports.file.resolvePathFn = () => path.join(logsDir, `main-${dateStr}.log`);
 
   // Console in dev mode, file always
   log.transports.console.level = process.env.NODE_ENV === "production" ? "info" : "debug";
