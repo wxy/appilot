@@ -191,3 +191,46 @@ AI:    openai (npm SDK, 兼容 OpenAI/DeepSeek/Groq/Ollama)
 - `pubspec.yaml` → `package.json`，drift → drizzle-orm，Riverpod → Zustand，GoRouter → React Router (Hash)
 - 项目结构从 Flutter monorepo → npm workspace（packages/desktop、packages/engine）
 - 技术风险表更新：OAuth loopback server 风险消除，新增 better-sqlite3 原生 addon 编译风险
+
+---
+
+## 21. 设计转向：Apple 应用增长 / ASO 运营代理（2026-08-14）
+
+> 本轮为一次全盘产品讨论，将 Appilot 从「GitHub + Twitter 多平台推广工具」重新定位为「Apple 应用增长运营代理」。核心洞察：**应用下载/安装主要来自商店内的关键词搜索排名，而非外部社交传播**；且产品应是 **AI-first**（但只在 AI 有价值的环节用 AI），本质是一个周期性运行的 AI 运营代理（agent loop），而非仪表盘 + 生成器。
+
+### 21.1 决策清单
+
+| # | 决策 | 内容 |
+|---|------|------|
+| D1 | 重新定位 | Apple 应用增长 / ASO 运营代理，AI-first |
+| D2 | 范围 | 仅 iOS + macOS；不做 Chrome、Google Play、Android（以后做那类产品再扩展） |
+| D3 | 产品中心 | 以「产品」为第一实体，本地仓库为输入；产品类型（iOS/macOS）决定渠道/指标/策略 |
+| D4 | 多产品 | 顶层项目选择器；MVP 单项目只是测试形态 |
+| D5 | 无手动回填 | 不能自动化的追踪能力就「缺失」，不做手动表单；不接付费 Twitter 读取 API |
+| D6 | 从最便宜数据起步 | Search API（排名，免费）→ RSS feed（评论，免费）→ App Store Connect API（下载/评分，需开发者账号） |
+| D7 | 关键词来源 | AI 分析仓库自动建议描述性关键词（非造词品牌名），用户筛选 |
+| D8 | ASO 排名 | 跟踪「关键词 × 国家/语言 storefront」的排名时间序列；AI 还建议往标题/描述加什么词 |
+| D9 | 仓库观察 | 以 GitHub Release 为主信号（本地 git tag 兜底），release 触发 AI 重审 |
+| D10 | bundleId | 靠发现不靠约定（两应用格式不统一：`wang.xingyu.glowalk` vs `com.wxy.aipulse`） |
+| D11 | App Store 链接发现 | README 正则优先 + AI 兜底；`mt=12` macOS / `mt=8` iOS 区分平台，多链接让用户确认 |
+| D12 | AI 运营代理 | agent loop：采集 → AI 推理 → 周报/行动清单 → 人批准 → 记录结果 → 反馈闭环 |
+| D13 | 删除未接线 SQLite | Phase 0 的 drizzle 层从未被主进程调用，作为死代码移除（PR #21），持久化暂用 electron-store |
+| D14 | 全局 AI + 模型路由 | 全局 AI 配置；便宜模型做抽取/分类，强模型做诊断/规划 |
+
+### 21.2 两个真实应用（验证对象）
+
+| 应用 | 平台 | bundleId | trackId | 备注 |
+|------|------|----------|---------|------|
+| GloWalk: Path of Light | iOS | `wang.xingyu.glowalk` | `6794170791` | 免费、Utilities，v1.1.0（首发 2026-08-02） |
+| AI Pulse: Coding Cost Tracker | macOS（通用） | `com.wxy.aipulse` | `6786290416` | Developer Tools/Finance，单 trackId 覆盖 Mac+iOS+watchOS |
+
+### 21.3 关键数据源验证结果（已实测）
+
+- **iTunes Search API**（`itunes.apple.com/search`）：免费、无认证，按 `term` + `country` + `entity=software/macSoftware` 返回应用列表，可据此定位排名。
+- **iTunes Lookup API**（`itunes.apple.com/lookup?id={trackId}`）：免费、无认证，反解 bundleId + 全套元数据。
+- **App Store 评论 RSS**（`itunes.apple.com/{country}/rss/customerreviews/id={trackId}/json`）：免费，可用作评论洞察数据源。
+- **搜索量（search volume）**：Apple 不公开，拿不到；暂用「排名难度 + 竞品强度 + 相关性」近似。
+
+### 21.4 一个立刻可见的 ASO 发现
+
+实测 GloWalk：「GloWalk」（无空格）在 US 商店排第 2，但「Glow Walk」（带空格）完全搜不到——验证了「造词品牌名搜索价值低，关键是描述性品类词」的判断，也是该工具要持续跟踪并暴露的关键词缺口类型。
