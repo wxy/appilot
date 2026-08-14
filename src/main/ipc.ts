@@ -1,4 +1,4 @@
-import { ipcMain, shell, safeStorage } from "electron";
+import { ipcMain, shell, safeStorage, dialog } from "electron";
 import { log } from "../engine/logger";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
@@ -47,6 +47,45 @@ export function registerIpcHandlers() {
   // ── Shell ──
   ipcMain.handle("shell:openExternal", (_event, url: string) => {
     return shell.openExternal(url);
+  });
+
+  // ── Project selector + local repo folder picker (Phase A) ──
+  ipcMain.handle("dialog:selectFolder", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "选择应用源码目录",
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle("projects:list", async () => {
+    const s = await getStore();
+    return s.get("projects") || [];
+  });
+
+  ipcMain.handle("projects:add", async (_event, localPath: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      name: localPath.split("/").pop() || localPath,
+      localPath,
+      productType: null,
+      bundleId: null,
+      trackId: null,
+      createdAt: new Date().toISOString(),
+    };
+    projects.push(project);
+    s.set("projects", projects);
+    return project;
+  });
+
+  ipcMain.handle("projects:remove", async (_event, id: string) => {
+    const s = await getStore();
+    const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
+    s.set("projects", projects);
+    return true;
   });
 
   // ── AI Config ──
