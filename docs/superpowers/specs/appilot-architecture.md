@@ -1,13 +1,87 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：已确认 | 日期：2025-07-14 | 修订：2026-07-16（技术栈切换为 Electron/Node.js/TypeScript）
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-14（重新定位为 Apple 应用增长 / ASO 运营代理）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
-> 本文档定义 Appilot 的**技术架构**：分层设计、Core Engine 各组件接口与实现策略、Plugin 接口规范、AI 智能引擎设计、数据模型与数据库 Schema。标注了 **Phase 0 简化版**（最小闭环）vs **完整愿景**（Phase 5 完成后）的差异。
-> 技术栈：**Electron + React + TypeScript**（桌面），**Node.js**（Engine 纯逻辑包），better-sqlite3 + drizzle-orm（数据），Zustand（状态管理）。
+> 本文档定义 Appilot 的**技术架构**。§3 是当前方向（Apple 运营代理：agent loop + 采集器 + AI Reasoning）；§4 起为历史架构（GitHub + Twitter 时代），已废弃，保留作参考。
+> 技术栈：**Electron + React + TypeScript**（桌面），**Node.js**（Engine 纯逻辑包），Zustand（状态管理）。数据持久化当前用 electron-store，后续按需引入 SQLite。
 
 
-## 3. 架构设计
+## 3. 架构设计（当前方向：Apple 应用增长运营代理）
+
+### 3.0 总览：一个周期性运行的 AI 运营代理
+
+Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**：确定性采集器负责收集数据，AI Reasoning 层负责理解、判断、规划与起草，人只做批准。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Presentation (React)                     │
+│  ┌────────────┐  ┌──────────────────────────────┐           │
+│  │ 项目选择器  │  │  项目视图（关键词/排名/周报/建议）│           │
+│  └────────────┘  └──────────────────────────────┘           │
+├─────────────────────────────────────────────────────────────┤
+│                   Agent Orchestrator                         │
+│  周期调度（cron/timer）→ 编排一次 agent run：                 │
+│  采集 → AI 推理 → 生成周报/建议 → 待批准队列 → 记录结果       │
+├─────────────────────────────────────────────────────────────┤
+│              确定性 Collectors（不用 AI）                     │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐    │
+│  │ RankCollector│ │ReviewCollector│ │ReleaseWatcher   │    │
+│  │ (Search API) │ │ (RSS feed)   │ │ (GitHub Release) │    │
+│  └──────────────┘ └──────────────┘ └──────────────────┘    │
+│  ┌──────────────────────────────────────────────┐           │
+│  │ RepoAnalyzer（本地仓库 + 产品类型识别 +        │           │
+│  │              App Store 链接发现 → bundleId）  │           │
+│  └──────────────────────────────────────────────┘           │
+├─────────────────────────────────────────────────────────────┤
+│                 AI Reasoning 层（模型路由）                   │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────┐ │
+│  │关键词建议    │ │归因诊断     │ │竞品分析     │ │周报生成   │ │
+│  │(便宜模型)   │ │(强模型)     │ │(强模型)     │ │(强模型)   │ │
+│  └────────────┘ └────────────┘ └────────────┘ └──────────┘ │
+│  ┌──────────────────────────────────────────────┐           │
+│  │ 元数据/内容起草（release note、商店描述改稿）  │           │
+│  └──────────────────────────────────────────────┘           │
+├─────────────────────────────────────────────────────────────┤
+│                     Data Layer                               │
+│  projects / channels / keywords / keyword_rankings /         │
+│  reviews / releases / agent_runs / ai_actions               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 3.0.1 核心组件职责
+
+| 组件 | 职责 | 用 AI？ |
+|------|------|---------|
+| **ProjectRegistry** | 多项目管理：增删改查、每个项目的本地路径 / GitHub 仓库 / 产品类型 | ❌ |
+| **RepoAnalyzer** | 读本地仓库 → 识别产品类型（.xcodeproj/.xcworkspace）→ 从 README 发现 App Store 链接 → 解析 trackId → Lookup API 反解 bundleId | 链接发现用正则优先、AI 兜底 |
+| **KeywordEngine** | AI 建议描述性关键词（分语言/storefront）+ 用户筛选 → 跟踪关键词集 | ✅ |
+| **RankCollector** | iTunes Search API 按「关键词 × storefront」轮询排名，写时间序列 | ❌ |
+| **ReviewCollector** | App Store RSS feed 拉评论 | ❌ |
+| **ReleaseWatcher** | 检测 GitHub Release（本地 git tag 兜底），触发重审 | ❌ |
+| **AgentOrchestrator** | 周期性编排 agent run：采集 → 推理 → 周报 → 待批准 → 记录结果 → 反馈闭环 | 调度 ❌，推理 ✅ |
+| **AIService** | 全局 AI 配置 + 模型路由（便宜模型 vs 强模型） | ✅ |
+
+### 3.0.2 数据模型（当前方向）
+
+| 实体 | 关键字段 | 说明 |
+|------|----------|------|
+| `projects` | name, productType(ios/macos), bundleId, trackId, localPath, githubRepo | 产品是第一实体 |
+| `channels` | projectId, kind(app_store), trackId, creds, lastSyncAt | 分发渠道（Phase 0 仅 App Store） |
+| `keywords` | projectId, keyword, storefront, language, status | 关键词带 storefront 维度 |
+| `keyword_rankings` | keywordId, storefront, rank, date | 排名时间序列 |
+| `reviews` | projectId, storefront, author, rating, title, body, date | 评论快照 |
+| `releases` | projectId, tag, publishedAt, summary | 检测到的 release |
+| `agent_runs` | projectId, startedAt, inputSummary, outputBrief, status | 每次 agent run 记录 |
+| `ai_actions` | 沿用（AI 调用审计 + token/cost） | 模型路由下的用量统计 |
+
+> 说明：Phase 0 已实现的 SQLite 层（drizzle）因从未被主进程接线而作为死代码移除（见评审记录 §21）。当前持久化用 electron-store，在 agent loop 引入后按上表重建持久层。
+
+---
+
+## 历史架构（GitHub + Twitter 时代，已废弃）
+
+> ⚠️ 以下 §3.0（Phase 0 简化架构）、§3.1（Hub-and-Spoke）、§4–§7 均来自 2026-07 的旧设计，围绕「GitHub 仓库 + Twitter/Reddit/Discord/YouTube 插件」展开，已被上方 §3 取代。保留仅作历史参考。
 
 ### 3.0 Phase 0 简化架构（最小闭环）
 
@@ -1106,4 +1180,3 @@ ai_actions                            │
 - **新增 reminders 表** — `id / post_id (FK) / remind_at / message / dismissed`，供手动模式下"到期提醒去看看反馈"任务使用，详见 [第 17 节](#17-手动发布与分级追踪能力模型-2026-07-14)
 
 ---
-
