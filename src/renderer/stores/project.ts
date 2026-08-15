@@ -4,6 +4,7 @@ export interface KeywordEntry {
   language: string;
   keyword: string;
   rationale: string;
+  translation: string;
 }
 
 export interface SubmissionKeywordsEntry {
@@ -14,6 +15,9 @@ export interface SubmissionKeywordsEntry {
 export interface RemovedKeywordEntry {
   language: string;
   keyword: string;
+  rationale: string;
+  translation: string;
+  removedAt: string;
 }
 
 export interface RankSnapshot {
@@ -54,6 +58,8 @@ interface ProjectState {
   updateTrackedKeywords: (id: string, keywords: KeywordEntry[]) => void;
   updateSubmissionKeywords: (id: string, submission: SubmissionKeywordsEntry[]) => void;
   removeTrackedKeyword: (id: string, language: string, keyword: string) => Promise<void>;
+  restoreTrackedKeyword: (id: string, language: string, keyword: string) => Promise<void>;
+  clearRemovedKeywords: (id: string, languages: string[]) => Promise<void>;
   collectRanks: (id: string, language: string, storefront: string) => Promise<RankSnapshot[]>;
 }
 
@@ -67,9 +73,16 @@ function normalizeProject(p: any): Project {
       language: k.language || "unknown",
       keyword: k.keyword,
       rationale: k.rationale || "",
+      translation: k.translation || "",
     })),
     submissionKeywords: p.submissionKeywords || [],
-    removedKeywords: p.removedKeywords || [],
+    removedKeywords: (p.removedKeywords || []).map((item: any) => ({
+      language: item.language || "unknown",
+      keyword: item.keyword,
+      rationale: item.rationale || "",
+      translation: item.translation || "",
+      removedAt: item.removedAt || new Date().toISOString(),
+    })),
     rankSnapshots: p.rankSnapshots || [],
   };
 }
@@ -151,6 +164,24 @@ export const useProject = create<ProjectState>((set, get) => ({
   removeTrackedKeyword: async (id, language, keyword) => {
     const project = normalizeProject(
       await (window as any).appilot.projects.removeTrackedKeyword(id, language, keyword),
+    );
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? project : p)),
+    }));
+  },
+
+  restoreTrackedKeyword: async (id, language, keyword) => {
+    const project = normalizeProject(
+      await (window as any).appilot.projects.restoreTrackedKeyword(id, language, keyword),
+    );
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? project : p)),
+    }));
+  },
+
+  clearRemovedKeywords: async (id, languages) => {
+    const project = normalizeProject(
+      await (window as any).appilot.projects.clearRemovedKeywords(id, languages),
     );
     set((s) => ({
       projects: s.projects.map((p) => (p.id === id ? project : p)),

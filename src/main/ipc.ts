@@ -72,6 +72,187 @@ function sanitizeRankSnapshots(project: any): any {
   return cleaned.length === snapshots.length ? project : { ...project, rankSnapshots: cleaned };
 }
 
+interface ScheduledTask {
+  id: string;
+  kind: "rank";
+  projectId: string;
+  keyword: string;
+  queryLanguage: string;
+  storefront: string;
+  intervalMinutes: number;
+  nextRunAt: string;
+  lastRunAt?: string | null;
+  lastStatus?: "success" | "failed";
+  enabled: boolean;
+}
+
+let schedulerTimer: NodeJS.Timeout | null = null;
+let schedulerRunning = false;
+const rankEntityCache = new Map<string, "software" | "macSoftware">();
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function rankTaskId(projectId: string, keyword: string, queryLanguage: string, storefront: string): string {
+  return `${projectId}:${queryLanguage}:${storefront}:${keyword}`;
+}
+
+function taskSeed(task: { projectId: string; keyword: string; queryLanguage: string; storefront: string }): string {
+  return [task.projectId, task.queryLanguage, task.storefront, task.keyword].join(":");
+}
+
+function nextRunAt(seed: string, intervalMinutes: number, now = new Date()): string {
+  const slot = hashString(seed) % intervalMinutes;
+  const candidate = new Date(now);
+  candidate.setSeconds(0, 0);
+  candidate.setMinutes(candidate.getMinutes() + slot + 1);
+  return candidate.toISOString();
+}
+
+async function resolveRankEntity(project: any): Promise<"software" | "macSoftware"> {
+  const cached = rankEntityCache.get(project.trackId);
+  if (cached) return cached;
+  const { lookupApp } = await import("../engine/app-store-discovery");
+  const metadata = await lookupApp(project.trackId);
+  const entity: "software" | "macSoftware" = metadata?.kind === "mac-software" ? "macSoftware" : "software";
+  rankEntityCache.set(project.trackId, entity);
+  return entity;
+}
+
+async function reconcileRankTasks(store: any): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const activeKeys = new Set<string>();
+  const desiredTasks = new Map<string, ScheduledTask>();
+
+  for (const project of projects) {
+    if (!project.trackId) continue;
+    const tracked: any[] = project.trackedKeywords || [];
+    const supportedLanguages: { code: string }[] = project.supportedLanguages || [];
+
+    for (const localization of supportedLanguages) {
+      const localizationCode = localization.code;
+      const storefronts = storefrontsForLanguage(localizationCode);
+      const queryLanguages = localizationCode === "en" ? ["en"] : [localizationCode, "en"];
+
+      for (const keyword of tracked) {
+        if (!queryLanguages.includes(keyword.language)) continue;
+        for (const storefront of storefronts) {
+          const id = rankTaskId(project.id, keyword.keyword, keyword.language, storefront);
+          activeKeys.add(id);
+          const previous = existing.find((task) => task.id === id);
+          desiredTasks.set(id, {
+            id,
+            kind: "rank",
+            projectId: project.id,
+            keyword: keyword.keyword,
+            queryLanguage: keyword.language,
+            storefront,
+            intervalMinutes: previous?.intervalMinutes || 24 * 60,
+            nextRunAt: previous?.nextRunAt || nextRunAt(taskSeed({ projectId: project.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), 24 * 60),
+            lastRunAt: previous?.lastRunAt ?? null,
+            lastStatus: previous?.lastStatus,
+            enabled: previous?.enabled ?? true,
+          });
+        }
+      }
+    }
+  }
+
+  const next = existing
+    .filter((task) => activeKeys.has(task.id))
+    .map((task) => desiredTasks.get(task.id) || task);
+  for (const task of desiredTasks.values()) {
+    if (!next.some((existingTask) => existingTask.id === task.id)) {
+      next.push(task);
+    }
+  }
+
+  store.set("scheduledTasks", next);
+}
+
+async function runRankTask(store: any, task: ScheduledTask): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  const project = projects.find((item: any) => item.id === task.projectId);
+  if (!project?.trackId) return;
+
+  const isActive = (project.trackedKeywords || []).some(
+    (keyword: any) => keyword.keyword === task.keyword && keyword.language === task.queryLanguage,
+  );
+  if (!isActive) {
+    task.enabled = false;
+    task.lastStatus = "failed";
+    return;
+  }
+
+  const { searchAppStoreRank } = await import("../engine/rank-collector");
+  const entity = await resolveRankEntity(project);
+  try {
+    const result = await searchAppStoreRank({
+      term: task.keyword,
+      country: task.storefront,
+      trackId: project.trackId,
+      entity,
+    });
+    const snapshot = {
+      keyword: task.keyword,
+      language: task.queryLanguage,
+      storefront: task.storefront,
+      rank: result.rank,
+      totalResults: result.totalResults,
+      checkedAt: new Date().toISOString(),
+    };
+    const previous = Array.isArray(project.rankSnapshots) ? project.rankSnapshots : [];
+    project.rankSnapshots = [...previous, snapshot].slice(-5000);
+    task.lastStatus = "success";
+  } catch (err: any) {
+    log.warn(`Scheduled rank task failed for "${task.keyword}" in ${task.storefront}: ${err.message}`);
+    task.lastStatus = "failed";
+  }
+
+  task.lastRunAt = new Date().toISOString();
+  task.nextRunAt = nextRunAt(taskSeed(task), task.intervalMinutes);
+  store.set("projects", projects);
+}
+
+async function schedulerTick(): Promise<void> {
+  if (schedulerRunning) return;
+  schedulerRunning = true;
+  try {
+    const store = await getStore();
+    await reconcileRankTasks(store);
+
+    const now = Date.now();
+    const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    const due = tasks
+      .filter((task) => task.enabled && task.kind === "rank" && new Date(task.nextRunAt).getTime() <= now)
+      .slice(0, 4);
+
+    for (const task of due) {
+      await runRankTask(store, task);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    store.set("scheduledTasks", tasks);
+  } catch (err: any) {
+    log.error(`Task scheduler tick failed: ${err.message}`);
+  } finally {
+    schedulerRunning = false;
+  }
+}
+
+export function startTaskScheduler(): void {
+  if (schedulerTimer) return;
+  schedulerTimer = setInterval(() => {
+    void schedulerTick();
+  }, 60_000);
+  void schedulerTick();
+}
+
 export function registerIpcHandlers() {
   // ── Shell ──
   ipcMain.handle("shell:openExternal", (_event, url: string) => {
@@ -118,9 +299,9 @@ export function registerIpcHandlers() {
       artworkUrl: string | null;
       supportedLanguages: { code: string; name: string }[];
       storeLinks: { country: string; name: string; platform: "ios" | "macos" | "unknown"; url: string }[];
-      trackedKeywords: { language: string; keyword: string; rationale: string }[];
+      trackedKeywords: { language: string; keyword: string; rationale: string; translation: string }[];
       submissionKeywords: { language: string; text: string }[];
-      removedKeywords: { language: string; keyword: string }[];
+      removedKeywords: { language: string; keyword: string; rationale: string; translation: string; removedAt: string }[];
       createdAt: string;
     } = existingIndex >= 0
       ? { ...projects[existingIndex] }
@@ -238,14 +419,64 @@ export function registerIpcHandlers() {
     const project = projects.find((p: any) => p.id === projectId);
     if (!project) throw new Error("Project not found");
 
+    const removedKeyword = (project.trackedKeywords || []).find(
+      (item: any) => item.language === language && item.keyword === keyword,
+    );
     project.trackedKeywords = (project.trackedKeywords || []).filter(
       (item: any) => !(item.language === language && item.keyword === keyword),
     );
     const removed = Array.isArray(project.removedKeywords) ? project.removedKeywords : [];
     if (!removed.some((item: any) => item.language === language && item.keyword === keyword)) {
-      removed.push({ language, keyword });
+      removed.push({
+        language,
+        keyword,
+        rationale: removedKeyword?.rationale || "",
+        translation: removedKeyword?.translation || "",
+        removedAt: new Date().toISOString(),
+      });
     }
     project.removedKeywords = removed;
+    s.set("projects", projects);
+    return project;
+  });
+
+  ipcMain.handle("projects:restoreTrackedKeyword", async (_event, projectId: string, language: string, keyword: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+
+    const removedItem = (project.removedKeywords || []).find(
+      (item: any) => item.language === language && item.keyword === keyword,
+    );
+    if (!removedItem) throw new Error("Keyword is not in removed list");
+
+    const tracked = project.trackedKeywords || [];
+    if (!tracked.some((item: any) => item.language === language && item.keyword === keyword)) {
+      tracked.push({
+        language,
+        keyword,
+        rationale: removedItem.rationale || "",
+        translation: removedItem.translation || "",
+      });
+    }
+    project.trackedKeywords = tracked;
+    project.removedKeywords = (project.removedKeywords || []).filter(
+      (item: any) => !(item.language === language && item.keyword === keyword),
+    );
+    s.set("projects", projects);
+    return project;
+  });
+
+  ipcMain.handle("projects:clearRemovedKeywords", async (_event, projectId: string, languages: string[]) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const languageSet = new Set(Array.isArray(languages) ? languages : []);
+    project.removedKeywords = (project.removedKeywords || []).filter(
+      (item: any) => !languageSet.has(item.language),
+    );
     s.set("projects", projects);
     return project;
   });
@@ -313,6 +544,18 @@ export function registerIpcHandlers() {
     project.rankSnapshots = [...previous, ...result.snapshots].slice(-5000);
     s.set("projects", projects);
     return project;
+  });
+
+  ipcMain.handle("scheduler:status", async () => {
+    const s = await getStore();
+    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
+    const now = Date.now();
+    return {
+      enabled: Boolean(schedulerTimer),
+      total: tasks.length,
+      due: tasks.filter((task) => task.enabled && new Date(task.nextRunAt).getTime() <= now).length,
+      failed: tasks.filter((task) => task.lastStatus === "failed").length,
+    };
   });
 
   // ── AI Config ──

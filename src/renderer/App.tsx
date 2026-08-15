@@ -502,6 +502,7 @@ interface KeywordSuggestion {
   language: string;
   keyword: string;
   rationale: string;
+  translation: string;
 }
 
 interface KeywordGeneration {
@@ -510,7 +511,7 @@ interface KeywordGeneration {
 }
 
 function KeywordsPage() {
-  const { projects, currentProjectId, updateTrackedKeywords, updateSubmissionKeywords, removeTrackedKeyword, collectRanks } = useProject();
+  const { projects, currentProjectId, updateTrackedKeywords, updateSubmissionKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords, collectRanks } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const [activeLang, setActiveLang] = useState<string>("");
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
@@ -521,6 +522,7 @@ function KeywordsPage() {
   const [selectedStorefront, setSelectedStorefront] = useState<string>("us");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
   const [rankProgress, setRankProgress] = useState<{ current: number; total: number; keyword: string; storefront: string } | null>(null);
+  const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number } | null>(null);
 
   const initialLanguage = (project?.supportedLanguages || []).some((l) => l.code === activeLang)
     ? activeLang
@@ -540,6 +542,12 @@ function KeywordsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    (window as any).appilot?.scheduler?.status()
+      .then((status: any) => setSchedulerStatus(status))
+      .catch(() => setSchedulerStatus(null));
+  }, [rankLoading]);
+
   if (!project) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
   }
@@ -548,6 +556,7 @@ function KeywordsPage() {
   const currentLang = languages.some((l) => l.code === activeLang) ? activeLang : (languages[0]?.code || "");
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
+  const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
   const savedSubmission = (project.submissionKeywords || []).find((s) => s.language === currentLang);
   const submissionText = submissionDrafts[currentLang] ?? savedSubmission?.text ?? "";
   const charCount = submissionText.length;
@@ -600,7 +609,12 @@ function KeywordsPage() {
           const lang = s.language || r.lang;
           return !existingKeys.has(`${lang}\u0000${s.keyword}`) && !removedKeys.has(`${lang}\u0000${s.keyword}`);
         })
-        .map((s) => ({ language: s.language || r.lang, keyword: s.keyword, rationale: s.rationale }));
+        .map((s) => ({
+          language: s.language || r.lang,
+          keyword: s.keyword,
+          rationale: s.rationale,
+          translation: s.translation || "",
+        }));
       trackedNext = [...trackedNext, ...additions];
 
       const submissionText = r.gen.submission.join(",").trim();
@@ -643,6 +657,14 @@ function KeywordsPage() {
 
   const removeTracked = async (kw: string, language: string) => {
     await removeTrackedKeyword(project.id, language, kw);
+  };
+
+  const restoreTracked = async (language: string, kw: string) => {
+    await restoreTrackedKeyword(project.id, language, kw);
+  };
+
+  const clearRemoved = async () => {
+    await clearRemovedKeywords(project.id, queryLanguages);
   };
 
   const saveSubmission = async () => {
@@ -784,6 +806,12 @@ function KeywordsPage() {
                   <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
                     同一张表完成生成、查看排名与趋势，不再重复列出关键词。
                   </p>
+                  {schedulerStatus && (
+                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
+                      自动任务 {schedulerStatus.enabled ? "已启用" : "未启用"} · 待执行 {schedulerStatus.due}
+                      {schedulerStatus.failed > 0 ? ` · 失败 ${schedulerStatus.failed}` : ""}
+                    </p>
+                  )}
                 </div>
                 <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
                   <select
@@ -857,6 +885,11 @@ function KeywordsPage() {
                           <div className="flex-1 min-w-0">
                             <div className="font-mono text-sm text-zinc-800 dark:text-zinc-200 truncate">
                               {keyword.keyword}
+                              {keyword.translation && keyword.translation !== keyword.keyword && (
+                                <span className="ml-1 font-sans text-zinc-500 dark:text-zinc-400">
+                                  ({keyword.translation})
+                                </span>
+                              )}
                             </div>
                             {keyword.rationale && (
                               <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
@@ -919,6 +952,39 @@ function KeywordsPage() {
                         </button>
                       );
                     })}
+                  </div>
+                )}
+
+                {removedForCurrent.length > 0 && (
+                  <div className="mt-6 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 p-4">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        已删除关键词（{removedForCurrent.length}）
+                      </h4>
+                      <button
+                        onClick={clearRemoved}
+                        className="text-xs text-zinc-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400"
+                      >
+                        清空
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {removedForCurrent.map((item) => (
+                        <span
+                          key={`${item.language}:${item.keyword}`}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
+                        >
+                          {item.keyword}
+                          <button
+                            onClick={() => restoreTracked(item.language, item.keyword)}
+                            className="text-amber-600 dark:text-amber-400 hover:underline"
+                            title="恢复"
+                          >
+                            恢复
+                          </button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
 
