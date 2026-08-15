@@ -1,6 +1,7 @@
 import { ipcMain, shell, safeStorage, dialog } from "electron";
 import path from "path";
 import { log } from "../engine/logger";
+import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../engine/storefronts";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
 let store: any = null;
@@ -63,6 +64,14 @@ function dedupeProjects(projects: any[]): any[] {
   return [...byPath.values()];
 }
 
+function sanitizeRankSnapshots(project: any): any {
+  const snapshots = Array.isArray(project?.rankSnapshots) ? project.rankSnapshots : [];
+  const cleaned = snapshots.filter((snapshot: any) => {
+    return isStorefrontAllowedForQueryLanguage(snapshot?.language || "", snapshot?.storefront || "");
+  });
+  return cleaned.length === snapshots.length ? project : { ...project, rankSnapshots: cleaned };
+}
+
 export function registerIpcHandlers() {
   // ── Shell ──
   ipcMain.handle("shell:openExternal", (_event, url: string) => {
@@ -83,10 +92,11 @@ export function registerIpcHandlers() {
     const s = await getStore();
     const raw: any[] = s.get("projects") || [];
     const projects = dedupeProjects(raw);
-    if (projects.length !== raw.length) {
-      s.set("projects", projects);
+    const cleaned = projects.map(sanitizeRankSnapshots);
+    if (projects.length !== raw.length || cleaned.some((project, index) => project !== projects[index])) {
+      s.set("projects", cleaned);
     }
-    return projects;
+    return cleaned;
   });
 
   ipcMain.handle("projects:add", async (_event, localPath: string) => {
@@ -110,6 +120,7 @@ export function registerIpcHandlers() {
       storeLinks: { country: string; name: string; platform: "ios" | "macos" | "unknown"; url: string }[];
       trackedKeywords: { language: string; keyword: string; rationale: string }[];
       submissionKeywords: { language: string; text: string }[];
+      removedKeywords: { language: string; keyword: string }[];
       createdAt: string;
     } = existingIndex >= 0
       ? { ...projects[existingIndex] }
@@ -126,6 +137,7 @@ export function registerIpcHandlers() {
           storeLinks: [],
           trackedKeywords: [],
           submissionKeywords: [],
+          removedKeywords: [],
           createdAt: new Date().toISOString(),
         };
 
@@ -216,6 +228,89 @@ export function registerIpcHandlers() {
     const project = projects.find((p: any) => p.id === projectId);
     if (!project) throw new Error("Project not found");
     project.submissionKeywords = submissionKeywords;
+    s.set("projects", projects);
+    return project;
+  });
+
+  ipcMain.handle("projects:removeTrackedKeyword", async (_event, projectId: string, language: string, keyword: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+
+    project.trackedKeywords = (project.trackedKeywords || []).filter(
+      (item: any) => !(item.language === language && item.keyword === keyword),
+    );
+    const removed = Array.isArray(project.removedKeywords) ? project.removedKeywords : [];
+    if (!removed.some((item: any) => item.language === language && item.keyword === keyword)) {
+      removed.push({ language, keyword });
+    }
+    project.removedKeywords = removed;
+    s.set("projects", projects);
+    return project;
+  });
+
+  ipcMain.handle("projects:collectRanks", async (event, projectId: string, language?: string, storefront?: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+    if (!project.trackId) throw new Error("缺少 App Store Track ID，请先确认 README 中的商店链接。");
+
+    let keywords: any[] = project.trackedKeywords || [];
+    if (typeof language === "string" && language) {
+      const queryLanguages = language === "en" ? ["en"] : [language, "en"];
+      keywords = keywords.filter((keyword: any) => queryLanguages.includes(keyword.language));
+    }
+    if (keywords.length === 0) throw new Error("还没有跟踪关键词，请先生成或添加关键词。");
+
+    const allowedStorefronts = typeof language === "string" && language
+      ? storefrontsForLanguage(language)
+      : [];
+    const requestedStorefront = typeof storefront === "string" && storefront
+      ? storefront.toLowerCase()
+      : null;
+
+    if (requestedStorefront && allowedStorefronts.length > 0 && !allowedStorefronts.includes(requestedStorefront)) {
+      throw new Error(`商店 ${requestedStorefront.toUpperCase()} 不属于语言 ${language}，请重新选择。`);
+    }
+
+    const storefronts: string[] = requestedStorefront
+      ? [requestedStorefront]
+      : (allowedStorefronts.length > 0 ? allowedStorefronts : ["us"]);
+    if (storefronts.length === 0) storefronts.push("us");
+
+    const { lookupApp } = await import("../engine/app-store-discovery");
+    const metadata = await lookupApp(project.trackId);
+    const entity: "software" | "macSoftware" = metadata?.kind === "mac-software" ? "macSoftware" : "software";
+    if (metadata?.kind) {
+      project.kind = metadata.kind;
+    }
+
+    const targets = keywords.flatMap((keyword: any) =>
+      storefronts.map((storefront: string) => ({
+        keyword: keyword.keyword,
+        language: keyword.language || "unknown",
+        storefront,
+      })),
+    );
+
+    const { collectKeywordRankings } = await import("../engine/rank-collector");
+    const result = await collectKeywordRankings({
+      targets,
+      trackId: project.trackId,
+      productType: project.productType,
+      entity,
+      delayMs: 1000,
+      onProgress: (progress) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send("projects:collectRanksProgress", progress);
+        }
+      },
+    });
+
+    const previous = Array.isArray(project.rankSnapshots) ? project.rankSnapshots : [];
+    project.rankSnapshots = [...previous, ...result.snapshots].slice(-5000);
     s.set("projects", projects);
     return project;
   });

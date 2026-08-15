@@ -17,6 +17,7 @@ const g1 = parseKeywordGeneration(
 assert(g1.tracking.length === 2, "parse: 2 tracking keywords");
 assert(g1.tracking[0].keyword === "flashlight", "parse: tracking keyword");
 assert(g1.tracking[0].rationale === "core use case", "parse: tracking rationale");
+assert(g1.tracking[0].language === "en", "parse: defaults language to en");
 assert(g1.submission.join(",") === "flashlight,nightwalk,pedometer", "parse: submission list");
 
 // 2. markdown-fenced JSON is unwrapped
@@ -40,6 +41,14 @@ const tracking = Array.from({ length: 40 }, (_, i) => `{"keyword":"kw${i}","rati
 const submission = Array.from({ length: 40 }, (_, i) => `"s${i}"`).join(",");
 const g5 = parseKeywordGeneration(`{"tracking":[${tracking}],"submission":[${submission}]}`);
 assert(g5.tracking.length === 30 && g5.submission.length === 30, "parse: caps at 30");
+
+// 6. mixed local + English tracking keywords
+const g6 = parseKeywordGeneration(
+  '{"tracking":[{"language":"zh-Hans","keyword":"AI 成本追踪","rationale":"本地词"},{"language":"en","keyword":"AI cost tracker","rationale":"English phrase"}],"submission":["成本追踪","AI","cost"]}',
+  "zh-Hans",
+);
+assert(g6.tracking[0].language === "zh-Hans", "parse: keeps local language");
+assert(g6.tracking[1].language === "en", "parse: keeps English language");
 
 console.log(`\n${errors === 0 ? "🎉 All keyword-suggester tests passed!" : `❌ ${errors} test(s) failed`}`);
 process.exit(errors > 0 ? 1 : 0);

@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld("appilot", {
     generateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language),
     saveTrackedKeywords: (projectId: string, trackedKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveTrackedKeywords", projectId, trackedKeywords),
     saveSubmissionKeywords: (projectId: string, submissionKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveSubmissionKeywords", projectId, submissionKeywords),
+    removeTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
+      ipcRenderer.invoke("projects:removeTrackedKeyword", projectId, language, keyword),
+    collectRanks: (projectId: string, language: string, storefront: string): Promise<any> =>
+      ipcRenderer.invoke("projects:collectRanks", projectId, language, storefront),
+    onRankProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+      ipcRenderer.on("projects:collectRanksProgress", listener);
+      return () => ipcRenderer.removeListener("projects:collectRanksProgress", listener);
+    },
   },
 
   ai: {

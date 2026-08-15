@@ -15,6 +15,7 @@ export interface AppMetadata {
   trackId: string;
   trackName: string;
   bundleId: string;
+  kind: string;
   version: string;
   averageUserRating: number;
   userRatingCount: number;
@@ -383,6 +384,7 @@ export async function lookupApp(trackId: string): Promise<AppMetadata | null> {
       trackId: String(r.trackId ?? trackId),
       trackName: r.trackName ?? "",
       bundleId: r.bundleId ?? "",
+      kind: r.kind ?? "",
       version: r.version ?? "",
       averageUserRating: r.averageUserRating ?? 0,
       userRatingCount: r.userRatingCount ?? 0,
