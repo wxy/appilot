@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { useTheme } from "./stores/theme";
-import { useProject } from "./stores/project";
+import { useProject, type RankSnapshot } from "./stores/project";
 import { cn } from "./lib/utils";
+import { defaultStorefrontForLanguage, storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
 
 /* ── Layout ── */
 
@@ -497,6 +499,7 @@ function ManageProjectsPage() {
 /* ── Keywords (tracking vs submission, one AI request per language) ── */
 
 interface KeywordSuggestion {
+  language: string;
   keyword: string;
   rationale: string;
 }
@@ -507,12 +510,35 @@ interface KeywordGeneration {
 }
 
 function KeywordsPage() {
-  const { projects, currentProjectId, updateTrackedKeywords, updateSubmissionKeywords } = useProject();
+  const { projects, currentProjectId, updateTrackedKeywords, updateSubmissionKeywords, removeTrackedKeyword, collectRanks } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const [activeLang, setActiveLang] = useState<string>("");
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
+  const [rankLoading, setRankLoading] = useState(false);
+  const [rankError, setRankError] = useState("");
+  const [selectedStorefront, setSelectedStorefront] = useState<string>("us");
+  const [selectedKeyword, setSelectedKeyword] = useState<string>("");
+  const [rankProgress, setRankProgress] = useState<{ current: number; total: number; keyword: string; storefront: string } | null>(null);
+
+  const initialLanguage = (project?.supportedLanguages || []).some((l) => l.code === activeLang)
+    ? activeLang
+    : ((project?.supportedLanguages || [])[0]?.code || "");
+  const languageDefaultStorefront = defaultStorefrontForLanguage(initialLanguage);
+
+  useEffect(() => {
+    setSelectedStorefront(languageDefaultStorefront);
+  }, [languageDefaultStorefront]);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onRankProgress?.((progress: any) => {
+      setRankProgress(progress);
+    });
+    return () => {
+      off?.();
+    };
+  }, []);
 
   if (!project) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
@@ -520,11 +546,32 @@ function KeywordsPage() {
 
   const languages = project.supportedLanguages || [];
   const currentLang = languages.some((l) => l.code === activeLang) ? activeLang : (languages[0]?.code || "");
-  const tracked = (project.trackedKeywords || []).filter((k) => k.language === currentLang);
+  const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
+  const tracked = (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
   const savedSubmission = (project.submissionKeywords || []).find((s) => s.language === currentLang);
   const submissionText = submissionDrafts[currentLang] ?? savedSubmission?.text ?? "";
   const charCount = submissionText.length;
   const currentLoading = loadingLangs.has(currentLang);
+  const storefronts = storefrontsForLanguage(currentLang);
+  const defaultStorefront = storefronts[0] || "us";
+  const activeStorefront = storefronts.includes(selectedStorefront)
+    ? selectedStorefront
+    : defaultStorefront;
+  const rankSnapshots = project.rankSnapshots || [];
+  const ranksForCurrent = rankSnapshots.filter(
+    (snapshot) => queryLanguages.includes(snapshot.language) && snapshot.storefront === activeStorefront,
+  );
+  const chartKeyword = tracked.some((keyword) => keyword.keyword === selectedKeyword)
+    ? selectedKeyword
+    : (tracked[0]?.keyword || "");
+  const chartSnapshots = rankSnapshots
+    .filter(
+      (snapshot) =>
+        queryLanguages.includes(snapshot.language) &&
+        snapshot.storefront === activeStorefront &&
+        snapshot.keyword === chartKeyword,
+    )
+    .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
 
   const generateOne = async (lang: string): Promise<{ lang: string; gen: KeywordGeneration | null }> => {
     try {
@@ -544,10 +591,16 @@ function KeywordsPage() {
 
     for (const r of results) {
       if (!r.gen) continue;
-      const existingKeys = new Set(trackedNext.filter((k) => k.language === r.lang).map((k) => k.keyword));
+      const existingKeys = new Set(trackedNext.map((k) => `${k.language}\u0000${k.keyword}`));
+      const removedKeys = new Set(
+        (latest?.removedKeywords || []).map((item) => `${item.language}\u0000${item.keyword}`),
+      );
       const additions = r.gen.tracking
-        .filter((s) => !existingKeys.has(s.keyword))
-        .map((s) => ({ language: r.lang, keyword: s.keyword, rationale: s.rationale }));
+        .filter((s) => {
+          const lang = s.language || r.lang;
+          return !existingKeys.has(`${lang}\u0000${s.keyword}`) && !removedKeys.has(`${lang}\u0000${s.keyword}`);
+        })
+        .map((s) => ({ language: s.language || r.lang, keyword: s.keyword, rationale: s.rationale }));
       trackedNext = [...trackedNext, ...additions];
 
       const submissionText = r.gen.submission.join(",").trim();
@@ -588,10 +641,8 @@ function KeywordsPage() {
     setLoadingLangs(new Set());
   };
 
-  const removeTracked = async (kw: string) => {
-    const next = (project.trackedKeywords || []).filter((k) => !(k.language === currentLang && k.keyword === kw));
-    const saved = await (window as any).appilot.projects.saveTrackedKeywords(project.id, next);
-    updateTrackedKeywords(project.id, saved.trackedKeywords);
+  const removeTracked = async (kw: string, language: string) => {
+    await removeTrackedKeyword(project.id, language, kw);
   };
 
   const saveSubmission = async () => {
@@ -606,6 +657,79 @@ function KeywordsPage() {
       delete copy[currentLang];
       return copy;
     });
+  };
+
+  const handleCollectRanks = async () => {
+    setRankError("");
+    setRankLoading(true);
+    setRankProgress({ current: 0, total: tracked.length, keyword: "", storefront: activeStorefront });
+    try {
+      await collectRanks(project.id, currentLang, activeStorefront);
+    } catch (e: any) {
+      setRankError(e.message || "排名采集失败。");
+    } finally {
+      setRankLoading(false);
+      setRankProgress(null);
+    }
+  };
+
+  const snapshotsByKeyword = new Map<string, RankSnapshot[]>();
+  for (const snapshot of ranksForCurrent) {
+    const list = snapshotsByKeyword.get(snapshot.keyword) || [];
+    list.push(snapshot);
+    snapshotsByKeyword.set(snapshot.keyword, list);
+  }
+
+  type RankTrend = "none" | "new" | "lost" | "up" | "down" | "same";
+
+  const rankSummary = (keyword: string): {
+    rank: number | null;
+    delta: number | null;
+    trend: RankTrend;
+    checkedAt: string | null;
+  } => {
+    const list = [...(snapshotsByKeyword.get(keyword) || [])].sort(
+      (a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime(),
+    );
+    const latest = list[list.length - 1] || null;
+    const previous = list.length > 1 ? list[list.length - 2] : null;
+    if (!latest) return { rank: null, delta: null, trend: "none", checkedAt: null };
+
+    let delta: number | null = null;
+    let trend: RankTrend = "same";
+
+    if (previous?.rank == null && latest.rank != null) {
+      trend = "new";
+    } else if (previous?.rank != null && latest.rank == null) {
+      trend = "lost";
+    } else if (previous?.rank != null && latest.rank != null) {
+      delta = previous.rank - latest.rank;
+      if (delta > 0) trend = "up";
+      else if (delta < 0) trend = "down";
+    }
+
+    return { rank: latest.rank, delta, trend, checkedAt: latest.checkedAt };
+  };
+
+  const trackedWithRank = tracked
+    .map((keyword) => ({
+      keyword,
+      summary: rankSummary(keyword.keyword),
+    }))
+    .sort((a, b) => {
+      const aRank = a.summary.rank ?? Number.MAX_SAFE_INTEGER;
+      const bRank = b.summary.rank ?? Number.MAX_SAFE_INTEGER;
+      if (aRank !== bRank) return aRank - bRank;
+      return a.keyword.keyword.localeCompare(b.keyword.keyword);
+    });
+
+  const formatCheckedAt = (checkedAt: string | null): { date: string; time: string } => {
+    if (!checkedAt) return { date: "—", time: "" };
+    const date = new Date(checkedAt);
+    return {
+      date: date.toLocaleDateString(),
+      time: date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
   };
 
   return (
@@ -650,37 +774,188 @@ function KeywordsPage() {
           </div>
 
           <div className="space-y-6">
-            {/* Tracking keywords */}
+            {/* Tracking keywords + rankings */}
             <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
+              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
                 <div>
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">跟踪关键词（{tracked.length}）</h3>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">模拟用户会搜索的词，用于跟踪排名，不限制数量。</p>
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    跟踪关键词与排名（{tracked.length}）
+                  </h3>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+                    同一张表完成生成、查看排名与趋势，不再重复列出关键词。
+                  </p>
                 </div>
-                <button onClick={() => handleGenerate(currentLang)} disabled={currentLoading} className={btnPrimary}>
-                  {currentLoading ? "生成中..." : "AI 生成"}
-                </button>
-              </div>
-              <div className="p-4">
-                {tracked.length === 0 ? (
-                  <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">暂无关键词，点击「AI 生成」。</p>
-                ) : (
-                  <div className="space-y-1">
-                    {tracked.map((k) => (
-                      <div key={k.keyword} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
-                        <div className="min-w-0">
-                          <span className="text-sm font-mono text-zinc-800 dark:text-zinc-200">{k.keyword}</span>
-                          {k.rationale && <span className="text-xs text-zinc-400 dark:text-zinc-500 ml-2">{k.rationale}</span>}
-                        </div>
-                        <button
-                          onClick={() => removeTracked(k.keyword)}
-                          className="shrink-0 text-zinc-400 hover:text-red-500 text-xs"
-                          title="移除"
-                        >
-                          ✕
-                        </button>
-                      </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+                  <select
+                    value={activeStorefront}
+                    onChange={(e) => setSelectedStorefront(e.target.value)}
+                    className={inputClass + " w-full sm:max-w-60"}
+                  >
+                    {storefronts.map((country) => (
+                      <option key={country} value={country}>
+                        {storefrontDisplayName(country)}
+                      </option>
                     ))}
+                  </select>
+                  <button onClick={() => handleGenerate(currentLang)} disabled={currentLoading} className={btnPrimary + " justify-self-start"}>
+                    {currentLoading ? "生成中..." : "AI 生成"}
+                  </button>
+                  <button onClick={handleCollectRanks} disabled={rankLoading || tracked.length === 0} className={btnPrimary + " justify-self-start"}>
+                    {rankLoading
+                      ? `采集中 ${rankProgress?.current ?? 0}/${rankProgress?.total ?? 0}`
+                      : "采集排名"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-5">
+                {rankLoading && rankProgress && (
+                  <div className="mb-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-300">
+                      <span className="truncate">
+                        {rankProgress.keyword || "—"} · {storefrontDisplayName(rankProgress.storefront)}
+                      </span>
+                      <span className="font-mono shrink-0">
+                        {rankProgress.current}/{rankProgress.total}
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-amber-500 transition-all duration-200"
+                        style={{
+                          width: `${rankProgress.total > 0 ? Math.round((rankProgress.current / rankProgress.total) * 100) : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {rankError && (
+                  <div className="mb-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
+                    {rankError}
+                  </div>
+                )}
+
+                {tracked.length === 0 ? (
+                  <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
+                    暂无关键词，点击「AI 生成」。
+                  </p>
+                ) : (
+                  <div className="rounded-xl border border-zinc-100 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {trackedWithRank.map(({ keyword, summary }) => {
+                      const checked = formatCheckedAt(summary.checkedAt);
+                      return (
+                        <button
+                          type="button"
+                          key={keyword.keyword}
+                          onClick={() => setSelectedKeyword(keyword.keyword)}
+                          className={cn(
+                            "w-full flex items-center gap-4 px-4 py-3 text-left cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+                            keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
+                          )}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="font-mono text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                              {keyword.keyword}
+                            </div>
+                            {keyword.rationale && (
+                              <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
+                                {keyword.rationale}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="w-12 text-right shrink-0">
+                            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-0.5">排名</div>
+                            <div className={cn("font-mono", summary.rank !== null && summary.rank <= 10 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-zinc-600 dark:text-zinc-300")}>
+                              {summary.rank ?? "—"}
+                            </div>
+                          </div>
+
+                          <div className="w-16 text-right shrink-0">
+                            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-0.5">变化</div>
+                            <div className="font-mono">
+                              {summary.trend === "new" ? (
+                                <span className="text-amber-600 dark:text-amber-400">进榜</span>
+                              ) : summary.trend === "lost" ? (
+                                <span className="text-red-600 dark:text-red-400">掉榜</span>
+                              ) : summary.trend === "up" ? (
+                                <span className="text-emerald-600 dark:text-emerald-400">▲ {summary.delta}</span>
+                              ) : summary.trend === "down" ? (
+                                <span className="text-red-600 dark:text-red-400">▼ {Math.abs(summary.delta ?? 0)}</span>
+                              ) : (
+                                <span className="text-zinc-400">—</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="w-20 text-right shrink-0 hidden sm:block">
+                            <div className="text-xs text-zinc-400 dark:text-zinc-500 leading-tight">
+                              {checked.date}
+                            </div>
+                            <div className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-0.5 leading-tight">
+                              {checked.time}
+                            </div>
+                          </div>
+
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeTracked(keyword.keyword, keyword.language);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.stopPropagation();
+                                removeTracked(keyword.keyword, keyword.language);
+                              }
+                            }}
+                            className="shrink-0 text-zinc-400 hover:text-red-500 text-xs"
+                            title="移除"
+                          >
+                            ✕
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {chartKeyword && chartSnapshots.length > 0 && (
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        {chartKeyword} · 排名趋势
+                      </h4>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">越低越好</span>
+                    </div>
+                    <div className="h-56">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={chartSnapshots
+                            .filter((snapshot) => snapshot.rank !== null)
+                            .map((snapshot) => ({
+                              time: new Date(snapshot.checkedAt).toLocaleString(),
+                              rank: snapshot.rank,
+                            }))}
+                          margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+                          <XAxis dataKey="time" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                          <YAxis reversed domain={[1, "auto"]} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={34} />
+                          <Tooltip />
+                          <Line
+                            type="monotone"
+                            dataKey="rank"
+                            stroke="#f59e0b"
+                            strokeWidth={2}
+                            dot={{ r: 3 }}
+                            activeDot={{ r: 5 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
                   </div>
                 )}
               </div>
@@ -714,6 +989,7 @@ function KeywordsPage() {
                 )}
               </div>
             </div>
+
           </div>
         </>
       )}

@@ -11,6 +11,7 @@ import { log } from "../logger";
 import { EngineError } from "../errors";
 
 export interface KeywordSuggestion {
+  language: string;
   keyword: string;
   rationale: string;
 }
@@ -31,13 +32,14 @@ function parseJsonObject(raw: string): any {
 }
 
 /** Parse the AI's JSON response into tracking + submission keyword sets. */
-export function parseKeywordGeneration(raw: string): KeywordGeneration {
+export function parseKeywordGeneration(raw: string, fallbackLanguage = "en"): KeywordGeneration {
   const data = parseJsonObject(raw);
 
   const tracking: KeywordSuggestion[] = Array.isArray(data.tracking)
     ? data.tracking
         .filter((x: any) => x && typeof x.keyword === "string" && x.keyword.trim())
         .map((x: any) => ({
+          language: String(x.language || fallbackLanguage).trim(),
           keyword: x.keyword.trim(),
           rationale: String(x.rationale || "").trim(),
         }))
@@ -71,11 +73,11 @@ export async function generateKeywords(
       role: "system",
       content: [
         "You are Appilot's ASO keyword analyst. In ONE response, generate two keyword sets for the target localization language:",
-        "1. `tracking`: a broad set of search terms a real user might type to find this app. Include 12-20 SHORT terms (single words or compound terms WITHOUT spaces, e.g. 'flashlight', 'nightwalk'). Breadth matters — cover category, function, use case, and synonyms.",
+        "1. `tracking`: realistic SEARCH PHRASES (2-4 words, spaces allowed) a user would type and this app could plausibly rank for. If the target localization is English, return 10-20 English phrases with `language` set to 'en'. Otherwise return 8-12 phrases in the target localization language and 8-12 English phrases, each item marked with its own `language` field. Prefer specific product phrases, category+function phrases, and use-case phrases. Avoid single generic words like 'ai', 'code', or 'tracker' unless part of a longer phrase. Do not include competitor brand names.",
         "2. `submission`: a curated set to put into the App Store keyword field. It must total 100 characters MAXIMUM (comma-separated, no spaces). Choose only high-value descriptive terms that fit the limit; do NOT include competitor brand names.",
-        "Keywords must be in the target localization language. Each tracking term needs a `rationale` written in the UI language.",
+        "Each tracking term needs a `language`, a `keyword`, and a `rationale` written in the UI language.",
         'Respond ONLY with a JSON object in this exact shape:',
-        '{"tracking":[{"keyword":"...","rationale":"..."}],"submission":["kw1","kw2","kw3"]}',
+        '{"tracking":[{"language":"zh-Hans","keyword":"...","rationale":"..."},{"language":"en","keyword":"...","rationale":"..."}],"submission":["kw1","kw2","kw3"]}',
       ].join("\n"),
     },
     {
@@ -112,7 +114,7 @@ export async function generateKeywords(
     }
   }
   try {
-    return parseKeywordGeneration(raw);
+    return parseKeywordGeneration(raw, context.language);
   } catch (err: any) {
     log.warn(`Failed to parse keyword generation for ${context.name}: ${err.message}`);
     throw new Error("AI 关键词响应无法解析，请重试。");

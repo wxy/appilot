@@ -8,8 +8,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts && tsx tests/app-store-discovery.test.ts && tsx tests/keyword-suggester.test.ts",
-    "test:ci": "tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts && tsx tests/app-store-discovery.test.ts && tsx tests/keyword-suggester.test.ts"
+    "test": "tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts && tsx tests/app-store-discovery.test.ts && tsx tests/keyword-suggester.test.ts && tsx tests/rank-collector.test.ts && tsx tests/storefronts.test.ts",
+    "test:ci": "tsx tests/errors.test.ts && tsx tests/repo-analyzer.test.ts && tsx tests/ai-provider.test.ts && tsx tests/ai-engine.test.ts && tsx tests/app-store-discovery.test.ts && tsx tests/keyword-suggester.test.ts && tsx tests/rank-collector.test.ts && tsx tests/storefronts.test.ts"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",
