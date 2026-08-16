@@ -4,6 +4,7 @@ export interface KeywordEntry {
   language: string;
   keyword: string;
   rationale: string;
+  translation: string;
 }
 
 export interface SubmissionKeywordsEntry {
@@ -14,6 +15,9 @@ export interface SubmissionKeywordsEntry {
 export interface RemovedKeywordEntry {
   language: string;
   keyword: string;
+  rationale: string;
+  translation: string;
+  removedAt: string;
 }
 
 export interface RankSnapshot {
@@ -25,13 +29,12 @@ export interface RankSnapshot {
   checkedAt: string;
 }
 
-export interface Project {
+export interface StoreProduct {
   id: string;
-  name: string;
-  localPath: string;
-  productType: "ios" | "macos" | null;
-  bundleId: string | null;
+  projectId: string;
+  platform: "ios" | "macos" | "unknown";
   trackId: string | null;
+  bundleId: string | null;
   trackName: string | null;
   artworkUrl: string | null;
   supportedLanguages: { code: string; name: string }[];
@@ -43,35 +46,192 @@ export interface Project {
   createdAt: string;
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  localPath: string;
+  createdAt: string;
+  storeProducts: StoreProduct[];
+
+  // Legacy summary fields, kept for compatibility and migration.
+  productType: "ios" | "macos" | null;
+  bundleId: string | null;
+  trackId: string | null;
+  trackName: string | null;
+  artworkUrl: string | null;
+  supportedLanguages: { code: string; name: string }[];
+  storeLinks: { country: string; name: string; platform: "ios" | "macos" | "unknown"; url: string }[];
+  trackedKeywords: KeywordEntry[];
+  submissionKeywords: SubmissionKeywordsEntry[];
+  removedKeywords: RemovedKeywordEntry[];
+  rankSnapshots: RankSnapshot[];
+}
+
 interface ProjectState {
   projects: Project[];
   currentProjectId: string | null;
+  currentProductId: string | null;
   loading: boolean;
   load: () => Promise<void>;
   addByFolder: (localPath: string) => Promise<Project>;
   select: (id: string) => void;
+  selectProduct: (id: string) => void;
   remove: (id: string) => Promise<void>;
-  updateTrackedKeywords: (id: string, keywords: KeywordEntry[]) => void;
-  updateSubmissionKeywords: (id: string, submission: SubmissionKeywordsEntry[]) => void;
-  removeTrackedKeyword: (id: string, language: string, keyword: string) => Promise<void>;
-  collectRanks: (id: string, language: string, storefront: string) => Promise<RankSnapshot[]>;
+  updateTrackedKeywords: (productId: string, keywords: KeywordEntry[]) => void;
+  updateSubmissionKeywords: (productId: string, submission: SubmissionKeywordsEntry[]) => void;
+  removeTrackedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
+  restoreTrackedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
+  clearRemovedKeywords: (productId: string, languages: string[]) => Promise<void>;
+  collectRanks: (productId: string, language: string, storefront: string) => Promise<RankSnapshot[]>;
 }
 
-/** Normalize persisted projects, tolerating legacy shapes. */
+function normalizeKeyword(item: any): KeywordEntry {
+  return {
+    language: item.language || "unknown",
+    keyword: item.keyword,
+    rationale: item.rationale || "",
+    translation: item.translation || "",
+  };
+}
+
+function normalizeRemovedKeyword(item: any): RemovedKeywordEntry {
+  return {
+    language: item.language || "unknown",
+    keyword: item.keyword,
+    rationale: item.rationale || "",
+    translation: item.translation || "",
+    removedAt: item.removedAt || new Date().toISOString(),
+  };
+}
+
+function normalizeStoreProduct(product: any, projectId: string): StoreProduct {
+  return {
+    id: product.id || `${projectId}:${product.platform || "unknown"}`,
+    projectId,
+    platform: product.platform || "unknown",
+    trackId: product.trackId ?? null,
+    bundleId: product.bundleId ?? null,
+    trackName: product.trackName ?? null,
+    artworkUrl: product.artworkUrl ?? null,
+    supportedLanguages: product.supportedLanguages || [],
+    storeLinks: product.storeLinks || [],
+    trackedKeywords: (product.trackedKeywords || []).map(normalizeKeyword),
+    submissionKeywords: product.submissionKeywords || [],
+    removedKeywords: (product.removedKeywords || []).map(normalizeRemovedKeyword),
+    rankSnapshots: product.rankSnapshots || [],
+    createdAt: product.createdAt || new Date().toISOString(),
+  };
+}
+
+function migrateLegacyProject(p: any): StoreProduct[] {
+  const existingProducts = Array.isArray(p.storeProducts) ? p.storeProducts : [];
+  const legacyKeywords = p.trackedKeywords || p.keywords || [];
+  const duplicatedLegacyData =
+    existingProducts.length > 1 &&
+    legacyKeywords.length > 0 &&
+    existingProducts.every((product: any) => {
+      const productKeywords = product.trackedKeywords || [];
+      if (productKeywords.length !== legacyKeywords.length) return false;
+      return productKeywords.every((item: any, index: number) =>
+        item.language === legacyKeywords[index]?.language &&
+        item.keyword === legacyKeywords[index]?.keyword,
+      );
+    });
+
+  if (existingProducts.length > 0 && !duplicatedLegacyData) {
+    return existingProducts.map((product: any) => normalizeStoreProduct(product, p.id));
+  }
+
+  const platforms = new Set<string>();
+  const links = p.storeLinks || [];
+  for (const link of links) {
+    platforms.add(link.platform || "unknown");
+  }
+  if (platforms.size === 0) {
+    platforms.add(p.productType || "unknown");
+  }
+
+  const platformList = [...platforms];
+  const primaryPlatform = p.productType || platformList[0];
+
+  return platformList.map((platform) =>
+    normalizeStoreProduct(
+      {
+        platform,
+        trackId: p.trackId ?? null,
+        bundleId: p.bundleId ?? null,
+        trackName: p.trackName ?? null,
+        artworkUrl: p.artworkUrl ?? null,
+        supportedLanguages: p.supportedLanguages || [],
+        storeLinks: links.filter((link: any) => (link.platform || "unknown") === platform),
+        trackedKeywords: platform === primaryPlatform ? p.trackedKeywords || p.keywords || [] : [],
+        submissionKeywords: platform === primaryPlatform ? p.submissionKeywords || [] : [],
+        removedKeywords: platform === primaryPlatform ? p.removedKeywords || [] : [],
+        rankSnapshots: platform === primaryPlatform ? p.rankSnapshots || [] : [],
+        createdAt: p.createdAt || new Date().toISOString(),
+      },
+      p.id,
+    ),
+  );
+}
+
+function summarizeLegacyProject(products: StoreProduct[]): Partial<Project> {
+  const primary = products[0];
+  if (!primary) {
+    return {
+      productType: null,
+      bundleId: null,
+      trackId: null,
+      trackName: null,
+      artworkUrl: null,
+      supportedLanguages: [],
+      storeLinks: [],
+      trackedKeywords: [],
+      submissionKeywords: [],
+      removedKeywords: [],
+      rankSnapshots: [],
+    };
+  }
+  return {
+    productType: primary.platform === "unknown" ? null : primary.platform,
+    bundleId: primary.bundleId,
+    trackId: primary.trackId,
+    trackName: primary.trackName,
+    artworkUrl: primary.artworkUrl,
+    supportedLanguages: primary.supportedLanguages,
+    storeLinks: primary.storeLinks,
+    trackedKeywords: primary.trackedKeywords,
+    submissionKeywords: primary.submissionKeywords,
+    removedKeywords: primary.removedKeywords,
+    rankSnapshots: primary.rankSnapshots,
+  };
+}
+
 function normalizeProject(p: any): Project {
+  const products = migrateLegacyProject(p);
   return {
     ...p,
-    supportedLanguages: p.supportedLanguages || [],
-    storeLinks: p.storeLinks || [],
-    trackedKeywords: (p.trackedKeywords || p.keywords || []).map((k: any) => ({
-      language: k.language || "unknown",
-      keyword: k.keyword,
-      rationale: k.rationale || "",
-    })),
-    submissionKeywords: p.submissionKeywords || [],
-    removedKeywords: p.removedKeywords || [],
-    rankSnapshots: p.rankSnapshots || [],
+    storeProducts: products,
+    ...summarizeLegacyProject(products),
   };
+}
+
+function updateProduct(
+  projects: Project[],
+  productId: string,
+  updater: (product: StoreProduct) => StoreProduct,
+): Project[] {
+  return projects.map((project) => {
+    if (!project.storeProducts.some((product) => product.id === productId)) return project;
+    const storeProducts = project.storeProducts.map((product) =>
+      product.id === productId ? updater(product) : product,
+    );
+    return {
+      ...project,
+      storeProducts,
+      ...summarizeLegacyProject(storeProducts),
+    };
+  });
 }
 
 function upsertRankSnapshot(snapshots: RankSnapshot[], snapshot: RankSnapshot): RankSnapshot[] {
@@ -93,16 +253,20 @@ function upsertRankSnapshot(snapshots: RankSnapshot[], snapshot: RankSnapshot): 
 export const useProject = create<ProjectState>((set, get) => ({
   projects: [],
   currentProjectId: null,
+  currentProductId: null,
   loading: false,
 
   load: async () => {
     set({ loading: true });
     try {
       const raw = (await (window as any).appilot.projects.list()) || [];
-      const projects = raw.map(normalizeProject);
+      const projects: Project[] = raw.map(normalizeProject);
+      const currentProjectId = get().currentProjectId || projects?.[0]?.id || null;
+      const currentProject = projects.find((project) => project.id === currentProjectId);
       set({
         projects,
-        currentProjectId: get().currentProjectId || projects?.[0]?.id || null,
+        currentProjectId,
+        currentProductId: get().currentProductId || currentProject?.storeProducts?.[0]?.id || null,
       });
     } finally {
       set({ loading: false });
@@ -118,68 +282,94 @@ export const useProject = create<ProjectState>((set, get) => ({
           ? s.projects.map((p) => (p.id === project.id ? project : p))
           : [...s.projects, project],
         currentProjectId: project.id,
+        currentProductId: project.storeProducts[0]?.id || null,
       };
     });
     return project;
   },
 
-  select: (id) => set({ currentProjectId: id }),
+  select: (id) => {
+    const project = get().projects.find((item) => item.id === id);
+    set({
+      currentProjectId: id,
+      currentProductId: project?.storeProducts?.[0]?.id || null,
+    });
+  },
+
+  selectProduct: (id) => set({ currentProductId: id }),
 
   remove: async (id) => {
     await (window as any).appilot.projects.remove(id);
     set((s) => {
       const projects = s.projects.filter((p) => p.id !== id);
+      const currentProjectId = s.currentProjectId === id ? projects[0]?.id ?? null : s.currentProjectId;
+      const currentProject = projects.find((project) => project.id === currentProjectId);
       return {
         projects,
-        currentProjectId: s.currentProjectId === id ? projects[0]?.id ?? null : s.currentProjectId,
+        currentProjectId,
+        currentProductId: currentProject?.storeProducts?.[0]?.id || null,
       };
     });
   },
 
-  updateTrackedKeywords: (id, keywords) => {
+  updateTrackedKeywords: (productId, keywords) => {
     set((s) => ({
-      projects: s.projects.map((p) => (p.id === id ? { ...p, trackedKeywords: keywords } : p)),
+      projects: updateProduct(s.projects, productId, (product) => ({ ...product, trackedKeywords: keywords })),
     }));
   },
 
-  updateSubmissionKeywords: (id, submission) => {
+  updateSubmissionKeywords: (productId, submission) => {
     set((s) => ({
-      projects: s.projects.map((p) => (p.id === id ? { ...p, submissionKeywords: submission } : p)),
+      projects: updateProduct(s.projects, productId, (product) => ({ ...product, submissionKeywords: submission })),
     }));
   },
 
-  removeTrackedKeyword: async (id, language, keyword) => {
-    const project = normalizeProject(
-      await (window as any).appilot.projects.removeTrackedKeyword(id, language, keyword),
-    );
+  removeTrackedKeyword: async (productId, language, keyword) => {
+    const updatedProject = normalizeProject(
+      await (window as any).appilot.projects.removeTrackedKeyword(productId, language, keyword),
+    ) as unknown as Project;
     set((s) => ({
-      projects: s.projects.map((p) => (p.id === id ? project : p)),
+      projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
     }));
   },
 
-  collectRanks: async (id, language, storefront) => {
+  restoreTrackedKeyword: async (productId, language, keyword) => {
+    const updatedProject = normalizeProject(
+      await (window as any).appilot.projects.restoreTrackedKeyword(productId, language, keyword),
+    ) as unknown as Project;
+    set((s) => ({
+      projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
+    }));
+  },
+
+  clearRemovedKeywords: async (productId, languages) => {
+    const updatedProject = normalizeProject(
+      await (window as any).appilot.projects.clearRemovedKeywords(productId, languages),
+    ) as unknown as Project;
+    set((s) => ({
+      projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
+    }));
+  },
+
+  collectRanks: async (productId, language, storefront) => {
     const off = (window as any).appilot?.projects?.onRankProgress?.((progress: any) => {
       if (!progress?.snapshot) return;
       set((s) => ({
-        projects: s.projects.map((p) =>
-          p.id === id
-            ? {
-                ...p,
-                rankSnapshots: upsertRankSnapshot(p.rankSnapshots || [], progress.snapshot),
-              }
-            : p,
-        ),
+        projects: updateProduct(s.projects, productId, (product) => ({
+          ...product,
+          rankSnapshots: upsertRankSnapshot(product.rankSnapshots || [], progress.snapshot),
+        })),
       }));
     });
 
     try {
-      const project = normalizeProject(
-        await (window as any).appilot.projects.collectRanks(id, language, storefront),
-      );
+      const updatedProject = normalizeProject(
+        await (window as any).appilot.projects.collectRanks(productId, language, storefront),
+      ) as unknown as Project;
       set((s) => ({
-        projects: s.projects.map((p) => (p.id === id ? project : p)),
+        projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
       }));
-      return project.rankSnapshots;
+      return updatedProject.storeProducts.find((product) => product.id === productId)?.rankSnapshots || [];
     } finally {
       off?.();
     }
