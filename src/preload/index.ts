@@ -39,10 +39,13 @@ contextBridge.exposeInMainWorld("appilot", {
 
   repo: {
     checkRelease: (projectId: string): Promise<any> => ipcRenderer.invoke("repo:checkRelease", projectId),
+    setReleaseStatus: (projectId: string, tag: string, status: "accepted" | "ignored"): Promise<any> =>
+      ipcRenderer.invoke("repo:setReleaseStatus", projectId, tag, status),
   },
 
   scheduler: {
     status: (): Promise<any> => ipcRenderer.invoke("scheduler:status"),
+    list: (): Promise<any> => ipcRenderer.invoke("scheduler:list"),
     runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
   },
 

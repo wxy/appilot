@@ -38,6 +38,8 @@ export async function reviewRelease(
   context: {
     name: string;
     description: string;
+    keywords: string[];
+    recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
   },
 ): Promise<ReleaseReview> {
@@ -56,6 +58,10 @@ export async function reviewRelease(
       content: [
         `App name: ${context.name}`,
         `Current description: ${context.description || "N/A"}`,
+        `Tracked keywords: ${context.keywords.join(", ") || "N/A"}`,
+        `Recent rankings: ${context.recentRankings
+          .map((item) => `${item.keyword}@${item.storefront}:${item.rank ?? "not ranked"}`)
+          .join(", ") || "N/A"}`,
         `Release tag: ${context.release.tag}`,
         `Release name: ${context.release.name || context.release.tag}`,
         `Published at: ${context.release.publishedAt}`,

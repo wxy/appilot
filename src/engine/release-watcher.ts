@@ -46,11 +46,25 @@ async function getGitRemote(localPath: string): Promise<string | null> {
 
 async function listGitHubReleases(owner: string, repo: string): Promise<ReleaseInfo[]> {
   const octokit = new Octokit({ request: { timeout: 10_000 } });
-  const { data } = await octokit.rest.repos.listReleases({
-    owner,
-    repo,
-    per_page: 5,
-  });
+  let data: any[] = [];
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await octokit.rest.repos.listReleases({
+        owner,
+        repo,
+        per_page: 5,
+      });
+      data = response.data;
+      break;
+    } catch (err: any) {
+      const status = err?.status || err?.response?.status;
+      if ((status === 403 || status === 429) && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
   return data.map((release) => ({
     id: String(release.id),
     tag: release.tag_name,

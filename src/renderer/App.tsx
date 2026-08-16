@@ -17,6 +17,68 @@ const NAV_ITEMS = [
   { to: "/trend", label: "长期效果" },
 ];
 
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: "英文",
+  de: "德文",
+  fr: "法文",
+  es: "西班牙文",
+  it: "意大利文",
+  nl: "荷兰文",
+  pt: "葡萄牙文",
+  "pt-BR": "巴西葡萄牙文",
+  ja: "日文",
+  ko: "韩文",
+  "zh-Hans": "简体中文",
+  "zh-Hant": "繁体中文",
+  ru: "俄文",
+};
+
+function languageLabel(code: string): string {
+  return LANGUAGE_LABELS[code] || code;
+}
+
+function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function formatHumanTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const target = new Date(iso);
+  const now = new Date();
+  const diffMs = target.getTime() - now.getTime();
+  const absMs = Math.abs(diffMs);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (absMs < minute) return diffMs >= 0 ? "即将" : "刚刚";
+  if (absMs < hour) {
+    const count = Math.round(absMs / minute);
+    return diffMs >= 0 ? `${count} 分钟后` : `${count} 分钟前`;
+  }
+  if (absMs < day) {
+    const count = Math.round(absMs / hour);
+    return diffMs >= 0 ? `${count} 小时后` : `${count} 小时前`;
+  }
+
+  const dayDiff = Math.round((startOfDay(target) - startOfDay(now)) / day);
+  if (dayDiff === 1) return "明天";
+  if (dayDiff === 2) return "后天";
+  if (dayDiff === -1) return "昨天";
+  if (dayDiff === -2) return "前天";
+  if (dayDiff > 2 && dayDiff <= 7) return `${dayDiff} 天后`;
+  if (dayDiff < -2 && dayDiff >= -7) return `${Math.abs(dayDiff)} 天前`;
+
+  const monthDiff =
+    (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth());
+  if (monthDiff === 1) return "下个月";
+  if (monthDiff === -1) return "上个月";
+  if (monthDiff > 1) return `${monthDiff} 个月后`;
+  if (monthDiff < -1) return `${Math.abs(monthDiff)} 个月前`;
+
+  return target.toLocaleDateString();
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
   const { resolved, toggle } = useTheme();
   const { projects, currentProjectId, currentProductId, load, select, selectProduct, addByFolder } = useProject();
@@ -216,6 +278,13 @@ function Layout({ children }: { children: React.ReactNode }) {
             {resolved === "dark" ? "浅色模式" : "深色模式"}
             <span className="text-xs">{resolved === "dark" ? "☀" : "☾"}</span>
           </button>
+          <Link
+            to="/tasks"
+            className="flex items-center justify-between px-2 py-1.5 text-sm rounded-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+          >
+            任务中心
+            <span className="text-xs">▦</span>
+          </Link>
           <Link
             to="/settings"
             className="flex items-center justify-between px-2 py-1.5 text-sm rounded-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
@@ -456,6 +525,24 @@ function RepoPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    if (!project?.id) return;
+    let cancelled = false;
+    (window as any).appilot?.repo?.checkRelease(project.id)
+      .then((next: any) => {
+        if (!cancelled) setResult(next);
+      })
+      .catch((e: any) => {
+        if (!cancelled) setError(e.message || "Release 检查失败。");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id]);
+
   if (!project) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示仓库动态。" />;
   }
@@ -471,6 +558,18 @@ function RepoPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReleaseStatus = async (status: "accepted" | "ignored") => {
+    if (!result?.release?.tag) return;
+    await (window as any).appilot.repo.setReleaseStatus(project.id, result.release.tag, status);
+    setResult((prev: any) => {
+      if (!prev) return prev;
+      const history = (prev.history || []).map((entry: any) =>
+        entry.tag === prev.release.tag ? { ...entry, status, actionAt: new Date().toISOString() } : entry,
+      );
+      return { ...prev, history };
+    });
   };
 
   return (
@@ -531,7 +630,23 @@ function RepoPage() {
           {result.review && (
             <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
               <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">AI 重审建议</h3>
+                <div className="flex items-center justify-between gap-4">
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">AI 重审建议</h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleReleaseStatus("accepted")}
+                      className="px-3 py-1.5 text-xs rounded-lg bg-amber-500 hover:bg-amber-600 text-white"
+                    >
+                      采纳
+                    </button>
+                    <button
+                      onClick={() => handleReleaseStatus("ignored")}
+                      className="px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                    >
+                      忽略
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="p-5 space-y-5">
                 {result.review.summary && (
@@ -540,6 +655,40 @@ function RepoPage() {
                 <ReleaseSuggestionList title="描述建议" items={result.review.descriptionSuggestions} />
                 <ReleaseSuggestionList title="关键词建议" items={result.review.keywordSuggestions} />
                 <ReleaseSuggestionList title="推广角度" items={result.review.promotionAngles} />
+              </div>
+            </div>
+          )}
+
+          {result.history?.length > 0 && (
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Release 历史</h3>
+              </div>
+              <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {result.history.map((entry: any) => (
+                  <div key={entry.tag} className="px-5 py-3 flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                        {entry.name || entry.tag}
+                      </div>
+                      <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+                        {entry.tag} · {entry.publishedAt ? new Date(entry.publishedAt).toLocaleString() : "—"}
+                      </div>
+                    </div>
+                    <span
+                      className={cn(
+                        "px-2.5 py-1 rounded-full text-xs font-medium shrink-0",
+                        entry.status === "accepted"
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                          : entry.status === "ignored"
+                            ? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                            : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+                      )}
+                    >
+                      {entry.status === "accepted" ? "已采纳" : entry.status === "ignored" ? "已忽略" : "待处理"}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -561,6 +710,220 @@ function ReleaseSuggestionList({ title, items }: { title: string; items: string[
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function TaskCenterPage() {
+  const [data, setData] = useState<{ running: boolean; tasks: any[] } | null>(null);
+  const [typeFilter, setTypeFilter] = useState<"all" | "rank" | "release">("all");
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      (window as any).appilot?.scheduler?.list()
+        .then((next: any) => {
+          if (!cancelled) setData(next);
+        })
+        .catch(() => {
+          if (!cancelled) setData(null);
+        });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const tasks = (data?.tasks || []).filter(
+    (task) => typeFilter === "all" || task.kind === typeFilter,
+  );
+  const pending = tasks.filter((task) => task.enabled);
+  const failed = tasks.filter((task) => task.lastStatus === "failed");
+
+  const pendingGroups = groupTasks(pending);
+  const failedGroups = groupTasks(failed);
+
+  return (
+    <div className="p-10 max-w-4xl mx-auto">
+      <div className="flex items-start justify-between gap-4 mb-8">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+            查看后台任务的准备、执行和完成状态。
+          </p>
+        </div>
+        {data?.running && (
+          <span className="px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
+            调度器运行中
+          </span>
+        )}
+      </div>
+
+      <div className="mb-6 flex gap-2">
+        {(["all", "rank", "release"] as const).map((filter) => (
+          <button
+            key={filter}
+            onClick={() => setTypeFilter(filter)}
+            className={cn(
+              "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+              typeFilter === filter
+                ? "border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+            )}
+          >
+            {filter === "all" ? "全部任务" : filter === "rank" ? "排名采集" : "发布检查"}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-6">
+        <TaskSection title={`准备进行（${pendingGroups.length} 组）`} groups={pendingGroups} />
+        <TaskSection title={`失败（${failedGroups.length} 组）`} groups={failedGroups} />
+      </div>
+    </div>
+  );
+}
+
+function groupTasks(tasks: any[]): any[] {
+  const map = new Map<string, any>();
+  for (const task of tasks) {
+    const key =
+      task.kind === "release"
+        ? task.id
+        : `${task.projectName}\u0000${task.platform}\u0000${task.queryLanguage || ""}\u0000${task.storefront || ""}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, {
+        key,
+        kind: task.kind,
+        projectName: task.projectName,
+        productName: task.productName,
+        platform: task.platform,
+        queryLanguage: task.queryLanguage,
+        storefront: task.storefront,
+        tasks: [task],
+        lastRunAt: task.lastRunAt,
+        nextRunAt: task.nextRunAt,
+        firstRunAt: task.firstRunAt,
+        executionCount: task.executionCount || 0,
+      });
+    } else {
+      existing.tasks.push(task);
+      if (task.lastRunAt && (!existing.lastRunAt || new Date(task.lastRunAt) > new Date(existing.lastRunAt))) {
+        existing.lastRunAt = task.lastRunAt;
+      }
+      if (new Date(task.nextRunAt) < new Date(existing.nextRunAt)) {
+        existing.nextRunAt = task.nextRunAt;
+      }
+      existing.executionCount += task.executionCount || 0;
+      if (task.firstRunAt && (!existing.firstRunAt || new Date(task.firstRunAt) < new Date(existing.firstRunAt))) {
+        existing.firstRunAt = task.firstRunAt;
+      }
+    }
+  }
+  return [...map.values()];
+}
+
+function TaskSection({ title, groups }: { title: string; groups: any[] }) {
+  const [page, setPage] = useState(0);
+  const pageSize = 8;
+  useEffect(() => {
+    setPage(0);
+  }, [title, groups.length]);
+  if (groups.length === 0) return null;
+  const totalPages = Math.max(1, Math.ceil(groups.length / pageSize));
+  const visible = groups.slice(page * pageSize, page * pageSize + pageSize);
+
+  return (
+    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+      <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
+      </div>
+      <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+        {visible.map((group) => (
+          <div key={group.key} className="px-5 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2 min-w-0">
+                <span
+                  className={cn(
+                    "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
+                    group.kind === "release"
+                      ? "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400"
+                      : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+                  )}
+                >
+                  {group.kind === "release" ? "发布" : "排名"}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                    {group.kind === "release"
+                      ? group.projectName
+                      : `${group.projectName} · ${
+                          group.platform === "ios"
+                            ? "iOS"
+                            : group.platform === "macos"
+                              ? "macOS"
+                              : "未识别"
+                        } · ${languageLabel(group.queryLanguage || "")} · ${
+                          storefrontDisplayName(group.storefront || "")
+                        } · ${
+                          group.tasks.length
+                        } 个关键词`}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
+              <TaskMeta
+                label="上次执行"
+                value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+              />
+              <TaskMeta label="执行次数" value={`${group.executionCount} 次`} />
+              <TaskMeta
+                label="首次执行"
+                value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      {totalPages > 1 && (
+        <div className="px-6 py-3 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between text-xs text-zinc-400 dark:text-zinc-500">
+          <span>
+            {page + 1} / {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((value) => Math.max(0, value - 1))}
+              disabled={page === 0}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40"
+            >
+              上一页
+            </button>
+            <button
+              onClick={() => setPage((value) => Math.min(totalPages - 1, value + 1))}
+              disabled={page >= totalPages - 1}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-0.5">{label}</div>
+      <div className="text-zinc-600 dark:text-zinc-300 truncate">{value}</div>
     </div>
   );
 }
@@ -1377,6 +1740,7 @@ export function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/overview" element={<OverviewPage />} />
         <Route path="/keywords" element={<KeywordsPage />} />
+        <Route path="/tasks" element={<TaskCenterPage />} />
         <Route path="/assets" element={<PlaceholderPage title="素材中心" desc="文案、海报方向、视频脚本。" />} />
         <Route path="/repo" element={<RepoPage />} />
         <Route path="/reviews" element={<PlaceholderPage title="评论洞察" desc="用户评论聚类与洞察。" />} />
