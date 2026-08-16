@@ -231,10 +231,10 @@ function detectLanguagesFromXcstrings(filePath: string): string[] {
     return [];
   }
 
-  const languages = new Set<string>();
+  const languages: string[] = [];
   if (data.sourceLanguage) {
     const lang = normalizeLanguage(String(data.sourceLanguage));
-    if (lang) languages.add(lang);
+    if (lang && !languages.includes(lang)) languages.push(lang);
   }
 
   const strings = data.strings;
@@ -244,12 +244,12 @@ function detectLanguagesFromXcstrings(filePath: string): string[] {
       if (!localizations || typeof localizations !== "object") continue;
       for (const code of Object.keys(localizations)) {
         const lang = normalizeLanguage(code);
-        if (lang) languages.add(lang);
+        if (lang && !languages.includes(lang)) languages.push(lang);
       }
     }
   }
 
-  return [...languages];
+  return languages;
 }
 
 /**
@@ -258,6 +258,7 @@ function detectLanguagesFromXcstrings(filePath: string): string[] {
  */
 export function detectLocalizedLanguages(localPath: string): string[] {
   const languages = new Set<string>();
+  let primaryLanguage: string | null = null;
 
   for (const dir of findDirs(localPath, ".lproj", 5)) {
     const code = path.basename(dir).replace(/\.lproj$/, "");
@@ -266,7 +267,11 @@ export function detectLocalizedLanguages(localPath: string): string[] {
   }
 
   for (const xcstrings of findFilesBySuffix(localPath, ".xcstrings", 5)) {
-    for (const lang of detectLanguagesFromXcstrings(xcstrings)) {
+    const xcLanguages = detectLanguagesFromXcstrings(xcstrings);
+    if (!primaryLanguage && xcLanguages[0]) {
+      primaryLanguage = xcLanguages[0];
+    }
+    for (const lang of xcLanguages) {
       languages.add(lang);
     }
   }
@@ -289,7 +294,11 @@ export function detectLocalizedLanguages(localPath: string): string[] {
     }
   }
 
-  return [...languages].sort();
+  const sorted = [...languages].sort();
+  if (primaryLanguage) {
+    return [primaryLanguage, ...sorted.filter((lang) => lang !== primaryLanguage)];
+  }
+  return sorted;
 }
 
 /** Detect whether a local repo is an iOS or macOS app (macos wins over ios). */

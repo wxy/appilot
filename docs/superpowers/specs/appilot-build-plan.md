@@ -25,21 +25,21 @@
 产出：选本地仓库 → 在 Appilot 中定位并建立该产品，即使早期信息还不完整
 ```
 
-### Phase B: 发布工作台（GitHub Release → App Store 提交准备）
+### Phase B: 发布工作台（RELEASE_DRAFT.md → App Store 提交准备）
 
 ```
-  ✓ ReleaseWatcher（GitHub Release Draft 为主，本地 git tag 兜底；只读，不修改仓库）
-  ✓ 检测到 release draft → 只读重新分析仓库 → 生成 StoreSubmissionDraft
-  ✓ GitHub 正式发布作为完成信号，不再触发文案生成
+  ✓ ReleaseWatcher（读取仓库根目录 RELEASE_DRAFT.md；只读，按需检查，不修改仓库）
+  ✓ 用户进入发布工作台手动检查；确认后 AI 才生成 StoreSubmissionDraft
+  ✓ 仓库删除 RELEASE_DRAFT.md 作为完成信号，Appilot 不再生成文案
   ✓ Promotional Text：现在可改；未来接 API 自动更新，未接 API 生成文案供手动更新
   ✓ 随商店版本提交：描述 / What's New / 提交关键词（与跟踪关键词分开）
   ✓ Apple 字段限制：Promotional Text ≤170、关键词 ≤100、描述/What's New ≤4000
-  ✓ 推广角度 → 素材中心（文案 / 海报 brief / 视频脚本）
-  ✓ 同一「GitHub Release + 产品」只保留一份 draft，驳回后更新而不是新建
+  ✓ 推广角度作为发布工作台的一部分，暂不单设素材中心
+  ✓ 同一「公告修改时间 + 产品」只保留一份 draft，驳回后更新而不是新建
   ✓ App Store 状态：prepared / copied / submitted / in_review / rejected / released
   ✓ 驳回意见进入重新生成上下文
   ✓ 跟踪关键词增删建议：确认后才更新跟踪集
-产出：每次 GitHub Release 自动生成一份可直接粘贴到 App Store 的提交工作单
+产出：每次 RELEASE_DRAFT.md 生成一份可直接粘贴到 App Store 的提交工作单
 ```
 
 ### Phase C: 发布后管理（关键词跟踪起步）
@@ -81,7 +81,7 @@
 产出：从「排名」闭环到「下载」，形成完整增长漏斗
 ```
 
-> 优先级：Phase A 先定位并建立产品；Phase B 在每次 GitHub Release 后生成 App Store 提交工作单；Phase C 在上架后开始关键词排名跟踪；D→E 逐步叠加「智能」；F 需要 Apple 开发者账号 + API Key，放到最后。搜索量（search volume）Apple 不公开，全程不做，用「排名难度 + 竞品强度 + 相关性」近似。
+> 优先级：Phase A 先定位并建立产品；Phase B 在每次本地发布交班文档后生成 App Store 提交工作单；Phase C 在上架后开始关键词排名跟踪；D→E 逐步叠加「智能」；F 需要 Apple 开发者账号 + API Key，放到最后。搜索量（search volume）Apple 不公开，全程不做，用「排名难度 + 竞品强度 + 相关性」近似。
 
 ---
 

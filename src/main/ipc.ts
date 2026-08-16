@@ -2,6 +2,8 @@ import { ipcMain, shell, safeStorage, dialog } from "electron";
 import path from "path";
 import { log } from "../engine/logger";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../engine/storefronts";
+import { createStoreSubmissionDraft, submissionDraftId } from "../engine/store-submission";
+import type { AppStoreStatus, StoreSubmissionDraft } from "../engine/store-submission";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
 let store: any = null;
@@ -153,6 +155,107 @@ function recordReleaseHistory(project: any, release: any, review: any): any[] {
   return project.releaseHistory;
 }
 
+function getStoreSubmissionDrafts(project: any): StoreSubmissionDraft[] {
+  return Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [];
+}
+
+function upsertStoreSubmissionDraft(project: any, draft: StoreSubmissionDraft): StoreSubmissionDraft[] {
+  const drafts = getStoreSubmissionDrafts(project);
+  const index = drafts.findIndex((item) => item.id === draft.id);
+  const next = index >= 0
+    ? drafts.map((item) => item.id === draft.id ? draft : item)
+    : [draft, ...drafts];
+  project.storeSubmissionDrafts = next.slice(0, 100);
+  return project.storeSubmissionDrafts;
+}
+
+function findStoreSubmissionDraft(
+  project: any,
+  productId: string,
+  releaseTag: string,
+): StoreSubmissionDraft | null {
+  return getStoreSubmissionDrafts(project).find(
+    (item) => item.id === submissionDraftId(project.id, productId, releaseTag),
+  ) || null;
+}
+
+function isProductPostRelease(project: any, product: any): boolean {
+  const hasPublishedDraft = getStoreSubmissionDrafts(project).some(
+    (draft) =>
+      draft.productId === product.id &&
+      (draft.githubDraftStatus === "published" || draft.storeStatus === "released"),
+  );
+  if (hasPublishedDraft) return true;
+
+  // Legacy projects from before StoreSubmissionDraft existed may have release history
+  // but no published draft record. Treat them as already post-release.
+  return Array.isArray(project.releaseHistory) && project.releaseHistory.length > 0;
+}
+
+async function generateStoreSubmissionDraft(
+  store: any,
+  project: any,
+  product: any,
+  release: any,
+  existingDraft: StoreSubmissionDraft | null,
+  onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
+  selectedLanguages?: string[],
+): Promise<StoreSubmissionDraft> {
+  const { AIProvider } = await import("../engine/ai/ai-provider");
+  const { generateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
+  const { readRepoDescription } = await import("../engine/app-store-discovery");
+
+  const provider = new AIProvider({
+    baseURL: store.get("aiProviderUrl"),
+    apiKey: decryptApiKey(store.get("aiApiKey")),
+    model: store.get("aiModel"),
+  });
+
+  const trackedKeywords: string[] = Array.from(
+    new Set<string>(
+      (product.trackedKeywords || []).map((keyword: any) => String(keyword?.keyword || "").trim()),
+    ),
+  ).filter(Boolean);
+  const recentRankings = (product.rankSnapshots || []).slice(-20).map((snapshot: any) => ({
+    keyword: snapshot.keyword,
+    storefront: snapshot.storefront,
+    rank: snapshot.rank,
+    checkedAt: snapshot.checkedAt,
+  }));
+  const detectedLanguages = (product.supportedLanguages || [])
+    .map((item: any) => String(item?.code || "").trim())
+    .filter((code: string) => Boolean(code));
+  const languages = selectedLanguages?.length
+    ? selectedLanguages
+    : detectedLanguages.length > 0
+      ? detectedLanguages
+      : ["en"];
+
+  const content = await generateStoreSubmissionContent(
+    provider,
+    {
+      name: product.trackName || project.name,
+      description: readRepoDescription(project.localPath),
+      languages,
+      trackedKeywords,
+      currentSubmissionKeywords: product.submissionKeywords || [],
+      recentRankings,
+      release,
+      reviewFeedback: existingDraft?.reviewFeedback || "",
+      baseLocalization: existingDraft?.localizations?.[0],
+    },
+    onProgress,
+  );
+
+  return createStoreSubmissionDraft({
+    projectId: project.id,
+    productId: product.id,
+    release,
+    content,
+    existing: existingDraft,
+  });
+}
+
 function sanitizeRankSnapshots(project: any): any {
   const cleanSnapshots = (snapshots: any[]) =>
     snapshots.filter((snapshot: any) => {
@@ -194,12 +297,7 @@ interface RankScheduledTask extends ScheduledTaskBase {
   storefront: string;
 }
 
-interface ReleaseScheduledTask extends ScheduledTaskBase {
-  kind: "release";
-  projectId: string;
-}
-
-type ScheduledTask = RankScheduledTask | ReleaseScheduledTask;
+type ScheduledTask = RankScheduledTask;
 
 let schedulerTimer: NodeJS.Timeout | null = null;
 let schedulerRunning = false;
@@ -251,6 +349,7 @@ async function reconcileRankTasks(store: any): Promise<void> {
     const storeProducts: any[] = project.storeProducts || [];
     for (const product of storeProducts) {
     if (!product.trackId) continue;
+    if (!isProductPostRelease(project, product)) continue;
     const tracked: any[] = product.trackedKeywords || [];
     const supportedLanguages: { code: string }[] = product.supportedLanguages || [];
 
@@ -358,124 +457,12 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
   store.set("projects", projects);
 }
 
-async function reconcileReleaseTasks(store: any): Promise<void> {
-  const projects: any[] = (store.get("projects") || []).map(migrateLegacyStoreProducts);
-  store.set("projects", projects);
-  const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
-  const activeKeys = new Set<string>();
-  const desiredTasks = new Map<string, ReleaseScheduledTask>();
-
-  for (const project of projects) {
-    const id = `${project.id}:release`;
-    activeKeys.add(id);
-    const previous = existing.find((task) => task.id === id);
-    desiredTasks.set(id, {
-      id,
-      kind: "release",
-      projectId: project.id,
-      intervalMinutes: previous?.intervalMinutes || 60,
-      nextRunAt: previous?.nextRunAt || nextRunAt(id, 60),
-      lastRunAt: previous?.lastRunAt ?? null,
-      firstRunAt: previous?.firstRunAt ?? null,
-      executionCount: previous?.executionCount || 0,
-      lastStatus: previous?.lastStatus,
-      enabled: previous?.enabled ?? true,
-    });
-  }
-
-  const next = existing
-    .filter((task) => task.kind !== "release" || activeKeys.has(task.id))
-    .map((task) => (task.kind === "release" ? desiredTasks.get(task.id) || task : task));
-  for (const task of desiredTasks.values()) {
-    if (!next.some((existingTask) => existingTask.id === task.id)) {
-      next.push(task);
-    }
-  }
-  store.set("scheduledTasks", next);
-}
-
-async function runReleaseTask(store: any, task: ReleaseScheduledTask): Promise<void> {
-  const projects: any[] = store.get("projects") || [];
-  const project = projects.find((item: any) => item.id === task.projectId);
-  if (!project) {
-    task.enabled = false;
-    return;
-  }
-
-  const { checkForRelease } = await import("../engine/release-watcher");
-  const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
-  if (!result.latest) {
-    task.lastStatus = "success";
-    task.lastRunAt = new Date().toISOString();
-    task.nextRunAt = nextRunAt(`${project.id}:release`, task.intervalMinutes);
-    return;
-  }
-
-  let review = project.lastReleaseReview || null;
-  if (result.isNew || !review || review.releaseTag !== result.latest.tag) {
-    const { AIProvider } = await import("../engine/ai/ai-provider");
-    const provider = new AIProvider({
-      baseURL: store.get("aiProviderUrl"),
-      apiKey: decryptApiKey(store.get("aiApiKey")),
-      model: store.get("aiModel"),
-    });
-    const { reviewRelease } = await import("../engine/ai/release-reviewer");
-    const { readRepoDescription } = await import("../engine/app-store-discovery");
-    const keywords: string[] = Array.from(
-      new Set(
-        (project.storeProducts || []).flatMap((product: any) =>
-          (product.trackedKeywords || []).map((keyword: any) => keyword.keyword),
-        ),
-      ),
-    );
-    const recentRankings = (project.storeProducts || []).flatMap((product: any) =>
-      (product.rankSnapshots || []).slice(-20).map((snapshot: any) => ({
-        keyword: snapshot.keyword,
-        storefront: snapshot.storefront,
-        rank: snapshot.rank,
-        checkedAt: snapshot.checkedAt,
-      })),
-    );
-    try {
-      review = {
-        ...(await reviewRelease(provider, {
-          name: project.name,
-          description: readRepoDescription(project.localPath),
-          keywords,
-          recentRankings,
-          release: result.latest,
-        })),
-        releaseTag: result.latest.tag,
-      };
-      project.lastReleaseTag = result.latest.tag;
-      project.lastReleaseReview = review;
-      recordReleaseHistory(project, result.latest, review);
-      task.lastStatus = "success";
-    } catch (err: any) {
-      log.warn(`Scheduled release review failed for ${project.id}: ${err.message}`);
-      task.lastStatus = "failed";
-    }
-  } else {
-    task.lastStatus = "success";
-  }
-
-  task.lastRunAt = new Date().toISOString();
-  task.executionCount += 1;
-  task.firstRunAt = task.firstRunAt || task.lastRunAt;
-  task.nextRunAt = nextRunAt(
-    `${project.id}:release`,
-    task.lastStatus === "failed" ? 30 : task.intervalMinutes,
-  );
-  store.set("projects", projects);
-}
-
 async function schedulerTick(): Promise<void> {
   if (schedulerRunning) return;
   schedulerRunning = true;
   try {
     const store = await getStore();
     await reconcileRankTasks(store);
-    await reconcileReleaseTasks(store);
 
     const now = Date.now();
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
@@ -484,11 +471,7 @@ async function schedulerTick(): Promise<void> {
       .slice(0, 4);
 
     for (const task of due) {
-      if (task.kind === "rank") {
-        await runRankTask(store, task);
-      } else {
-        await runReleaseTask(store, task);
-      }
+      await runRankTask(store, task);
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
     store.set("scheduledTasks", tasks);
@@ -950,25 +933,13 @@ export function registerIpcHandlers() {
     return {
       running: schedulerRunning,
       tasks: tasks.map((task) => {
-        const context =
-          task.kind === "rank"
-            ? findProductContext(projects, task.productId)
-            : null;
-        const project =
-          task.kind === "release"
-            ? projects.find((item: any) => item.id === task.projectId)
-            : context?.project || null;
+        const context = findProductContext(projects, task.productId);
+        const project = context?.project || null;
         return {
           ...task,
           projectName: project?.name || "已删除项目",
-          productName:
-            task.kind === "release"
-              ? "仓库级"
-              : context?.product.trackName || context?.project.name || "未知产品",
-          platform:
-            task.kind === "release"
-              ? "仓库"
-              : context?.product.platform || "unknown",
+          productName: context?.product.trackName || context?.project.name || "未知产品",
+          platform: context?.product.platform || "unknown",
         };
       }),
     };
@@ -978,6 +949,191 @@ export function registerIpcHandlers() {
     await schedulerTick();
     return true;
   });
+
+  ipcMain.handle("release:list", async (_event, projectId: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+
+    const { checkForRelease } = await import("../engine/release-watcher");
+    const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    return {
+      releases: result.releases.map((release) => ({
+        ...release,
+        submissionDrafts: (project.storeProducts || []).map((product: any) =>
+          findStoreSubmissionDraft(project, product.id, release.tag),
+        ),
+      })),
+      latestDraft: result.releases.find((release) => release.draft) || null,
+    };
+  });
+
+  ipcMain.handle(
+    "release:get",
+    async (
+      _event,
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      force = false,
+      languages?: string[],
+    ) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const product = (project.storeProducts || []).find((item: any) => item.id === productId);
+    if (!product) throw new Error("Store product not found");
+
+    const { checkForRelease } = await import("../engine/release-watcher");
+    const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    const release = result.releases.find((item) => item.tag === releaseTag) || null;
+    if (!release) return { release: null, draft: null, actionable: false };
+
+    const existing = findStoreSubmissionDraft(project, productId, releaseTag);
+    if (release.draft) {
+      if (force) {
+        const draft = await generateStoreSubmissionDraft(
+          s,
+          project,
+          product,
+          release,
+          existing,
+          (progress) => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", progress);
+            }
+          },
+          languages,
+        );
+        upsertStoreSubmissionDraft(project, draft);
+        s.set("projects", projects);
+        return { release, draft, actionable: true };
+      }
+      return { release, draft: existing, actionable: Boolean(existing) };
+    }
+
+    if (existing) {
+      existing.githubDraftStatus = "published";
+      existing.storeStatus = existing.storeStatus === "released" ? existing.storeStatus : "released";
+      existing.updatedAt = new Date().toISOString();
+      upsertStoreSubmissionDraft(project, existing);
+      s.set("projects", projects);
+      return { release, draft: existing, actionable: false };
+    }
+
+    return { release, draft: null, actionable: false };
+    },
+  );
+
+  ipcMain.handle("release:saveDraft", async (_event, projectId: string, draft: StoreSubmissionDraft) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    if (!draft?.id || draft.projectId !== projectId) throw new Error("Invalid submission draft");
+
+    draft.updatedAt = new Date().toISOString();
+    upsertStoreSubmissionDraft(project, draft);
+    const context = findProductContext(projects, draft.productId);
+    if (context) {
+      context.product.submissionKeywords = (draft.localizations || []).map((item) => ({
+        language: item.language,
+        text: item.keywords,
+      }));
+    }
+    s.set("projects", projects);
+    return draft;
+  });
+
+  ipcMain.handle(
+    "release:applyKeywordDeltas",
+    async (_event, projectId: string, productId: string, releaseTag: string) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const draft = findStoreSubmissionDraft(project, productId, releaseTag);
+      if (!draft) throw new Error("Submission draft not found");
+
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const product = context.product;
+      const tracked = [...(product.trackedKeywords || [])];
+      const removed = [...(product.removedKeywords || [])];
+
+      for (const delta of draft.trackingKeywordDeltas || []) {
+        if (delta.direction === "add") {
+          const removedIndex = removed.findIndex(
+            (item: any) => item.language === delta.language && item.keyword === delta.keyword,
+          );
+          if (removedIndex >= 0) {
+            tracked.push(removed[removedIndex]);
+            removed.splice(removedIndex, 1);
+          } else if (!tracked.some((item: any) => item.language === delta.language && item.keyword === delta.keyword)) {
+            tracked.push({
+              language: delta.language,
+              keyword: delta.keyword,
+              rationale: delta.reason || "",
+              translation: "",
+            });
+          }
+        } else {
+          const trackedIndex = tracked.findIndex(
+            (item: any) => item.language === delta.language && item.keyword === delta.keyword,
+          );
+          if (trackedIndex >= 0) {
+            const [removedKeyword] = tracked.splice(trackedIndex, 1);
+            if (!removed.some((item: any) => item.language === delta.language && item.keyword === delta.keyword)) {
+              removed.push({
+                language: delta.language,
+                keyword: delta.keyword,
+                rationale: removedKeyword?.rationale || delta.reason || "",
+                translation: removedKeyword?.translation || "",
+                removedAt: new Date().toISOString(),
+              });
+            }
+          }
+        }
+      }
+
+      product.trackedKeywords = tracked;
+      product.removedKeywords = removed;
+      draft.trackingKeywordDeltas = [];
+      draft.updatedAt = new Date().toISOString();
+      upsertStoreSubmissionDraft(project, draft);
+      s.set("projects", projects);
+      void schedulerTick();
+      return product;
+    },
+  );
+
+  ipcMain.handle(
+    "release:setStoreStatus",
+    async (
+      _event,
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      storeStatus: AppStoreStatus,
+      reviewFeedback?: string,
+    ) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const draft = findStoreSubmissionDraft(project, productId, releaseTag);
+      if (!draft) throw new Error("Submission draft not found");
+
+      draft.storeStatus = storeStatus;
+      draft.reviewFeedback = reviewFeedback?.trim() || "";
+      draft.updatedAt = new Date().toISOString();
+      upsertStoreSubmissionDraft(project, draft);
+      s.set("projects", projects);
+      return draft;
+    },
+  );
 
   ipcMain.handle("repo:checkRelease", async (_event, projectId: string) => {
     const s = await getStore();

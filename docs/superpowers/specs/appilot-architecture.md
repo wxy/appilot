@@ -58,8 +58,8 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | **KeywordEngine** | AI 建议描述性关键词（分语言/storefront）+ 用户筛选 → 跟踪关键词集 | ✅ |
 | **RankCollector** | iTunes Search API 按「关键词 × storefront」轮询排名，写时间序列 | ❌ |
 | **ReviewCollector** | App Store RSS feed 拉评论 | ❌ |
-| **ReleaseWatcher** | **只读**检测 GitHub Release Draft（本地 git tag 兜底），正式发布作为完成信号 | ❌ |
-| **ReleaseSubmissionPlanner** | 把 GitHub Release 转成 App Store 提交内容：Promotional Text（现在可改）+ 描述 / What's New / 提交关键词（随商店版本提交）+ 推广素材 brief | ✅ |
+| **ReleaseWatcher** | **只读**、按需读取仓库根目录 `RELEASE_DRAFT.md`，文件存在即触发，文件修改时间用于识别新预发布；不自动调度 | ❌ |
+| **ReleaseSubmissionPlanner** | 把发布公告转成 App Store 提交内容：Promotional Text（现在可改）+ 描述 / What's New / 提交关键词（随商店版本提交）+ 推广素材 brief | ✅ |
 | **AgentOrchestrator** | 周期性编排 agent run：采集 → 推理 → 周报 → 待批准 → 记录结果 → 反馈闭环 | 调度 ❌，推理 ✅ |
 | **AIService** | 全局 AI 配置 + 模型路由（便宜模型 vs 强模型） | ✅ |
 
@@ -72,8 +72,8 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | `keywords` | projectId, keyword, storefront, language, status | 关键词带 storefront 维度 |
 | `keyword_rankings` | keywordId, storefront, rank, date | 排名时间序列 |
 | `reviews` | projectId, storefront, author, rating, title, body, date | 评论快照 |
-| `releases` | projectId, tag, publishedAt, body, appVersion, buildNumber, isDraft, status, summary | 检测到的 GitHub Release |
-| `store_submission_drafts` | id, projectId, productId, appVersion, buildNumber, releaseTag, githubDraftStatus, promotionalText, whatsNew, description, submissionKeywords, trackingKeywordDeltas, storeStatus, reviewFeedback, revision, createdAt, updatedAt | 每个 GitHub Release Draft + 产品的权威商店提交草稿 |
+| `releases` | projectId, tag, publishedAt, body, appVersion, buildNumber, isDraft, status, summary | 检测到的 `RELEASE_DRAFT.md` |
+| `store_submission_drafts` | id, projectId, productId, appVersion, buildNumber, releaseTag, githubDraftStatus, localizations, trackingKeywordDeltas, storeStatus, reviewFeedback, revision, createdAt, updatedAt | 每个预发布公告修改时间 + 产品的权威商店提交草稿 |
 | `tracking_keyword_changes` | draftId, productId, language, keyword, direction(add/remove), reason, status | 发布时提出的跟踪关键词增删建议 |
 | `agent_runs` | projectId, startedAt, inputSummary, outputBrief, status | 每次 agent run 记录 |
 | `ai_actions` | 沿用（AI 调用审计 + token/cost） | 模型路由下的用量统计 |
@@ -82,13 +82,13 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 
 ### 3.0.3 StoreSubmissionDraft（当前方向）
 
-一个「GitHub Release + 产品」对应一份权威 `StoreSubmissionDraft`。它不是 GitHub Release 日志，也不是一次性文本列表，而是会随 App Store 审核状态反复更新的提交工作单。
+一个「`RELEASE_DRAFT.md` 修改时间 + 产品」对应一份权威 `StoreSubmissionDraft`。它不是发布日志，也不是一次性文本列表，而是会随 App Store 审核状态反复更新的提交工作单。
 
 | 字段 | 含义 | 示例 |
 |------|------|------|
 | `appVersion` / `buildNumber` | 商店提交身份键 | `2.1.0` / `42` |
-| `releaseTag` | 关联的 GitHub Release | `v2.1.0` |
-| `githubDraftStatus` | 当前 GitHub Release 是否为草案 | `draft` / `published` |
+| `releaseTag` | 关联的预发布公告标识 | `draft-<mtimeMs>` |
+| `githubDraftStatus` | 当前公告文件是否为预发布 | `draft` / `published` |
 | `promotionalText` | 现在可改的推广文本 | ≤ 170 字符 |
 | `whatsNew` | 本次新增变化 | ≤ 4000 字符 |
 | `description` | App 描述 | ≤ 4000 字符 |
@@ -101,8 +101,8 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 规则：
 
 - **仓库只读**：`RepoAnalyzer`、`ReleaseWatcher` 和 `ReleaseSubmissionPlanner` 只能读仓库，不写文件、不创建分支、不提交 PR。
-- **草案触发，正式发布结束**：`githubDraftStatus === "draft"` 时生成/更新提交文案；转为 `published` 后只标记 `released`，不再生成文案。
-- **一个 Release 一份草稿**：GitHub Release 被编辑、二进制替换，或 App Store 驳回后重新提交，都更新同一个 draft，不创建多条半成品。
+- **文件存在触发，文件删除结束**：仓库根目录存在 `RELEASE_DRAFT.md` 时生成/更新提交文案；仓库删除该文件后，Appilot 不再生成文案。
+- **一个公告一份草稿**：公告被编辑，或 App Store 驳回后重新提交，都更新同一个 draft，不创建多条半成品。
 - **驳回不是失败**：`rejected` 是状态机的一部分，携带 `reviewFeedback`，触发同一 draft 的重新生成。
 - **关键词增删不立即写入跟踪集**：先生成 `tracking_keyword_changes`，用户确认后再更新关键词状态。
 

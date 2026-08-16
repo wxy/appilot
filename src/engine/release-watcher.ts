@@ -1,10 +1,6 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { Octokit } from "@octokit/rest";
-import { RepoAnalyzer } from "./repo-analyzer";
+import fs from "fs";
+import path from "path";
 import { log } from "./logger";
-
-const execFileAsync = promisify(execFile);
 
 export interface ReleaseInfo {
   id: string;
@@ -13,7 +9,8 @@ export interface ReleaseInfo {
   publishedAt: string;
   url: string;
   body: string;
-  source: "github" | "git-tag";
+  source: "release-draft-file";
+  draft: boolean;
 }
 
 export interface ReleaseCheckResult {
@@ -23,104 +20,55 @@ export interface ReleaseCheckResult {
   releases: ReleaseInfo[];
 }
 
-function parseGithubRemote(remote: string): { owner: string; repo: string } | null {
-  try {
-    return RepoAnalyzer.parseGitHubUrl(remote);
-  } catch {
-    return null;
-  }
-}
+const RELEASE_DRAFT_FILENAME = "RELEASE_DRAFT.md";
 
-async function getGitRemote(localPath: string): Promise<string | null> {
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["config", "--get", "remote.origin.url"],
-      { cwd: localPath },
-    );
-    return stdout.trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-async function listGitHubReleases(owner: string, repo: string): Promise<ReleaseInfo[]> {
-  const octokit = new Octokit({ request: { timeout: 10_000 } });
-  let data: any[] = [];
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const response = await octokit.rest.repos.listReleases({
-        owner,
-        repo,
-        per_page: 5,
-      });
-      data = response.data;
-      break;
-    } catch (err: any) {
-      const status = err?.status || err?.response?.status;
-      if ((status === 403 || status === 429) && attempt < 3) {
-        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
-        continue;
-      }
-      throw err;
+function firstHeading(content: string): string | null {
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("#")) {
+      return trimmed.replace(/^#+\s*/, "").trim() || null;
     }
+    return trimmed;
   }
-  return data.map((release) => ({
-    id: String(release.id),
-    tag: release.tag_name,
-    name: release.name || null,
-    publishedAt: release.published_at || release.created_at || "",
-    url: release.html_url,
-    body: release.body || "",
-    source: "github",
-  }));
+  return null;
 }
 
-async function listLocalTags(localPath: string): Promise<ReleaseInfo[]> {
+function readReleaseDraft(localPath: string): ReleaseInfo | null {
+  const filePath = path.join(localPath, RELEASE_DRAFT_FILENAME);
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      [
-        "for-each-ref",
-        "--sort=-creatordate",
-        "--format=%(refname:short)%09%(creatordate:iso8601)%09%(objectname:short)",
-        "refs/tags",
-      ],
-      { cwd: localPath },
-    );
-    return stdout
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .slice(0, 5)
-      .map((line) => {
-        const [tag, publishedAt] = line.split("\t");
-        return {
-          id: tag,
-          tag,
-          name: null,
-          publishedAt,
-          url: "",
-          body: "",
-          source: "git-tag" as const,
-        };
-      });
+    const content = fs.readFileSync(filePath, "utf8");
+    const stat = fs.statSync(filePath);
+    const modifiedAt = stat.mtime.toISOString();
+    const draftId = `draft-${stat.mtimeMs}`;
+
+    return {
+      id: draftId,
+      tag: draftId,
+      name: firstHeading(content) || RELEASE_DRAFT_FILENAME,
+      publishedAt: modifiedAt,
+      url: "",
+      body: content,
+      source: "release-draft-file",
+      draft: true,
+    };
   } catch (err: any) {
-    log.warn(`Local git tag lookup failed for ${localPath}: ${err.message}`);
-    return [];
+    if (err?.code !== "ENOENT") {
+      log.warn(`Failed to read ${RELEASE_DRAFT_FILENAME}: ${err.message}`);
+    }
+    return null;
   }
 }
 
 export async function checkForRelease(
   localPath: string,
   lastSeenTag?: string | null,
+  _legacyGithubToken?: string | null,
 ): Promise<ReleaseCheckResult> {
-  const remote = await getGitRemote(localPath);
-  const github = remote ? parseGithubRemote(remote) : null;
-  const releases = github
-    ? await listGitHubReleases(github.owner, github.repo)
-    : await listLocalTags(localPath);
-  const latest = releases[0] || null;
+  const draft = readReleaseDraft(localPath);
+  const releases = draft ? [draft] : [];
+  const latest = draft || null;
   const isNew = Boolean(latest && latest.tag !== lastSeenTag);
 
   return {

@@ -43,6 +43,35 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("repo:setReleaseStatus", projectId, tag, status),
   },
 
+  release: {
+    list: (projectId: string): Promise<any> => ipcRenderer.invoke("release:list", projectId),
+    get: (
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      force = false,
+      languages?: string[],
+    ): Promise<any> =>
+      ipcRenderer.invoke("release:get", projectId, productId, releaseTag, force, languages),
+    onGenerateProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+      ipcRenderer.on("release:generateProgress", listener);
+      return () => ipcRenderer.removeListener("release:generateProgress", listener);
+    },
+    saveDraft: (projectId: string, draft: any): Promise<any> =>
+      ipcRenderer.invoke("release:saveDraft", projectId, draft),
+    applyKeywordDeltas: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("release:applyKeywordDeltas", projectId, productId, releaseTag),
+    setStoreStatus: (
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      storeStatus: string,
+      reviewFeedback?: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke("release:setStoreStatus", projectId, productId, releaseTag, storeStatus, reviewFeedback),
+  },
+
   scheduler: {
     status: (): Promise<any> => ipcRenderer.invoke("scheduler:status"),
     list: (): Promise<any> => ipcRenderer.invoke("scheduler:list"),
