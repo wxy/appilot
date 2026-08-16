@@ -33,6 +33,10 @@ contextBridge.exposeInMainWorld("appilot", {
     },
   },
 
+  repo: {
+    checkRelease: (projectId: string): Promise<any> => ipcRenderer.invoke("repo:checkRelease", projectId),
+  },
+
   ai: {
     getConfig: (): Promise<AIConfig> => ipcRenderer.invoke("ai:getConfig"),
     saveConfig: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:saveConfig", config),

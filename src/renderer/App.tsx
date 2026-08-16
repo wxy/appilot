@@ -396,6 +396,122 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   );
 }
 
+function RepoPage() {
+  const { projects, currentProjectId } = useProject();
+  const project = projects.find((item) => item.id === currentProjectId);
+  const [result, setResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!project) {
+    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示仓库动态。" />;
+  }
+
+  const handleCheck = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const next = await (window as any).appilot.repo.checkRelease(project.id);
+      setResult(next);
+    } catch (e: any) {
+      setError(e.message || "Release 检查失败。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-10 max-w-3xl mx-auto">
+      <div className="flex items-start justify-between gap-4 mb-8">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">仓库动态</h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+            检测新 Release，并让 AI 生成本次版本的更新建议。
+          </p>
+        </div>
+        <button onClick={handleCheck} disabled={loading} className={btnPrimary}>
+          {loading ? "检查中..." : "检查新 Release"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
+          {error}
+        </div>
+      )}
+
+      {!result?.release ? (
+        <EmptyState title="尚未检测到 Release" desc="点击右上角检查新 Release。" />
+      ) : (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  {result.release.name || result.release.tag}
+                </h3>
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+                  {result.release.tag} · {new Date(result.release.publishedAt).toLocaleString()}
+                </p>
+              </div>
+              {result.isNew && (
+                <span className="px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
+                  新版本
+                </span>
+              )}
+            </div>
+            <div className="p-5">
+              <p className="text-sm whitespace-pre-wrap text-zinc-600 dark:text-zinc-300">
+                {result.release.body || "该 Release 没有正文。"}
+              </p>
+              {result.release.url && (
+                <button
+                  onClick={() => (window as any).appilot.openExternal(result.release.url)}
+                  className="mt-3 text-sm text-amber-600 dark:text-amber-400 hover:underline"
+                >
+                  打开 Release ↗
+                </button>
+              )}
+            </div>
+          </div>
+
+          {result.review && (
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">AI 重审建议</h3>
+              </div>
+              <div className="p-5 space-y-5">
+                {result.review.summary && (
+                  <p className="text-sm text-zinc-700 dark:text-zinc-300">{result.review.summary}</p>
+                )}
+                <ReleaseSuggestionList title="描述建议" items={result.review.descriptionSuggestions} />
+                <ReleaseSuggestionList title="关键词建议" items={result.review.keywordSuggestions} />
+                <ReleaseSuggestionList title="推广角度" items={result.review.promotionAngles} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReleaseSuggestionList({ title, items }: { title: string; items: string[] }) {
+  if (!items?.length) return null;
+  return (
+    <div>
+      <h4 className="text-xs font-medium text-zinc-400 dark:text-zinc-500 mb-2">{title}</h4>
+      <ul className="space-y-1.5">
+        {items.map((item, index) => (
+          <li key={`${item}-${index}`} className="text-sm text-zinc-700 dark:text-zinc-300">
+            • {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function PlaceholderPage({ title, desc }: { title: string; desc: string }) {
   const { projects, currentProjectId } = useProject();
   if (!projects.some((p) => p.id === currentProjectId)) {
@@ -1125,7 +1241,7 @@ export function App() {
         <Route path="/overview" element={<OverviewPage />} />
         <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/assets" element={<PlaceholderPage title="素材中心" desc="文案、海报方向、视频脚本。" />} />
-        <Route path="/repo" element={<PlaceholderPage title="仓库动态" desc="新 Release 检测与 AI 重审。" />} />
+        <Route path="/repo" element={<RepoPage />} />
         <Route path="/reviews" element={<PlaceholderPage title="评论洞察" desc="用户评论聚类与洞察。" />} />
         <Route path="/trend" element={<PlaceholderPage title="长期效果" desc="增长时间线与你采纳的动作。" />} />
         <Route path="/projects" element={<ManageProjectsPage />} />

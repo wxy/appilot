@@ -315,6 +315,46 @@ export function registerIpcHandlers() {
     return project;
   });
 
+  ipcMain.handle("repo:checkRelease", async (_event, projectId: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+
+    const { checkForRelease } = await import("../engine/release-watcher");
+    const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    if (!result.latest) {
+      return { release: null, review: null, isNew: false };
+    }
+
+    let review = project.lastReleaseReview || null;
+    if (result.isNew || !review || review.releaseTag !== result.latest.tag) {
+      const { AIProvider } = await import("../engine/ai/ai-provider");
+      const provider = new AIProvider({
+        baseURL: s.get("aiProviderUrl"),
+        apiKey: decryptApiKey(s.get("aiApiKey")),
+        model: s.get("aiModel"),
+      });
+      const { reviewRelease } = await import("../engine/ai/release-reviewer");
+      const { readRepoDescription } = await import("../engine/app-store-discovery");
+      const generated = await reviewRelease(provider, {
+        name: project.trackName || project.name,
+        description: readRepoDescription(project.localPath),
+        release: result.latest,
+      });
+      review = { ...generated, releaseTag: result.latest.tag };
+    }
+
+    project.lastReleaseTag = result.latest.tag;
+    project.lastReleaseReview = review;
+    s.set("projects", projects);
+    return {
+      release: result.latest,
+      review,
+      isNew: result.isNew,
+    };
+  });
+
   // ── AI Config ──
   ipcMain.handle("ai:getConfig", async () => {
     const s = await getStore();
