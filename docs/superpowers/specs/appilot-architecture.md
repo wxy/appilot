@@ -1,7 +1,7 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-14（重新定位为 Apple 应用增长 / ASO 运营代理）
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-16（补充 ReleaseSubmissionPlanner / ReleaseAction）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
 > 本文档定义 Appilot 的**技术架构**。§3 是当前方向（Apple 运营代理：agent loop + 采集器 + AI Reasoning）；§4 起为历史架构（GitHub + Twitter 时代），已废弃，保留作参考。
 > 技术栈：**Electron + React + TypeScript**（桌面），**Node.js**（Engine 纯逻辑包），Zustand（状态管理）。数据持久化当前用 electron-store，后续按需引入 SQLite。
@@ -58,7 +58,8 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | **KeywordEngine** | AI 建议描述性关键词（分语言/storefront）+ 用户筛选 → 跟踪关键词集 | ✅ |
 | **RankCollector** | iTunes Search API 按「关键词 × storefront」轮询排名，写时间序列 | ❌ |
 | **ReviewCollector** | App Store RSS feed 拉评论 | ❌ |
-| **ReleaseWatcher** | 检测 GitHub Release（本地 git tag 兜底），触发重审 | ❌ |
+| **ReleaseWatcher** | 检测 GitHub Release（本地 git tag 兜底），触发商店提交工作台 | ❌ |
+| **ReleaseSubmissionPlanner** | 把 GitHub Release 转成 App Store 提交内容：Promotional Text（现在可改）+ 描述 / What's New / 提交关键词（随商店版本提交）+ 推广素材 brief | ✅ |
 | **AgentOrchestrator** | 周期性编排 agent run：采集 → 推理 → 周报 → 待批准 → 记录结果 → 反馈闭环 | 调度 ❌，推理 ✅ |
 | **AIService** | 全局 AI 配置 + 模型路由（便宜模型 vs 强模型） | ✅ |
 
@@ -71,11 +72,26 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | `keywords` | projectId, keyword, storefront, language, status | 关键词带 storefront 维度 |
 | `keyword_rankings` | keywordId, storefront, rank, date | 排名时间序列 |
 | `reviews` | projectId, storefront, author, rating, title, body, date | 评论快照 |
-| `releases` | projectId, tag, publishedAt, summary | 检测到的 release |
+| `releases` | projectId, tag, publishedAt, body, status, summary | 检测到的 release |
+| `release_actions` | releaseId, projectId, kind, timing, target, title, content, status, createdAt, updatedAt, completedAt | 每个 release 产出的可执行动作 |
 | `agent_runs` | projectId, startedAt, inputSummary, outputBrief, status | 每次 agent run 记录 |
 | `ai_actions` | 沿用（AI 调用审计 + token/cost） | 模型路由下的用量统计 |
 
 > 说明：Phase 0 已实现的 SQLite 层（drizzle）因从未被主进程接线而作为死代码移除（见评审记录 §21）。当前持久化用 electron-store，在 agent loop 引入后按上表重建持久层。
+
+### 3.0.3 Release 提交工作单模型（当前方向）
+
+一个 GitHub Release 对应一个 `release_actions` 集合。Action 不承载「一次性文本建议」，而是承载「需要人拍板并最终落地到 App Store 或素材中心」的任务。
+
+| 字段 | 含义 | 示例 |
+|------|------|------|
+| `kind` | 动作类型 | `update_promotional_text` / `update_description` / `update_whats_new` / `update_keywords` / `create_promotion_asset` |
+| `timing` | 动作发生在 App Store 流程的哪一步 | `now`（可立即改） / `with_store_version`（随商店版本提交） / `asset_center`（进入素材中心） |
+| `target` | 动作最终去向 | `app_store` / `keyword_tracking` / `asset_center` |
+| `content` | AI 生成或用户修改后的内容 | 完整文案、增量 diff 或推广 brief |
+| `status` | 人的决策状态 | `pending` / `accepted` / `modified` / `ignored` / `done` |
+
+`ReleaseSubmissionPlanner` 负责生成结构化 Action；`AgentOrchestrator` 后续把这些 Action 纳入周报，已 `done` 的 Action 成为归因时间线中的证据点。
 
 ---
 

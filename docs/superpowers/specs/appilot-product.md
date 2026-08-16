@@ -1,7 +1,7 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-14（重新定位为 Apple 应用增长 / ASO 运营代理）
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-16（补充 Release → App Store 提交工作流）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
 > 本文档定义 Appilot 的**产品边界**。§1–§2 是当前方向（Apple 应用增长运营代理）；§15 起为历史设计（GitHub + Twitter 时代），已废弃，保留作参考。
 
@@ -93,11 +93,48 @@ Appilot 是面向独立开发者（OPC，一人公司）的 **Apple 应用增长
 
 ### 2.2 核心流程
 
-1. **添加项目**：选本地仓库目录 → AI 分析仓库理解产品 → 从 README 自动发现 App Store 链接（正则优先 + AI 兜底）→ 解析 trackId（`mt=12` macOS / `mt=8` iOS 区分平台，多链接时让用户确认）→ Lookup API 反解 bundleId + 元数据。
-2. **关键词建议**：AI 分析仓库 → 建议**描述性关键词**（而非造词品牌名），附理由，分语言/storefront 分层 → 用户筛选后进入跟踪集。同时输出「建议加到标题/描述的关键词」（ASO 优化建议）。
-3. **排名跟踪**：iTunes Search API（免费）按「关键词 × 国家/语言 storefront」记录排名时间序列，展示升降趋势。
-4. **仓库观察 + release 重审**：以 GitHub Release 为主信号（本地 git tag 兜底）检测新版本 → 重新 AI 分析 → 输出「待确认变更建议」（描述改什么、关键词增删什么、这次更新有什么值得推广）。
-5. **运营周报（agent loop）**：周期性 AI 运行，综合排名趋势 + 评论 + 竞品 + release 事件，输出「本周该做的 3 件事，为什么，预期效果」。
+1. **产品定位与项目接入**：选本地仓库目录 → AI 分析仓库理解产品 → 从 README 自动发现 App Store 链接（正则优先 + AI 兜底）→ 解析 trackId（`mt=12` macOS / `mt=8` iOS 区分平台，多链接时让用户确认）→ Lookup API 反解 bundleId + 基础元数据。这个阶段允许信息不完整，目标只是先把「产品」在 Appilot 里建立起来。
+2. **发布工作台**：以 GitHub Release 为主信号（本地 git tag 兜底）检测新版本 → 重新 AI 分析本次发布 → 生成可直接粘贴到 App Store 的商店内容。App Store 元数据按编辑时机分成两类：**Promotional Text（现在可改，未来接 API 后自动更新；未接 API 时生成文本供手动更新）** 和 **需要随新版本提交并审核的字段（名称/副标题/描述/关键词/What's New）**。开发流程止于 GitHub Release，商店提交内容由 Appilot 管理准备，最后再到 App Store Connect 完成提交。截图制作暂不纳入当前工作流。
+3. **发布后管理**：应用上架后，iTunes Search API（免费）按「关键词 × 国家/语言 storefront」记录排名时间序列，展示升降趋势；之后再逐步加入评论、下载、评分等信号。
+4. **运营周报（agent loop）**：周期性 AI 运行，综合排名趋势 + 评论 + 竞品 + release 事件，输出「本周该做的 3 件事，为什么，预期效果」。
+
+### 2.6 Release 管理闭环（商店提交准备）
+
+Appilot 中的「发布」不是一次性生成几条建议，而是一个面向 App Store 提交的短周期工作台。它位于「产品定位」之后、「发布后关键词跟踪」之前。核心边界是：
+
+- **GitHub Release 是唯一触发信号**：开发侧只负责打 tag / 发 GitHub Release，不再在开发流程里撰写商店文案。
+- **Appilot 负责把 GitHub Release 翻译成 App Store 提交内容**：商品描述、Promotional Text、What's New、候选提交关键词，以及可复用的推广角度。
+- **人只做关键决策**：确认、修改、忽略、标记完成；不负责从零写文案，也不负责手动回填数据。
+
+```
+GitHub Release 创建
+        ↓
+Appilot 检测新发布
+        ↓
+AI 生成 Release 提交工作单
+  ├─ 现在可改：Promotional Text
+  ├─ 随商店版本提交：描述 / What's New / 提交关键词
+  └─ 推广素材：角度 + 文案 brief → 素材中心
+        ↓
+用户确认 / 修改 / 忽略
+        ↓
+用户到 App Store Connect 创建版本、粘贴内容、提审
+        ↓
+发布后标记完成，作为后续 agent loop 的事件证据
+```
+
+**App Store 字段规则（Appilot 必须遵守）**
+
+| 字段 | 是否可随时改 | Appilot 当前阶段 |
+|------|:---:|------------------|
+| Promotional Text | ✅ 可随时改 | 生成文案；未来接 App Store Connect API 后可自动更新，未接 API 则复制后手动更新 |
+| What's New | ❌ 随版本提交 | 根据 GitHub Release body 生成本次「新增变化」 |
+| App 描述 | ❌ 随版本提交 | 生成完整描述或增量修改建议，随商店新版本提交 |
+| 名称 / 副标题 | ❌ 随版本提交 | 仅在 AI 认为有必要时生成，否则保持现状 |
+| 关键词 | ❌ 随版本提交 | 生成「提交关键词」，与「跟踪关键词」分开管理 |
+| 推广角度 | 不直接写回商店 | 进入素材中心，用于生成帖文、海报 brief、视频脚本 |
+
+**每个 Release 的产出不是纯文本列表，而是可执行的 `ReleaseAction`**：有 `kind`、`timing`、`target`、`status`、内容与更新时间。这样同一个 Release 可以同时产出「现在要更新的推广文本」和「随商店版本提交的字段」，也可以在历史里追溯用户对每条建议做了什么。
 
 ### 2.3 AI 运营代理（agent loop）
 

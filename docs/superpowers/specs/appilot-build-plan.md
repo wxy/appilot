@@ -1,7 +1,7 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-14（重新定位为 Apple 应用增长 / ASO 运营代理）
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-16（Phase C 更新为发布工作台）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
 > 本文档是 Appilot 的**构建计划**。§13 为当前方向（Apple 运营代理的 Phase A–F）；旧的 Phase 0–5（GitHub + Twitter）已废弃。
 
@@ -10,7 +10,7 @@
 
 **策略：纵向切片，先让两个真实应用（GloWalk / AI Pulse）被跟踪起来，再逐层加「智能」。**
 
-### Phase A: 项目接入（多项目 + 本地仓库 + AI 分析 + App Store 链接发现）
+### Phase A: 产品定位与项目接入
 
 ```
   ✓ 项目选择器（顶层入口，多项目管理）
@@ -20,38 +20,42 @@
       - App Store 链接发现（README 正则优先 + AI 兜底）
       - 解析 trackId（mt=12 macOS / mt=8 iOS，多链接时用户确认）
       - Lookup API 反解 bundleId + 元数据
-  ✓ AI 分析仓库 → 产品理解
-  ✓ AI 关键词建议（描述性词 + 理由 + 分语言/storefront）+ 建议加到标题/描述
-  ✓ 用户筛选关键词 → 跟踪关键词集
-产出：选本地仓库 → AI 自动识别产品类型、发现 bundleId、给出候选关键词
+  ✓ AI 分析仓库 → 基础产品理解与摘要
+  ✓ 建立基础产品档案（名称、平台、bundleId、trackId、商店链接、支持语言）
+产出：选本地仓库 → 在 Appilot 中定位并建立该产品，即使早期信息还不完整
 ```
 
-### Phase B: 关键词排名跟踪
-
-```
-  ✓ RankCollector（iTunes Search API 按「关键词 × storefront」轮询）
-  ✓ keyword_rankings 时间序列 + 趋势图（升降/进榜/掉榜）
-  ✓ 多 storefront / 多语言视图
-产出：每天看到每个关键词在各商店的排名及趋势
-```
-
-### Phase C: 仓库观察 + release 重审
+### Phase B: 发布工作台（GitHub Release → App Store 提交准备）
 
 ```
   ✓ ReleaseWatcher（GitHub Release 为主，本地 git tag 兜底）
-  ✓ 检测到新 release → 重新 AI 分析
-  ✓ 输出待确认变更建议（描述改什么、关键词增删、这次更新值得推广的点）
-产出：每次发版自动生成一份「该更新什么」的建议
+  ✓ 检测到新 release → 生成结构化 ReleaseSubmissionPlan
+  ✓ Promotional Text：现在可改；未来接 API 自动更新，未接 API 生成文案供手动更新
+  ✓ 随商店版本提交：描述 / What's New / 提交关键词（与跟踪关键词分开）
+  ✓ 推广角度 → 素材中心（文案 / 海报 brief / 视频脚本）
+  ✓ 每条产出为 ReleaseAction：pending / accepted / modified / ignored / done
+产出：每次 GitHub Release 自动生成一份可直接粘贴到 App Store 的提交工作单
+```
+
+### Phase C: 发布后管理（关键词跟踪起步）
+
+```
+  ✓ 基于产品档案 / 最近 Release / 商店提交关键词，AI 生成跟踪关键词候选
+  ✓ 用户筛选后进入跟踪关键词集
+  ✓ RankCollector（iTunes Search API 按「关键词 × storefront」轮询）
+  ✓ keyword_rankings 时间序列 + 趋势图（升降/进榜/掉榜）
+  ✓ 多 storefront / 多语言视图
+产出：应用上架后，每天看到每个关键词在各商店的排名及趋势
 ```
 
 ### Phase D: AI 运营代理（agent loop）
 
 ```
   ✓ AgentOrchestrator（周期调度，编排一次 agent run）
-  ✓ 周报 / 行动清单（综合排名 + 评论 + 竞品 + release → 「本周该做 3 件事」）
+  ✓ 周报 / 行动清单（综合排名 + 评论 + 竞品 + release actions → 「本周该做 3 件事」）
   ✓ 归因诊断（排名突变 → 关联事件 → 解释原因）
   ✓ 竞品分析（同关键词谁排前面、差在哪）
-  ✓ 反馈闭环（记录建议的执行结果，喂回下一轮）
+  ✓ 反馈闭环（记录 ReleaseAction 的执行结果，喂回下一轮）
 产出：App 从「仪表盘」变成「告诉你做什么」的运营代理
 ```
 
@@ -71,7 +75,7 @@
 产出：从「排名」闭环到「下载」，形成完整增长漏斗
 ```
 
-> 优先级：Phase A→B 让两个真实应用立刻可被跟踪（排名）；C→E 逐步叠加「智能」；F 需要 Apple 开发者账号 + API Key，放到最后。搜索量（search volume）Apple 不公开，全程不做，用「排名难度 + 竞品强度 + 相关性」近似。
+> 优先级：Phase A 先定位并建立产品；Phase B 在每次 GitHub Release 后生成 App Store 提交工作单；Phase C 在上架后开始关键词排名跟踪；D→E 逐步叠加「智能」；F 需要 Apple 开发者账号 + API Key，放到最后。搜索量（search volume）Apple 不公开，全程不做，用「排名难度 + 竞品强度 + 相关性」近似。
 
 ---
 
