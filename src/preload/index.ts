@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("appilot", {
 
   scheduler: {
     status: (): Promise<any> => ipcRenderer.invoke("scheduler:status"),
+    runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
   },
 
   ai: {
