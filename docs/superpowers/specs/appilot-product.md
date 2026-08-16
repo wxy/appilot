@@ -25,6 +25,7 @@ Appilot 是面向独立开发者（OPC，一人公司）的 **Apple 应用增长
 - **AI 优先，但精准用 AI** — AI 用在「理解、判断、诊断、规划、起草」这类需要智力的环节；「采集排名/评论/元数据」这类确定性工作用普通代码，不用 AI。全局一个 AI 配置 + 模型路由（便宜模型做抽取/分类，强模型做诊断/规划），把 AI 用足、用对地方。
 - **产品中心** — 以「产品」为第一实体，代码仓库只是理解产品的一个输入。产品类型（iOS / macOS）决定分发渠道、指标和运营策略。
 - **本地优先** — 数据归用户掌控，凭据不离开设备。从本地仓库直接读取源码与元数据。
+- **仓库只读边界** — Appilot 只读取本地仓库和 GitHub Release，不写文件、不创建分支、不提交 PR。README 或元数据过时是运营信号，由 Appilot 标记给人处理，但不越界修改开发仓库。
 - **无手动回填** — 不能自动化的追踪能力就「缺失」，不做手动填报表单——因为手动追踪并没有真正减轻运营负担。
 - **反馈闭环** — AI 的建议要能看到执行后的结果（排名/下载变化），并据此持续变聪明。这是 Appilot 相比一次性顾问工具的核心差异。
 - **Human-in-the-loop** — AI 负责分析与建议，用户负责确认。执行（尤其涉及 App Store 元数据改动）始终由人拍板。
@@ -94,24 +95,25 @@ Appilot 是面向独立开发者（OPC，一人公司）的 **Apple 应用增长
 ### 2.2 核心流程
 
 1. **产品定位与项目接入**：选本地仓库目录 → AI 分析仓库理解产品 → 从 README 自动发现 App Store 链接（正则优先 + AI 兜底）→ 解析 trackId（`mt=12` macOS / `mt=8` iOS 区分平台，多链接时让用户确认）→ Lookup API 反解 bundleId + 基础元数据。这个阶段允许信息不完整，目标只是先把「产品」在 Appilot 里建立起来。
-2. **发布工作台**：以 GitHub Release 为主信号（本地 git tag 兜底）检测新版本 → 重新 AI 分析本次发布 → 生成可直接粘贴到 App Store 的商店内容。App Store 元数据按编辑时机分成两类：**Promotional Text（现在可改，未来接 API 后自动更新；未接 API 时生成文本供手动更新）** 和 **需要随新版本提交并审核的字段（名称/副标题/描述/关键词/What's New）**。开发流程止于 GitHub Release，商店提交内容由 Appilot 管理准备，最后再到 App Store Connect 完成提交。截图制作暂不纳入当前工作流。
-3. **发布后管理**：应用上架后，iTunes Search API（免费）按「关键词 × 国家/语言 storefront」记录排名时间序列，展示升降趋势；之后再逐步加入评论、下载、评分等信号。
+2. **发布工作台**：以 **GitHub Release Draft** 为主信号（本地 git tag 兜底）检测新版本 → 只读地重新分析本次发布与仓库现状 → 生成可直接粘贴到 App Store 的商店内容。App Store 元数据按编辑时机分成两类：**Promotional Text（现在可改，未来接 API 后自动更新；未接 API 时生成文本供手动更新）** 和 **需要随新版本提交并审核的字段（名称/副标题/描述/关键词/What's New）**。当草案在商店审核通过后，用户把 GitHub Release Draft 转为正式发布；Appilot 把正式发布视为提交完成信号，不再重新生成文案。截图制作暂不纳入当前工作流。每次发布还会提出对现有跟踪关键词的补充/删除建议。
+3. **发布后管理**：应用上架后，iTunes Search API（免费）按「关键词 × 国家/语言 storefront」记录排名时间序列，展示升降趋势；之后再逐步加入评论、下载、评分等信号。发布工作台中确认的关键词增删会进入或移出跟踪集。
 4. **运营周报（agent loop）**：周期性 AI 运行，综合排名趋势 + 评论 + 竞品 + release 事件，输出「本周该做的 3 件事，为什么，预期效果」。
 
 ### 2.6 Release 管理闭环（商店提交准备）
 
 Appilot 中的「发布」不是一次性生成几条建议，而是一个面向 App Store 提交的短周期工作台。它位于「产品定位」之后、「发布后关键词跟踪」之前。核心边界是：
 
-- **GitHub Release 是唯一触发信号**：开发侧只负责打 tag / 发 GitHub Release，不再在开发流程里撰写商店文案。
+- **GitHub Release Draft 是唯一触发信号**：开发侧先创建发布草案，Appilot 读取草案并生成商店提交文案；正式发布表示商店侧已经提交完成，不再触发文案生成。
+- **仓库只读**：Appilot 可以读取仓库、Git tag 和 GitHub Release，但绝不修改仓库。若 README 与最新 Release 不一致，只作为「待人工处理」的运营信号呈现。
 - **Appilot 负责把 GitHub Release 翻译成 App Store 提交内容**：商品描述、Promotional Text、What's New、候选提交关键词，以及可复用的推广角度。
 - **人只做关键决策**：确认、修改、忽略、标记完成；不负责从零写文案，也不负责手动回填数据。
 
 ```
-GitHub Release 创建
+GitHub Release Draft 创建
         ↓
-Appilot 检测新发布
+Appilot 检测发布草案
         ↓
-AI 生成 Release 提交工作单
+AI 生成 StoreSubmissionDraft
   ├─ 现在可改：Promotional Text
   ├─ 随商店版本提交：描述 / What's New / 提交关键词
   └─ 推广素材：角度 + 文案 brief → 素材中心
@@ -120,7 +122,11 @@ AI 生成 Release 提交工作单
         ↓
 用户到 App Store Connect 创建版本、粘贴内容、提审
         ↓
-发布后标记完成，作为后续 agent loop 的事件证据
+App Store 通过 → 用户把 GitHub Release Draft 转为正式发布
+        ↓
+Appilot 标记为已发布，不再生成相关文案
+        ↓
+被驳回 → 保持 GitHub Release Draft → 记录驳回意见 → 在同一提交工作单上重新生成
 ```
 
 **App Store 字段规则（Appilot 必须遵守）**
@@ -134,7 +140,30 @@ AI 生成 Release 提交工作单
 | 关键词 | ❌ 随版本提交 | 生成「提交关键词」，与「跟踪关键词」分开管理 |
 | 推广角度 | 不直接写回商店 | 进入素材中心，用于生成帖文、海报 brief、视频脚本 |
 
-**每个 Release 的产出不是纯文本列表，而是可执行的 `ReleaseAction`**：有 `kind`、`timing`、`target`、`status`、内容与更新时间。这样同一个 Release 可以同时产出「现在要更新的推广文本」和「随商店版本提交的字段」，也可以在历史里追溯用户对每条建议做了什么。
+**StoreSubmissionDraft 生命周期**
+
+```text
+GitHub Release Draft
+        ↓
+StoreSubmissionDraft prepared
+        ↓
+copied/submitted → in_review → rejected
+        ↓                            ↓
+GitHub 转正式发布              记录驳回意见 + 重新生成同一草稿
+        ↓
+released
+```
+
+- 身份键是「GitHub Release + 产品」。同一个 GitHub Release 对应多个平台产品时，各自生成 StoreSubmissionDraft。
+- GitHub Release Draft 被编辑或同一 App 版本重新替换二进制时，Appilot 更新已有草稿，而不是创建一条新的、半成品 Release。
+- **正式发布是结束信号，不是触发信号**：已发布的 GitHub Release 不再进入文案生成流程；若尚未在 Appilot 中建立过草稿，则只作为历史发布记录。
+- `rejected` 是提交工作单的正常状态，不是失败记录；它携带驳回意见，作为下一次生成文案的上下文。
+
+**每个 Release 的产出不是纯文本列表，而是一份可替换、可迭代的 `StoreSubmissionDraft`**：同一「GitHub Release + 产品」只保留一份权威草稿，App Store 驳回后更新这份草稿，不创建多条不完整发布。这样同一个 Release 可以同时产出「现在要更新的推广文本」和「随商店版本提交的字段」，也可以追溯用户对每条建议做了什么。
+
+**仓库信息与 Release 不一致时的处理**：Appilot 只检测并提示，不修改仓库。例如 README 仍写着旧版本，而 GitHub Release 已经是新版本，Appilot 会把「README 可能过时」作为发布工作台的一条风险提示；是否去开发仓库更新 README，由人决定，且该操作不属于 Appilot。
+
+**跟踪关键词随发布迭代**：发布工作台不只生成商店提交关键词，还会基于本次 Release 与产品现状，对已有跟踪关键词提出「补充」和「删除」建议。用户确认后，新增词进入跟踪集，删除词进入已删除列表；如果后续发布又认为某个词重新有效，由新的发布建议恢复，而不是在商店提交过程中直接回填数据。
 
 ### 2.3 AI 运营代理（agent loop）
 

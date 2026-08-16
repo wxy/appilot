@@ -54,11 +54,11 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | 组件 | 职责 | 用 AI？ |
 |------|------|---------|
 | **ProjectRegistry** | 多项目管理：增删改查、每个项目的本地路径 / GitHub 仓库 / 产品类型 | ❌ |
-| **RepoAnalyzer** | 读本地仓库 → 识别产品类型（.xcodeproj/.xcworkspace）→ 从 README 发现 App Store 链接 → 解析 trackId → Lookup API 反解 bundleId | 链接发现用正则优先、AI 兜底 |
+| **RepoAnalyzer** | **只读**读取本地仓库 → 识别产品类型（.xcodeproj/.xcworkspace）→ 从 README 发现 App Store 链接 → 解析 trackId → Lookup API 反解 bundleId | 链接发现用正则优先、AI 兜底 |
 | **KeywordEngine** | AI 建议描述性关键词（分语言/storefront）+ 用户筛选 → 跟踪关键词集 | ✅ |
 | **RankCollector** | iTunes Search API 按「关键词 × storefront」轮询排名，写时间序列 | ❌ |
 | **ReviewCollector** | App Store RSS feed 拉评论 | ❌ |
-| **ReleaseWatcher** | 检测 GitHub Release（本地 git tag 兜底），触发商店提交工作台 | ❌ |
+| **ReleaseWatcher** | **只读**检测 GitHub Release Draft（本地 git tag 兜底），正式发布作为完成信号 | ❌ |
 | **ReleaseSubmissionPlanner** | 把 GitHub Release 转成 App Store 提交内容：Promotional Text（现在可改）+ 描述 / What's New / 提交关键词（随商店版本提交）+ 推广素材 brief | ✅ |
 | **AgentOrchestrator** | 周期性编排 agent run：采集 → 推理 → 周报 → 待批准 → 记录结果 → 反馈闭环 | 调度 ❌，推理 ✅ |
 | **AIService** | 全局 AI 配置 + 模型路由（便宜模型 vs 强模型） | ✅ |
@@ -72,26 +72,41 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | `keywords` | projectId, keyword, storefront, language, status | 关键词带 storefront 维度 |
 | `keyword_rankings` | keywordId, storefront, rank, date | 排名时间序列 |
 | `reviews` | projectId, storefront, author, rating, title, body, date | 评论快照 |
-| `releases` | projectId, tag, publishedAt, body, status, summary | 检测到的 release |
-| `release_actions` | releaseId, projectId, kind, timing, target, title, content, status, createdAt, updatedAt, completedAt | 每个 release 产出的可执行动作 |
+| `releases` | projectId, tag, publishedAt, body, appVersion, buildNumber, isDraft, status, summary | 检测到的 GitHub Release |
+| `store_submission_drafts` | id, projectId, productId, appVersion, buildNumber, releaseTag, githubDraftStatus, promotionalText, whatsNew, description, submissionKeywords, trackingKeywordDeltas, storeStatus, reviewFeedback, revision, createdAt, updatedAt | 每个 GitHub Release Draft + 产品的权威商店提交草稿 |
+| `tracking_keyword_changes` | draftId, productId, language, keyword, direction(add/remove), reason, status | 发布时提出的跟踪关键词增删建议 |
 | `agent_runs` | projectId, startedAt, inputSummary, outputBrief, status | 每次 agent run 记录 |
 | `ai_actions` | 沿用（AI 调用审计 + token/cost） | 模型路由下的用量统计 |
 
 > 说明：Phase 0 已实现的 SQLite 层（drizzle）因从未被主进程接线而作为死代码移除（见评审记录 §21）。当前持久化用 electron-store，在 agent loop 引入后按上表重建持久层。
 
-### 3.0.3 Release 提交工作单模型（当前方向）
+### 3.0.3 StoreSubmissionDraft（当前方向）
 
-一个 GitHub Release 对应一个 `release_actions` 集合。Action 不承载「一次性文本建议」，而是承载「需要人拍板并最终落地到 App Store 或素材中心」的任务。
+一个「GitHub Release + 产品」对应一份权威 `StoreSubmissionDraft`。它不是 GitHub Release 日志，也不是一次性文本列表，而是会随 App Store 审核状态反复更新的提交工作单。
 
 | 字段 | 含义 | 示例 |
 |------|------|------|
-| `kind` | 动作类型 | `update_promotional_text` / `update_description` / `update_whats_new` / `update_keywords` / `create_promotion_asset` |
-| `timing` | 动作发生在 App Store 流程的哪一步 | `now`（可立即改） / `with_store_version`（随商店版本提交） / `asset_center`（进入素材中心） |
-| `target` | 动作最终去向 | `app_store` / `keyword_tracking` / `asset_center` |
-| `content` | AI 生成或用户修改后的内容 | 完整文案、增量 diff 或推广 brief |
-| `status` | 人的决策状态 | `pending` / `accepted` / `modified` / `ignored` / `done` |
+| `appVersion` / `buildNumber` | 商店提交身份键 | `2.1.0` / `42` |
+| `releaseTag` | 关联的 GitHub Release | `v2.1.0` |
+| `githubDraftStatus` | 当前 GitHub Release 是否为草案 | `draft` / `published` |
+| `promotionalText` | 现在可改的推广文本 | ≤ 170 字符 |
+| `whatsNew` | 本次新增变化 | ≤ 4000 字符 |
+| `description` | App 描述 | ≤ 4000 字符 |
+| `submissionKeywords` | 随商店版本提交的关键词 | ≤ 100 字符/语言 |
+| `trackingKeywordDeltas` | 对现有跟踪关键词的增删建议 | `add: night mode` / `remove: torch` |
+| `storeStatus` | App Store 提交状态 | `prepared` / `copied` / `submitted` / `in_review` / `rejected` / `released` |
+| `reviewFeedback` | 驳回意见 | 供重新生成文案时作为上下文 |
+| `revision` | 同一提交工作单的修订次数 | `1` / `2` / `3` |
 
-`ReleaseSubmissionPlanner` 负责生成结构化 Action；`AgentOrchestrator` 后续把这些 Action 纳入周报，已 `done` 的 Action 成为归因时间线中的证据点。
+规则：
+
+- **仓库只读**：`RepoAnalyzer`、`ReleaseWatcher` 和 `ReleaseSubmissionPlanner` 只能读仓库，不写文件、不创建分支、不提交 PR。
+- **草案触发，正式发布结束**：`githubDraftStatus === "draft"` 时生成/更新提交文案；转为 `published` 后只标记 `released`，不再生成文案。
+- **一个 Release 一份草稿**：GitHub Release 被编辑、二进制替换，或 App Store 驳回后重新提交，都更新同一个 draft，不创建多条半成品。
+- **驳回不是失败**：`rejected` 是状态机的一部分，携带 `reviewFeedback`，触发同一 draft 的重新生成。
+- **关键词增删不立即写入跟踪集**：先生成 `tracking_keyword_changes`，用户确认后再更新关键词状态。
+
+`AgentOrchestrator` 后续把已 `released` 的 draft 与 `tracking_keyword_changes` 纳入周报和长期效果时间线。
 
 ---
 

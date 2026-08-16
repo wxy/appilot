@@ -15,7 +15,7 @@
 ```
   ✓ 项目选择器（顶层入口，多项目管理）
   ✓ 本地仓库目录选择（Electron dialog）
-  ✓ RepoAnalyzer 扩展：
+  ✓ RepoAnalyzer 扩展（只读）：
       - 产品类型识别（.xcodeproj / .xcworkspace → ios / macos）
       - App Store 链接发现（README 正则优先 + AI 兜底）
       - 解析 trackId（mt=12 macOS / mt=8 iOS，多链接时用户确认）
@@ -28,19 +28,25 @@
 ### Phase B: 发布工作台（GitHub Release → App Store 提交准备）
 
 ```
-  ✓ ReleaseWatcher（GitHub Release 为主，本地 git tag 兜底）
-  ✓ 检测到新 release → 生成结构化 ReleaseSubmissionPlan
+  ✓ ReleaseWatcher（GitHub Release Draft 为主，本地 git tag 兜底；只读，不修改仓库）
+  ✓ 检测到 release draft → 只读重新分析仓库 → 生成 StoreSubmissionDraft
+  ✓ GitHub 正式发布作为完成信号，不再触发文案生成
   ✓ Promotional Text：现在可改；未来接 API 自动更新，未接 API 生成文案供手动更新
   ✓ 随商店版本提交：描述 / What's New / 提交关键词（与跟踪关键词分开）
+  ✓ Apple 字段限制：Promotional Text ≤170、关键词 ≤100、描述/What's New ≤4000
   ✓ 推广角度 → 素材中心（文案 / 海报 brief / 视频脚本）
-  ✓ 每条产出为 ReleaseAction：pending / accepted / modified / ignored / done
+  ✓ 同一「GitHub Release + 产品」只保留一份 draft，驳回后更新而不是新建
+  ✓ App Store 状态：prepared / copied / submitted / in_review / rejected / released
+  ✓ 驳回意见进入重新生成上下文
+  ✓ 跟踪关键词增删建议：确认后才更新跟踪集
 产出：每次 GitHub Release 自动生成一份可直接粘贴到 App Store 的提交工作单
 ```
 
 ### Phase C: 发布后管理（关键词跟踪起步）
 
 ```
-  ✓ 基于产品档案 / 最近 Release / 商店提交关键词，AI 生成跟踪关键词候选
+  ✓ 跟踪关键词来源优先级：商店提交关键词 > 产品/品牌词 > Release body 提取 > 用户补充
+  ✓ 承接发布工作台确认的 trackingKeywordDeltas（新增/删除）
   ✓ 用户筛选后进入跟踪关键词集
   ✓ RankCollector（iTunes Search API 按「关键词 × storefront」轮询）
   ✓ keyword_rankings 时间序列 + 趋势图（升降/进榜/掉榜）
