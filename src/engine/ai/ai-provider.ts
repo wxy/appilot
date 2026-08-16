@@ -77,7 +77,12 @@ export class AIProvider {
 
   async chat(
     messages: ChatMessage[],
-    opts?: { temperature?: number; maxTokens?: number; thinking?: ThinkingEffort },
+    opts?: {
+      temperature?: number;
+      maxTokens?: number;
+      thinking?: ThinkingEffort;
+      responseFormat?: "json_object";
+    },
   ): Promise<string> {
     const isDeepSeek = this.config.baseURL.includes("deepseek");
     const thinkingEffort: ThinkingEffort = opts?.thinking ?? (isDeepSeek ? "low" : "disabled");
@@ -91,6 +96,7 @@ export class AIProvider {
           messages,
           temperature: opts?.temperature ?? 0.7,
           max_tokens: opts?.maxTokens ?? 2000,
+          ...(opts?.responseFormat ? { response_format: { type: opts.responseFormat } } : {}),
           ...deepSeekThinkingParams(this.config.baseURL, thinkingEffort),
         } as any);
       } catch (err: any) {

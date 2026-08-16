@@ -44,11 +44,12 @@ assert(g5.tracking.length === 30 && g5.submission.length === 30, "parse: caps at
 
 // 6. mixed local + English tracking keywords
 const g6 = parseKeywordGeneration(
-  '{"tracking":[{"language":"zh-Hans","keyword":"AI 成本追踪","rationale":"本地词"},{"language":"en","keyword":"AI cost tracker","rationale":"English phrase"}],"submission":["成本追踪","AI","cost"]}',
+  '{"tracking":[{"language":"zh-Hans","keyword":"AI 成本追踪","translation":"AI 成本追踪","rationale":"本地词"},{"language":"en","keyword":"AI cost tracker","translation":"AI 成本追踪器","rationale":"English phrase"}],"submission":["成本追踪","AI","cost"]}',
   "zh-Hans",
 );
 assert(g6.tracking[0].language === "zh-Hans", "parse: keeps local language");
 assert(g6.tracking[1].language === "en", "parse: keeps English language");
+assert(g6.tracking[1].translation === "AI 成本追踪器", "parse: keeps translation when provided");
 
 console.log(`\n${errors === 0 ? "🎉 All keyword-suggester tests passed!" : `❌ ${errors} test(s) failed`}`);
 process.exit(errors > 0 ? 1 : 0);

@@ -19,7 +19,7 @@ const NAV_ITEMS = [
 
 function Layout({ children }: { children: React.ReactNode }) {
   const { resolved, toggle } = useTheme();
-  const { projects, currentProjectId, load, select, addByFolder } = useProject();
+  const { projects, currentProjectId, currentProductId, load, select, selectProduct, addByFolder } = useProject();
   const location = useLocation();
   const [cost, setCost] = useState<number | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -58,6 +58,16 @@ function Layout({ children }: { children: React.ReactNode }) {
   };
 
   const currentProject = projects.find((p) => p.id === currentProjectId) || null;
+  const currentProduct = currentProject?.storeProducts?.find((product) => product.id === currentProductId)
+    || currentProject?.storeProducts?.[0]
+    || null;
+  const platformLabel = (platform: string) =>
+    platform === "ios" ? "iOS" : platform === "macos" ? "macOS" : "未识别";
+  const currentProjectLabel = currentProject
+    ? currentProject.storeProducts.length > 1 && currentProduct
+      ? `${currentProject.name} · ${platformLabel(currentProduct.platform)}`
+      : currentProject.name
+    : "选择项目";
 
   return (
     <div className="flex h-screen bg-zinc-50 dark:bg-zinc-950">
@@ -83,28 +93,68 @@ function Layout({ children }: { children: React.ReactNode }) {
             className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 hover:border-amber-500/50 transition-colors"
           >
             <span className="truncate">
-              {currentProject ? currentProject.name : "选择项目"}
+              {currentProjectLabel}
             </span>
             <span className={cn("text-zinc-400 transition-transform", projectMenuOpen && "rotate-180")}>▾</span>
           </button>
 
           {projectMenuOpen && (
             <div className="absolute left-3 right-3 top-full mt-1 z-20 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 overflow-hidden">
-              {projects.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => { select(p.id); setProjectMenuOpen(false); }}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2 text-sm text-left",
-                    p.id === currentProjectId
-                      ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                      : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                  )}
-                >
-                  <span className={cn("text-xs", p.id === currentProjectId ? "text-amber-500" : "text-transparent")}>✓</span>
-                  <span className="truncate">{p.name}</span>
-                </button>
-              ))}
+              {projects.map((p) => {
+                const products = p.storeProducts || [];
+                if (products.length > 1) {
+                  return (
+                    <div key={p.id} className="py-1">
+                      <div className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400">
+                        <span className="text-xs text-transparent">✓</span>
+                        <span className="truncate">{p.name}</span>
+                      </div>
+                      {products.map((product) => (
+                        <button
+                          key={product.id}
+                          onClick={() => {
+                            select(p.id);
+                            selectProduct(product.id);
+                            setProjectMenuOpen(false);
+                          }}
+                          className={cn(
+                            "w-full flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs text-left",
+                            product.id === currentProductId
+                              ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                              : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                          )}
+                        >
+                          <span className={cn("text-xs", product.id === currentProductId ? "text-amber-500" : "text-transparent")}>✓</span>
+                          <span className="truncate">
+                            {platformLabel(product.platform)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                }
+
+                const product = products[0];
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      select(p.id);
+                      if (product) selectProduct(product.id);
+                      setProjectMenuOpen(false);
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-2 text-sm text-left",
+                      p.id === currentProjectId
+                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                        : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                    )}
+                  >
+                    <span className={cn("text-xs", p.id === currentProjectId ? "text-amber-500" : "text-transparent")}>✓</span>
+                    <span className="truncate">{p.name}</span>
+                  </button>
+                );
+              })}
               <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
               <button
                 onClick={handleAddProject}
@@ -244,7 +294,9 @@ function HomePage() {
                     {p.trackName || p.name}
                   </p>
                   <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
-                    {p.productType === "ios" ? "iOS" : p.productType === "macos" ? "macOS" : "未识别"}
+                    {(p.storeProducts || []).map((product) =>
+                      product.platform === "ios" ? "iOS" : product.platform === "macos" ? "macOS" : "未识别",
+                    ).join(" · ") || "未识别"}
                   </p>
                 </div>
               </button>
@@ -266,10 +318,11 @@ function HomePage() {
 }
 
 function OverviewPage() {
-  const { projects, currentProjectId } = useProject();
+  const { projects, currentProjectId, currentProductId } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
+  const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
 
-  if (!project) {
+  if (!project || !product) {
     return (
       <EmptyState
         title="还没有项目"
@@ -278,8 +331,8 @@ function OverviewPage() {
     );
   }
 
-  const languages = project.supportedLanguages || [];
-  const storeLinks = project.storeLinks || [];
+  const languages = product.supportedLanguages || [];
+  const storeLinks = product.storeLinks || [];
   const storeGroups = [
     { label: "macOS", links: storeLinks.filter((l) => l.platform === "macos") },
     { label: "iOS", links: storeLinks.filter((l) => l.platform === "ios") },
@@ -290,9 +343,9 @@ function OverviewPage() {
     <div className="p-10 max-w-2xl mx-auto">
       {/* App identity */}
       <div className="flex items-center gap-4 mb-8">
-        {project.artworkUrl ? (
+        {product.artworkUrl ? (
           <img
-            src={project.artworkUrl}
+            src={product.artworkUrl}
             alt=""
             className="w-16 h-16 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm object-cover"
           />
@@ -303,7 +356,7 @@ function OverviewPage() {
         )}
         <div className="min-w-0">
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-            {project.trackName || project.name}
+            {product.trackName || project.name}
           </h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
             {project.localPath}
@@ -317,8 +370,8 @@ function OverviewPage() {
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">识别结果</h3>
         </div>
         <div className="p-6 grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
-          <Field label="产品类型" value={project.productType === "ios" ? "iOS" : project.productType === "macos" ? "macOS" : "未识别"} />
-          <Field label="商店名称" value={project.trackName || project.name} />
+          <Field label="产品类型" value={product.platform === "ios" ? "iOS" : product.platform === "macos" ? "macOS" : "未识别"} />
+          <Field label="商店名称" value={product.trackName || project.name} />
         </div>
       </div>
 
@@ -618,6 +671,7 @@ interface KeywordSuggestion {
   language: string;
   keyword: string;
   rationale: string;
+  translation: string;
 }
 
 interface KeywordGeneration {
@@ -626,8 +680,9 @@ interface KeywordGeneration {
 }
 
 function KeywordsPage() {
-  const { projects, currentProjectId, updateTrackedKeywords, updateSubmissionKeywords, removeTrackedKeyword, collectRanks } = useProject();
+  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, updateSubmissionKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords, collectRanks } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
+  const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [activeLang, setActiveLang] = useState<string>("");
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
@@ -637,10 +692,11 @@ function KeywordsPage() {
   const [selectedStorefront, setSelectedStorefront] = useState<string>("us");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
   const [rankProgress, setRankProgress] = useState<{ current: number; total: number; keyword: string; storefront: string } | null>(null);
+  const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
 
-  const initialLanguage = (project?.supportedLanguages || []).some((l) => l.code === activeLang)
+  const initialLanguage = (product?.supportedLanguages || []).some((l) => l.code === activeLang)
     ? activeLang
-    : ((project?.supportedLanguages || [])[0]?.code || "");
+    : ((product?.supportedLanguages || [])[0]?.code || "");
   const languageDefaultStorefront = defaultStorefrontForLanguage(initialLanguage);
 
   useEffect(() => {
@@ -656,15 +712,35 @@ function KeywordsPage() {
     };
   }, []);
 
-  if (!project) {
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      (window as any).appilot?.scheduler?.status()
+        .then((status: any) => {
+          if (!cancelled) setSchedulerStatus(status);
+        })
+        .catch(() => {
+          if (!cancelled) setSchedulerStatus(null);
+        });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
   }
 
-  const languages = project.supportedLanguages || [];
+  const languages = product.supportedLanguages || [];
   const currentLang = languages.some((l) => l.code === activeLang) ? activeLang : (languages[0]?.code || "");
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
-  const tracked = (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
-  const savedSubmission = (project.submissionKeywords || []).find((s) => s.language === currentLang);
+  const tracked = (product.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
+  const removedForCurrent = (product.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
+  const savedSubmission = (product.submissionKeywords || []).find((s) => s.language === currentLang);
   const submissionText = submissionDrafts[currentLang] ?? savedSubmission?.text ?? "";
   const charCount = submissionText.length;
   const currentLoading = loadingLangs.has(currentLang);
@@ -673,7 +749,7 @@ function KeywordsPage() {
   const activeStorefront = storefronts.includes(selectedStorefront)
     ? selectedStorefront
     : defaultStorefront;
-  const rankSnapshots = project.rankSnapshots || [];
+  const rankSnapshots = product.rankSnapshots || [];
   const ranksForCurrent = rankSnapshots.filter(
     (snapshot) => queryLanguages.includes(snapshot.language) && snapshot.storefront === activeStorefront,
   );
@@ -691,7 +767,7 @@ function KeywordsPage() {
 
   const generateOne = async (lang: string): Promise<{ lang: string; gen: KeywordGeneration | null }> => {
     try {
-      const gen: KeywordGeneration = await (window as any).appilot.projects.generateKeywords(project.id, lang);
+      const gen: KeywordGeneration = await (window as any).appilot.projects.generateKeywords(product.id, lang);
       return { lang, gen };
     } catch (e: any) {
       setError(e.message || "关键词生成失败。请先在设置里配置 AI。");
@@ -700,23 +776,29 @@ function KeywordsPage() {
   };
 
   const applyGenerations = async (results: { lang: string; gen: KeywordGeneration | null }[]) => {
-    const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
-    let trackedNext = [...(latest?.trackedKeywords || [])];
-    let submissionNext = [...(latest?.submissionKeywords || [])];
+    const latestProject = useProject.getState().projects.find((p) => p.id === currentProjectId);
+    const latest = latestProject?.storeProducts?.find((item) => item.id === product.id) || product;
+    let trackedNext = [...(latest.trackedKeywords || [])];
+    let submissionNext = [...(latest.submissionKeywords || [])];
     const drafts: Record<string, string> = {};
 
     for (const r of results) {
       if (!r.gen) continue;
       const existingKeys = new Set(trackedNext.map((k) => `${k.language}\u0000${k.keyword}`));
       const removedKeys = new Set(
-        (latest?.removedKeywords || []).map((item) => `${item.language}\u0000${item.keyword}`),
+        (latest.removedKeywords || []).map((item) => `${item.language}\u0000${item.keyword}`),
       );
       const additions = r.gen.tracking
         .filter((s) => {
           const lang = s.language || r.lang;
           return !existingKeys.has(`${lang}\u0000${s.keyword}`) && !removedKeys.has(`${lang}\u0000${s.keyword}`);
         })
-        .map((s) => ({ language: s.language || r.lang, keyword: s.keyword, rationale: s.rationale }));
+        .map((s) => ({
+          language: s.language || r.lang,
+          keyword: s.keyword,
+          rationale: s.rationale,
+          translation: s.translation || "",
+        }));
       trackedNext = [...trackedNext, ...additions];
 
       const submissionText = r.gen.submission.join(",").trim();
@@ -728,10 +810,10 @@ function KeywordsPage() {
     }
 
     if (results.some((r) => r.gen)) {
-      const savedTracked = await (window as any).appilot.projects.saveTrackedKeywords(project.id, trackedNext);
-      const savedSubmission = await (window as any).appilot.projects.saveSubmissionKeywords(project.id, submissionNext);
-      updateTrackedKeywords(project.id, savedTracked.trackedKeywords);
-      updateSubmissionKeywords(project.id, savedSubmission.submissionKeywords);
+      await (window as any).appilot.projects.saveTrackedKeywords(product.id, trackedNext);
+      await (window as any).appilot.projects.saveSubmissionKeywords(product.id, submissionNext);
+      updateTrackedKeywords(product.id, trackedNext);
+      updateSubmissionKeywords(product.id, submissionNext);
     }
     setSubmissionDrafts((prev) => ({ ...prev, ...drafts }));
   };
@@ -758,16 +840,24 @@ function KeywordsPage() {
   };
 
   const removeTracked = async (kw: string, language: string) => {
-    await removeTrackedKeyword(project.id, language, kw);
+    await removeTrackedKeyword(product.id, language, kw);
+  };
+
+  const restoreTracked = async (language: string, kw: string) => {
+    await restoreTrackedKeyword(product.id, language, kw);
+  };
+
+  const clearRemoved = async () => {
+    await clearRemovedKeywords(product.id, queryLanguages);
   };
 
   const saveSubmission = async () => {
     const next = [
-      ...(project.submissionKeywords || []).filter((s) => s.language !== currentLang),
+      ...(product.submissionKeywords || []).filter((s) => s.language !== currentLang),
       { language: currentLang, text: submissionText },
     ];
-    const saved = await (window as any).appilot.projects.saveSubmissionKeywords(project.id, next);
-    updateSubmissionKeywords(project.id, saved.submissionKeywords);
+    await (window as any).appilot.projects.saveSubmissionKeywords(product.id, next);
+    updateSubmissionKeywords(product.id, next);
     setSubmissionDrafts((prev) => {
       const copy = { ...prev };
       delete copy[currentLang];
@@ -780,7 +870,7 @@ function KeywordsPage() {
     setRankLoading(true);
     setRankProgress({ current: 0, total: tracked.length, keyword: "", storefront: activeStorefront });
     try {
-      await collectRanks(project.id, currentLang, activeStorefront);
+      await collectRanks(product.id, currentLang, activeStorefront);
     } catch (e: any) {
       setRankError(e.message || "排名采集失败。");
     } finally {
@@ -900,6 +990,15 @@ function KeywordsPage() {
                   <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
                     同一张表完成生成、查看排名与趋势，不再重复列出关键词。
                   </p>
+                  {schedulerStatus && (
+                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
+                      自动任务 {schedulerStatus.enabled ? "已启用" : "未启用"} · 待执行 {schedulerStatus.due}
+                      {schedulerStatus.failed > 0 ? ` · 失败 ${schedulerStatus.failed}` : ""}
+                      {schedulerStatus.nextDueAt
+                        ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
+                        : ""}
+                    </p>
+                  )}
                 </div>
                 <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
                   <select
@@ -973,6 +1072,11 @@ function KeywordsPage() {
                           <div className="flex-1 min-w-0">
                             <div className="font-mono text-sm text-zinc-800 dark:text-zinc-200 truncate">
                               {keyword.keyword}
+                              {keyword.translation && keyword.translation !== keyword.keyword && (
+                                <span className="ml-1 font-sans text-zinc-500 dark:text-zinc-400">
+                                  ({keyword.translation})
+                                </span>
+                              )}
                             </div>
                             {keyword.rationale && (
                               <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
@@ -1035,6 +1139,39 @@ function KeywordsPage() {
                         </button>
                       );
                     })}
+                  </div>
+                )}
+
+                {removedForCurrent.length > 0 && (
+                  <div className="mt-6 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 p-4">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        已删除关键词（{removedForCurrent.length}）
+                      </h4>
+                      <button
+                        onClick={clearRemoved}
+                        className="text-xs text-zinc-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400"
+                      >
+                        清空
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {removedForCurrent.map((item) => (
+                        <span
+                          key={`${item.language}:${item.keyword}`}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
+                        >
+                          {item.keyword}
+                          <button
+                            onClick={() => restoreTracked(item.language, item.keyword)}
+                            className="text-amber-600 dark:text-amber-400 hover:underline"
+                            title="恢复"
+                          >
+                            恢复
+                          </button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
 

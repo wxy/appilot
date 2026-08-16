@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld("appilot", {
     saveSubmissionKeywords: (projectId: string, submissionKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveSubmissionKeywords", projectId, submissionKeywords),
     removeTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
       ipcRenderer.invoke("projects:removeTrackedKeyword", projectId, language, keyword),
+    restoreTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
+      ipcRenderer.invoke("projects:restoreTrackedKeyword", projectId, language, keyword),
+    clearRemovedKeywords: (projectId: string, languages: string[]): Promise<any> =>
+      ipcRenderer.invoke("projects:clearRemovedKeywords", projectId, languages),
     collectRanks: (projectId: string, language: string, storefront: string): Promise<any> =>
       ipcRenderer.invoke("projects:collectRanks", projectId, language, storefront),
     onRankProgress: (callback: (progress: any) => void): (() => void) => {
@@ -35,6 +39,11 @@ contextBridge.exposeInMainWorld("appilot", {
 
   repo: {
     checkRelease: (projectId: string): Promise<any> => ipcRenderer.invoke("repo:checkRelease", projectId),
+  },
+
+  scheduler: {
+    status: (): Promise<any> => ipcRenderer.invoke("scheduler:status"),
+    runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
   },
 
   ai: {

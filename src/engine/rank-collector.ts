@@ -42,6 +42,16 @@ function entityForProductType(productType?: string | null): string {
   return productType === "macos" ? "macSoftware" : "software";
 }
 
+async function fetchWithTimeout(url: URL, timeoutMs = 15_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function searchAppStoreRank(opts: {
   term: string;
   country: string;
@@ -57,7 +67,7 @@ export async function searchAppStoreRank(opts: {
 
   let lastStatus = 0;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     lastStatus = res.status;
     if (res.status === 429 && attempt < 3) {
       await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));

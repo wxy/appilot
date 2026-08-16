@@ -64,17 +64,250 @@ function dedupeProjects(projects: any[]): any[] {
   return [...byPath.values()];
 }
 
+function findProductContext(projects: any[], productId: string): { project: any; product: any } | null {
+  for (const project of projects) {
+    const product = (project.storeProducts || []).find((item: any) => item.id === productId);
+    if (product) return { project, product };
+  }
+  return null;
+}
+
+function updateProductInProjects(projects: any[], productId: string, updater: (product: any) => any): any[] {
+  return projects.map((project) => {
+    const index = (project.storeProducts || []).findIndex((item: any) => item.id === productId);
+    if (index < 0) return project;
+    const storeProducts = [...(project.storeProducts || [])];
+    storeProducts[index] = updater(storeProducts[index]);
+    return { ...project, storeProducts };
+  });
+}
+
 function sanitizeRankSnapshots(project: any): any {
-  const snapshots = Array.isArray(project?.rankSnapshots) ? project.rankSnapshots : [];
-  const cleaned = snapshots.filter((snapshot: any) => {
+  const cleanSnapshots = (snapshots: any[]) =>
+    snapshots.filter((snapshot: any) => {
     return isStorefrontAllowedForQueryLanguage(snapshot?.language || "", snapshot?.storefront || "");
   });
-  return cleaned.length === snapshots.length ? project : { ...project, rankSnapshots: cleaned };
+
+  const storeProducts = Array.isArray(project?.storeProducts)
+    ? project.storeProducts.map((product: any) => {
+        const snapshots = Array.isArray(product?.rankSnapshots) ? product.rankSnapshots : [];
+        const cleaned = cleanSnapshots(snapshots);
+        return cleaned.length === snapshots.length ? product : { ...product, rankSnapshots: cleaned };
+      })
+    : [];
+  const snapshots = Array.isArray(project?.rankSnapshots) ? project.rankSnapshots : [];
+  const cleaned = cleanSnapshots(snapshots);
+  const productsChanged = storeProducts.some(
+    (product: any, index: number) => product !== project?.storeProducts?.[index],
+  );
+  if (cleaned.length === snapshots.length && !productsChanged) return project;
+  return { ...project, rankSnapshots: cleaned, storeProducts };
+}
+
+interface ScheduledTask {
+  id: string;
+  kind: "rank";
+  productId: string;
+  keyword: string;
+  queryLanguage: string;
+  storefront: string;
+  intervalMinutes: number;
+  nextRunAt: string;
+  lastRunAt?: string | null;
+  lastStatus?: "success" | "failed";
+  enabled: boolean;
+}
+
+let schedulerTimer: NodeJS.Timeout | null = null;
+let schedulerRunning = false;
+const rankEntityCache = new Map<string, "software" | "macSoftware">();
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function rankTaskId(productId: string, keyword: string, queryLanguage: string, storefront: string): string {
+  return `${productId}:${queryLanguage}:${storefront}:${keyword}`;
+}
+
+function taskSeed(task: { productId: string; keyword: string; queryLanguage: string; storefront: string }): string {
+  return [task.productId, task.queryLanguage, task.storefront, task.keyword].join(":");
+}
+
+function nextRunAt(seed: string, intervalMinutes: number, now = new Date()): string {
+  const slot = hashString(seed) % intervalMinutes;
+  const candidate = new Date(now);
+  candidate.setSeconds(0, 0);
+  candidate.setMinutes(candidate.getMinutes() + slot + 1);
+  return candidate.toISOString();
+}
+
+async function resolveRankEntity(product: any): Promise<"software" | "macSoftware"> {
+  const cached = rankEntityCache.get(product.trackId);
+  if (cached) return cached;
+  const { lookupApp } = await import("../engine/app-store-discovery");
+  const metadata = await lookupApp(product.trackId);
+  const entity: "software" | "macSoftware" = metadata?.kind === "mac-software" ? "macSoftware" : "software";
+  rankEntityCache.set(product.trackId, entity);
+  return entity;
+}
+
+async function reconcileRankTasks(store: any): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const activeKeys = new Set<string>();
+  const desiredTasks = new Map<string, ScheduledTask>();
+
+  for (const project of projects) {
+    const storeProducts: any[] = project.storeProducts || [];
+    for (const product of storeProducts) {
+    if (!product.trackId) continue;
+    const tracked: any[] = product.trackedKeywords || [];
+    const supportedLanguages: { code: string }[] = product.supportedLanguages || [];
+
+    for (const localization of supportedLanguages) {
+      const localizationCode = localization.code;
+      const storefronts = storefrontsForLanguage(localizationCode);
+      const queryLanguages = localizationCode === "en" ? ["en"] : [localizationCode, "en"];
+
+      for (const keyword of tracked) {
+        if (!queryLanguages.includes(keyword.language)) continue;
+        for (const storefront of storefronts) {
+          const id = rankTaskId(product.id, keyword.keyword, keyword.language, storefront);
+          activeKeys.add(id);
+          const previous = existing.find((task) => task.id === id);
+          desiredTasks.set(id, {
+            id,
+            kind: "rank",
+            productId: product.id,
+            keyword: keyword.keyword,
+            queryLanguage: keyword.language,
+            storefront,
+            intervalMinutes: previous?.intervalMinutes || 24 * 60,
+            nextRunAt: previous?.nextRunAt || nextRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), 24 * 60),
+            lastRunAt: previous?.lastRunAt ?? null,
+            lastStatus: previous?.lastStatus,
+            enabled: previous?.enabled ?? true,
+          });
+        }
+      }
+    }
+    }
+  }
+
+  const next = existing
+    .filter((task) => activeKeys.has(task.id))
+    .map((task) => desiredTasks.get(task.id) || task);
+  for (const task of desiredTasks.values()) {
+    if (!next.some((existingTask) => existingTask.id === task.id)) {
+      next.push(task);
+    }
+  }
+
+  store.set("scheduledTasks", next);
+}
+
+async function runRankTask(store: any, task: ScheduledTask): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  let product: any = null;
+  let project: any = null;
+  for (const candidateProject of projects) {
+    const candidate = (candidateProject.storeProducts || []).find(
+      (item: any) => item.id === task.productId,
+    );
+    if (candidate) {
+      project = candidateProject;
+      product = candidate;
+      break;
+    }
+  }
+  if (!project || !product?.trackId) return;
+
+  const isActive = (product.trackedKeywords || []).some(
+    (keyword: any) => keyword.keyword === task.keyword && keyword.language === task.queryLanguage,
+  );
+  if (!isActive) {
+    task.enabled = false;
+    task.lastStatus = "failed";
+    return;
+  }
+
+  const { searchAppStoreRank } = await import("../engine/rank-collector");
+  const entity = await resolveRankEntity(product);
+  try {
+    const result = await searchAppStoreRank({
+      term: task.keyword,
+      country: task.storefront,
+      trackId: product.trackId,
+      entity,
+    });
+    const snapshot = {
+      keyword: task.keyword,
+      language: task.queryLanguage,
+      storefront: task.storefront,
+      rank: result.rank,
+      totalResults: result.totalResults,
+      checkedAt: new Date().toISOString(),
+    };
+    const previous = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
+    product.rankSnapshots = [...previous, snapshot].slice(-5000);
+    task.lastStatus = "success";
+  } catch (err: any) {
+    log.warn(`Scheduled rank task failed for "${task.keyword}" in ${task.storefront}: ${err.message}`);
+    task.lastStatus = "failed";
+  }
+
+  task.lastRunAt = new Date().toISOString();
+  task.nextRunAt = nextRunAt(
+    taskSeed(task),
+    task.lastStatus === "failed" ? 30 : task.intervalMinutes,
+  );
+  store.set("projects", projects);
+}
+
+async function schedulerTick(): Promise<void> {
+  if (schedulerRunning) return;
+  schedulerRunning = true;
+  try {
+    const store = await getStore();
+    await reconcileRankTasks(store);
+
+    const now = Date.now();
+    const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    const due = tasks
+      .filter((task) => task.enabled && task.kind === "rank" && new Date(task.nextRunAt).getTime() <= now)
+      .slice(0, 4);
+
+    for (const task of due) {
+      await runRankTask(store, task);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    store.set("scheduledTasks", tasks);
+  } catch (err: any) {
+    log.error(`Task scheduler tick failed: ${err.message}`);
+  } finally {
+    schedulerRunning = false;
+  }
+}
+
+export function startTaskScheduler(): void {
+  if (schedulerTimer) return;
+  schedulerTimer = setInterval(() => {
+    void schedulerTick();
+  }, 60_000);
+  void schedulerTick();
 }
 
 export function registerIpcHandlers() {
   // ── Shell ──
   ipcMain.handle("shell:openExternal", (_event, url: string) => {
+    if (!/^https?:\/\//i.test(url)) {
+      throw new Error("Only http/https URLs can be opened");
+    }
     return shell.openExternal(url);
   });
 
@@ -118,9 +351,26 @@ export function registerIpcHandlers() {
       artworkUrl: string | null;
       supportedLanguages: { code: string; name: string }[];
       storeLinks: { country: string; name: string; platform: "ios" | "macos" | "unknown"; url: string }[];
-      trackedKeywords: { language: string; keyword: string; rationale: string }[];
+      trackedKeywords: { language: string; keyword: string; rationale: string; translation: string }[];
       submissionKeywords: { language: string; text: string }[];
-      removedKeywords: { language: string; keyword: string }[];
+      removedKeywords: { language: string; keyword: string; rationale: string; translation: string; removedAt: string }[];
+      rankSnapshots: { keyword: string; language: string; storefront: string; rank: number | null; totalResults: number; checkedAt: string }[];
+      storeProducts: {
+        id: string;
+        projectId: string;
+        platform: "ios" | "macos" | "unknown";
+        trackId: string | null;
+        bundleId: string | null;
+        trackName: string | null;
+        artworkUrl: string | null;
+        supportedLanguages: { code: string; name: string }[];
+        storeLinks: { country: string; name: string; platform: "ios" | "macos" | "unknown"; url: string }[];
+        trackedKeywords: { language: string; keyword: string; rationale: string; translation: string }[];
+        submissionKeywords: { language: string; text: string }[];
+        removedKeywords: { language: string; keyword: string; rationale: string; translation: string; removedAt: string }[];
+        rankSnapshots: { keyword: string; language: string; storefront: string; rank: number | null; totalResults: number; checkedAt: string }[];
+        createdAt: string;
+      }[];
       createdAt: string;
     } = existingIndex >= 0
       ? { ...projects[existingIndex] }
@@ -138,6 +388,8 @@ export function registerIpcHandlers() {
           trackedKeywords: [],
           submissionKeywords: [],
           removedKeywords: [],
+          rankSnapshots: [],
+          storeProducts: [],
           createdAt: new Date().toISOString(),
         };
 
@@ -151,20 +403,79 @@ export function registerIpcHandlers() {
         lookupApp,
         localizedStoreLinks,
       } = await import("../engine/app-store-discovery");
-      project.productType = detectApplePlatform(localPath);
       const languages = detectLocalizedLanguages(localPath);
       project.supportedLanguages = languages.map((code) => ({ code, name: languageDisplayName(code) }));
       const discovery = discoverAppStoreLinks(localPath);
+      const detectedPlatform = detectApplePlatform(localPath);
+      const products: any[] = [];
+
       if (discovery) {
-        project.trackId = discovery.trackId;
-        project.storeLinks = localizedStoreLinks(discovery.links);
-        const meta = await lookupApp(discovery.trackId);
-        if (meta) {
-          project.bundleId = meta.bundleId;
-          project.trackName = meta.trackName;
-          project.artworkUrl = meta.artworkUrl;
+        const localizedLinks = localizedStoreLinks(discovery.links);
+        const byPlatform = new Map<string, typeof localizedLinks>();
+        for (const link of localizedLinks) {
+          const key = link.platform;
+          if (!byPlatform.has(key)) byPlatform.set(key, []);
+          byPlatform.get(key)?.push(link);
+        }
+
+        for (const [platform, links] of byPlatform.entries()) {
+          const existingProduct = (project.storeProducts || []).find(
+            (item: any) => item.id === `${project.id}:${platform}` || item.platform === platform,
+          );
+          const trackId = discovery.links.find((link) => {
+            const linkPlatform = link.mt === "12" ? "macos" : link.mt === "8" ? "ios" : "unknown";
+            return linkPlatform === platform;
+          })?.trackId || null;
+          const meta = trackId ? await lookupApp(trackId) : null;
+          products.push({
+            id: `${project.id}:${platform}`,
+            projectId: project.id,
+            platform,
+            trackId,
+            bundleId: meta?.bundleId ?? null,
+            trackName: meta?.trackName ?? null,
+            artworkUrl: meta?.artworkUrl ?? null,
+            supportedLanguages: project.supportedLanguages,
+            storeLinks: links,
+            trackedKeywords: existingProduct?.trackedKeywords || [],
+            submissionKeywords: existingProduct?.submissionKeywords || [],
+            removedKeywords: existingProduct?.removedKeywords || [],
+            rankSnapshots: existingProduct?.rankSnapshots || [],
+            createdAt: project.createdAt,
+          });
         }
       }
+
+      if (products.length === 0) {
+        const existingProduct = (project.storeProducts || []).find(
+          (item: any) => item.platform === detectedPlatform || item.platform === "unknown",
+        );
+        products.push({
+          id: `${project.id}:${detectedPlatform || "unknown"}`,
+          projectId: project.id,
+          platform: detectedPlatform || "unknown",
+          trackId: null,
+          bundleId: null,
+          trackName: null,
+          artworkUrl: null,
+          supportedLanguages: project.supportedLanguages,
+          storeLinks: [],
+          trackedKeywords: existingProduct?.trackedKeywords || [],
+          submissionKeywords: existingProduct?.submissionKeywords || [],
+          removedKeywords: existingProduct?.removedKeywords || [],
+          rankSnapshots: existingProduct?.rankSnapshots || [],
+          createdAt: project.createdAt,
+        });
+      }
+
+      project.storeProducts = products;
+      const primary = products[0];
+      project.productType = primary.platform === "unknown" ? null : primary.platform;
+      project.trackId = primary.trackId;
+      project.bundleId = primary.bundleId;
+      project.trackName = primary.trackName;
+      project.artworkUrl = primary.artworkUrl;
+      project.storeLinks = primary.storeLinks;
     } catch (err: any) {
       log.warn(`Project analysis failed for ${localPath}: ${err.message}`);
     }
@@ -175,6 +486,7 @@ export function registerIpcHandlers() {
       projects.push(project);
     }
     s.set("projects", projects);
+    void schedulerTick();
     return project;
   });
 
@@ -182,14 +494,15 @@ export function registerIpcHandlers() {
     const s = await getStore();
     const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
     s.set("projects", projects);
+    void schedulerTick();
     return true;
   });
 
-  ipcMain.handle("projects:generateKeywords", async (_event, projectId: string, language: string) => {
+  ipcMain.handle("projects:generateKeywords", async (_event, productId: string, language: string) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
-    const project = projects.find((p: any) => p.id === projectId);
-    if (!project) throw new Error("Project not found");
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
     if (!language) throw new Error("Missing language");
 
     const { AIProvider } = await import("../engine/ai/ai-provider");
@@ -201,63 +514,129 @@ export function registerIpcHandlers() {
     const { generateKeywords } = await import("../engine/ai/keyword-suggester");
     const { readRepoDescription } = await import("../engine/app-store-discovery");
 
-    const description = readRepoDescription(project.localPath);
+    const description = readRepoDescription(context.project.localPath);
     const result = await generateKeywords(provider, {
-      name: project.trackName || project.name,
+      name: context.product.trackName || context.project.name,
       description,
-      productType: project.productType || "unknown",
+      productType: context.product.platform || "unknown",
       language,
       uiLanguage: "zh-Hans",
     });
     return result;
   });
 
-  ipcMain.handle("projects:saveTrackedKeywords", async (_event, projectId: string, trackedKeywords: any[]) => {
+  ipcMain.handle("projects:saveTrackedKeywords", async (_event, productId: string, trackedKeywords: any[]) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
-    const project = projects.find((p: any) => p.id === projectId);
-    if (!project) throw new Error("Project not found");
-    project.trackedKeywords = trackedKeywords;
-    s.set("projects", projects);
-    return project;
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const nextProjects = updateProductInProjects(projects, productId, (product) => ({
+      ...product,
+      trackedKeywords,
+    }));
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
-  ipcMain.handle("projects:saveSubmissionKeywords", async (_event, projectId: string, submissionKeywords: any[]) => {
+  ipcMain.handle("projects:saveSubmissionKeywords", async (_event, productId: string, submissionKeywords: any[]) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
-    const project = projects.find((p: any) => p.id === projectId);
-    if (!project) throw new Error("Project not found");
-    project.submissionKeywords = submissionKeywords;
-    s.set("projects", projects);
-    return project;
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const nextProjects = updateProductInProjects(projects, productId, (product) => ({
+      ...product,
+      submissionKeywords,
+    }));
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
-  ipcMain.handle("projects:removeTrackedKeyword", async (_event, projectId: string, language: string, keyword: string) => {
+  ipcMain.handle("projects:removeTrackedKeyword", async (_event, productId: string, language: string, keyword: string) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
-    const project = projects.find((p: any) => p.id === projectId);
-    if (!project) throw new Error("Project not found");
-
-    project.trackedKeywords = (project.trackedKeywords || []).filter(
-      (item: any) => !(item.language === language && item.keyword === keyword),
-    );
-    const removed = Array.isArray(project.removedKeywords) ? project.removedKeywords : [];
-    if (!removed.some((item: any) => item.language === language && item.keyword === keyword)) {
-      removed.push({ language, keyword });
-    }
-    project.removedKeywords = removed;
-    s.set("projects", projects);
-    return project;
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const nextProjects = updateProductInProjects(projects, productId, (product) => {
+      const removedKeyword = (product.trackedKeywords || []).find(
+        (item: any) => item.language === language && item.keyword === keyword,
+      );
+      const trackedKeywords = (product.trackedKeywords || []).filter(
+        (item: any) => !(item.language === language && item.keyword === keyword),
+      );
+      const removedKeywords = Array.isArray(product.removedKeywords) ? [...product.removedKeywords] : [];
+      if (!removedKeywords.some((item: any) => item.language === language && item.keyword === keyword)) {
+        removedKeywords.push({
+          language,
+          keyword,
+          rationale: removedKeyword?.rationale || "",
+          translation: removedKeyword?.translation || "",
+          removedAt: new Date().toISOString(),
+        });
+      }
+      return { ...product, trackedKeywords, removedKeywords };
+    });
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
-  ipcMain.handle("projects:collectRanks", async (event, projectId: string, language?: string, storefront?: string) => {
+  ipcMain.handle("projects:restoreTrackedKeyword", async (_event, productId: string, language: string, keyword: string) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
-    const project = projects.find((p: any) => p.id === projectId);
-    if (!project) throw new Error("Project not found");
-    if (!project.trackId) throw new Error("缺少 App Store Track ID，请先确认 README 中的商店链接。");
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const nextProjects = updateProductInProjects(projects, productId, (product) => {
+      const removedItem = (product.removedKeywords || []).find(
+        (item: any) => item.language === language && item.keyword === keyword,
+      );
+      if (!removedItem) throw new Error("Keyword is not in removed list");
+      const trackedKeywords = [...(product.trackedKeywords || [])];
+      if (!trackedKeywords.some((item: any) => item.language === language && item.keyword === keyword)) {
+        trackedKeywords.push({
+          language,
+          keyword,
+          rationale: removedItem.rationale || "",
+          translation: removedItem.translation || "",
+        });
+      }
+      const removedKeywords = (product.removedKeywords || []).filter(
+        (item: any) => !(item.language === language && item.keyword === keyword),
+      );
+      return { ...product, trackedKeywords, removedKeywords };
+    });
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+  });
 
-    let keywords: any[] = project.trackedKeywords || [];
+  ipcMain.handle("projects:clearRemovedKeywords", async (_event, productId: string, languages: string[]) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const languageSet = new Set(Array.isArray(languages) ? languages : []);
+    const nextProjects = updateProductInProjects(projects, productId, (product) => ({
+      ...product,
+      removedKeywords: (product.removedKeywords || []).filter(
+        (item: any) => !languageSet.has(item.language),
+      ),
+    }));
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+  });
+
+  ipcMain.handle("projects:collectRanks", async (event, productId: string, language?: string, storefront?: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const { project, product } = context;
+    if (!product.trackId) throw new Error("缺少 App Store Track ID，请先确认 README 中的商店链接。");
+
+    let keywords: any[] = product.trackedKeywords || [];
     if (typeof language === "string" && language) {
       const queryLanguages = language === "en" ? ["en"] : [language, "en"];
       keywords = keywords.filter((keyword: any) => queryLanguages.includes(keyword.language));
@@ -281,10 +660,10 @@ export function registerIpcHandlers() {
     if (storefronts.length === 0) storefronts.push("us");
 
     const { lookupApp } = await import("../engine/app-store-discovery");
-    const metadata = await lookupApp(project.trackId);
+    const metadata = await lookupApp(product.trackId);
     const entity: "software" | "macSoftware" = metadata?.kind === "mac-software" ? "macSoftware" : "software";
     if (metadata?.kind) {
-      project.kind = metadata.kind;
+      product.kind = metadata.kind;
     }
 
     const targets = keywords.flatMap((keyword: any) =>
@@ -298,8 +677,8 @@ export function registerIpcHandlers() {
     const { collectKeywordRankings } = await import("../engine/rank-collector");
     const result = await collectKeywordRankings({
       targets,
-      trackId: project.trackId,
-      productType: project.productType,
+      trackId: product.trackId,
+      productType: product.platform,
       entity,
       delayMs: 1000,
       onProgress: (progress) => {
@@ -309,10 +688,32 @@ export function registerIpcHandlers() {
       },
     });
 
-    const previous = Array.isArray(project.rankSnapshots) ? project.rankSnapshots : [];
-    project.rankSnapshots = [...previous, ...result.snapshots].slice(-5000);
-    s.set("projects", projects);
-    return project;
+    const previous = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
+    product.rankSnapshots = [...previous, ...result.snapshots].slice(-5000);
+    const nextProjects = updateProductInProjects(projects, productId, (item) => ({ ...item, rankSnapshots: product.rankSnapshots }));
+    s.set("projects", nextProjects);
+    return nextProjects.find((item) => item.id === project.id) || project;
+  });
+
+  ipcMain.handle("scheduler:status", async () => {
+    const s = await getStore();
+    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
+    const now = Date.now();
+    const nextTask = tasks
+      .filter((task) => task.enabled)
+      .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime())[0];
+    return {
+      enabled: Boolean(schedulerTimer),
+      total: tasks.length,
+      due: tasks.filter((task) => task.enabled && new Date(task.nextRunAt).getTime() <= now).length,
+      failed: tasks.filter((task) => task.lastStatus === "failed").length,
+      nextDueAt: nextTask?.nextRunAt || null,
+    };
+  });
+
+  ipcMain.handle("scheduler:runDue", async () => {
+    await schedulerTick();
+    return true;
   });
 
   ipcMain.handle("repo:checkRelease", async (_event, projectId: string) => {
