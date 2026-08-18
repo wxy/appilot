@@ -46,6 +46,32 @@ export const STOREFRONT_NAMES: Record<string, string> = {
 
 export const ALL_STOREFRONT_CODES = Object.keys(STOREFRONT_NAMES);
 
+const LANGUAGE_PRIORITY = [
+  "en",
+  "zh-Hans",
+  "zh-Hant",
+  "ja",
+  "ko",
+  "de",
+  "fr",
+  "es",
+  "it",
+  "nl",
+  "pt",
+  "pt-BR",
+  "ru",
+];
+
+export function sortLanguageCodes(codes: string[]): string[] {
+  const priority = new Map(LANGUAGE_PRIORITY.map((code, index) => [code, index]));
+  return [...codes].sort((a, b) => {
+    const aPriority = priority.has(a) ? priority.get(a)! : Number.MAX_SAFE_INTEGER;
+    const bPriority = priority.has(b) ? priority.get(b)! : Number.MAX_SAFE_INTEGER;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return a.localeCompare(b);
+  });
+}
+
 export function storefrontsForLanguage(language: string): string[] {
   return STOREFRONTS_BY_LANGUAGE[language] || ["us"];
 }

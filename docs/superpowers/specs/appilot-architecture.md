@@ -1,7 +1,7 @@
 # Appilot — MVP 设计文档
 
 
-> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-14（重新定位为 Apple 应用增长 / ASO 运营代理）
+> 所属：[Appilot MVP 设计文档集](./README.md) | 状态：重新定位中 | 日期：2025-07-14 | 修订：2026-08-16（补充 ReleaseSubmissionPlanner / ReleaseAction）
 > 姊妹文件：[产品规格](./appilot-product.md) · [架构设计](./appilot-architecture.md) · [UI 设计](./appilot-ui.md) · [构建计划](./appilot-build-plan.md) · [横切关注点](./appilot-cross-cutting.md) · [评审记录](./appilot-review-log.md)
 > 本文档定义 Appilot 的**技术架构**。§3 是当前方向（Apple 运营代理：agent loop + 采集器 + AI Reasoning）；§4 起为历史架构（GitHub + Twitter 时代），已废弃，保留作参考。
 > 技术栈：**Electron + React + TypeScript**（桌面），**Node.js**（Engine 纯逻辑包），Zustand（状态管理）。数据持久化当前用 electron-store，后续按需引入 SQLite。
@@ -54,11 +54,12 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | 组件 | 职责 | 用 AI？ |
 |------|------|---------|
 | **ProjectRegistry** | 多项目管理：增删改查、每个项目的本地路径 / GitHub 仓库 / 产品类型 | ❌ |
-| **RepoAnalyzer** | 读本地仓库 → 识别产品类型（.xcodeproj/.xcworkspace）→ 从 README 发现 App Store 链接 → 解析 trackId → Lookup API 反解 bundleId | 链接发现用正则优先、AI 兜底 |
+| **RepoAnalyzer** | **只读**读取本地仓库 → 识别产品类型（.xcodeproj/.xcworkspace）→ 从 README 发现 App Store 链接 → 解析 trackId → Lookup API 反解 bundleId | 链接发现用正则优先、AI 兜底 |
 | **KeywordEngine** | AI 建议描述性关键词（分语言/storefront）+ 用户筛选 → 跟踪关键词集 | ✅ |
 | **RankCollector** | iTunes Search API 按「关键词 × storefront」轮询排名，写时间序列 | ❌ |
 | **ReviewCollector** | App Store RSS feed 拉评论 | ❌ |
-| **ReleaseWatcher** | 检测 GitHub Release（本地 git tag 兜底），触发重审 | ❌ |
+| **ReleaseWatcher** | **只读**、按需读取仓库根目录 `RELEASE_DRAFT.md`，文件存在即触发，文件修改时间用于识别新预发布；不自动调度 | ❌ |
+| **ReleaseSubmissionPlanner** | 把发布公告转成 App Store 提交内容：Promotional Text（现在可改）+ 描述 / What's New / 提交关键词（随商店版本提交）+ 推广素材 brief | ✅ |
 | **AgentOrchestrator** | 周期性编排 agent run：采集 → 推理 → 周报 → 待批准 → 记录结果 → 反馈闭环 | 调度 ❌，推理 ✅ |
 | **AIService** | 全局 AI 配置 + 模型路由（便宜模型 vs 强模型） | ✅ |
 
@@ -71,11 +72,41 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | `keywords` | projectId, keyword, storefront, language, status | 关键词带 storefront 维度 |
 | `keyword_rankings` | keywordId, storefront, rank, date | 排名时间序列 |
 | `reviews` | projectId, storefront, author, rating, title, body, date | 评论快照 |
-| `releases` | projectId, tag, publishedAt, summary | 检测到的 release |
+| `releases` | projectId, tag, publishedAt, body, appVersion, buildNumber, isDraft, status, summary | 检测到的 `RELEASE_DRAFT.md` |
+| `store_submission_drafts` | id, projectId, productId, appVersion, buildNumber, releaseTag, githubDraftStatus, localizations, trackingKeywordDeltas, storeStatus, reviewFeedback, revision, createdAt, updatedAt | 每个预发布公告修改时间 + 产品的权威商店提交草稿 |
+| `tracking_keyword_changes` | draftId, productId, language, keyword, direction(add/remove), reason, status | 发布时提出的跟踪关键词增删建议 |
 | `agent_runs` | projectId, startedAt, inputSummary, outputBrief, status | 每次 agent run 记录 |
 | `ai_actions` | 沿用（AI 调用审计 + token/cost） | 模型路由下的用量统计 |
 
 > 说明：Phase 0 已实现的 SQLite 层（drizzle）因从未被主进程接线而作为死代码移除（见评审记录 §21）。当前持久化用 electron-store，在 agent loop 引入后按上表重建持久层。
+
+### 3.0.3 StoreSubmissionDraft（当前方向）
+
+一个「`RELEASE_DRAFT.md` 修改时间 + 产品」对应一份权威 `StoreSubmissionDraft`。它不是发布日志，也不是一次性文本列表，而是会随 App Store 审核状态反复更新的提交工作单。
+
+| 字段 | 含义 | 示例 |
+|------|------|------|
+| `appVersion` / `buildNumber` | 商店提交身份键 | `2.1.0` / `42` |
+| `releaseTag` | 关联的预发布公告标识 | `draft-<mtimeMs>` |
+| `githubDraftStatus` | 当前公告文件是否为预发布 | `draft` / `published` |
+| `promotionalText` | 现在可改的推广文本 | ≤ 170 字符 |
+| `whatsNew` | 本次新增变化 | ≤ 4000 字符 |
+| `description` | App 描述 | ≤ 4000 字符 |
+| `submissionKeywords` | 随商店版本提交的关键词 | ≤ 100 字符/语言 |
+| `trackingKeywordDeltas` | 对现有跟踪关键词的增删建议 | `add: night mode` / `remove: torch` |
+| `storeStatus` | App Store 提交状态 | `prepared` / `copied` / `submitted` / `in_review` / `rejected` / `released` |
+| `reviewFeedback` | 驳回意见 | 供重新生成文案时作为上下文 |
+| `revision` | 同一提交工作单的修订次数 | `1` / `2` / `3` |
+
+规则：
+
+- **仓库只读**：`RepoAnalyzer`、`ReleaseWatcher` 和 `ReleaseSubmissionPlanner` 只能读仓库，不写文件、不创建分支、不提交 PR。
+- **文件存在触发，文件删除结束**：仓库根目录存在 `RELEASE_DRAFT.md` 时生成/更新提交文案；仓库删除该文件后，Appilot 不再生成文案。
+- **一个公告一份草稿**：公告被编辑，或 App Store 驳回后重新提交，都更新同一个 draft，不创建多条半成品。
+- **驳回不是失败**：`rejected` 是状态机的一部分，携带 `reviewFeedback`，触发同一 draft 的重新生成。
+- **关键词增删不立即写入跟踪集**：先生成 `tracking_keyword_changes`，用户确认后再更新关键词状态。
+
+`AgentOrchestrator` 后续把已 `released` 的 draft 与 `tracking_keyword_changes` 纳入周报和长期效果时间线。
 
 ---
 

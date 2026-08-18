@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { useTheme } from "./stores/theme";
@@ -10,12 +10,75 @@ import { defaultStorefrontForLanguage, storefrontDisplayName, storefrontsForLang
 
 const NAV_ITEMS = [
   { to: "/overview", label: "总览" },
+  { to: "/release", label: "发布工作台" },
   { to: "/keywords", label: "关键词" },
-  { to: "/assets", label: "素材中心" },
-  { to: "/repo", label: "仓库动态" },
   { to: "/reviews", label: "评论" },
   { to: "/trend", label: "长期效果" },
 ];
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: "英文",
+  de: "德文",
+  fr: "法文",
+  es: "西班牙文",
+  it: "意大利文",
+  nl: "荷兰文",
+  pt: "葡萄牙文",
+  "pt-BR": "巴西葡萄牙文",
+  ja: "日文",
+  ko: "韩文",
+  "zh-Hans": "简体中文",
+  "zh-Hant": "繁体中文",
+  ru: "俄文",
+};
+
+const UI_SOURCE_LANGUAGE = "zh-Hans";
+
+function languageLabel(code: string): string {
+  return LANGUAGE_LABELS[code] || code;
+}
+
+function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function formatHumanTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const target = new Date(iso);
+  const now = new Date();
+  const diffMs = target.getTime() - now.getTime();
+  const absMs = Math.abs(diffMs);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (absMs < minute) return diffMs >= 0 ? "即将" : "刚刚";
+  if (absMs < hour) {
+    const count = Math.round(absMs / minute);
+    return diffMs >= 0 ? `${count} 分钟后` : `${count} 分钟前`;
+  }
+  if (absMs < day) {
+    const count = Math.round(absMs / hour);
+    return diffMs >= 0 ? `${count} 小时后` : `${count} 小时前`;
+  }
+
+  const dayDiff = Math.round((startOfDay(target) - startOfDay(now)) / day);
+  if (dayDiff === 1) return "明天";
+  if (dayDiff === 2) return "后天";
+  if (dayDiff === -1) return "昨天";
+  if (dayDiff === -2) return "前天";
+  if (dayDiff > 2 && dayDiff <= 7) return `${dayDiff} 天后`;
+  if (dayDiff < -2 && dayDiff >= -7) return `${Math.abs(dayDiff)} 天前`;
+
+  const monthDiff =
+    (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth());
+  if (monthDiff === 1) return "下个月";
+  if (monthDiff === -1) return "上个月";
+  if (monthDiff > 1) return `${monthDiff} 个月后`;
+  if (monthDiff < -1) return `${Math.abs(monthDiff)} 个月前`;
+
+  return target.toLocaleDateString();
+}
 
 function Layout({ children }: { children: React.ReactNode }) {
   const { resolved, toggle } = useTheme();
@@ -217,6 +280,13 @@ function Layout({ children }: { children: React.ReactNode }) {
             <span className="text-xs">{resolved === "dark" ? "☀" : "☾"}</span>
           </button>
           <Link
+            to="/tasks"
+            className="flex items-center justify-between px-2 py-1.5 text-sm rounded-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+          >
+            任务中心
+            <span className="text-xs">▦</span>
+          </Link>
+          <Link
             to="/settings"
             className="flex items-center justify-between px-2 py-1.5 text-sm rounded-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
           >
@@ -307,7 +377,7 @@ function HomePage() {
 
       <div className="mt-10 rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center">
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          接入一个本地应用仓库，让副驾驶识别产品并建议关键词。
+          接入一个本地应用仓库，让副驾驶识别产品并建立基础档案。
         </p>
         <button onClick={handleAdd} disabled={adding} className={btnPrimary}>
           {adding ? "正在分析..." : "＋ 添加项目"}
@@ -445,6 +515,787 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
       <p className={cn("text-zinc-800 dark:text-zinc-200 truncate", mono && "font-mono")}>
         {value}
       </p>
+    </div>
+  );
+}
+
+function ReleasePage() {
+  const { projects, currentProjectId, currentProductId } = useProject();
+  const project = projects.find((item) => item.id === currentProjectId);
+  const products = project?.storeProducts || [];
+  const [productId, setProductId] = useState(currentProductId || products[0]?.id || "");
+  const [releases, setReleases] = useState<any[]>([]);
+  const [selectedTag, setSelectedTag] = useState("");
+  const [active, setActive] = useState<any>(null);
+  const [checking, setChecking] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [loadingDraft, setLoadingDraft] = useState(false);
+  const [error, setError] = useState("");
+  const [activeLanguage, setActiveLanguage] = useState("");
+  const [sourceLanguage, setSourceLanguage] = useState("");
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [releaseContext, setReleaseContext] = useState<any>(null);
+  const [previewTarget, setPreviewTarget] = useState<"release" | "readme" | "previous" | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
+  const translatingRef = useRef<Set<string>>(new Set());
+
+  const loadReleases = async () => {
+    if (!project?.id) return;
+    setChecking(true);
+    setError("");
+    try {
+      const next = await (window as any).appilot.release.list(project.id);
+      setReleases(next.releases || []);
+      setActive((prev: any) => {
+        if (prev?.draft?.releaseTag && next.releases?.some((item: any) => item.tag === prev.draft.releaseTag)) {
+          return prev;
+        }
+        return null;
+      });
+      const draft = next.releases?.find((item: any) => item.draft) || next.releases?.[0];
+      setSelectedTag((current) => {
+        if (current && next.releases?.some((item: any) => item.tag === current)) {
+          return current;
+        }
+        return draft?.tag || "";
+      });
+    } catch (e: any) {
+      setError(e.message || "发布列表加载失败。");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadReleases();
+  }, [project?.id]);
+
+  useEffect(() => {
+    setSourceLanguage(UI_SOURCE_LANGUAGE);
+    setTranslatingLanguages(new Set());
+    setConfirmed(false);
+    setActiveLanguage("");
+    setStep(1);
+  }, [productId, project?.id]);
+
+  useEffect(() => {
+    if (!project?.id || !productId || !selectedTag) return;
+    let cancelled = false;
+    (window as any).appilot?.release?.context(project.id, productId, selectedTag)
+      .then((context: any) => {
+        if (!cancelled) setReleaseContext(context);
+      })
+      .catch(() => {
+        if (!cancelled) setReleaseContext(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, productId, selectedTag]);
+
+  const draft = active?.draft || null;
+  const release = active?.release || null;
+  const localizations = draft?.localizations?.length
+    ? draft.localizations
+    : draft
+      ? [{
+          language: "en",
+          promotionalText: draft.promotionalText || "",
+          description: draft.description || "",
+          whatsNew: draft.whatsNew || "",
+          keywords: (draft.submissionKeywords || [])
+            .find((item: any) => item.language === "en")?.text || "",
+        }]
+      : [];
+  const activeLocalization =
+    localizations.find((item: any) => item.language === activeLanguage) || localizations[0] || null;
+  const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
+  const selectedProduct = products.find((item) => item.id === productId) || null;
+  const availableLanguages = (selectedProduct?.supportedLanguages || [])
+    .map((item: any) => String(item?.code || "").trim())
+    .filter(Boolean);
+  const orderedLanguages = availableLanguages.includes(UI_SOURCE_LANGUAGE)
+    ? [
+        UI_SOURCE_LANGUAGE,
+        ...availableLanguages.filter((language) => language !== UI_SOURCE_LANGUAGE),
+      ]
+    : availableLanguages;
+  const selectedExistingDraft =
+    active?.draft?.productId === productId && active?.draft?.releaseTag === selectedTag
+      ? active.draft
+      : selectedRelease?.submissionDrafts?.find(
+          (item: any) => item?.productId === productId,
+        ) || null;
+  const isReadOnly = Boolean(release && !release.draft) || confirmed;
+  const feedbackReadOnly = Boolean(release && !release.draft);
+  const busy = generating || loadingDraft;
+
+  useEffect(() => {
+    if (!activeLanguage && localizations[0]?.language) {
+      setActiveLanguage(localizations[0].language);
+    }
+  }, [activeLanguage, localizations]);
+
+  const updateLocalizationField = (field: "promotionalText" | "description" | "whatsNew" | "keywords", value: string) => {
+    setActive((prev: any) => {
+      if (!prev?.draft) return prev;
+      const nextLocalizations = (prev.draft.localizations || []).map((item: any) =>
+        item.language === activeLocalization?.language
+          ? { ...item, [field]: value }
+          : item,
+      );
+      return {
+        ...prev,
+        draft: {
+          ...prev.draft,
+          localizations: nextLocalizations,
+        },
+      };
+    });
+  };
+
+  const updateDraftField = (key: string, value: string) => {
+    setActive((prev: any) => prev?.draft ? { ...prev, draft: { ...prev.draft, [key]: value } } : prev);
+  };
+
+  const handleLoad = async (force: boolean) => {
+    if (!project || !productId || !selectedTag) return;
+    if (force) {
+      setGenerating(true);
+    } else {
+      setLoadingDraft(true);
+    }
+    setError("");
+    try {
+      if (force && active?.draft) {
+        const saved = await (window as any).appilot.release.saveDraft(project.id, active.draft);
+        setActive((prev: any) => ({ ...prev, draft: saved }));
+      }
+      const next = await (window as any).appilot.release.get(
+        project.id,
+        productId,
+        selectedTag,
+        force,
+        force ? sourceLanguage : undefined,
+      );
+      setActive(next);
+      if (force) {
+        setStep(2);
+        setConfirmed(false);
+      } else if (next.draft?.localizations?.length > 1) {
+        setStep(2);
+        setConfirmed(true);
+      } else {
+        setStep(2);
+        setConfirmed(false);
+      }
+    } catch (e: any) {
+      setError(e.message || "发布工作单加载失败。");
+    } finally {
+      setGenerating(false);
+      setLoadingDraft(false);
+    }
+  };
+
+  const handleProductChange = async (value: string) => {
+    setProductId(value);
+    setActive(null);
+    setActiveLanguage("");
+    const existing = selectedRelease?.submissionDrafts?.find(
+      (item: any) => item?.productId === value,
+    );
+    if (!existing || !project || !selectedTag) return;
+
+    setLoadingDraft(true);
+    try {
+      const next = await (window as any).appilot.release.get(project.id, value, selectedTag, false);
+      setActive(next);
+      setStep(2);
+      setConfirmed((next.draft?.localizations?.length || 0) > 1);
+    } catch (e: any) {
+      setError(e.message || "已有文案加载失败。");
+    } finally {
+      setLoadingDraft(false);
+    }
+  };
+
+  const handleConfirmDraft = () => {
+    setConfirmed(true);
+  };
+
+  const handleTranslateOne = async (language: string) => {
+    if (!project || !draft || !selectedTag || translatingRef.current.has(language)) return;
+    if (!confirmed || localizations.some((item: any) => item.language === language)) return;
+
+    translatingRef.current.add(language);
+    setTranslatingLanguages((prev) => new Set(prev).add(language));
+    setError("");
+    try {
+      const currentDraft = active?.draft;
+      if (currentDraft) {
+        const saved = await (window as any).appilot.release.saveDraft(project.id, currentDraft);
+        setActive((prev: any) => ({ ...prev, draft: saved }));
+      }
+      const next = await (window as any).appilot.release.translate(
+        project.id,
+        currentDraft?.productId || draft.productId,
+        currentDraft?.releaseTag || draft.releaseTag,
+        [language],
+        sourceLanguage || currentDraft?.localizations?.[0]?.language || draft.localizations?.[0]?.language,
+      );
+      setActive((prev: any) => ({ ...prev, draft: next }));
+      setActiveLanguage(language);
+    } catch (e: any) {
+      setError(e.message || `${languageLabel(language)} 翻译失败。`);
+    } finally {
+      translatingRef.current.delete(language);
+      setTranslatingLanguages((prev) => {
+        const next = new Set(prev);
+        next.delete(language);
+        return next;
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!draft && selectedExistingDraft && selectedRelease?.draft && project && selectedTag) {
+      void handleLoad(false);
+    }
+  }, [draft?.id, selectedExistingDraft?.id, project?.id, selectedTag]);
+
+  if (!project) {
+    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示发布工作台。" />;
+  }
+
+  return (
+    <div className="p-10 max-w-4xl mx-auto">
+      <div className="flex items-start justify-between gap-4 mb-8">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">发布工作台</h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+            读取仓库根目录的 RELEASE_DRAFT.md，由你确认后再生成 App Store 提交文案。
+          </p>
+        </div>
+        <button onClick={loadReleases} disabled={checking} className={btnPrimary}>
+          {checking ? "检查中..." : "检查发布"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
+          {error}
+        </div>
+      )}
+
+      {releases.length === 0 ? (
+        <EmptyState title="尚未检测到预发布公告" desc="请在仓库根目录创建 RELEASE_DRAFT.md，然后点击检查发布。" />
+      ) : (
+        <>
+          <div className="mb-6 max-w-xs">
+            <select value={productId} onChange={(e) => handleProductChange(e.target.value)} className={inputClass}>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.platform === "ios" ? "iOS" : product.platform === "macos" ? "macOS" : "未识别"} · {product.trackName || project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedRelease && (
+            <>
+              <div
+                onClick={() => setPreviewTarget("release")}
+                className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-4 shadow-sm cursor-pointer hover:border-amber-500/40"
+              >
+                <p className="text-xs text-zinc-400 dark:text-zinc-500">预发布公告</p>
+                <div className="mt-1 flex items-center justify-between gap-4">
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    {selectedRelease.name || "RELEASE_DRAFT.md"}
+                  </p>
+                  <div className="flex items-center gap-3 text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
+                    {step > 1 && <span className="text-emerald-500">✓</span>}
+                    <span>更新于 {formatHumanTime(selectedRelease.publishedAt)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {releaseContext && step <= 2 && (
+                <div className="space-y-2 mb-5">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTarget("readme")}
+                    className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 py-3 text-left hover:border-amber-500/40"
+                  >
+                    <span className="flex items-center justify-between gap-3 text-sm">
+                      <span>README</span>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                        {step > 1 ? "✓ " : ""}{formatHumanTime(releaseContext.readmeModifiedAt)}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTarget("previous")}
+                    className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 py-3 text-left hover:border-amber-500/40"
+                  >
+                    <span className="flex items-center justify-between gap-3 text-sm">
+                      <span>上次文案</span>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                        {step > 1 ? "✓ " : ""}{formatHumanTime(releaseContext.previousUpdatedAt)}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {step === 1 && (
+                <div className="mb-5">
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-2">语言</p>
+                  <div className="flex flex-wrap gap-2">
+                    {orderedLanguages.map((language, index) => (
+                      <span
+                        key={language}
+                        className={cn(
+                          "px-3 py-1.5 text-sm rounded-lg border",
+                          index === 0
+                            ? "border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                            : "border-zinc-200 dark:border-zinc-700 text-zinc-400 dark:text-zinc-500",
+                        )}
+                      >
+                        {languageLabel(language)}{index === 0 ? " ✓" : ""}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedRelease.draft && step === 1 && !draft && (
+                <div className="mb-6 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => handleLoad(true)}
+                    disabled={busy}
+                    className={btnPrimary}
+                  >
+                    {generating ? "生成中..." : "下一步：生成文案"}
+                  </button>
+                </div>
+              )}
+
+              {!selectedRelease.draft && step === 1 && (
+                <div className="mb-6">
+                  {selectedExistingDraft ? (
+                    <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
+                      {loadingDraft ? "加载中..." : "查看历史文案"}
+                    </button>
+                  ) : (
+                    <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有历史文案</span>
+                  )}
+                </div>
+              )}
+
+            </>
+          )}
+        </>
+      )}
+
+      {!draft ? (
+        selectedRelease && step > 1 ? (
+          <EmptyState
+            title={selectedRelease.draft ? "等待生成提交文案" : "该正式发布没有历史文案"}
+            desc={selectedRelease.draft ? "确认后由 AI 生成 Promotional Text、描述、What's New 和关键词。" : "正式发布只作为完成信号，不再生成新的商店文案。"}
+          />
+        ) : null
+      ) : (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店提交工作单</h3>
+              {isReadOnly ? (
+                <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 text-xs font-medium">
+                  只读参考
+                </span>
+              ) : null}
+            </div>
+
+            <div className="p-5 space-y-5">
+              {activeLocalization && (
+                <>
+                  <div className="space-y-2">
+                          <FieldHeader label="推广文本" text={activeLocalization.promotionalText} />
+                          <textarea
+                            value={activeLocalization.promotionalText}
+                            onChange={(e) => updateLocalizationField("promotionalText", e.target.value)}
+                            disabled={isReadOnly}
+                            className={inputClass + " min-h-20 resize-none rounded-none"}
+                          />
+                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                            {activeLocalization.promotionalText.length}/170 字符
+                          </p>
+                          <FieldHeader label="软件描述" text={activeLocalization.description} />
+                          <textarea
+                            value={activeLocalization.description}
+                            onChange={(e) => updateLocalizationField("description", e.target.value)}
+                            disabled={isReadOnly}
+                            className={inputClass + " min-h-40 resize-none rounded-none"}
+                          />
+                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                            {activeLocalization.description.length}/4000 字符
+                          </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <FieldHeader label="新增内容" text={activeLocalization.whatsNew} />
+                        <textarea
+                          value={activeLocalization.whatsNew}
+                          onChange={(e) => updateLocalizationField("whatsNew", e.target.value)}
+                          disabled={isReadOnly}
+                          className={inputClass + " min-h-32 resize-none rounded-none"}
+                        />
+                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
+                          {activeLocalization.whatsNew.length}/4000 字符
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <FieldHeader label="关键词" text={activeLocalization.keywords} />
+                        <textarea
+                          value={activeLocalization.keywords}
+                          onChange={(e) => updateLocalizationField("keywords", e.target.value)}
+                          disabled={isReadOnly}
+                          className={inputClass + " min-h-16 resize-none rounded-none"}
+                        />
+                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
+                          {activeLocalization.keywords.length}/100 字符
+                        </p>
+                  </div>
+                </>
+              )}
+
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {orderedLanguages.map((language) => {
+                    const generated = localizations.some((item: any) => item.language === language);
+                    const translating = translatingLanguages.has(language);
+                    const active = activeLocalization?.language === language;
+                    const clickable = confirmed && !generated && !translating;
+                    return (
+                      <button
+                        key={language}
+                        onClick={() => {
+                          if (generated) {
+                            setActiveLanguage(language);
+                          } else if (clickable) {
+                            void handleTranslateOne(language);
+                          }
+                        }}
+                        disabled={generating || (!generated && !clickable)}
+                        className={cn(
+                          "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+                          active
+                            ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                            : generated
+                              ? "border-emerald-500/50 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                              : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400",
+                        )}
+                      >
+                        {languageLabel(language)}
+                        {translating ? " ..." : generated ? " ✓" : ""}
+                      </button>
+                    );
+                  })}
+                </div>
+                {!confirmed && (
+                  <button onClick={handleConfirmDraft} className={btnPrimary}>
+                    确定文案
+                  </button>
+                )}
+              </div>
+
+              <FieldBlock label="驳回意见 / 我的修改意见（重新生成时作为上下文）">
+                <textarea
+                  value={draft.reviewFeedback || ""}
+                  onChange={(e) => updateDraftField("reviewFeedback", e.target.value)}
+                  disabled={feedbackReadOnly}
+                  className={inputClass + " min-h-20 resize-none"}
+                />
+                {!feedbackReadOnly && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
+                      {generating ? "重新生成中..." : "根据意见重新生成"}
+                    </button>
+                  </div>
+                )}
+              </FieldBlock>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewTarget && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+          <div className="w-full max-w-2xl max-h-[80vh] rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 dark:border-zinc-800">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                {previewTarget === "release" ? "预发布公告" : previewTarget === "readme" ? "README" : "上次文案"}
+              </h3>
+              <button onClick={() => setPreviewTarget(null)} className="text-sm text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+                关闭
+              </button>
+            </div>
+            <div className="p-5 overflow-auto whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300 max-h-[calc(80vh-70px)]">
+              {previewTarget === "release"
+                ? selectedRelease?.body || "没有预发布公告内容"
+                : previewTarget === "readme"
+                  ? releaseContext?.readme || "没有 README 内容"
+                  : releaseContext?.previousDescription || "没有上次文案"}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FieldBlock({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 mb-2">{label}</p>
+      {children}
+    </div>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="text-xs text-amber-600 dark:text-amber-400 hover:underline"
+    >
+      {copied ? "已复制" : "复制"}
+    </button>
+  );
+}
+
+function FieldHeader({ label, text, copy = true }: { label: string; text: string; copy?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500">{label}</span>
+      {copy ? <CopyButton text={text} /> : null}
+    </div>
+  );
+}
+
+function TaskCenterPage() {
+  const [data, setData] = useState<{ running: boolean; tasks: any[] } | null>(null);
+  const [typeFilter, setTypeFilter] = useState<"all" | "rank">("all");
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      (window as any).appilot?.scheduler?.list()
+        .then((next: any) => {
+          if (!cancelled) setData(next);
+        })
+        .catch(() => {
+          if (!cancelled) setData(null);
+        });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const tasks = (data?.tasks || []).filter(
+    (task) => typeFilter === "all" || task.kind === typeFilter,
+  );
+  const pending = tasks.filter((task) => task.enabled);
+  const failed = tasks.filter((task) => task.lastStatus === "failed");
+
+  const pendingGroups = groupTasks(pending);
+  const failedGroups = groupTasks(failed);
+
+  return (
+    <div className="p-10 max-w-4xl mx-auto">
+      <div className="flex items-start justify-between gap-4 mb-8">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+            查看后台任务的准备、执行和完成状态。
+          </p>
+        </div>
+        {data?.running && (
+          <span className="px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
+            调度器运行中
+          </span>
+        )}
+      </div>
+
+      <div className="mb-6 flex gap-2">
+        {(["all", "rank"] as const).map((filter) => (
+          <button
+            key={filter}
+            onClick={() => setTypeFilter(filter)}
+            className={cn(
+              "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+              typeFilter === filter
+                ? "border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+            )}
+          >
+            {filter === "all" ? "全部任务" : "排名采集"}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-6">
+        <TaskSection title={`准备进行（${pendingGroups.length} 组）`} groups={pendingGroups} />
+        <TaskSection title={`失败（${failedGroups.length} 组）`} groups={failedGroups} />
+      </div>
+    </div>
+  );
+}
+
+function groupTasks(tasks: any[]): any[] {
+  const map = new Map<string, any>();
+  for (const task of tasks) {
+    const key = `${task.projectName}\u0000${task.platform}\u0000${task.queryLanguage || ""}\u0000${task.storefront || ""}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, {
+        key,
+        kind: "rank",
+        projectName: task.projectName,
+        productName: task.productName,
+        platform: task.platform,
+        queryLanguage: task.queryLanguage,
+        storefront: task.storefront,
+        tasks: [task],
+        lastRunAt: task.lastRunAt,
+        nextRunAt: task.nextRunAt,
+        firstRunAt: task.firstRunAt,
+        executionCount: task.executionCount || 0,
+      });
+    } else {
+      existing.tasks.push(task);
+      if (task.lastRunAt && (!existing.lastRunAt || new Date(task.lastRunAt) > new Date(existing.lastRunAt))) {
+        existing.lastRunAt = task.lastRunAt;
+      }
+      if (new Date(task.nextRunAt) < new Date(existing.nextRunAt)) {
+        existing.nextRunAt = task.nextRunAt;
+      }
+      existing.executionCount += task.executionCount || 0;
+      if (task.firstRunAt && (!existing.firstRunAt || new Date(task.firstRunAt) < new Date(existing.firstRunAt))) {
+        existing.firstRunAt = task.firstRunAt;
+      }
+    }
+  }
+  return [...map.values()];
+}
+
+function TaskSection({ title, groups }: { title: string; groups: any[] }) {
+  const [page, setPage] = useState(0);
+  const pageSize = 8;
+  useEffect(() => {
+    setPage(0);
+  }, [title, groups.length]);
+  if (groups.length === 0) return null;
+  const totalPages = Math.max(1, Math.ceil(groups.length / pageSize));
+  const visible = groups.slice(page * pageSize, page * pageSize + pageSize);
+
+  return (
+    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+      <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
+      </div>
+      <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+        {visible.map((group) => (
+          <div key={group.key} className="px-5 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2 min-w-0">
+                <span
+                  className="mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                >
+                  排名
+                </span>
+                <div className="min-w-0">
+                  <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                    {`${group.projectName} · ${
+                      group.platform === "ios"
+                        ? "iOS"
+                        : group.platform === "macos"
+                          ? "macOS"
+                          : "未识别"
+                    } · ${languageLabel(group.queryLanguage || "")} · ${
+                      storefrontDisplayName(group.storefront || "")
+                    } · ${group.tasks.length} 个关键词`}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
+              <TaskMeta
+                label="上次执行"
+                value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+              />
+              <TaskMeta label="执行次数" value={`${group.executionCount} 次`} />
+              <TaskMeta
+                label="首次执行"
+                value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      {totalPages > 1 && (
+        <div className="px-6 py-3 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between text-xs text-zinc-400 dark:text-zinc-500">
+          <span>
+            {page + 1} / {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((value) => Math.max(0, value - 1))}
+              disabled={page === 0}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40"
+            >
+              上一页
+            </button>
+            <button
+              onClick={() => setPage((value) => Math.min(totalPages - 1, value + 1))}
+              disabled={page >= totalPages - 1}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-0.5">{label}</div>
+      <div className="text-zinc-600 dark:text-zinc-300 truncate">{value}</div>
     </div>
   );
 }
@@ -1261,8 +2112,8 @@ export function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/overview" element={<OverviewPage />} />
         <Route path="/keywords" element={<KeywordsPage />} />
-        <Route path="/assets" element={<PlaceholderPage title="素材中心" desc="文案、海报方向、视频脚本。" />} />
-        <Route path="/repo" element={<PlaceholderPage title="仓库动态" desc="新 Release 检测与 AI 重审。" />} />
+        <Route path="/tasks" element={<TaskCenterPage />} />
+        <Route path="/release" element={<ReleasePage />} />
         <Route path="/reviews" element={<PlaceholderPage title="评论洞察" desc="用户评论聚类与洞察。" />} />
         <Route path="/trend" element={<PlaceholderPage title="长期效果" desc="增长时间线与你采纳的动作。" />} />
         <Route path="/projects" element={<ManageProjectsPage />} />

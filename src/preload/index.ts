@@ -37,8 +37,61 @@ contextBridge.exposeInMainWorld("appilot", {
     },
   },
 
+  repo: {
+    checkRelease: (projectId: string): Promise<any> => ipcRenderer.invoke("repo:checkRelease", projectId),
+    setReleaseStatus: (projectId: string, tag: string, status: "accepted" | "ignored"): Promise<any> =>
+      ipcRenderer.invoke("repo:setReleaseStatus", projectId, tag, status),
+  },
+
+  release: {
+    list: (projectId: string): Promise<any> => ipcRenderer.invoke("release:list", projectId),
+    context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("release:context", projectId, productId, releaseTag),
+    get: (
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      force = false,
+      language?: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke("release:get", projectId, productId, releaseTag, force, language),
+    onGenerateProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+      ipcRenderer.on("release:generateProgress", listener);
+      return () => ipcRenderer.removeListener("release:generateProgress", listener);
+    },
+    saveDraft: (projectId: string, draft: any): Promise<any> =>
+      ipcRenderer.invoke("release:saveDraft", projectId, draft),
+    applyKeywordDeltas: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("release:applyKeywordDeltas", projectId, productId, releaseTag),
+    translate: (
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      targetLanguages: string[],
+      sourceLanguage?: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "release:translate",
+        projectId,
+        productId,
+        releaseTag,
+        targetLanguages,
+        sourceLanguage,
+      ),
+    setStoreStatus: (
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      storeStatus: string,
+      reviewFeedback?: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke("release:setStoreStatus", projectId, productId, releaseTag, storeStatus, reviewFeedback),
+  },
+
   scheduler: {
     status: (): Promise<any> => ipcRenderer.invoke("scheduler:status"),
+    list: (): Promise<any> => ipcRenderer.invoke("scheduler:list"),
     runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
   },
 
