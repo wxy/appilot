@@ -11,6 +11,14 @@ contextBridge.exposeInMainWorld("appilot", {
   version: "0.1.0",
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
 
+  menu: {
+    onCommand: (callback: (command: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, command: any) => callback(command);
+      ipcRenderer.on("app:menu-command", listener);
+      return () => ipcRenderer.removeListener("app:menu-command", listener);
+    },
+  },
+
   dialog: {
     selectFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:selectFolder"),
   },

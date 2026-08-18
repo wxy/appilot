@@ -139,9 +139,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         {/* Brand */}
         <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800/60">
           <Link to="/" className="flex items-center gap-2.5" title="返回首页">
-            <div className="w-7 h-7 rounded-lg bg-amber-500 flex items-center justify-center">
-              <span className="text-white text-xs font-bold">A</span>
-            </div>
+            <img src="./icon.png" alt="Appilot" className="w-7 h-7 rounded-md object-cover" />
             <div>
               <h1 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Appilot</h1>
               <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">你的副驾驶</p>
@@ -2105,9 +2103,45 @@ function SettingsPage() {
 
 /* ── App Root ── */
 
+function MenuCommandListener() {
+  const navigate = useNavigate();
+  const { load, select, selectProduct, addByFolder } = useProject();
+
+  useEffect(() => {
+    const off = (window as any).appilot?.menu?.onCommand?.(async (command: any) => {
+      if (command?.view === "settings") {
+        navigate("/settings");
+        return;
+      }
+      if (command?.view === "add") {
+        const folder = await (window as any).appilot?.dialog?.selectFolder();
+        if (folder) {
+          await addByFolder(folder);
+          navigate("/overview");
+        }
+        return;
+      }
+      if (command?.projectId) {
+        await load();
+        select(command.projectId);
+        if (command.productId) {
+          selectProduct(command.productId);
+        }
+        navigate(command.view === "release" ? "/release" : "/overview");
+      }
+    });
+    return () => {
+      off?.();
+    };
+  }, []);
+
+  return null;
+}
+
 export function App() {
   return (
     <Layout>
+      <MenuCommandListener />
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/overview" element={<OverviewPage />} />

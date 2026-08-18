@@ -5,6 +5,7 @@ import { log } from "../engine/logger";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../engine/storefronts";
 import { createStoreSubmissionDraft, submissionDraftId } from "../engine/store-submission";
 import type { AppStoreStatus, StoreSubmissionDraft } from "../engine/store-submission";
+import { updateApplicationMenu } from "./menu";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
 let store: any = null;
@@ -29,7 +30,7 @@ function decryptApiKey(stored: string): string {
   }
 }
 
-async function getStore() {
+export async function getStore() {
   if (!store) {
     try {
       const mod = await import("electron-store");
@@ -734,6 +735,7 @@ export function registerIpcHandlers() {
     }
     s.set("projects", projects);
     void schedulerTick();
+    updateApplicationMenu(s);
     return project;
   });
 
@@ -742,6 +744,7 @@ export function registerIpcHandlers() {
     const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
     s.set("projects", projects);
     void schedulerTick();
+    updateApplicationMenu(s);
     return true;
   });
 
