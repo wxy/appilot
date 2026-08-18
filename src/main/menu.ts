@@ -1,4 +1,25 @@
 import { BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron";
+import { projectEvents } from "./project-events";
+
+let storeProvider: (() => Promise<any>) | null = null;
+let autoRefreshStarted = false;
+
+export function setMenuStoreProvider(provider: () => Promise<any>): void {
+  storeProvider = provider;
+  void refreshFromProvider();
+}
+
+export function startMenuAutoRefresh(): void {
+  if (autoRefreshStarted) return;
+  autoRefreshStarted = true;
+  projectEvents.on("changed", () => void refreshFromProvider());
+}
+
+async function refreshFromProvider(): Promise<void> {
+  if (!storeProvider) return;
+  const store = await storeProvider();
+  updateApplicationMenu(store);
+}
 
 function sendMenuCommand(command: {
   view: "overview" | "release" | "add" | "settings";

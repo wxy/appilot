@@ -4,8 +4,8 @@ import path from "path";
 import { log } from "../engine/logger";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../engine/storefronts";
 import { createStoreSubmissionDraft, submissionDraftId } from "../engine/store-submission";
-import type { AppStoreStatus, StoreSubmissionDraft } from "../engine/store-submission";
-import { updateApplicationMenu } from "./menu";
+import type { StoreSubmissionDraft } from "../engine/store-submission";
+import { emitProjectsChanged } from "./project-events";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
 let store: any = null;
@@ -147,28 +147,6 @@ function updateProductInProjects(projects: any[], productId: string, updater: (p
     storeProducts[index] = updater(storeProducts[index]);
     return { ...project, storeProducts };
   });
-}
-
-function recordReleaseHistory(project: any, release: any, review: any): any[] {
-  const history = Array.isArray(project.releaseHistory) ? project.releaseHistory : [];
-  let entry = history.find((item: any) => item.tag === release.tag);
-  if (!entry) {
-    entry = {
-      tag: release.tag,
-      name: release.name || release.tag,
-      publishedAt: release.publishedAt,
-      status: "pending",
-      reviewedAt: new Date().toISOString(),
-      actionAt: null,
-      review,
-    };
-    history.unshift(entry);
-  } else {
-    entry.review = review;
-    entry.reviewedAt = entry.reviewedAt || new Date().toISOString();
-  }
-  project.releaseHistory = history.slice(0, 20);
-  return project.releaseHistory;
 }
 
 function getStoreSubmissionDrafts(project: any): StoreSubmissionDraft[] {
@@ -751,7 +729,7 @@ export function registerIpcHandlers() {
     }
     s.set("projects", projects);
     void schedulerTick();
-    updateApplicationMenu(s);
+    emitProjectsChanged();
     return project;
   });
 
@@ -760,7 +738,7 @@ export function registerIpcHandlers() {
     const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
     s.set("projects", projects);
     void schedulerTick();
-    updateApplicationMenu(s);
+    emitProjectsChanged();
     return true;
   });
 
@@ -1278,165 +1256,6 @@ export function registerIpcHandlers() {
     return draft;
   });
 
-  ipcMain.handle(
-    "release:applyKeywordDeltas",
-    async (_event, projectId: string, productId: string, releaseTag: string) => {
-      const s = await getStore();
-      const projects: any[] = s.get("projects") || [];
-      const project = projects.find((item: any) => item.id === projectId);
-      if (!project) throw new Error("Project not found");
-      const draft = findStoreSubmissionDraft(project, productId, releaseTag);
-      if (!draft) throw new Error("Submission draft not found");
-
-      const context = findProductContext(projects, productId);
-      if (!context) throw new Error("Store product not found");
-      const product = context.product;
-      const tracked = [...(product.trackedKeywords || [])];
-      const removed = [...(product.removedKeywords || [])];
-
-      for (const delta of draft.trackingKeywordDeltas || []) {
-        if (delta.direction === "add") {
-          const removedIndex = removed.findIndex(
-            (item: any) => item.language === delta.language && item.keyword === delta.keyword,
-          );
-          if (removedIndex >= 0) {
-            tracked.push(removed[removedIndex]);
-            removed.splice(removedIndex, 1);
-          } else if (!tracked.some((item: any) => item.language === delta.language && item.keyword === delta.keyword)) {
-            tracked.push({
-              language: delta.language,
-              keyword: delta.keyword,
-              rationale: delta.reason || "",
-              translation: "",
-            });
-          }
-        } else {
-          const trackedIndex = tracked.findIndex(
-            (item: any) => item.language === delta.language && item.keyword === delta.keyword,
-          );
-          if (trackedIndex >= 0) {
-            const [removedKeyword] = tracked.splice(trackedIndex, 1);
-            if (!removed.some((item: any) => item.language === delta.language && item.keyword === delta.keyword)) {
-              removed.push({
-                language: delta.language,
-                keyword: delta.keyword,
-                rationale: removedKeyword?.rationale || delta.reason || "",
-                translation: removedKeyword?.translation || "",
-                removedAt: new Date().toISOString(),
-              });
-            }
-          }
-        }
-      }
-
-      product.trackedKeywords = tracked;
-      product.removedKeywords = removed;
-      draft.trackingKeywordDeltas = [];
-      draft.updatedAt = new Date().toISOString();
-      upsertStoreSubmissionDraft(project, draft);
-      s.set("projects", projects);
-      void schedulerTick();
-      return product;
-    },
-  );
-
-  ipcMain.handle(
-    "release:setStoreStatus",
-    async (
-      _event,
-      projectId: string,
-      productId: string,
-      releaseTag: string,
-      storeStatus: AppStoreStatus,
-      reviewFeedback?: string,
-    ) => {
-      const s = await getStore();
-      const projects: any[] = s.get("projects") || [];
-      const project = projects.find((item: any) => item.id === projectId);
-      if (!project) throw new Error("Project not found");
-      const draft = findStoreSubmissionDraft(project, productId, releaseTag);
-      if (!draft) throw new Error("Submission draft not found");
-
-      draft.storeStatus = storeStatus;
-      draft.reviewFeedback = reviewFeedback?.trim() || "";
-      draft.updatedAt = new Date().toISOString();
-      upsertStoreSubmissionDraft(project, draft);
-      s.set("projects", projects);
-      return draft;
-    },
-  );
-
-  ipcMain.handle("repo:checkRelease", async (_event, projectId: string) => {
-    const s = await getStore();
-    const projects: any[] = s.get("projects") || [];
-    const project = projects.find((item: any) => item.id === projectId);
-    if (!project) throw new Error("Project not found");
-
-    const { checkForRelease } = await import("../engine/release-watcher");
-    const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
-    if (!result.latest) {
-      return { release: null, review: null, isNew: false };
-    }
-
-    let review = project.lastReleaseReview || null;
-    if (result.isNew || !review || review.releaseTag !== result.latest.tag) {
-      const { AIProvider } = await import("../engine/ai/ai-provider");
-      const provider = new AIProvider({
-        baseURL: s.get("aiProviderUrl"),
-        apiKey: decryptApiKey(s.get("aiApiKey")),
-        model: s.get("aiModel"),
-      });
-      const { reviewRelease } = await import("../engine/ai/release-reviewer");
-      const { readRepoDescription } = await import("../engine/app-store-discovery");
-      const generated = await reviewRelease(provider, {
-        name: project.name,
-        description: readRepoDescription(project.localPath),
-        keywords: Array.from(
-          new Set(
-            (project.storeProducts || []).flatMap((product: any) =>
-              (product.trackedKeywords || []).map((keyword: any) => keyword.keyword),
-            ),
-          ),
-        ),
-        recentRankings: (project.storeProducts || []).flatMap((product: any) =>
-          (product.rankSnapshots || []).slice(-20).map((snapshot: any) => ({
-            keyword: snapshot.keyword,
-            storefront: snapshot.storefront,
-            rank: snapshot.rank,
-            checkedAt: snapshot.checkedAt,
-          })),
-        ),
-        release: result.latest,
-      });
-      review = { ...generated, releaseTag: result.latest.tag };
-    }
-
-    project.lastReleaseTag = result.latest.tag;
-    project.lastReleaseReview = review;
-    const history = recordReleaseHistory(project, result.latest, review);
-    s.set("projects", projects);
-    return {
-      release: result.latest,
-      review,
-      isNew: result.isNew,
-      history,
-    };
-  });
-
-  ipcMain.handle("repo:setReleaseStatus", async (_event, projectId: string, tag: string, status: "accepted" | "ignored") => {
-    const s = await getStore();
-    const projects: any[] = s.get("projects") || [];
-    const project = projects.find((item: any) => item.id === projectId);
-    if (!project) throw new Error("Project not found");
-    const history = Array.isArray(project.releaseHistory) ? project.releaseHistory : [];
-    const entry = history.find((item: any) => item.tag === tag);
-    if (!entry) throw new Error("Release history not found");
-    entry.status = status;
-    entry.actionAt = new Date().toISOString();
-    s.set("projects", projects);
-    return entry;
-  });
-
   // ── AI Config ──
   ipcMain.handle("ai:getConfig", async () => {
     const s = await getStore();
@@ -1465,88 +1284,10 @@ export function registerIpcHandlers() {
     return provider.validateConnection();
   });
 
-  // ── AI Engine (Task 0.7) ──
-  ipcMain.handle("ai:analyzeProduct", async (_event, repoUrl: string) => {
-    const s = await getStore();
-    const { AIProvider } = await import("../engine/ai/ai-provider");
-    const provider = new AIProvider({
-      baseURL: s.get("aiProviderUrl"),
-      apiKey: decryptApiKey(s.get("aiApiKey")),
-      model: s.get("aiModel"),
-    });
-    try {
-      const { RepoAnalyzer } = await import("../engine/repo-analyzer");
-      const { AIEngine } = await import("../engine/ai/ai-engine");
-      const engine = new AIEngine(new RepoAnalyzer(), provider);
-      const result = await engine.analyzeProduct(repoUrl);
-      if (provider.totalUsage) trackAiUsage(provider.totalUsage.totalTokens, provider.totalUsage.estimatedCost);
-      return result;
-    } catch (err: any) {
-      log.error(`analyzeProduct failed: ${err.message}`, { repoUrl, errorCode: err.code });
-      throw err;
-    }
-  });
-
-  ipcMain.handle("ai:generateTweet", async (_event, repoUrl: string, stage: string) => {
-    const s = await getStore();
-    const { AIProvider } = await import("../engine/ai/ai-provider");
-    const provider = new AIProvider({
-      baseURL: s.get("aiProviderUrl"),
-      apiKey: decryptApiKey(s.get("aiApiKey")),
-      model: s.get("aiModel"),
-    });
-    try {
-      const { RepoAnalyzer } = await import("../engine/repo-analyzer");
-      const { AIEngine } = await import("../engine/ai/ai-engine");
-      const engine = new AIEngine(new RepoAnalyzer(), provider);
-      const result = await engine.generateTweet(repoUrl, stage as any);
-      if (provider.totalUsage) trackAiUsage(provider.totalUsage.totalTokens, provider.totalUsage.estimatedCost);
-      return result;
-    } catch (err: any) {
-      log.error(`generateTweet failed: ${err.message}`, { repoUrl, stage, errorCode: err.code });
-      throw err;
-    }
-  });
-
   // ── Analytics / Stats (Task 0.13/0.14) ──
-  ipcMain.handle("stats:save", async (_event, entry: { views: number; likes: number; comments: number; note: string; permalink: string }) => {
-    const s = await getStore();
-    const entries: any[] = s.get("stats") || [];
-    entries.push({ ...entry, date: new Date().toISOString() });
-    s.set("stats", entries);
-    return entries;
-  });
-
-  ipcMain.handle("stats:list", async () => {
-    const s = await getStore();
-    return s.get("stats") || [];
-  });
-
   ipcMain.handle("stats:aiUsage", async () => {
     const s = await getStore();
     return s.get("aiUsage") || { calls: 0, totalTokens: 0, estimatedCost: 0 };
-  });
-
-  // Track AI usage after each call
-  const trackAiUsage = async (tokens: number, cost: number) => {
-    const s = await getStore();
-    const usage: any = s.get("aiUsage") || { calls: 0, totalTokens: 0, estimatedCost: 0 };
-    usage.calls += 1;
-    usage.totalTokens += tokens;
-    usage.estimatedCost += cost;
-    s.set("aiUsage", usage);
-  };
-
-  // ── Content Store / Drafts (Task 0.10/0.12) ──
-  ipcMain.handle("draft:save", async (_event, content: string) => {
-    const s = await getStore();
-    s.set("draft", { content, savedAt: new Date().toISOString() });
-    return true;
-  });
-
-  ipcMain.handle("draft:load", async () => {
-    const s = await getStore();
-    return s.get("draft") || null;
   });
 
 }

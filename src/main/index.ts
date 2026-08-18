@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, shell } from "electron";
 import path from "path";
 import { getStore, registerIpcHandlers, startTaskScheduler } from "./ipc";
-import { updateApplicationMenu } from "./menu";
+import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
 import { setupLogger } from "./logger";
 
 let mainWindow: BrowserWindow | null = null;
@@ -52,7 +52,8 @@ app.whenReady().then(() => {
     app.dock.setIcon(path.join(__dirname, "../../resources/icon_1024.png"));
   }
   createWindow();
-  void getStore().then(updateApplicationMenu);
+  setMenuStoreProvider(() => getStore());
+  startMenuAutoRefresh();
 });
 
 app.on("window-all-closed", () => app.quit());
