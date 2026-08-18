@@ -8,7 +8,7 @@ export interface AIConfig {
 
 contextBridge.exposeInMainWorld("appilot", {
   platform: process.platform,
-  version: "0.1.0",
+  getVersion: (): Promise<string> => ipcRenderer.invoke("app:getVersion"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
 
   menu: {

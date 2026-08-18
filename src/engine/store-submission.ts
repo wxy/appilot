@@ -25,20 +25,6 @@ export interface StoreSubmissionLocalization {
   keywords: string;
 }
 
-export interface StoreSubmissionRevision {
-  revision: number;
-  createdAt: string;
-  source: "initial" | "regenerated";
-  summary: string;
-  localizations: StoreSubmissionLocalization[];
-  promotionalText: string;
-  whatsNew: string;
-  description: string;
-  submissionKeywords: { language: string; text: string }[];
-  trackingKeywordDeltas: TrackingKeywordChange[];
-  promotionAngles: string[];
-}
-
 export interface StoreSubmissionContent {
   summary: string;
   localizations: StoreSubmissionLocalization[];
@@ -62,8 +48,6 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   githubDraftStatus: GitHubReleaseStatus;
   storeStatus: AppStoreStatus;
   reviewFeedback: string;
-  revision: number;
-  revisions: StoreSubmissionRevision[];
   createdAt: string;
   updatedAt: string;
 }
@@ -109,8 +93,6 @@ export function createStoreSubmissionDraft(input: {
     githubDraftStatus: githubStatusForRelease(input.release),
     storeStatus: existing?.storeStatus || "prepared",
     reviewFeedback: existing?.reviewFeedback || "",
-    revision: existing ? existing.revision + 1 : 1,
-    revisions: [],
     createdAt: existing?.createdAt || now,
     updatedAt: now,
     summary: input.content.summary,

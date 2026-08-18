@@ -1,4 +1,4 @@
-import { ipcMain, shell, safeStorage, dialog } from "electron";
+import { app, ipcMain, shell, safeStorage, dialog } from "electron";
 import fs from "fs";
 import path from "path";
 import { log } from "../engine/logger";
@@ -56,6 +56,20 @@ function normalizeLocalPath(localPath: unknown): string {
   } catch {
     return localPath.trim();
   }
+}
+
+function assertNonEmptyString(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${name} is required`);
+  }
+  return value.trim();
+}
+
+function assertStringArray(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`${name} must be an array of strings`);
+  }
+  return [...new Set(value as string[])];
 }
 
 /** Keep only the most recent project for each local path. */
@@ -546,6 +560,8 @@ export function startTaskScheduler(): void {
 }
 
 export function registerIpcHandlers() {
+  ipcMain.handle("app:getVersion", () => app.getVersion());
+
   // ── Shell ──
   ipcMain.handle("shell:openExternal", (_event, url: string) => {
     if (!/^https?:\/\//i.test(url)) {
@@ -986,6 +1002,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle("release:list", async (_event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
@@ -1007,6 +1024,9 @@ export function registerIpcHandlers() {
   ipcMain.handle(
     "release:context",
     async (_event, projectId: string, productId: string, releaseTag: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      releaseTag = assertNonEmptyString(releaseTag, "releaseTag");
       const s = await getStore();
       const projects: any[] = s.get("projects") || [];
       const project = projects.find((item: any) => item.id === projectId);
@@ -1052,7 +1072,13 @@ export function registerIpcHandlers() {
       force = false,
       language?: string,
     ) => {
-    const s = await getStore();
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      releaseTag = assertNonEmptyString(releaseTag, "releaseTag");
+      if (language !== undefined) {
+        language = assertNonEmptyString(language, "language");
+      }
+      const s = await getStore();
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
@@ -1121,6 +1147,10 @@ export function registerIpcHandlers() {
       targetLanguages: string[],
       sourceLanguage?: string,
     ) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      releaseTag = assertNonEmptyString(releaseTag, "releaseTag");
+      targetLanguages = assertStringArray(targetLanguages, "targetLanguages");
       const s = await getStore();
       const projects: any[] = s.get("projects") || [];
       const project = projects.find((item: any) => item.id === projectId);
