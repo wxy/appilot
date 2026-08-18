@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, Menu, shell } from "electron";
 import path from "path";
 import { registerIpcHandlers, startTaskScheduler } from "./ipc";
 import { setupLogger } from "./logger";
@@ -6,12 +6,15 @@ import { setupLogger } from "./logger";
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
+  const iconPath = path.join(__dirname, "../../resources/icon.icns");
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 750,
     minWidth: 800,
     minHeight: 600,
     title: "Appilot",
+    icon: process.platform === "darwin" ? iconPath : path.join(__dirname, "../../resources/icon_512.png"),
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -37,6 +40,10 @@ app.whenReady().then(() => {
   setupLogger();
   registerIpcHandlers();
   startTaskScheduler();
+  Menu.setApplicationMenu(null);
+  if (process.platform === "darwin" && app.dock) {
+    app.dock.setIcon(path.join(__dirname, "../../resources/icon.icns"));
+  }
   createWindow();
 });
 
