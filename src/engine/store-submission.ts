@@ -19,6 +19,10 @@ export interface TrackingKeywordChange {
 
 export interface StoreSubmissionLocalization {
   language: string;
+  /** App Store 名称：建议「具体名称: 描述性短句」，≤30 字符。 */
+  name: string;
+  /** App Store 副标题，≤30 字符。 */
+  subtitle: string;
   promotionalText: string;
   description: string;
   whatsNew: string;
@@ -48,6 +52,10 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   githubDraftStatus: GitHubReleaseStatus;
   storeStatus: AppStoreStatus;
   reviewFeedback: string;
+  /** 母本语言已确定（锁定母本、允许翻译其他语言）的时间。 */
+  masterConfirmedAt?: string;
+  /** 整批多语言文案已确定（全部只读）的时间。 */
+  batchConfirmedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

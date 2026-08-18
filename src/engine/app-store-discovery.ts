@@ -336,6 +336,11 @@ function readReadme(localPath: string): string | null {
   }
 }
 
+/** Read the full README content for display ("" when missing). */
+export function readFullReadme(localPath: string): string {
+  return readReadme(localPath) || "";
+}
+
 /** Extract every App Store link from README Markdown content. */
 export function extractAppStoreLinks(content: string): AppStoreLink[] {
   const links: AppStoreLink[] = [];

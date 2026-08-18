@@ -89,6 +89,8 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | `appVersion` / `buildNumber` | 商店提交身份键 | `2.1.0` / `42` |
 | `releaseTag` | 关联的预发布公告标识 | `draft-<mtimeMs>` |
 | `githubDraftStatus` | 当前公告文件是否为预发布 | `draft` / `published` |
+| `name` | App 名称（按语言）：建议「具体名称: 描述性短句」 | ≤ 30 字符 |
+| `subtitle` | App 副标题（按语言） | ≤ 30 字符 |
 | `promotionalText` | 现在可改的推广文本 | ≤ 170 字符 |
 | `whatsNew` | 本次新增变化 | ≤ 4000 字符 |
 | `description` | App 描述 | ≤ 4000 字符 |
