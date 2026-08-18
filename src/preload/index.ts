@@ -91,6 +91,8 @@ contextBridge.exposeInMainWorld("appilot", {
     getConfig: (): Promise<AIConfig> => ipcRenderer.invoke("ai:getConfig"),
     saveConfig: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:saveConfig", config),
     testConnection: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:testConnection", config),
+    listModels: (config: { providerUrl: string; apiKey: string }): Promise<{ models: string[]; error: string }> =>
+      ipcRenderer.invoke("ai:listModels", config),
   },
 
   stats: {

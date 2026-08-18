@@ -14,20 +14,55 @@ let store: any = null;
  * Phase 0: encrypt the AI API key at rest using Electron safeStorage
  * (macOS Keychain / Windows DPAPI). Falls back to plaintext if unavailable.
  */
-function encryptApiKey(key: string): string {
-  if (!key) return "";
-  if (!safeStorage.isEncryptionAvailable()) return key;
-  return safeStorage.encryptString(key).toString("base64");
-}
-
 function decryptApiKey(stored: string): string {
   if (!stored) return "";
   if (!safeStorage.isEncryptionAvailable()) return stored;
-  try {
-    return safeStorage.decryptString(Buffer.from(stored, "base64"));
-  } catch {
-    return stored; // legacy plaintext value written before encryption
+  // Peel off encryption layers one at a time. A legacy double-encrypted value
+  // decrypts first to another base64 blob, then to the real key. Plaintext
+  // (legacy or keychain-unavailable) values are returned as-is.
+  let current = stored;
+  for (let layer = 0; layer < 3; layer++) {
+    if (!looksLikeEncryptedBlob(current)) return current;
+    try {
+      current = safeStorage.decryptString(Buffer.from(current, "base64"));
+    } catch {
+      return current;
+    }
   }
+  return current;
+}
+
+/** True when the value looks like an encrypted blob rather than a real key
+ *  (printable ASCII). Real API keys virtually always contain a hyphen (e.g.
+ *  "sk-…"), which strict base64 rejects — so only genuine ciphertext blobs
+ *  (pure base64 of non-printable bytes) are treated as encrypted. */
+function looksLikeEncryptedBlob(value: string): boolean {
+  if (!value || !safeStorage.isEncryptionAvailable()) return false;
+  if (value.length < 32) return false;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(value, "base64");
+  } catch {
+    return false;
+  }
+  if (buf.length < 24) return false;
+  if (buf.toString("base64") !== value) return false;
+  let printable = 0;
+  for (const byte of buf) {
+    if (byte >= 32 && byte <= 126) printable++;
+  }
+  return printable / buf.length < 0.8;
+}
+
+function encryptApiKey(key: string): string {
+  if (!key) return "";
+  if (!safeStorage.isEncryptionAvailable()) return key;
+  if (looksLikeEncryptedBlob(key)) {
+    log.warn("API key appears already encrypted; storing as-is to avoid double encryption");
+    return key;
+  }
+  return safeStorage.encryptString(key).toString("base64");
 }
 
 export async function getStore() {
@@ -1013,16 +1048,29 @@ export function registerIpcHandlers() {
       if (!product) throw new Error("Store product not found");
 
       const { checkForRelease } = await import("../engine/release-watcher");
-      const { readRepoDescription } = await import("../engine/app-store-discovery");
+      const { readFullReadme } = await import("../engine/app-store-discovery");
       const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
       const release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) throw new Error("Release not found");
 
-      const previousDrafts = getStoreSubmissionDrafts(project)
-        .filter((item) => item.productId === productId && item.releaseTag !== releaseTag)
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-      const previous = previousDrafts[0] || null;
-      const readme = readRepoDescription(project.localPath);
+      const draftSummaries = getStoreSubmissionDrafts(project)
+        .filter((item) => item.productId === productId)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        .map((draft) => ({
+          releaseTag: draft.releaseTag,
+          updatedAt: draft.updatedAt,
+          appVersion: draft.appVersion || "",
+          summary: draft.summary || "",
+          localizations: draft.localizations || [],
+          promotionalText: draft.promotionalText || "",
+          description: draft.description || "",
+          whatsNew: draft.whatsNew || "",
+          submissionKeywords: draft.submissionKeywords || [],
+          githubDraftStatus: draft.githubDraftStatus || "",
+          storeStatus: draft.storeStatus || "",
+        }));
+      const previous = draftSummaries.find((item) => item.releaseTag !== releaseTag) || null;
+      const readme = readFullReadme(project.localPath);
       let readmeModifiedAt = "";
       try {
         readmeModifiedAt = fs.statSync(path.join(project.localPath, "README.md")).mtime.toISOString();
@@ -1033,6 +1081,7 @@ export function registerIpcHandlers() {
       return {
         readme,
         readmeModifiedAt,
+        drafts: draftSummaries,
         previousDescription: previous?.description || "",
         previousUpdatedAt: previous?.updatedAt || "",
         release,
@@ -1259,9 +1308,17 @@ export function registerIpcHandlers() {
   // ── AI Config ──
   ipcMain.handle("ai:getConfig", async () => {
     const s = await getStore();
+    const stored = s.get("aiApiKey") || "";
+    const apiKey = decryptApiKey(stored);
     return {
       providerUrl: s.get("aiProviderUrl"),
-      apiKey: decryptApiKey(s.get("aiApiKey")),
+      apiKey,
+      apiKeyBroken: Boolean(
+        stored &&
+        apiKey &&
+        looksLikeEncryptedBlob(stored) &&
+        looksLikeEncryptedBlob(apiKey),
+      ),
       model: s.get("aiModel"),
     };
   });
@@ -1269,8 +1326,12 @@ export function registerIpcHandlers() {
   ipcMain.handle("ai:saveConfig", async (_event, config: { providerUrl: string; apiKey: string; model: string }) => {
     const s = await getStore();
     s.set("aiProviderUrl", config.providerUrl);
-    s.set("aiApiKey", encryptApiKey(config.apiKey));
     s.set("aiModel", config.model);
+    const currentStored = s.get("aiApiKey") || "";
+    const apiKey = config.apiKey || "";
+    if (apiKey && apiKey !== currentStored) {
+      s.set("aiApiKey", encryptApiKey(apiKey));
+    }
     return true;
   });
 
@@ -1282,6 +1343,32 @@ export function registerIpcHandlers() {
       model: config.model,
     });
     return provider.validateConnection();
+  });
+
+  ipcMain.handle("ai:listModels", async (_event, config: { providerUrl: string; apiKey: string }) => {
+    const providerUrl = String(config?.providerUrl || "").trim().replace(/\/+$/, "");
+    if (!providerUrl) return { models: [], error: "缺少供应商 URL" };
+    const apiKey = String(config?.apiKey || "").trim();
+    try {
+      const res = await fetch(`${providerUrl}/models`, {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        return {
+          models: [],
+          error: `模型列表请求失败（${res.status}）：${detail.slice(0, 200) || res.statusText}`,
+        };
+      }
+      const data: any = await res.json();
+      const models = (Array.isArray(data?.data) ? data.data : [])
+        .map((item: any) => String(item?.id || "").trim())
+        .filter(Boolean)
+        .sort((a: string, b: string) => a.localeCompare(b));
+      return { models, error: "" };
+    } catch (err: any) {
+      return { models: [], error: err?.message || String(err) };
+    }
   });
 
   // ── Analytics / Stats (Task 0.13/0.14) ──

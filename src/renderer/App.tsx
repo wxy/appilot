@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
 import { useProject, type RankSnapshot } from "./stores/project";
 import { cn } from "./lib/utils";
@@ -9,11 +11,11 @@ import { defaultStorefrontForLanguage, storefrontDisplayName, storefrontsForLang
 /* ── Layout ── */
 
 const NAV_ITEMS = [
-  { to: "/overview", label: "总览" },
-  { to: "/release", label: "发布工作台" },
-  { to: "/keywords", label: "关键词" },
-  { to: "/reviews", label: "评论" },
-  { to: "/trend", label: "长期效果" },
+  { to: "/overview", label: "总览", title: "总览" },
+  { to: "/release", label: "发布", title: "发布工作台" },
+  { to: "/keywords", label: "关键词", title: "关键词" },
+  { to: "/reviews", label: "评论", title: "评论" },
+  { to: "/trend", label: "趋势", title: "长期效果" },
 ];
 
 const LANGUAGE_LABELS: Record<string, string> = {
@@ -36,6 +38,12 @@ const UI_SOURCE_LANGUAGE = "zh-Hans";
 
 function languageLabel(code: string): string {
   return LANGUAGE_LABELS[code] || code;
+}
+
+function platformLabel(platform: string): string {
+  if (platform === "ios") return "iOS";
+  if (platform === "macos") return "macOS";
+  return "未识别";
 }
 
 function startOfDay(date: Date): number {
@@ -81,12 +89,13 @@ function formatHumanTime(iso: string | null | undefined): string {
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
-  const { resolved, toggle } = useTheme();
   const { projects, currentProjectId, currentProductId, load, select, selectProduct, addByFolder } = useProject();
   const location = useLocation();
   const [cost, setCost] = useState<number | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const overflowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
@@ -103,11 +112,14 @@ function Layout({ children }: { children: React.ReactNode }) {
       .catch(() => setCost(0));
   }, []);
 
-  // Close the project switcher when clicking outside.
+  // Close dropdowns when clicking outside.
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setProjectMenuOpen(false);
+      }
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false);
       }
     };
     document.addEventListener("mousedown", onDocClick);
@@ -124,8 +136,6 @@ function Layout({ children }: { children: React.ReactNode }) {
   const currentProduct = currentProject?.storeProducts?.find((product) => product.id === currentProductId)
     || currentProject?.storeProducts?.[0]
     || null;
-  const platformLabel = (platform: string) =>
-    platform === "ios" ? "iOS" : platform === "macos" ? "macOS" : "未识别";
   const currentProjectLabel = currentProject
     ? currentProject.storeProducts.length > 1 && currentProduct
       ? `${currentProject.name} · ${platformLabel(currentProduct.platform)}`
@@ -133,34 +143,27 @@ function Layout({ children }: { children: React.ReactNode }) {
     : "选择项目";
 
   return (
-    <div className="flex h-screen bg-zinc-50 dark:bg-zinc-950">
-      {/* Sidebar */}
-      <aside className="w-60 flex flex-col bg-white dark:bg-zinc-900 border-r border-zinc-200/60 dark:border-zinc-800/60">
+    <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950">
+      {/* Top bar */}
+      <header className="shrink-0 z-30 flex items-center gap-2.5 px-4 h-14 border-b border-zinc-200/60 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
         {/* Brand */}
-        <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800/60">
-          <Link to="/" className="flex items-center gap-2.5" title="返回首页">
-            <img src="./icon.png" alt="Appilot" className="w-7 h-7 rounded-md object-cover" />
-            <div>
-              <h1 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Appilot</h1>
-              <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">你的副驾驶</p>
-            </div>
-          </Link>
-        </div>
+        <Link to="/" className="flex items-center gap-2 shrink-0 pr-1" title="返回首页">
+          <img src="./icon.png" alt="Appilot" className="w-8 h-8 rounded-lg object-cover" />
+          <span className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Appilot</span>
+        </Link>
 
         {/* Project switcher */}
-        <div ref={menuRef} className="relative px-3 py-3 border-b border-zinc-100 dark:border-zinc-800/60">
+        <div ref={menuRef} className="relative">
           <button
             onClick={() => setProjectMenuOpen((v) => !v)}
-            className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 hover:border-amber-500/50 transition-colors"
+            className="flex items-center gap-2 pl-3 pr-2.5 h-9 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 text-zinc-700 dark:text-zinc-200 hover:border-amber-500/50 transition-colors max-w-64"
           >
-            <span className="truncate">
-              {currentProjectLabel}
-            </span>
-            <span className={cn("text-zinc-400 transition-transform", projectMenuOpen && "rotate-180")}>▾</span>
+            <span className="truncate">{currentProjectLabel}</span>
+            <span className={cn("text-zinc-400 text-xs transition-transform", projectMenuOpen && "rotate-180")}>▾</span>
           </button>
 
           {projectMenuOpen && (
-            <div className="absolute left-3 right-3 top-full mt-1 z-20 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 overflow-hidden">
+            <div className="absolute left-0 top-full mt-1.5 z-40 w-72 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 overflow-hidden">
               {projects.map((p) => {
                 const products = p.storeProducts || [];
                 if (products.length > 1) {
@@ -186,9 +189,7 @@ function Layout({ children }: { children: React.ReactNode }) {
                           )}
                         >
                           <span className={cn("text-xs", product.id === currentProductId ? "text-amber-500" : "text-transparent")}>✓</span>
-                          <span className="truncate">
-                            {platformLabel(product.platform)}
-                          </span>
+                          <span className="truncate">{platformLabel(product.platform)}</span>
                         </button>
                       ))}
                     </div>
@@ -234,22 +235,19 @@ function Layout({ children }: { children: React.ReactNode }) {
           )}
         </div>
 
-        {/* Nav (within current project) */}
-        <nav className="flex-1 px-3 py-2 overflow-auto">
-          {currentProject && (
-            <p className="px-3 pb-1 text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-              在 {currentProject.name} 内
-            </p>
-          )}
-          <div className="space-y-0.5">
+        <div className="w-px h-6 bg-zinc-200/70 dark:bg-zinc-800/70 mx-1" />
+
+        {/* Page nav (persistent) */}
+        <nav className="flex items-center gap-1">
           {NAV_ITEMS.map((item) => {
             const active = location.pathname === item.to;
             return (
               <Link
                 key={item.to}
                 to={item.to}
+                title={item.title}
                 className={cn(
-                  "flex items-center px-3 py-2.5 text-sm rounded-lg transition-colors",
+                  "px-3 py-1.5 text-sm rounded-lg transition-colors",
                   active
                     ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
                     : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
@@ -259,40 +257,50 @@ function Layout({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
-          </div>
         </nav>
 
-        {/* Footer: cost + theme */}
-        <div className="p-3 border-t border-zinc-100 dark:border-zinc-800/60 space-y-2">
-          <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 text-[11px] text-zinc-500 dark:text-zinc-400">
-            <span>本月 AI 成本</span>
+        {/* Right: cost + overflow menu */}
+        <div className="ml-auto flex items-center gap-2">
+          <div
+            className="flex items-center gap-1.5 px-2.5 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400"
+            title="本月 AI 成本"
+          >
+            <span>本月 AI</span>
             <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
               {cost === null ? "—" : `$${cost.toFixed(2)}`}
             </span>
           </div>
-          <button
-            onClick={toggle}
-            className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
-          >
-            {resolved === "dark" ? "浅色模式" : "深色模式"}
-            <span className="text-xs">{resolved === "dark" ? "☀" : "☾"}</span>
-          </button>
-          <Link
-            to="/tasks"
-            className="flex items-center justify-between px-2 py-1.5 text-sm rounded-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
-          >
-            任务中心
-            <span className="text-xs">▦</span>
-          </Link>
-          <Link
-            to="/settings"
-            className="flex items-center justify-between px-2 py-1.5 text-sm rounded-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
-          >
-            设置
-            <span className="text-xs">⚙</span>
-          </Link>
+
+          <div ref={overflowRef} className="relative">
+            <button
+              onClick={() => setOverflowOpen((v) => !v)}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+              title="更多"
+              aria-label="更多"
+            >
+              ⋯
+            </button>
+            {overflowOpen && (
+              <div className="absolute right-0 top-full mt-1.5 z-40 w-48 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 overflow-hidden">
+                <Link
+                  to="/tasks"
+                  onClick={() => setOverflowOpen(false)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                >
+                  <span className="text-zinc-400 text-xs">▦</span> 任务中心
+                </Link>
+                <Link
+                  to="/settings"
+                  onClick={() => setOverflowOpen(false)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                >
+                  <span className="text-zinc-400 text-xs">⚙</span> 设置
+                </Link>
+              </div>
+            )}
+          </div>
         </div>
-      </aside>
+      </header>
 
       {/* Content */}
       <main className="flex-1 overflow-auto">
@@ -408,7 +416,7 @@ function OverviewPage() {
   ].filter((g) => g.links.length > 0);
 
   return (
-    <div className="p-10 max-w-2xl mx-auto">
+    <div className="p-10 max-w-6xl mx-auto">
       {/* App identity */}
       <div className="flex items-center gap-4 mb-8">
         {product.artworkUrl ? (
@@ -517,6 +525,322 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   );
 }
 
+/** Resolve a submission draft into per-language localization objects (legacy drafts included). */
+function localizationList(draft: any): any[] {
+  if (draft?.localizations?.length) return draft.localizations;
+  return [
+    {
+      language: draft?.submissionKeywords?.[0]?.language || "en",
+      name: draft?.name || "",
+      subtitle: draft?.subtitle || "",
+      promotionalText: draft?.promotionalText || "",
+      description: draft?.description || "",
+      whatsNew: draft?.whatsNew || "",
+      keywords: draft?.submissionKeywords?.[0]?.text || "",
+    },
+  ];
+}
+
+function MarkdownView({ text }: { text: string }) {
+  return (
+    <div className="markdown-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
+function ReferenceSection({
+  title,
+  meta,
+  checked = false,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  meta?: string;
+  checked?: boolean;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left"
+      >
+        <span className="flex items-center gap-2.5 min-w-0">
+          <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{title}</span>
+          {checked ? <span className="text-xs text-emerald-500 shrink-0">✓</span> : null}
+          {meta ? (
+            <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{meta}</span>
+          ) : null}
+        </span>
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          className={cn(
+            "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        >
+          <path
+            d="M4 6l4 4 4-4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      {open ? <div className="px-5 pb-5">{children}</div> : null}
+    </div>
+  );
+}
+
+function formatVersionDate(iso?: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return (
+    date.toLocaleDateString("zh-CN", sameYear ? { month: "numeric", day: "numeric" } : { year: "numeric", month: "numeric", day: "numeric" }) +
+    " " +
+    date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+  );
+}
+
+function draftVersionLabel(item: any): string {
+  const tag = String(item.releaseTag || item.appVersion || "");
+  if (/^v?\d+(\.\d+)*$/.test(tag)) return tag.startsWith("v") ? tag : `v${tag}`;
+  return formatVersionDate(item.updatedAt) || tag || "未知版本";
+}
+
+/** Merge draft records that belong to the same release version (same releaseTag),
+ *  consolidating their localizations by language so a version is never split
+ *  into multiple rows because its languages were translated at different times. */
+function mergeHistoryDrafts(drafts: any[]): any[] {
+  const byTag = new Map<string, any>();
+  for (const draft of drafts) {
+    const key = String(draft.releaseTag || draft.id || "");
+    const existing = byTag.get(key);
+    if (!existing) {
+      byTag.set(key, { ...draft, localizations: [...(draft.localizations || [])] });
+      continue;
+    }
+    const langs = new Map<string, any>(
+      (existing.localizations || []).map((item: any) => [item.language, item]),
+    );
+    for (const loc of draft.localizations || []) {
+      if (loc?.language) langs.set(loc.language, loc);
+    }
+    const next: any = { ...existing, localizations: [...langs.values()] };
+    if (!next.updatedAt || new Date(draft.updatedAt).getTime() > new Date(next.updatedAt).getTime()) {
+      next.updatedAt = draft.updatedAt;
+    }
+    next.summary = next.summary || draft.summary || "";
+    byTag.set(key, next);
+  }
+  return [...byTag.values()].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+}
+
+function HistoryPanel({
+  drafts,
+  selectedDraft,
+  onSelect,
+}: {
+  drafts: any[];
+  selectedDraft: any;
+  onSelect: (draft: any) => void;
+}) {
+  const merged = mergeHistoryDrafts(drafts);
+  return (
+    <ReferenceSection title="历史文案" meta={merged.length > 0 ? `${merged.length} 个版本` : "暂无历史文案"} defaultOpen>
+      {merged.length === 0 ? (
+        <p className="text-sm text-zinc-400 dark:text-zinc-500 py-1">还没有可参考的历史版本。</p>
+      ) : (
+        <div className="space-y-1">
+          {merged.map((item: any, index: number) => {
+            const active = selectedDraft?.releaseTag === item.releaseTag;
+            const languages = (item.localizations || [])
+              .map((loc: any) => String(loc?.language || "").trim())
+              .filter(Boolean);
+            return (
+              <button
+                key={item.releaseTag || index}
+                type="button"
+                onClick={() => onSelect(item)}
+                className={cn(
+                  "w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left transition-colors",
+                  active
+                    ? "bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                    : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                )}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium truncate">{draftVersionLabel(item)}</span>
+                  <span className="text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
+                    {formatHumanTime(item.updatedAt)}
+                  </span>
+                </span>
+                {languages.length > 0 && (
+                  <span className="mt-1 flex flex-wrap gap-1">
+                    {languages.map((lang: string) => (
+                      <span
+                        key={lang}
+                        className="px-1.5 py-0.5 text-[10px] rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                      >
+                        {languageLabel(lang)}
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </ReferenceSection>
+  );
+}
+
+function CurrentCopyEntry({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left transition-colors",
+        active ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+      )}
+    >
+      <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">当前文案</span>
+      <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{label}</span>
+    </button>
+  );
+}
+
+function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
+  const [language, setLanguage] = useState("");
+  const localizations = localizationList(draft);
+  const activeLanguage = localizations.some((item: any) => item.language === language)
+    ? language
+    : localizations[0]?.language || "";
+  const loc = localizations.find((item: any) => item.language === activeLanguage) || localizations[0] || null;
+
+  return (
+    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+      <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">历史文案</h3>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">
+            {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-sm text-amber-600 dark:text-amber-400 hover:underline shrink-0"
+        >
+          返回当前文案
+        </button>
+      </div>
+      <div className="p-6 space-y-6">
+        {localizations.length > 1 && (
+          <div className="flex flex-wrap gap-2">
+            {localizations.map((item: any) => {
+              const active = item.language === activeLanguage;
+              return (
+                <button
+                  key={item.language}
+                  type="button"
+                  onClick={() => setLanguage(item.language)}
+                  className={cn(
+                    "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+                    active
+                      ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600",
+                  )}
+                >
+                  {languageLabel(item.language)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {loc && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <FieldHeader label="软件名称" text={loc.name || ""} />
+                <input value={loc.name || ""} readOnly className={inputLineClass} />
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                  {(loc.name || "").length}/30 字符
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <FieldHeader label="副标题" text={loc.subtitle || ""} />
+                <input value={loc.subtitle || ""} readOnly className={inputLineClass} />
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                  {(loc.subtitle || "").length}/30 字符
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <FieldHeader label="推广文本" text={loc.promotionalText || ""} />
+              <input value={loc.promotionalText || ""} readOnly className={inputLineClass} />
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                {(loc.promotionalText || "").length}/170 字符
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <FieldHeader label="关键词" text={loc.keywords || ""} />
+              <input value={loc.keywords || ""} readOnly className={inputLineClass} />
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                {(loc.keywords || "").length}/100 字符
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <FieldHeader label="软件描述" text={loc.description || ""} />
+              <textarea
+                value={(loc.description || "").replace(/^──── 介绍 ────\n?/, "")}
+                readOnly
+                className={inputClass + " min-h-40 resize-y"}
+              />
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                {(loc.description || "").replace(/^──── 介绍 ────\n?/, "").length}/4000 字符
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <FieldHeader label="新增内容" text={loc.whatsNew || ""} />
+              <textarea value={loc.whatsNew || ""} readOnly className={inputClass + " min-h-28 resize-y"} />
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                {(loc.whatsNew || "").length}/4000 字符
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReleasePage() {
   const { projects, currentProjectId, currentProductId } = useProject();
   const project = projects.find((item) => item.id === currentProjectId);
@@ -533,8 +857,7 @@ function ReleasePage() {
   const [sourceLanguage, setSourceLanguage] = useState("");
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [releaseContext, setReleaseContext] = useState<any>(null);
-  const [previewTarget, setPreviewTarget] = useState<"release" | "readme" | "previous" | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
+  const [historyDraft, setHistoryDraft] = useState<any>(null);
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
 
@@ -572,7 +895,6 @@ function ReleasePage() {
   useEffect(() => {
     setSourceLanguage(UI_SOURCE_LANGUAGE);
     setTranslatingLanguages(new Set());
-    setConfirmed(false);
     setActiveLanguage("");
     setStep(1);
   }, [productId, project?.id]);
@@ -580,6 +902,7 @@ function ReleasePage() {
   useEffect(() => {
     if (!project?.id || !productId || !selectedTag) return;
     let cancelled = false;
+    setHistoryDraft(null);
     (window as any).appilot?.release?.context(project.id, productId, selectedTag)
       .then((context: any) => {
         if (!cancelled) setReleaseContext(context);
@@ -594,22 +917,18 @@ function ReleasePage() {
 
   const draft = active?.draft || null;
   const release = active?.release || null;
-  const localizations = draft?.localizations?.length
-    ? draft.localizations
-    : draft
-      ? [{
-          language: "en",
-          promotionalText: draft.promotionalText || "",
-          description: draft.description || "",
-          whatsNew: draft.whatsNew || "",
-          keywords: (draft.submissionKeywords || [])
-            .find((item: any) => item.language === "en")?.text || "",
-        }]
-      : [];
+  const localizations = draft ? localizationList(draft) : [];
   const activeLocalization =
     localizations.find((item: any) => item.language === activeLanguage) || localizations[0] || null;
+  const primaryLanguage = localizations[0]?.language || "";
+  const masterConfirmed = Boolean(draft?.masterConfirmedAt);
+  const batchConfirmed = Boolean(draft?.batchConfirmedAt);
   const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
   const selectedProduct = products.find((item) => item.id === productId) || null;
+  const currentReleaseLabel =
+    selectedRelease?.name && selectedRelease.name !== "RELEASE_DRAFT.md"
+      ? selectedRelease.name
+      : formatVersionDate(selectedRelease?.publishedAt) || selectedTag;
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
@@ -619,14 +938,22 @@ function ReleasePage() {
         ...availableLanguages.filter((language) => language !== UI_SOURCE_LANGUAGE),
       ]
     : availableLanguages;
+  const remainingTranslationCount = orderedLanguages.filter(
+    (language) =>
+      language !== primaryLanguage &&
+      !localizations.some((item: any) => item.language === language),
+  ).length;
   const selectedExistingDraft =
     active?.draft?.productId === productId && active?.draft?.releaseTag === selectedTag
       ? active.draft
       : selectedRelease?.submissionDrafts?.find(
           (item: any) => item?.productId === productId,
         ) || null;
-  const isReadOnly = Boolean(release && !release.draft) || confirmed;
   const feedbackReadOnly = Boolean(release && !release.draft);
+  const isReadOnly =
+    feedbackReadOnly ||
+    batchConfirmed ||
+    (masterConfirmed && activeLocalization?.language === primaryLanguage);
   const busy = generating || loadingDraft;
 
   useEffect(() => {
@@ -635,7 +962,10 @@ function ReleasePage() {
     }
   }, [activeLanguage, localizations]);
 
-  const updateLocalizationField = (field: "promotionalText" | "description" | "whatsNew" | "keywords", value: string) => {
+  const updateLocalizationField = (
+    field: "name" | "subtitle" | "promotionalText" | "description" | "whatsNew" | "keywords",
+    value: string,
+  ) => {
     setActive((prev: any) => {
       if (!prev?.draft) return prev;
       const nextLocalizations = (prev.draft.localizations || []).map((item: any) =>
@@ -678,16 +1008,7 @@ function ReleasePage() {
         force ? sourceLanguage : undefined,
       );
       setActive(next);
-      if (force) {
-        setStep(2);
-        setConfirmed(false);
-      } else if (next.draft?.localizations?.length > 1) {
-        setStep(2);
-        setConfirmed(true);
-      } else {
-        setStep(2);
-        setConfirmed(false);
-      }
+      setStep(2);
     } catch (e: any) {
       setError(e.message || "发布工作单加载失败。");
     } finally {
@@ -700,6 +1021,8 @@ function ReleasePage() {
     setProductId(value);
     setActive(null);
     setActiveLanguage("");
+    setReleaseContext(null);
+    setHistoryDraft(null);
     const existing = selectedRelease?.submissionDrafts?.find(
       (item: any) => item?.productId === value,
     );
@@ -710,7 +1033,6 @@ function ReleasePage() {
       const next = await (window as any).appilot.release.get(project.id, value, selectedTag, false);
       setActive(next);
       setStep(2);
-      setConfirmed((next.draft?.localizations?.length || 0) > 1);
     } catch (e: any) {
       setError(e.message || "已有文案加载失败。");
     } finally {
@@ -718,13 +1040,40 @@ function ReleasePage() {
     }
   };
 
-  const handleConfirmDraft = () => {
-    setConfirmed(true);
+  const persistConfirm = async (patch: Record<string, string>) => {
+    if (!project?.id || !draft) return;
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, { ...draft, ...patch });
+      setActive((prev: any) => ({ ...prev, draft: saved }));
+    } catch (e: any) {
+      setError(e.message || "保存失败。");
+    }
+  };
+
+  const handleConfirmMaster = () => {
+    if (!draft?.masterConfirmedAt) {
+      void persistConfirm({ masterConfirmedAt: new Date().toISOString() });
+    }
+  };
+
+  const handleConfirmBatch = () => {
+    const now = new Date().toISOString();
+    void persistConfirm({
+      masterConfirmedAt: draft?.masterConfirmedAt || now,
+      batchConfirmedAt: now,
+    });
   };
 
   const handleTranslateOne = async (language: string) => {
     if (!project || !draft || !selectedTag || translatingRef.current.has(language)) return;
-    if (!confirmed || localizations.some((item: any) => item.language === language)) return;
+    if (
+      !masterConfirmed ||
+      batchConfirmed ||
+      feedbackReadOnly ||
+      localizations.some((item: any) => item.language === language)
+    ) {
+      return;
+    }
 
     translatingRef.current.add(language);
     setTranslatingLanguages((prev) => new Set(prev).add(language));
@@ -767,17 +1116,38 @@ function ReleasePage() {
   }
 
   return (
-    <div className="p-10 max-w-4xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-8">
-        <div>
-          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">发布工作台</h2>
+    <div className="p-8 max-w-6xl mx-auto">
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+        <div className="min-w-0">
+          <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">发布工作台</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
             读取仓库根目录的 RELEASE_DRAFT.md，由你确认后再生成 App Store 提交文案。
           </p>
         </div>
-        <button onClick={loadReleases} disabled={checking} className={btnPrimary}>
-          {checking ? "检查中..." : "检查发布"}
-        </button>
+        <div className="flex items-center gap-3">
+          {products.length > 0 && (
+            <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-zinc-800/80 p-1 gap-1">
+              {products.map((product) => (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() => handleProductChange(product.id)}
+                  className={cn(
+                    "px-3.5 py-1.5 text-sm rounded-lg transition-colors",
+                    product.id === productId
+                      ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm font-medium"
+                      : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300",
+                  )}
+                >
+                  {platformLabel(product.platform)}
+                </button>
+              ))}
+            </div>
+          )}
+          <button onClick={loadReleases} disabled={checking} className={btnPrimary}>
+            {checking ? "检查中..." : "检查发布"}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -789,67 +1159,63 @@ function ReleasePage() {
       {releases.length === 0 ? (
         <EmptyState title="尚未检测到预发布公告" desc="请在仓库根目录创建 RELEASE_DRAFT.md，然后点击检查发布。" />
       ) : (
-        <>
-          <div className="mb-6 max-w-xs">
-            <select value={productId} onChange={(e) => handleProductChange(e.target.value)} className={inputClass}>
-              {products.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.platform === "ios" ? "iOS" : product.platform === "macos" ? "macOS" : "未识别"} · {product.trackName || project.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {selectedRelease && (
-            <>
-              <div
-                onClick={() => setPreviewTarget("release")}
-                className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-4 shadow-sm cursor-pointer hover:border-amber-500/40"
-              >
-                <p className="text-xs text-zinc-400 dark:text-zinc-500">预发布公告</p>
-                <div className="mt-1 flex items-center justify-between gap-4">
-                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    {selectedRelease.name || "RELEASE_DRAFT.md"}
-                  </p>
-                  <div className="flex items-center gap-3 text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
-                    {step > 1 && <span className="text-emerald-500">✓</span>}
-                    <span>更新于 {formatHumanTime(selectedRelease.publishedAt)}</span>
-                  </div>
-                </div>
+        <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
+          <aside className="min-w-0">
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">参考</h3>
               </div>
+              {selectedRelease && (
+                <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                  <ReferenceSection
+                    title="预发布公告"
+                    meta={`更新于 ${formatHumanTime(selectedRelease.publishedAt)}`}
+                    checked={step > 1}
+                    defaultOpen
+                  >
+                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
+                      {selectedRelease.name || "RELEASE_DRAFT.md"}
+                    </p>
+                    <MarkdownView text={selectedRelease?.body || "没有预发布公告内容"} />
+                  </ReferenceSection>
 
-              {releaseContext && step <= 2 && (
-                <div className="space-y-2 mb-5">
-                  <button
-                    type="button"
-                    onClick={() => setPreviewTarget("readme")}
-                    className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 py-3 text-left hover:border-amber-500/40"
-                  >
-                    <span className="flex items-center justify-between gap-3 text-sm">
-                      <span>README</span>
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                        {step > 1 ? "✓ " : ""}{formatHumanTime(releaseContext.readmeModifiedAt)}
-                      </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewTarget("previous")}
-                    className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 py-3 text-left hover:border-amber-500/40"
-                  >
-                    <span className="flex items-center justify-between gap-3 text-sm">
-                      <span>上次文案</span>
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                        {step > 1 ? "✓ " : ""}{formatHumanTime(releaseContext.previousUpdatedAt)}
-                      </span>
-                    </span>
-                  </button>
+                  {releaseContext && step <= 2 && (
+                    <>
+                      <ReferenceSection
+                        title="README"
+                        meta={`更新于 ${formatHumanTime(releaseContext.readmeModifiedAt)}`}
+                        checked={step > 1}
+                      >
+                        <MarkdownView text={releaseContext.readme || "没有 README 内容"} />
+                      </ReferenceSection>
+                      <CurrentCopyEntry
+                        label={currentReleaseLabel}
+                        active={!historyDraft}
+                        onClick={() => setHistoryDraft(null)}
+                      />
+                      <HistoryPanel
+                        drafts={(releaseContext.drafts || []).filter(
+                          (item: any) => item.releaseTag !== selectedTag,
+                        )}
+                        selectedDraft={historyDraft}
+                        onSelect={(draft: any) => setHistoryDraft(draft)}
+                      />
+                    </>
+                  )}
                 </div>
               )}
+            </div>
+          </aside>
 
-              {step === 1 && (
-                <div className="mb-5">
-                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-2">语言</p>
+          <div className="min-w-0 space-y-6">
+            {historyDraft ? (
+              <HistoryViewer draft={historyDraft} onBack={() => setHistoryDraft(null)} />
+            ) : (
+              <>
+            {selectedRelease && step === 1 && (
+              <>
+                <div>
+                  <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">语言</p>
                   <div className="flex flex-wrap gap-2">
                     {orderedLanguages.map((language, index) => (
                       <span
@@ -866,188 +1232,223 @@ function ReleasePage() {
                     ))}
                   </div>
                 </div>
-              )}
 
-              {selectedRelease.draft && step === 1 && !draft && (
-                <div className="mb-6 flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={() => handleLoad(true)}
-                    disabled={busy}
-                    className={btnPrimary}
-                  >
+                {selectedRelease.draft && !draft && (
+                  <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
                     {generating ? "生成中..." : "下一步：生成文案"}
                   </button>
+                )}
+
+                {!selectedRelease.draft && (
+                  <div>
+                    {selectedExistingDraft ? (
+                      <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
+                        {loadingDraft ? "加载中..." : "查看历史文案"}
+                      </button>
+                    ) : (
+                      <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有历史文案</span>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {!draft ? (
+              selectedRelease && step > 1 ? (
+                <EmptyState
+                  title={selectedRelease.draft ? "等待生成提交文案" : "该正式发布没有历史文案"}
+                  desc={selectedRelease.draft ? "确认后由 AI 生成名称、副标题、Promotional Text、描述、What's New 和关键词。" : "正式发布只作为完成信号，不再生成新的商店文案。"}
+                />
+              ) : null
+            ) : (
+              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+                <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店提交工作单</h3>
                 </div>
-              )}
 
-              {!selectedRelease.draft && step === 1 && (
-                <div className="mb-6">
-                  {selectedExistingDraft ? (
-                    <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
-                      {loadingDraft ? "加载中..." : "查看历史文案"}
-                    </button>
-                  ) : (
-                    <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有历史文案</span>
-                  )}
-                </div>
-              )}
-
-            </>
-          )}
-        </>
-      )}
-
-      {!draft ? (
-        selectedRelease && step > 1 ? (
-          <EmptyState
-            title={selectedRelease.draft ? "等待生成提交文案" : "该正式发布没有历史文案"}
-            desc={selectedRelease.draft ? "确认后由 AI 生成 Promotional Text、描述、What's New 和关键词。" : "正式发布只作为完成信号，不再生成新的商店文案。"}
-          />
-        ) : null
-      ) : (
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-            <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
-              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店提交工作单</h3>
-              {isReadOnly ? (
-                <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 text-xs font-medium">
-                  只读参考
-                </span>
-              ) : null}
-            </div>
-
-            <div className="p-5 space-y-5">
-              {activeLocalization && (
-                <>
-                  <div className="space-y-2">
-                          <FieldHeader label="推广文本" text={activeLocalization.promotionalText} />
-                          <textarea
-                            value={activeLocalization.promotionalText}
-                            onChange={(e) => updateLocalizationField("promotionalText", e.target.value)}
+                <div className="p-6 space-y-6">
+                  {activeLocalization && (
+                    <>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <FieldHeader label="软件名称" text={activeLocalization.name || ""} />
+                          <input
+                            value={activeLocalization.name || ""}
+                            onChange={(e) => updateLocalizationField("name", e.target.value)}
                             disabled={isReadOnly}
-                            className={inputClass + " min-h-20 resize-none rounded-none"}
+                            className={inputLineClass}
+                          />
+                          <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
+                            建议：名称后加冒号和描述性短句（如 GloWalk: Path of Light）
+                          </p>
+                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                            {(activeLocalization.name || "").length}/30 字符
+                          </p>
+                        </div>
+                        <div className="space-y-1.5">
+                          <FieldHeader label="副标题" text={activeLocalization.subtitle || ""} />
+                          <input
+                            value={activeLocalization.subtitle || ""}
+                            onChange={(e) => updateLocalizationField("subtitle", e.target.value)}
+                            disabled={isReadOnly}
+                            className={inputLineClass}
                           />
                           <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                            {activeLocalization.promotionalText.length}/170 字符
+                            {(activeLocalization.subtitle || "").length}/30 字符
                           </p>
-                          <FieldHeader label="软件描述" text={activeLocalization.description} />
-                          <textarea
-                            value={activeLocalization.description}
-                            onChange={(e) => updateLocalizationField("description", e.target.value)}
-                            disabled={isReadOnly}
-                            className={inputClass + " min-h-40 resize-none rounded-none"}
-                          />
-                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                            {activeLocalization.description.length}/4000 字符
-                          </p>
+                        </div>
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
+                        <FieldHeader label="推广文本" text={activeLocalization.promotionalText} />
+                        <input
+                          value={activeLocalization.promotionalText}
+                          onChange={(e) => updateLocalizationField("promotionalText", e.target.value)}
+                          disabled={isReadOnly}
+                          className={inputLineClass}
+                        />
+                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                          {activeLocalization.promotionalText.length}/170 字符
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <FieldHeader label="关键词" text={activeLocalization.keywords} />
+                        <input
+                          value={activeLocalization.keywords}
+                          onChange={(e) => updateLocalizationField("keywords", e.target.value)}
+                          disabled={isReadOnly}
+                          className={inputLineClass}
+                        />
+                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                          {activeLocalization.keywords.length}/100 字符
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <FieldHeader label="软件描述" text={activeLocalization.description} />
+                        <textarea
+                          value={activeLocalization.description}
+                          onChange={(e) => updateLocalizationField("description", e.target.value)}
+                          disabled={isReadOnly}
+                          className={inputClass + " min-h-40 resize-y"}
+                        />
+                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                          {activeLocalization.description.length}/4000 字符
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
                         <FieldHeader label="新增内容" text={activeLocalization.whatsNew} />
                         <textarea
                           value={activeLocalization.whatsNew}
                           onChange={(e) => updateLocalizationField("whatsNew", e.target.value)}
                           disabled={isReadOnly}
-                          className={inputClass + " min-h-32 resize-none rounded-none"}
+                          className={inputClass + " min-h-28 resize-y"}
                         />
-                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
+                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
                           {activeLocalization.whatsNew.length}/4000 字符
                         </p>
                       </div>
+                    </>
+                  )}
 
-                      <div className="space-y-2">
-                        <FieldHeader label="关键词" text={activeLocalization.keywords} />
-                        <textarea
-                          value={activeLocalization.keywords}
-                          onChange={(e) => updateLocalizationField("keywords", e.target.value)}
-                          disabled={isReadOnly}
-                          className={inputClass + " min-h-16 resize-none rounded-none"}
-                        />
-                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
-                          {activeLocalization.keywords.length}/100 字符
-                        </p>
+                  <div className="border-t border-zinc-100 dark:border-zinc-800 pt-5 space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                      {orderedLanguages.map((language) => {
+                        const generated = localizations.some((item: any) => item.language === language);
+                        const translating = translatingLanguages.has(language);
+                        const active = activeLocalization?.language === language;
+                        const clickable =
+                          masterConfirmed &&
+                          !batchConfirmed &&
+                          !feedbackReadOnly &&
+                          !generated &&
+                          !translating;
+                        const chipTitle = generated
+                          ? `${languageLabel(language)}文案`
+                          : clickable
+                            ? `翻译为${languageLabel(language)}文案`
+                            : feedbackReadOnly
+                              ? "正式发布后只读，不可翻译"
+                              : batchConfirmed
+                                ? "整批文案已确定，只读"
+                                : "先确定母本语言，再翻译其他语言";
+                        return (
+                          <button
+                            key={language}
+                            title={chipTitle}
+                            onClick={() => {
+                              if (generated) {
+                                setActiveLanguage(language);
+                              } else if (clickable) {
+                                void handleTranslateOne(language);
+                              }
+                            }}
+                            disabled={generating || (!generated && !clickable)}
+                            className={cn(
+                              "px-3 py-1.5 text-sm rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                              active
+                                ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                                : generated
+                                  ? "border-emerald-500/50 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                  : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600",
+                            )}
+                          >
+                            {languageLabel(language)}
+                            {translating ? " ..." : generated ? " ✓" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {!feedbackReadOnly && !batchConfirmed && (
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                          {!masterConfirmed
+                            ? "确定母本语言后，可逐一翻译其他语言"
+                            : remainingTranslationCount > 0
+                              ? `还有 ${remainingTranslationCount} 个语言未翻译（可选）`
+                              : "全部语言已翻译"}
+                        </span>
+                        <button
+                          onClick={masterConfirmed ? handleConfirmBatch : handleConfirmMaster}
+                          className={btnPrimary}
+                        >
+                          {masterConfirmed ? "确定整个文案" : "确定母本语言"}
+                        </button>
+                      </div>
+                    )}
+
+                    {batchConfirmed && !feedbackReadOnly && (
+                      <div className="flex justify-end">
+                        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                          文案已确定
+                        </span>
+                      </div>
+                    )}
                   </div>
-                </>
-              )}
 
-              <div className="space-y-2">
-                <div className="flex flex-wrap gap-2">
-                  {orderedLanguages.map((language) => {
-                    const generated = localizations.some((item: any) => item.language === language);
-                    const translating = translatingLanguages.has(language);
-                    const active = activeLocalization?.language === language;
-                    const clickable = confirmed && !generated && !translating;
-                    return (
-                      <button
-                        key={language}
-                        onClick={() => {
-                          if (generated) {
-                            setActiveLanguage(language);
-                          } else if (clickable) {
-                            void handleTranslateOne(language);
-                          }
-                        }}
-                        disabled={generating || (!generated && !clickable)}
-                        className={cn(
-                          "px-3 py-1.5 text-sm rounded-lg border transition-colors",
-                          active
-                            ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                            : generated
-                              ? "border-emerald-500/50 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                              : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400",
-                        )}
-                      >
-                        {languageLabel(language)}
-                        {translating ? " ..." : generated ? " ✓" : ""}
-                      </button>
-                    );
-                  })}
+                  <FieldBlock label="驳回意见 / 我的修改意见（重新生成时作为上下文）">
+                    <textarea
+                      value={draft.reviewFeedback || ""}
+                      onChange={(e) => updateDraftField("reviewFeedback", e.target.value)}
+                      disabled={feedbackReadOnly}
+                      className={inputClass + " min-h-20 resize-y"}
+                    />
+                    {!feedbackReadOnly && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
+                          {generating ? "重新生成中..." : "重新生成"}
+                        </button>
+                      </div>
+                    )}
+                  </FieldBlock>
                 </div>
-                {!confirmed && (
-                  <button onClick={handleConfirmDraft} className={btnPrimary}>
-                    确定文案
-                  </button>
-                )}
               </div>
-
-              <FieldBlock label="驳回意见 / 我的修改意见（重新生成时作为上下文）">
-                <textarea
-                  value={draft.reviewFeedback || ""}
-                  onChange={(e) => updateDraftField("reviewFeedback", e.target.value)}
-                  disabled={feedbackReadOnly}
-                  className={inputClass + " min-h-20 resize-none"}
-                />
-                {!feedbackReadOnly && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
-                      {generating ? "重新生成中..." : "根据意见重新生成"}
-                    </button>
-                  </div>
-                )}
-              </FieldBlock>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {previewTarget && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
-          <div className="w-full max-w-2xl max-h-[80vh] rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 dark:border-zinc-800">
-              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                {previewTarget === "release" ? "预发布公告" : previewTarget === "readme" ? "README" : "上次文案"}
-              </h3>
-              <button onClick={() => setPreviewTarget(null)} className="text-sm text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
-                关闭
-              </button>
-            </div>
-            <div className="p-5 overflow-auto whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300 max-h-[calc(80vh-70px)]">
-              {previewTarget === "release"
-                ? selectedRelease?.body || "没有预发布公告内容"
-                : previewTarget === "readme"
-                  ? releaseContext?.readme || "没有 README 内容"
-                  : releaseContext?.previousDescription || "没有上次文案"}
-            </div>
+            )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1129,7 +1530,7 @@ function TaskCenterPage() {
   const failedGroups = groupTasks(failed);
 
   return (
-    <div className="p-10 max-w-4xl mx-auto">
+    <div className="p-10 max-w-6xl mx-auto">
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
@@ -1304,7 +1705,7 @@ function PlaceholderPage({ title, desc }: { title: string; desc: string }) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示数据。" />;
   }
   return (
-    <div className="p-10 max-w-2xl mx-auto">
+    <div className="p-10 max-w-6xl mx-auto">
       <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">{title}</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-8">{desc}</p>
       <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
@@ -1672,7 +2073,7 @@ function KeywordsPage() {
   };
 
   return (
-    <div className="p-10 max-w-3xl mx-auto">
+    <div className="p-10 max-w-6xl mx-auto">
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">关键词</h2>
@@ -1995,6 +2396,7 @@ const AI_PRESETS = [
 ];
 
 const inputClass = "w-full px-3.5 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-900 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 dark:focus:border-amber-400 transition-shadow";
+const inputLineClass = "w-full h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-900 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 dark:focus:border-amber-400 transition-shadow";
 const btnPrimary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed";
 const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
 
@@ -2003,7 +2405,13 @@ function SettingsPage() {
   const [preset, setPreset] = useState("OpenAI");
   const [providerUrl, setProviderUrl] = useState("https://api.openai.com/v1");
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [apiKeyBroken, setApiKeyBroken] = useState(false);
   const [model, setModel] = useState("gpt-4o");
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const [modelCustom, setModelCustom] = useState(false);
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [statusMsg, setStatusMsg] = useState("");
@@ -2013,20 +2421,64 @@ function SettingsPage() {
       if (c?.providerUrl) setProviderUrl(c.providerUrl);
       if (c?.apiKey) setApiKey(c.apiKey);
       if (c?.model) setModel(c.model);
-      const match = AI_PRESETS.find((p) => p.url === c?.providerUrl && p.model === c?.model);
-      if (match) setPreset(match.label);
+      setApiKeyBroken(Boolean(c?.apiKeyBroken));
     }).catch(() => {});
   }, []);
+
+  const listModels = useCallback(async (url: string, key: string) => {
+    if (!url.trim()) return;
+    setModelsLoading(true);
+    setModelsError("");
+    try {
+      const result = await (window as any).appilot?.ai?.listModels({ providerUrl: url, apiKey: key });
+      const list = Array.isArray(result?.models) ? result.models : [];
+      setModels(list);
+      if (list.length === 0 && result?.error) setModelsError(result.error);
+    } catch (e: any) {
+      setModelsError(e.message || "模型列表获取失败");
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
+  // Discover the provider's supported models whenever URL or key changes
+  // (debounced; the very first render with defaults is skipped).
+  const didInitModels = useRef(false);
+  useEffect(() => {
+    if (!didInitModels.current) {
+      didInitModels.current = true;
+      return;
+    }
+    if (!providerUrl.trim()) return;
+    const timer = window.setTimeout(() => void listModels(providerUrl, apiKey), 400);
+    return () => window.clearTimeout(timer);
+  }, [providerUrl, apiKey, listModels]);
+
+  // Keep the preset selector in sync with the actual URL + model: prefer an
+  // exact URL+model match, fall back to a URL match, otherwise Custom.
+  useEffect(() => {
+    const exact = AI_PRESETS.find((p) => p.url === providerUrl && p.model === model);
+    const byUrl = AI_PRESETS.find((p) => p.url === providerUrl);
+    setPreset((prev) => {
+      const prevMatch = AI_PRESETS.find((p) => p.label === prev);
+      if (prevMatch && prevMatch.url === providerUrl && prevMatch.model === model) return prev;
+      return (exact || byUrl)?.label || "Custom";
+    });
+  }, [providerUrl, model]);
 
   const handlePresetChange = (label: string) => {
     setPreset(label);
     const p = AI_PRESETS.find((p) => p.label === label);
-    if (p && p.label !== "Custom") { setProviderUrl(p.url); setModel(p.model); }
+    // Selecting a provider only sets its endpoint; the supported models are
+    // discovered from the provider API (see the model field below).
+    if (p && p.label !== "Custom") setProviderUrl(p.url);
   };
 
   const handleSave = async () => {
     try {
       await (window as any).appilot?.ai?.saveConfig({ providerUrl, apiKey, model });
+      const refreshed = await (window as any).appilot?.ai?.getConfig().catch(() => null);
+      if (refreshed) setApiKeyBroken(Boolean(refreshed.apiKeyBroken));
       setStatus("success"); setStatusMsg("已保存");
       setTimeout(() => setStatus("idle"), 2000);
     } catch (e: any) { setStatus("error"); setStatusMsg(e.message || "保存失败"); }
@@ -2035,9 +2487,10 @@ function SettingsPage() {
   const handleTest = async () => {
     setTesting(true); setStatus("idle");
     try {
-      const ok = await (window as any).appilot?.ai?.testConnection({ providerUrl, apiKey, model });
+      const result = await (window as any).appilot?.ai?.testConnection({ providerUrl, apiKey, model });
+      const ok = result?.ok ?? false;
       setStatus(ok ? "success" : "error");
-      setStatusMsg(ok ? "连接成功" : "连接失败");
+      setStatusMsg(ok ? "连接成功" : result?.error ? `连接失败：${result.error}` : "连接失败");
     } catch (e: any) { setStatus("error"); setStatusMsg(e.message || "出错"); }
     finally { setTesting(false); }
   };
@@ -2064,11 +2517,104 @@ function SettingsPage() {
           </div>
           <div>
             <label className="block text-[13px] font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">API Key</label>
-            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={inputClass} placeholder="sk-..." />
+            <div className="relative">
+              <input
+                type={showApiKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setApiKeyBroken(false);
+                }}
+                className={inputClass + " pr-10"}
+                placeholder="sk-..."
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+              >
+                {showApiKey ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                    <path d="M3 3l18 18" />
+                    <path d="M10.6 5.1A9.8 9.8 0 0 1 12 5c6.5 0 10 7 10 7a17.9 17.9 0 0 1-2.9 3.9M6.6 6.6A16.3 16.3 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 4.4-1.1" />
+                    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            {apiKeyBroken && (
+              <p className="text-[11px] text-red-500 dark:text-red-400 mt-1.5">
+                已保存的 API Key 无法解密（可能曾被多次加密或系统钥匙串异常），请重新粘贴真实的 Key 后保存。
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-[13px] font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">模型</label>
-            <input type="text" value={model} onChange={(e) => setModel(e.target.value)} className={inputClass} />
+            <div className="flex gap-2">
+              {models.length > 0 && !modelCustom ? (
+                <select
+                  value={models.includes(model) ? model : ""}
+                  onChange={(e) => {
+                    if (e.target.value === "__custom__") setModelCustom(true);
+                    else setModel(e.target.value);
+                  }}
+                  className={inputClass}
+                >
+                  {!models.includes(model) && <option value="">请选择模型</option>}
+                  {models.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  <option value="__custom__">自定义…</option>
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className={inputClass}
+                  placeholder="模型名称"
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => listModels(providerUrl, apiKey)}
+                disabled={modelsLoading}
+                className={btnSecondary + " shrink-0 px-3"}
+                title="刷新模型列表"
+              >
+                {modelsLoading ? "…" : "⟳"}
+              </button>
+            </div>
+            {modelCustom && models.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setModelCustom(false)}
+                className="mt-1.5 text-xs text-amber-600 dark:text-amber-400 hover:underline"
+              >
+                从列表选择模型
+              </button>
+            )}
+            {modelsLoading && (
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1.5">正在获取模型列表…</p>
+            )}
+            {!modelsLoading && models.length > 0 && (
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1.5">
+                该服务商支持 {models.length} 个模型
+              </p>
+            )}
+            {!modelsLoading && modelsError && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1.5">
+                模型列表获取失败：{modelsError}（可手动输入模型名）
+              </p>
+            )}
           </div>
           <div className="flex gap-3 items-center pt-1">
             <button onClick={handleSave} className={btnPrimary}>保存</button>

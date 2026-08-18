@@ -59,9 +59,28 @@ async function parseJsonWithRepair(provider: AIProvider, raw: string): Promise<a
   }
 }
 
-export function withDescriptionHeading(description: string): string {
-  const marker = "──── 介绍 ────";
-  return description.startsWith(marker) ? description : `${marker}\n${description}`;
+/** Normalize + clamp an AI-generated localization into the store field limits. */
+export function normalizeLocalizedStoreCopy(
+  raw: any,
+  language: string,
+  fallbackName = "",
+): StoreSubmissionLocalization {
+  return {
+    language,
+    name: String(raw?.name || fallbackName || "").trim().slice(0, 30),
+    subtitle: String(raw?.subtitle || "").trim().slice(0, 30),
+    promotionalText: ensureQuotePrefix(String(raw?.promotionalText || "").trim()).slice(0, 170),
+    description: String(raw?.description || "").trim().slice(0, 4000),
+    whatsNew: String(raw?.whatsNew || "").trim().slice(0, 4000),
+    keywords: String(raw?.keywords || "").trim().slice(0, 100),
+  };
+}
+
+/** Promotional text is shown above the description; prefix it with "> " so it
+ *  reads as the indented intro line instead of a description heading marker. */
+function ensureQuotePrefix(text: string): string {
+  if (!text) return "";
+  return text.startsWith("> ") ? text : `> ${text}`;
 }
 
 export async function reviewRelease(
@@ -331,7 +350,9 @@ async function generateLocalizedStoreCopy(
         "Respond ONLY with JSON in this shape:",
         JSON.stringify(
           {
-            promotionalText: "max 170 characters",
+            name: "app name with ': short descriptive phrase', max 30 chars",
+            subtitle: "short tagline, max 30 chars",
+            promotionalText: "'> ' followed by a short promo line, max 170 chars",
             description: "max 4000 characters",
             whatsNew: "max 4000 characters",
             keywords: "comma separated keywords, max 100 chars",
@@ -339,6 +360,10 @@ async function generateLocalizedStoreCopy(
           null,
           2,
         ),
+        "ASO: App Store search ranking is driven mainly by the app name, subtitle, and hidden keyword field. Treat them as ONE coherent set:",
+        "- `name`: keep the app's brand name verbatim, append a colon and a short descriptive phrase containing high-value search terms (e.g. `GloWalk: Path of Light`). Total ≤30 characters.",
+        "- `subtitle`: a compact tagline (≤30 characters) that complements the name and adds searchable terms.",
+        "- `keywords`: cover terms NOT already in the name or subtitle (Apple indexes those automatically); prioritize tracked keywords, current rankings, and release features. Total ≤100 characters.",
         "Base the description on the current app description/README context, not only the release announcement.",
         "Use the release body primarily for whatsNew.",
         "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
@@ -356,6 +381,9 @@ async function generateLocalizedStoreCopy(
           : "",
         context.previousLocalization
           ? `Previous release ${context.previousLocalization.language} description:\n${context.previousLocalization.description}`
+          : "",
+        context.previousLocalization?.name || context.previousLocalization?.subtitle
+          ? `Previous release ${context.previousLocalization?.language || ""} name:\n${context.previousLocalization?.name || "N/A"}\nPrevious release ${context.previousLocalization?.language || ""} subtitle:\n${context.previousLocalization?.subtitle || "N/A"}`
           : "",
         `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
         `Current submission keywords: ${context.currentSubmissionKeywords
@@ -383,13 +411,7 @@ async function generateLocalizedStoreCopy(
 
   try {
     const data = await parseJsonWithRepair(provider, raw);
-    return {
-      language,
-      promotionalText: String(data.promotionalText || "").trim().slice(0, 170),
-      description: withDescriptionHeading(String(data.description || "").trim()).slice(0, 4000),
-      whatsNew: String(data.whatsNew || "").trim().slice(0, 4000),
-      keywords: String(data.keywords || "").trim().slice(0, 100),
-    };
+    return normalizeLocalizedStoreCopy(data, language, context.name);
   } catch (err: any) {
     log.warn(`Localized store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
     throw new EngineError(`AI 无法解析 ${language} 的商店文案，请重试。`, "AI_EMPTY_RESPONSE");
@@ -419,7 +441,9 @@ async function generateTranslatedStoreCopy(
         "Respond ONLY with JSON in this shape:",
         JSON.stringify(
           {
-            promotionalText: "max 170 characters",
+            name: "translated app name: short descriptive phrase, max 30 chars",
+            subtitle: "translated tagline, max 30 chars",
+            promotionalText: "keep the leading '> ' and translate, max 170 chars",
             description: "max 4000 characters",
             whatsNew: "max 4000 characters",
             keywords: "comma separated keywords, max 100 chars",
@@ -427,6 +451,7 @@ async function generateTranslatedStoreCopy(
           null,
           2,
         ),
+        "Translate `name`, `subtitle`, and `keywords` too: keep the brand name verbatim and localize the colon phrase, tagline, and keywords so the name+subtitle+keywords set stays coherent in the target language.",
         "Do not invent new product facts. Translate the provided copy faithfully.",
         "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
       ].join("\n"),
@@ -437,6 +462,8 @@ async function generateTranslatedStoreCopy(
         `Source language: ${primary.language}`,
         `Target language: ${language}`,
         `App name: ${context.name}`,
+        `Source name:\n${primary.name}`,
+        `Source subtitle:\n${primary.subtitle}`,
         `Source promotionalText:\n${primary.promotionalText}`,
         `Source description:\n${primary.description}`,
         `Source whatsNew:\n${primary.whatsNew}`,
@@ -456,13 +483,7 @@ async function generateTranslatedStoreCopy(
 
   try {
     const data = await parseJsonWithRepair(provider, raw);
-    return {
-      language,
-      promotionalText: String(data.promotionalText || "").trim().slice(0, 170),
-      description: withDescriptionHeading(String(data.description || "").trim()).slice(0, 4000),
-      whatsNew: String(data.whatsNew || "").trim().slice(0, 4000),
-      keywords: String(data.keywords || "").trim().slice(0, 100),
-    };
+    return normalizeLocalizedStoreCopy(data, language, primary.name || context.name);
   } catch (err: any) {
     log.warn(`Translated store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
     throw new EngineError(`AI 无法解析 ${language} 的翻译文案，请重试。`, "AI_EMPTY_RESPONSE");
@@ -492,7 +513,9 @@ async function reviseLocalizedStoreCopy(
         "Respond ONLY with JSON in this shape:",
         JSON.stringify(
           {
-            promotionalText: "max 170 characters",
+            name: "app name with ': short descriptive phrase', max 30 chars",
+            subtitle: "short tagline, max 30 chars",
+            promotionalText: "keep the leading '> ' if present, max 170 chars",
             description: "max 4000 characters",
             whatsNew: "max 4000 characters",
             keywords: "comma separated keywords, max 100 chars",
@@ -500,6 +523,7 @@ async function reviseLocalizedStoreCopy(
           null,
           2,
         ),
+        "Revise `name`, `subtitle`, and `keywords` together so they stay a coherent ASO set (name+subtitle+keywords). Keep the brand name verbatim.",
         "Do not discard the existing structure or section markers.",
         "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
       ].join("\n"),
@@ -509,6 +533,8 @@ async function reviseLocalizedStoreCopy(
       content: [
         `Language: ${language}`,
         `App name: ${context.name}`,
+        `Existing name:\n${base.name}`,
+        `Existing subtitle:\n${base.subtitle}`,
         `Existing promotionalText:\n${base.promotionalText}`,
         `Existing description:\n${base.description}`,
         `Existing whatsNew:\n${base.whatsNew}`,
@@ -529,13 +555,7 @@ async function reviseLocalizedStoreCopy(
 
   try {
     const data = await parseJsonWithRepair(provider, raw);
-    return {
-      language,
-      promotionalText: String(data.promotionalText || "").trim().slice(0, 170),
-      description: withDescriptionHeading(String(data.description || "").trim()).slice(0, 4000),
-      whatsNew: String(data.whatsNew || "").trim().slice(0, 4000),
-      keywords: String(data.keywords || "").trim().slice(0, 100),
-    };
+    return normalizeLocalizedStoreCopy(data, language, base.name || context.name);
   } catch (err: any) {
     log.warn(`Revised store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
     throw new EngineError(`AI 无法解析 ${language} 的修订文案，请重试。`, "AI_EMPTY_RESPONSE");

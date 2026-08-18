@@ -148,7 +148,7 @@ export class AIProvider {
     throw new EngineError("AI returned empty response", "AI_EMPTY_RESPONSE");
   }
 
-  async validateConnection(): Promise<boolean> {
+  async validateConnection(): Promise<{ ok: boolean; error: string }> {
     try {
       // Send a minimal ping — just list models or a trivial chat
       await this.client.chat.completions.create({
@@ -158,10 +158,10 @@ export class AIProvider {
         ...deepSeekThinkingParams(this.config.baseURL, "disabled"),
       } as any);
       log.info(`AI connection validated: ${this.config.model} @ ${this.config.baseURL}`);
-      return true;
+      return { ok: true, error: "" };
     } catch (err: any) {
       log.warn(`AI connection failed: ${err.message}`);
-      return false;
+      return { ok: false, error: err?.message || String(err) };
     }
   }
 
