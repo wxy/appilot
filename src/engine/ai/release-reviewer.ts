@@ -59,7 +59,7 @@ async function parseJsonWithRepair(provider: AIProvider, raw: string): Promise<a
   }
 }
 
-function withDescriptionHeading(description: string): string {
+export function withDescriptionHeading(description: string): string {
   const marker = "──── 介绍 ────";
   return description.startsWith(marker) ? description : `${marker}\n${description}`;
 }

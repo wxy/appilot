@@ -1,5 +1,4 @@
 // @appilot/engine — Core engine logic (pure TypeScript, zero Electron/React dependency)
-export const ENGINE_VERSION = "0.1.0";
 
 // Error handling (Task 0.3)
 export {

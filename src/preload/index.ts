@@ -8,8 +8,16 @@ export interface AIConfig {
 
 contextBridge.exposeInMainWorld("appilot", {
   platform: process.platform,
-  version: "0.1.0",
+  getVersion: (): Promise<string> => ipcRenderer.invoke("app:getVersion"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+
+  menu: {
+    onCommand: (callback: (command: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, command: any) => callback(command);
+      ipcRenderer.on("app:menu-command", listener);
+      return () => ipcRenderer.removeListener("app:menu-command", listener);
+    },
+  },
 
   dialog: {
     selectFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:selectFolder"),
@@ -37,12 +45,6 @@ contextBridge.exposeInMainWorld("appilot", {
     },
   },
 
-  repo: {
-    checkRelease: (projectId: string): Promise<any> => ipcRenderer.invoke("repo:checkRelease", projectId),
-    setReleaseStatus: (projectId: string, tag: string, status: "accepted" | "ignored"): Promise<any> =>
-      ipcRenderer.invoke("repo:setReleaseStatus", projectId, tag, status),
-  },
-
   release: {
     list: (projectId: string): Promise<any> => ipcRenderer.invoke("release:list", projectId),
     context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
@@ -62,8 +64,6 @@ contextBridge.exposeInMainWorld("appilot", {
     },
     saveDraft: (projectId: string, draft: any): Promise<any> =>
       ipcRenderer.invoke("release:saveDraft", projectId, draft),
-    applyKeywordDeltas: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
-      ipcRenderer.invoke("release:applyKeywordDeltas", projectId, productId, releaseTag),
     translate: (
       projectId: string,
       productId: string,
@@ -79,14 +79,6 @@ contextBridge.exposeInMainWorld("appilot", {
         targetLanguages,
         sourceLanguage,
       ),
-    setStoreStatus: (
-      projectId: string,
-      productId: string,
-      releaseTag: string,
-      storeStatus: string,
-      reviewFeedback?: string,
-    ): Promise<any> =>
-      ipcRenderer.invoke("release:setStoreStatus", projectId, productId, releaseTag, storeStatus, reviewFeedback),
   },
 
   scheduler: {
@@ -99,18 +91,9 @@ contextBridge.exposeInMainWorld("appilot", {
     getConfig: (): Promise<AIConfig> => ipcRenderer.invoke("ai:getConfig"),
     saveConfig: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:saveConfig", config),
     testConnection: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:testConnection", config),
-    analyzeProduct: (repoUrl: string): Promise<any> => ipcRenderer.invoke("ai:analyzeProduct", repoUrl),
-    generateTweet: (repoUrl: string, stage: string): Promise<any> => ipcRenderer.invoke("ai:generateTweet", repoUrl, stage),
-  },
-
-  draft: {
-    save: (content: string): Promise<boolean> => ipcRenderer.invoke("draft:save", content),
-    load: (): Promise<{ content: string; savedAt: string } | null> => ipcRenderer.invoke("draft:load"),
   },
 
   stats: {
-    save: (entry: any): Promise<any[]> => ipcRenderer.invoke("stats:save", entry),
-    list: (): Promise<any[]> => ipcRenderer.invoke("stats:list"),
     aiUsage: (): Promise<any> => ipcRenderer.invoke("stats:aiUsage"),
   },
 });
