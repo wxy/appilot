@@ -45,14 +45,16 @@ contextBridge.exposeInMainWorld("appilot", {
 
   release: {
     list: (projectId: string): Promise<any> => ipcRenderer.invoke("release:list", projectId),
+    context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("release:context", projectId, productId, releaseTag),
     get: (
       projectId: string,
       productId: string,
       releaseTag: string,
       force = false,
-      languages?: string[],
+      language?: string,
     ): Promise<any> =>
-      ipcRenderer.invoke("release:get", projectId, productId, releaseTag, force, languages),
+      ipcRenderer.invoke("release:get", projectId, productId, releaseTag, force, language),
     onGenerateProgress: (callback: (progress: any) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
       ipcRenderer.on("release:generateProgress", listener);
@@ -62,6 +64,21 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("release:saveDraft", projectId, draft),
     applyKeywordDeltas: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
       ipcRenderer.invoke("release:applyKeywordDeltas", projectId, productId, releaseTag),
+    translate: (
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      targetLanguages: string[],
+      sourceLanguage?: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "release:translate",
+        projectId,
+        productId,
+        releaseTag,
+        targetLanguages,
+        sourceLanguage,
+      ),
     setStoreStatus: (
       projectId: string,
       productId: string,

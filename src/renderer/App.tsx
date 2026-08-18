@@ -32,6 +32,8 @@ const LANGUAGE_LABELS: Record<string, string> = {
   ru: "俄文",
 };
 
+const UI_SOURCE_LANGUAGE = "zh-Hans";
+
 function languageLabel(code: string): string {
   return LANGUAGE_LABELS[code] || code;
 }
@@ -528,12 +530,15 @@ function ReleasePage() {
   const [checking, setChecking] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [activeLanguage, setActiveLanguage] = useState("");
-  const [generationProgress, setGenerationProgress] = useState<any[]>([]);
-  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
-  const [viewingRevision, setViewingRevision] = useState<number | null>(null);
+  const [sourceLanguage, setSourceLanguage] = useState("");
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [releaseContext, setReleaseContext] = useState<any>(null);
+  const [previewTarget, setPreviewTarget] = useState<"release" | "readme" | "previous" | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
+  const translatingRef = useRef<Set<string>>(new Set());
 
   const loadReleases = async () => {
     if (!project?.id) return;
@@ -567,29 +572,27 @@ function ReleasePage() {
   }, [project?.id]);
 
   useEffect(() => {
-    const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
-      setGenerationProgress((prev) => {
-        const next = prev.filter((item) => item.language !== progress.language);
-        return [...next, progress];
-      });
-    });
-    return () => {
-      off?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    const currentProduct = project?.storeProducts?.find((item) => item.id === productId);
-    const nextLanguages = (currentProduct?.supportedLanguages || [])
-      .map((item: any) => String(item?.code || "").trim())
-      .filter(Boolean);
-    setSelectedLanguages(nextLanguages);
+    setSourceLanguage(UI_SOURCE_LANGUAGE);
+    setTranslatingLanguages(new Set());
+    setConfirmed(false);
     setActiveLanguage("");
+    setStep(1);
   }, [productId, project?.id]);
 
-  if (!project) {
-    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示发布工作台。" />;
-  }
+  useEffect(() => {
+    if (!project?.id || !productId || !selectedTag) return;
+    let cancelled = false;
+    (window as any).appilot?.release?.context(project.id, productId, selectedTag)
+      .then((context: any) => {
+        if (!cancelled) setReleaseContext(context);
+      })
+      .catch(() => {
+        if (!cancelled) setReleaseContext(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, productId, selectedTag]);
 
   const draft = active?.draft || null;
   const release = active?.release || null;
@@ -612,13 +615,20 @@ function ReleasePage() {
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
+  const orderedLanguages = availableLanguages.includes(UI_SOURCE_LANGUAGE)
+    ? [
+        UI_SOURCE_LANGUAGE,
+        ...availableLanguages.filter((language) => language !== UI_SOURCE_LANGUAGE),
+      ]
+    : availableLanguages;
   const selectedExistingDraft =
     active?.draft?.productId === productId && active?.draft?.releaseTag === selectedTag
       ? active.draft
       : selectedRelease?.submissionDrafts?.find(
           (item: any) => item?.productId === productId,
         ) || null;
-  const isReadOnly = Boolean(release && !release.draft) || viewingRevision !== null;
+  const isReadOnly = Boolean(release && !release.draft) || confirmed;
+  const feedbackReadOnly = Boolean(release && !release.draft);
   const busy = generating || loadingDraft;
 
   useEffect(() => {
@@ -657,16 +667,29 @@ function ReleasePage() {
       setLoadingDraft(true);
     }
     setError("");
-    setGenerationProgress([]);
     try {
+      if (force && active?.draft) {
+        const saved = await (window as any).appilot.release.saveDraft(project.id, active.draft);
+        setActive((prev: any) => ({ ...prev, draft: saved }));
+      }
       const next = await (window as any).appilot.release.get(
         project.id,
         productId,
         selectedTag,
         force,
-        force ? selectedLanguages : undefined,
+        force ? sourceLanguage : undefined,
       );
       setActive(next);
+      if (force) {
+        setStep(2);
+        setConfirmed(false);
+      } else if (next.draft?.localizations?.length > 1) {
+        setStep(2);
+        setConfirmed(true);
+      } else {
+        setStep(2);
+        setConfirmed(false);
+      }
     } catch (e: any) {
       setError(e.message || "发布工作单加载失败。");
     } finally {
@@ -688,6 +711,8 @@ function ReleasePage() {
     try {
       const next = await (window as any).appilot.release.get(project.id, value, selectedTag, false);
       setActive(next);
+      setStep(2);
+      setConfirmed((next.draft?.localizations?.length || 0) > 1);
     } catch (e: any) {
       setError(e.message || "已有文案加载失败。");
     } finally {
@@ -695,82 +720,53 @@ function ReleasePage() {
     }
   };
 
-  const handleLanguageTagClick = (language: string) => {
-    if (busy) return;
-    if (draft) {
-      if (localizations.some((item: any) => item.language === language)) {
-        setActiveLanguage(language);
+  const handleConfirmDraft = () => {
+    setConfirmed(true);
+  };
+
+  const handleTranslateOne = async (language: string) => {
+    if (!project || !draft || !selectedTag || translatingRef.current.has(language)) return;
+    if (!confirmed || localizations.some((item: any) => item.language === language)) return;
+
+    translatingRef.current.add(language);
+    setTranslatingLanguages((prev) => new Set(prev).add(language));
+    setError("");
+    try {
+      const currentDraft = active?.draft;
+      if (currentDraft) {
+        const saved = await (window as any).appilot.release.saveDraft(project.id, currentDraft);
+        setActive((prev: any) => ({ ...prev, draft: saved }));
       }
-      return;
-    }
-    setSelectedLanguages((prev) => {
-      const enabled = prev.includes(language);
-      const next = enabled
-        ? prev.filter((item) => item !== language)
-        : [...prev, language];
-      return next.sort(
-        (a, b) => availableLanguages.indexOf(a) - availableLanguages.indexOf(b),
+      const next = await (window as any).appilot.release.translate(
+        project.id,
+        currentDraft?.productId || draft.productId,
+        currentDraft?.releaseTag || draft.releaseTag,
+        [language],
+        sourceLanguage || currentDraft?.localizations?.[0]?.language || draft.localizations?.[0]?.language,
       );
-    });
-  };
-
-  const handleViewRevision = (revision: any) => {
-    if (!active?.draft) return;
-    setViewingRevision(revision.revision);
-    setActive({
-      ...active,
-      draft: {
-        ...active.draft,
-        summary: revision.summary,
-        localizations: revision.localizations,
-        promotionalText: revision.promotionalText,
-        whatsNew: revision.whatsNew,
-        description: revision.description,
-        submissionKeywords: revision.submissionKeywords,
-        trackingKeywordDeltas: revision.trackingKeywordDeltas,
-        promotionAngles: revision.promotionAngles,
-        revision: revision.revision,
-      },
-    });
-    if (revision.localizations?.[0]?.language) {
-      setActiveLanguage(revision.localizations[0].language);
+      setActive((prev: any) => ({ ...prev, draft: next }));
+      setActiveLanguage(language);
+    } catch (e: any) {
+      setError(e.message || `${languageLabel(language)} 翻译失败。`);
+    } finally {
+      translatingRef.current.delete(language);
+      setTranslatingLanguages((prev) => {
+        const next = new Set(prev);
+        next.delete(language);
+        return next;
+      });
     }
   };
 
-  const handleBackToCurrent = () => {
-    setViewingRevision(null);
-    if (project && productId && selectedTag) {
+  useEffect(() => {
+    if (!draft && selectedExistingDraft && selectedRelease?.draft && project && selectedTag) {
       void handleLoad(false);
     }
-  };
+  }, [draft?.id, selectedExistingDraft?.id, project?.id, selectedTag]);
 
-  const handleSave = async () => {
-    if (!project || !draft) return;
-    setSaving(true);
-    try {
-      const saved = await (window as any).appilot.release.saveDraft(project.id, draft);
-      setActive((prev: any) => ({ ...prev, draft: saved }));
-    } catch (e: any) {
-      setError(e.message || "保存失败。");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleApplyKeywordDeltas = async () => {
-    if (!project || !draft) return;
-    const updatedProduct = await (window as any).appilot.release.applyKeywordDeltas(
-      project.id,
-      draft.productId,
-      draft.releaseTag,
-    );
-    setActive((prev: any) => prev?.draft ? {
-      ...prev,
-      draft: { ...prev.draft, trackingKeywordDeltas: [] },
-    } : prev);
-    await useProject.getState().load();
-    useProject.getState().selectProduct(updatedProduct.id);
-  };
+  if (!project) {
+    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示发布工作台。" />;
+  }
 
   return (
     <div className="p-10 max-w-4xl mx-auto">
@@ -792,15 +788,6 @@ function ReleasePage() {
         </div>
       )}
 
-      {generating && (
-        <div className="mb-6 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4">
-          <p className="text-sm font-medium text-amber-700 dark:text-amber-400">正在生成发布文案</p>
-          {generationProgress.some((item) => item.language === "global" && item.status === "started") && (
-            <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">正在分析发布公告...</p>
-          )}
-        </div>
-      )}
-
       {releases.length === 0 ? (
         <EmptyState title="尚未检测到预发布公告" desc="请在仓库根目录创建 RELEASE_DRAFT.md，然后点击检查发布。" />
       ) : (
@@ -817,73 +804,85 @@ function ReleasePage() {
 
           {selectedRelease && (
             <>
-              <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-4 shadow-sm">
+              <div
+                onClick={() => setPreviewTarget("release")}
+                className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-4 shadow-sm cursor-pointer hover:border-amber-500/40"
+              >
                 <p className="text-xs text-zinc-400 dark:text-zinc-500">预发布公告</p>
                 <div className="mt-1 flex items-center justify-between gap-4">
                   <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                     {selectedRelease.name || "RELEASE_DRAFT.md"}
                   </p>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
-                    更新于 {formatHumanTime(selectedRelease.publishedAt)}
-                  </p>
+                  <div className="flex items-center gap-3 text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
+                    {step > 1 && <span className="text-emerald-500">✓</span>}
+                    <span>更新于 {formatHumanTime(selectedRelease.publishedAt)}</span>
+                  </div>
                 </div>
               </div>
 
-              <div className="mb-5">
-                <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-2">
-                  {draft ? "文案语言" : "生成语言"}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {availableLanguages.map((language) => {
-                    const enabled = selectedLanguages.includes(language);
-                    const generated = localizations.some((item: any) => item.language === language);
-                    const progress = generationProgress.find((item: any) => item.language === language);
-                    const active = activeLocalization?.language === language;
-                    const isSelected = draft ? generated : enabled;
-                    return (
-                      <button
-                        key={language}
-                        onClick={() => handleLanguageTagClick(language)}
-                        disabled={busy || (draft ? !generated : false)}
-                        className={cn(
-                          "px-3 py-1.5 text-sm rounded-lg border transition-colors",
-                          active
-                            ? "border-amber-500 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                            : isSelected
-                              ? "border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                              : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                        )}
-                      >
-                        {languageLabel(language)}
-                        {progress?.status === "started" ? " ..." : progress?.status === "completed" || generated ? " ✓" : ""}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {selectedRelease.draft && !draft && (
-                <div className="mb-6 flex flex-wrap items-center gap-2">
-                  {selectedExistingDraft && (
-                    <button
-                      onClick={() => handleLoad(false)}
-                      disabled={busy}
-                      className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-                    >
-                      {loadingDraft ? "加载中..." : "查看已有文案"}
-                    </button>
-                  )}
+              {releaseContext && step <= 2 && (
+                <div className="space-y-2 mb-5">
                   <button
-                    onClick={() => handleLoad(true)}
-                    disabled={busy || selectedLanguages.length === 0}
-                    className={btnPrimary}
+                    type="button"
+                    onClick={() => setPreviewTarget("readme")}
+                    className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 py-3 text-left hover:border-amber-500/40"
                   >
-                    {generating ? "生成中..." : selectedExistingDraft ? "重新生成" : "生成提交文案"}
+                    <span className="flex items-center justify-between gap-3 text-sm">
+                      <span>README</span>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                        {step > 1 ? "✓ " : ""}{formatHumanTime(releaseContext.readmeModifiedAt)}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTarget("previous")}
+                    className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 py-3 text-left hover:border-amber-500/40"
+                  >
+                    <span className="flex items-center justify-between gap-3 text-sm">
+                      <span>上次文案</span>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                        {step > 1 ? "✓ " : ""}{formatHumanTime(releaseContext.previousUpdatedAt)}
+                      </span>
+                    </span>
                   </button>
                 </div>
               )}
 
-              {!selectedRelease.draft && (
+              {step === 1 && (
+                <div className="mb-5">
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-2">语言</p>
+                  <div className="flex flex-wrap gap-2">
+                    {orderedLanguages.map((language, index) => (
+                      <span
+                        key={language}
+                        className={cn(
+                          "px-3 py-1.5 text-sm rounded-lg border",
+                          index === 0
+                            ? "border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                            : "border-zinc-200 dark:border-zinc-700 text-zinc-400 dark:text-zinc-500",
+                        )}
+                      >
+                        {languageLabel(language)}{index === 0 ? " ✓" : ""}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedRelease.draft && step === 1 && !draft && (
+                <div className="mb-6 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => handleLoad(true)}
+                    disabled={busy}
+                    className={btnPrimary}
+                  >
+                    {generating ? "生成中..." : "下一步：生成文案"}
+                  </button>
+                </div>
+              )}
+
+              {!selectedRelease.draft && step === 1 && (
                 <div className="mb-6">
                   {selectedExistingDraft ? (
                     <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
@@ -894,13 +893,14 @@ function ReleasePage() {
                   )}
                 </div>
               )}
+
             </>
           )}
         </>
       )}
 
       {!draft ? (
-        selectedRelease ? (
+        selectedRelease && step > 1 ? (
           <EmptyState
             title={selectedRelease.draft ? "等待生成提交文案" : "该正式发布没有历史文案"}
             desc={selectedRelease.draft ? "确认后由 AI 生成 Promotional Text、描述、What's New 和关键词。" : "正式发布只作为完成信号，不再生成新的商店文案。"}
@@ -919,8 +919,6 @@ function ReleasePage() {
             </div>
 
             <div className="p-5 space-y-5">
-              {draft.summary && <p className="text-sm text-zinc-700 dark:text-zinc-300">{draft.summary}</p>}
-
               {activeLocalization && (
                 <>
                   <div className="space-y-2">
@@ -929,7 +927,7 @@ function ReleasePage() {
                             value={activeLocalization.promotionalText}
                             onChange={(e) => updateLocalizationField("promotionalText", e.target.value)}
                             disabled={isReadOnly}
-                            className={inputClass + " min-h-20 resize-none rounded-b-none"}
+                            className={inputClass + " min-h-20 resize-none rounded-none"}
                           />
                           <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
                             {activeLocalization.promotionalText.length}/170 字符
@@ -939,7 +937,7 @@ function ReleasePage() {
                             value={activeLocalization.description}
                             onChange={(e) => updateLocalizationField("description", e.target.value)}
                             disabled={isReadOnly}
-                            className={inputClass + " min-h-40 resize-none rounded-t-none"}
+                            className={inputClass + " min-h-40 resize-none rounded-none"}
                           />
                           <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
                             {activeLocalization.description.length}/4000 字符
@@ -952,7 +950,7 @@ function ReleasePage() {
                           value={activeLocalization.whatsNew}
                           onChange={(e) => updateLocalizationField("whatsNew", e.target.value)}
                           disabled={isReadOnly}
-                          className={inputClass + " min-h-32 resize-none"}
+                          className={inputClass + " min-h-32 resize-none rounded-none"}
                         />
                         <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
                           {activeLocalization.whatsNew.length}/4000 字符
@@ -965,7 +963,7 @@ function ReleasePage() {
                           value={activeLocalization.keywords}
                           onChange={(e) => updateLocalizationField("keywords", e.target.value)}
                           disabled={isReadOnly}
-                          className={inputClass + " min-h-16 resize-none"}
+                          className={inputClass + " min-h-16 resize-none rounded-none"}
                         />
                         <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
                           {activeLocalization.keywords.length}/100 字符
@@ -974,71 +972,83 @@ function ReleasePage() {
                 </>
               )}
 
-              <FieldBlock label="跟踪关键词调整">
-                {(draft.trackingKeywordDeltas || []).map((item: any, index: number) => (
-                  <div key={`${item.keyword}-${index}`} className="text-sm text-zinc-700 dark:text-zinc-300">
-                    <span className={item.direction === "add" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
-                      {item.direction === "add" ? "+" : "-"} {item.keyword}
-                    </span>
-                    <span className="text-zinc-400 dark:text-zinc-500"> · {languageLabel(item.language)}</span>
-                    {item.reason && <span className="text-zinc-500 dark:text-zinc-400"> · {item.reason}</span>}
-                  </div>
-                ))}
-                {(draft.trackingKeywordDeltas || []).length > 0 && !isReadOnly && (
-                  <button onClick={handleApplyKeywordDeltas} className="mt-3 text-sm text-amber-600 dark:text-amber-400 hover:underline">
-                    应用这些关键词增删
-                  </button>
-                )}
-              </FieldBlock>
-
-              <FieldBlock label="推广角度">
-                {(draft.promotionAngles || []).map((item: string, index: number) => (
-                  <div key={`${item}-${index}`} className="text-sm text-zinc-700 dark:text-zinc-300">• {item}</div>
-                ))}
-              </FieldBlock>
-
-              <FieldBlock label="历史生成版本">
-                {(draft.revisions || []).length === 0 ? (
-                  <p className="text-sm text-zinc-400 dark:text-zinc-500">暂无历史版本</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {[...(draft.revisions || [])].reverse().map((revision: any) => (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {orderedLanguages.map((language) => {
+                    const generated = localizations.some((item: any) => item.language === language);
+                    const translating = translatingLanguages.has(language);
+                    const active = activeLocalization?.language === language;
+                    const clickable = confirmed && !generated && !translating;
+                    return (
                       <button
-                        key={`${revision.revision}-${revision.createdAt}`}
-                        onClick={() => handleViewRevision(revision)}
-                        className="w-full flex items-center justify-between text-sm rounded-lg px-2 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                        key={language}
+                        onClick={() => {
+                          if (generated) {
+                            setActiveLanguage(language);
+                          } else if (clickable) {
+                            void handleTranslateOne(language);
+                          }
+                        }}
+                        disabled={generating || (!generated && !clickable)}
+                        className={cn(
+                          "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+                          active
+                            ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                            : generated
+                              ? "border-emerald-500/50 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                              : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400",
+                        )}
                       >
-                        <span className="text-zinc-700 dark:text-zinc-300">v{revision.revision}</span>
-                        <span className="text-zinc-400 dark:text-zinc-500">{formatHumanTime(revision.createdAt)}</span>
+                        {languageLabel(language)}
+                        {translating ? " ..." : generated ? " ✓" : ""}
                       </button>
-                    ))}
-                  </div>
-                )}
-                {viewingRevision !== null && (
-                  <button onClick={handleBackToCurrent} className="mt-3 text-sm text-amber-600 dark:text-amber-400 hover:underline">
-                    返回当前版本
+                    );
+                  })}
+                </div>
+                {!confirmed && (
+                  <button onClick={handleConfirmDraft} className={btnPrimary}>
+                    确定文案
                   </button>
                 )}
-              </FieldBlock>
+              </div>
 
               <FieldBlock label="驳回意见 / 我的修改意见（重新生成时作为上下文）">
                 <textarea
                   value={draft.reviewFeedback || ""}
                   onChange={(e) => updateDraftField("reviewFeedback", e.target.value)}
-                  disabled={isReadOnly}
+                  disabled={feedbackReadOnly}
                   className={inputClass + " min-h-20 resize-none"}
                 />
-                {!isReadOnly && (
+                {!feedbackReadOnly && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
                       {generating ? "重新生成中..." : "根据意见重新生成"}
                     </button>
-                    <button onClick={handleSave} disabled={saving} className={btnSecondary}>
-                      {saving ? "保存中..." : "保存修改"}
-                    </button>
                   </div>
                 )}
               </FieldBlock>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewTarget && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+          <div className="w-full max-w-2xl max-h-[80vh] rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 dark:border-zinc-800">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                {previewTarget === "release" ? "预发布公告" : previewTarget === "readme" ? "README" : "上次文案"}
+              </h3>
+              <button onClick={() => setPreviewTarget(null)} className="text-sm text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+                关闭
+              </button>
+            </div>
+            <div className="p-5 overflow-auto whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300 max-h-[calc(80vh-70px)]">
+              {previewTarget === "release"
+                ? selectedRelease?.body || "没有预发布公告内容"
+                : previewTarget === "readme"
+                  ? releaseContext?.readme || "没有 README 内容"
+                  : releaseContext?.previousDescription || "没有上次文案"}
             </div>
           </div>
         </div>
@@ -1079,11 +1089,11 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function FieldHeader({ label, text }: { label: string; text: string }) {
+function FieldHeader({ label, text, copy = true }: { label: string; text: string; copy?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500">{label}</span>
-      <CopyButton text={text} />
+      {copy ? <CopyButton text={text} /> : null}
     </div>
   );
 }

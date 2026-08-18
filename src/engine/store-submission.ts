@@ -98,22 +98,6 @@ export function createStoreSubmissionDraft(input: {
 }): StoreSubmissionDraft {
   const now = new Date().toISOString();
   const existing = input.existing || null;
-  const revisions = existing?.revisions || [];
-  if (existing) {
-    revisions.push({
-      revision: existing.revision,
-      createdAt: existing.updatedAt || existing.createdAt,
-      source: "regenerated",
-      summary: existing.summary,
-      localizations: existing.localizations,
-      promotionalText: existing.promotionalText,
-      whatsNew: existing.whatsNew,
-      description: existing.description,
-      submissionKeywords: existing.submissionKeywords,
-      trackingKeywordDeltas: existing.trackingKeywordDeltas,
-      promotionAngles: existing.promotionAngles,
-    });
-  }
   return {
     id: submissionDraftId(input.projectId, input.productId, input.release.tag),
     projectId: input.projectId,
@@ -126,7 +110,7 @@ export function createStoreSubmissionDraft(input: {
     storeStatus: existing?.storeStatus || "prepared",
     reviewFeedback: existing?.reviewFeedback || "",
     revision: existing ? existing.revision + 1 : 1,
-    revisions: revisions.slice(-20),
+    revisions: [],
     createdAt: existing?.createdAt || now,
     updatedAt: now,
     summary: input.content.summary,

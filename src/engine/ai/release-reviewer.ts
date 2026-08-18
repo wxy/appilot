@@ -52,7 +52,7 @@ async function parseJsonWithRepair(provider: AIProvider, raw: string): Promise<a
       {
         temperature: 0,
         maxTokens: 8000,
-        thinking: "low",
+        thinking: "disabled",
       },
     );
     return parseJson(repaired);
@@ -132,18 +132,19 @@ export async function generateStoreSubmissionContent(
   context: {
     name: string;
     description: string;
-    languages: string[];
+    language: string;
     trackedKeywords: string[];
     currentSubmissionKeywords: { language: string; text: string }[];
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
     reviewFeedback?: string;
     baseLocalization?: StoreSubmissionLocalization;
+    previousDescription?: string;
+    previousLocalization?: StoreSubmissionLocalization;
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
 ): Promise<StoreSubmissionContent> {
-  const languages = context.languages.length > 0 ? context.languages : ["en"];
-  const primaryLanguage = languages[0];
+  const primaryLanguage = context.language || "en";
 
   onProgress?.({ language: "global", status: "started" });
   const globalPlan = await generateGlobalReleasePlan(provider, context);
@@ -156,18 +157,6 @@ export async function generateStoreSubmissionContent(
     : await generateLocalizedStoreCopy(provider, context, primaryLanguage);
   onProgress?.({ language: primaryLanguage, status: "completed" });
   localizations.push(primaryLocalization);
-
-  for (const language of languages.slice(1)) {
-    onProgress?.({ language, status: "started" });
-    const localization = await generateTranslatedStoreCopy(
-      provider,
-      context,
-      primaryLocalization,
-      language,
-    );
-    onProgress?.({ language, status: "completed" });
-    localizations.push(localization);
-  }
 
   const primary = localizations[0];
   return {
@@ -185,6 +174,36 @@ export async function generateStoreSubmissionContent(
   };
 }
 
+export async function translateStoreSubmissionContent(
+  provider: AIProvider,
+  context: {
+    name: string;
+    description: string;
+    trackedKeywords: string[];
+    currentSubmissionKeywords: { language: string; text: string }[];
+    recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
+    release: ReleaseInfo;
+    reviewFeedback?: string;
+    previousDescription?: string;
+    previousLocalization?: StoreSubmissionLocalization;
+  },
+  source: StoreSubmissionLocalization,
+  targetLanguages: string[],
+  onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
+): Promise<StoreSubmissionLocalization[]> {
+  const translations: StoreSubmissionLocalization[] = [];
+
+  for (const language of targetLanguages) {
+    if (language === source.language) continue;
+    onProgress?.({ language, status: "started" });
+    const translation = await generateTranslatedStoreCopy(provider, context, source, language);
+    onProgress?.({ language, status: "completed" });
+    translations.push(translation);
+  }
+
+  return translations;
+}
+
 async function generateGlobalReleasePlan(
   provider: AIProvider,
   context: {
@@ -195,6 +214,8 @@ async function generateGlobalReleasePlan(
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
     reviewFeedback?: string;
+    previousDescription?: string;
+    previousLocalization?: StoreSubmissionLocalization;
   },
 ): Promise<{
   summary: string;
@@ -252,7 +273,7 @@ async function generateGlobalReleasePlan(
   const raw = await provider.chat(messages, {
     temperature: 0.4,
     maxTokens: 2000,
-    thinking: "low",
+    thinking: "disabled",
   });
 
   try {
@@ -297,6 +318,8 @@ async function generateLocalizedStoreCopy(
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
     reviewFeedback?: string;
+    previousDescription?: string;
+    previousLocalization?: StoreSubmissionLocalization;
   },
   language: string,
 ): Promise<StoreSubmissionLocalization> {
@@ -318,6 +341,7 @@ async function generateLocalizedStoreCopy(
         ),
         "Base the description on the current app description/README context, not only the release announcement.",
         "Use the release body primarily for whatsNew.",
+        "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
         "Keep promotionalText ≤170 characters, keywords ≤100 characters, and description/whatsNew ≤4000 characters.",
       ].join("\n"),
     },
@@ -327,6 +351,12 @@ async function generateLocalizedStoreCopy(
         `Language: ${language}`,
         `App name: ${context.name}`,
         `Current description/README: ${context.description || "N/A"}`,
+        context.previousDescription
+          ? `Previous release description:\n${context.previousDescription}`
+          : "",
+        context.previousLocalization
+          ? `Previous release ${context.previousLocalization.language} description:\n${context.previousLocalization.description}`
+          : "",
         `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
         `Current submission keywords: ${context.currentSubmissionKeywords
           .filter((item: { language: string; text: string }) => item.language === language)
@@ -347,8 +377,8 @@ async function generateLocalizedStoreCopy(
 
   const raw = await provider.chat(messages, {
     temperature: 0.4,
-    maxTokens: 5000,
-    thinking: "low",
+    maxTokens: 8000,
+    thinking: "disabled",
   });
 
   try {
@@ -398,6 +428,7 @@ async function generateTranslatedStoreCopy(
           2,
         ),
         "Do not invent new product facts. Translate the provided copy faithfully.",
+        "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
       ].join("\n"),
     },
     {
@@ -419,8 +450,8 @@ async function generateTranslatedStoreCopy(
 
   const raw = await provider.chat(messages, {
     temperature: 0.3,
-    maxTokens: 5000,
-    thinking: "low",
+    maxTokens: 8000,
+    thinking: "disabled",
   });
 
   try {
@@ -470,6 +501,7 @@ async function reviseLocalizedStoreCopy(
           2,
         ),
         "Do not discard the existing structure or section markers.",
+        "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
       ].join("\n"),
     },
     {
@@ -491,8 +523,8 @@ async function reviseLocalizedStoreCopy(
 
   const raw = await provider.chat(messages, {
     temperature: 0.3,
-    maxTokens: 5000,
-    thinking: "low",
+    maxTokens: 8000,
+    thinking: "disabled",
   });
 
   try {
