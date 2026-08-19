@@ -1538,8 +1538,8 @@ function TaskCenterPage() {
   const failedGroups = groupTasks(failed);
 
   return (
-    <div className="p-10 max-w-6xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-8">
+    <div className="p-8 max-w-6xl mx-auto min-h-full flex flex-col">
+      <div className="flex items-start justify-between gap-4 mb-5">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
@@ -2164,7 +2164,7 @@ function KeywordsPage() {
         <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
       ) : (
         <>
-          <div className="mb-6">
+          <div className="mb-4">
             <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
               语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
             </p>
@@ -2215,29 +2215,28 @@ function KeywordsPage() {
             </div>
           </div>
 
-          <div className="space-y-6">
-            {/* Tracking keywords + rankings */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    跟踪关键词与排名（{tracked.length}）
-                  </h3>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
-                    同一张表完成生成、查看排名与趋势，不再重复列出关键词。
-                  </p>
-                  {schedulerStatus && (
-                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
-                      自动任务 {schedulerStatus.enabled ? "已启用" : "未启用"} · 待执行 {schedulerStatus.due}
-                      {schedulerStatus.failed > 0 ? ` · 失败 ${schedulerStatus.failed}` : ""}
-                      {schedulerStatus.nextDueAt
-                        ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
-                        : ""}
-                    </p>
-                  )}
-                </div>
+          <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+            <div className="px-6 py-3.5 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  关键词排名（{trackedActive.length}）
+                </h3>
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+                  跟踪提交内容中的搜索词在各商店的排名；点击行查看趋势折线。
+                </p>
               </div>
+              {schedulerStatus && (
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0 text-right">
+                  自动任务 {schedulerStatus.enabled ? "已启用" : "未启用"} · 待执行 {schedulerStatus.due}
+                  {schedulerStatus.failed > 0 ? ` · 失败 ${schedulerStatus.failed}` : ""}
+                  {schedulerStatus.nextDueAt
+                    ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
+                    : ""}
+                </p>
+              )}
+            </div>
 
+            <div className="flex-1 min-h-0 overflow-auto">
               <div className="p-5">
                 {matrixRows.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
@@ -2245,7 +2244,7 @@ function KeywordsPage() {
                   </p>
                 ) : (
                   <>
-                    <div className="max-h-[60vh] overflow-auto rounded-xl border border-zinc-100 dark:border-zinc-800">
+                    <div className="rounded-xl border border-zinc-100 dark:border-zinc-800">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30">
