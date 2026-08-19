@@ -66,10 +66,14 @@ export async function generateKeywords(
   provider: AIProvider,
   context: {
     name: string;
+    subtitle?: string;
     description: string;
     productType: string;
     language: string;
     uiLanguage: string;
+    submissionKeywords?: string[];
+    existingKeywords?: { keyword: string }[];
+    removedKeywords?: string[];
   },
 ): Promise<KeywordGeneration> {
   log.info(`Generating ASO keywords for ${context.name} (${context.language})`);
@@ -89,8 +93,14 @@ export async function generateKeywords(
       role: "user",
       content: [
         `App name: ${context.name}`,
+        `App subtitle: ${context.subtitle || "N/A"}`,
         `Platform: ${context.productType}`,
         `Description: ${context.description || "N/A"}`,
+        `Submission keywords: ${(context.submissionKeywords || []).join(", ") || "N/A"}`,
+        `Existing tracked keywords (do not repeat): ${(context.existingKeywords || [])
+          .map((item) => item.keyword)
+          .join(", ") || "N/A"}`,
+        `Removed keywords (do not re-suggest): ${(context.removedKeywords || []).join(", ") || "N/A"}`,
         `Target localization (keywords must be in this language): ${context.language}`,
         `UI language (write the rationale in this language): ${context.uiLanguage}`,
       ].join("\n"),
@@ -128,4 +138,89 @@ export async function generateKeywords(
     );
     throw new Error("AI 关键词响应无法解析，请重试。");
   }
+}
+
+export interface KeywordCurationRemoval {
+  keyword: string;
+  reason: string;
+}
+
+export interface KeywordCuration {
+  removals: KeywordCurationRemoval[];
+  adds: KeywordSuggestion[];
+}
+
+export function parseKeywordCuration(raw: string, fallbackLanguage = "en"): KeywordCuration {
+  const data = parseJsonObject(raw);
+  const removals = Array.isArray(data.removals)
+    ? data.removals
+        .map((item: any) => ({
+          keyword: String(item?.keyword || "").trim(),
+          reason: String(item?.reason || "").trim(),
+        }))
+        .filter((item) => item.keyword)
+        .slice(0, 20)
+    : [];
+  const adds = Array.isArray(data.adds)
+    ? data.adds
+        .filter((x: any) => x && typeof x.keyword === "string" && x.keyword.trim())
+        .map((x: any) => ({
+          language: String(x.language || fallbackLanguage).trim(),
+          keyword: x.keyword.trim(),
+          rationale: String(x.rationale || "").trim(),
+          translation: String(x.translation || "").trim(),
+        }))
+        .slice(0, 30)
+    : [];
+  return { removals, adds };
+}
+
+/** 复盘模式：结合现有跟踪词与观察数据，给出建议移除 / 建议新增。 */
+export async function curateKeywords(
+  provider: AIProvider,
+  context: {
+    name: string;
+    subtitle?: string;
+    description: string;
+    language: string;
+    uiLanguage: string;
+    existingKeywords: { keyword: string; language: string; bestRank: number | null; lastSeenAt: string | null; status: string }[];
+    submissionKeywords: string[];
+    removedKeywords: string[];
+  },
+): Promise<KeywordCuration> {
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content: [
+        "You are Appilot's ASO keyword curator. Review the existing tracking keywords for one localization and produce a curated suggestion set.",
+        "1. `removals`: keywords that are badly chosen or clearly ineffective. Common reasons: never ranked after many checks, irrelevant to the app, duplicate of the name/subtitle, or too generic. Give one short reason each.",
+        "2. `adds`: NEW keywords to track. Cover gaps (name/subtitle/submission-keyword intents), high-value scenarios from the description, and similar variants of keywords that HAVE ranked before. Never repeat existing or removed keywords.",
+        "Keep removals ≤20 and adds ≤30. Do not include competitor brand names.",
+        "Respond ONLY with JSON: {\"removals\":[{\"keyword\":\"...\",\"reason\":\"...\"}],\"adds\":[{\"language\":\"...\",\"keyword\":\"...\",\"translation\":\"...\",\"rationale\":\"...\"}]}",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        `App name: ${context.name}`,
+        `App subtitle: ${context.subtitle || "N/A"}`,
+        `Target localization: ${context.language}`,
+        `UI language (write rationale in this language): ${context.uiLanguage}`,
+        `Description: ${context.description || "N/A"}`,
+        `Submission keywords: ${context.submissionKeywords.join(", ") || "N/A"}`,
+        `Existing tracked keywords (keyword|bestRank|lastSeenAt|status):\n${context.existingKeywords
+          .map((k) => `${k.keyword}|${k.bestRank ?? "—"}|${k.lastSeenAt ?? "—"}|${k.status}`)
+          .join("\n") || "N/A"}`,
+        `Removed keywords (do not re-suggest): ${context.removedKeywords.join(", ") || "N/A"}`,
+      ].join("\n"),
+    },
+  ];
+  const raw = await provider.chat(messages, {
+    temperature: 0.4,
+    maxTokens: 3000,
+    thinking: "low",
+    responseFormat: "json_object",
+  });
+  return parseKeywordCuration(raw, context.language);
 }
