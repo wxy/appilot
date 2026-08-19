@@ -4,9 +4,10 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianG
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
-import { useProject } from "./stores/project";
+import { useProject, type RankSnapshot } from "./stores/project";
 import { cn } from "./lib/utils";
 import {
+  STALE_MS,
   matrixCellState,
   matrixColumnMeta,
   matrixFilterKeywords,
@@ -401,10 +402,156 @@ function HomePage() {
   );
 }
 
+interface OverviewRankRow {
+  keyword: string;
+  language: string;
+  bestRank: number;
+  storefront: string;
+  trend: "up" | "down" | "same" | "new";
+  delta: number | null;
+  checkedAt: string | null;
+  stale: boolean;
+}
+
+/**
+ * Per-keyword rank summary across every storefront: the best *current* rank
+ * (latest snapshot per storefront), the storefront it was achieved in, and
+ * the trend vs. that storefront's previous snapshot.
+ */
+function overviewRankRows(
+  keywords: { keyword: string; language: string }[],
+  snapshots: RankSnapshot[],
+): OverviewRankRow[] {
+  const rows: OverviewRankRow[] = [];
+  for (const keyword of keywords) {
+    const own = snapshots
+      .filter((s) => s.keyword === keyword.keyword && s.language === keyword.language)
+      .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
+    const byStorefront = new Map<string, RankSnapshot[]>();
+    for (const snapshot of own) {
+      const list = byStorefront.get(snapshot.storefront) || [];
+      list.push(snapshot);
+      byStorefront.set(snapshot.storefront, list);
+    }
+    let bestRank: number | null = null;
+    let bestStorefront = "";
+    let bestTrend: OverviewRankRow["trend"] = "same";
+    let bestDelta: number | null = null;
+    let bestCheckedAt: string | null = null;
+    for (const [storefront, list] of byStorefront) {
+      const latest = list[list.length - 1];
+      if (latest.rank == null) continue;
+      if (bestRank !== null && latest.rank >= bestRank) continue;
+      const previous = list[list.length - 2];
+      bestRank = latest.rank;
+      bestStorefront = storefront;
+      bestCheckedAt = latest.checkedAt;
+      if (!previous || previous.rank == null) {
+        bestTrend = "new";
+        bestDelta = null;
+      } else {
+        bestDelta = previous.rank - latest.rank;
+        bestTrend = bestDelta > 0 ? "up" : bestDelta < 0 ? "down" : "same";
+      }
+    }
+    if (bestRank !== null) {
+      rows.push({
+        keyword: keyword.keyword,
+        language: keyword.language,
+        bestRank,
+        storefront: bestStorefront,
+        trend: bestTrend,
+        delta: bestDelta,
+        checkedAt: bestCheckedAt,
+        stale: bestCheckedAt ? Date.now() - new Date(bestCheckedAt).getTime() > STALE_MS : true,
+      });
+    }
+  }
+  rows.sort((a, b) => a.bestRank - b.bestRank);
+  return rows;
+}
+
+function MetricBlock({
+  label,
+  value,
+  sub,
+  warn,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  warn?: boolean;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border px-5 py-4 bg-white dark:bg-zinc-900 shadow-sm transition-opacity",
+        warn
+          ? "border-amber-300/70 dark:border-amber-500/30"
+          : "border-zinc-200 dark:border-zinc-800",
+        warn && "opacity-90",
+      )}
+    >
+      <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-1.5 text-2xl font-mono font-semibold leading-none",
+          highlight || warn
+            ? "text-amber-600 dark:text-amber-400"
+            : "text-zinc-900 dark:text-zinc-100",
+        )}
+      >
+        {value}
+      </p>
+      {sub && <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500 truncate">{sub}</p>}
+    </div>
+  );
+}
+
 function OverviewPage() {
   const { projects, currentProjectId, currentProductId } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
+  const [releaseDraft, setReleaseDraft] = useState<{
+    name: string | null;
+    tag: string;
+    publishedAt: string;
+    body: string;
+  } | null>(null);
+  const [schedulerInfo, setSchedulerInfo] = useState<{
+    total: number;
+    due: number;
+    failed: number;
+    nextDueAt: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+    setReleaseDraft(null);
+    setSchedulerInfo(null);
+    (window as any).appilot?.release?.list(project.id)
+      .then((result: any) => {
+        if (!cancelled) setReleaseDraft(result?.latestDraft || null);
+      })
+      .catch(() => {
+        if (!cancelled) setReleaseDraft(null);
+      });
+    (window as any).appilot?.scheduler?.status()
+      .then((status: any) => {
+        if (!cancelled) setSchedulerInfo(status || null);
+      })
+      .catch(() => {
+        if (!cancelled) setSchedulerInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id]);
 
   if (!project || !product) {
     return (
@@ -423,10 +570,33 @@ function OverviewPage() {
     { label: "其他", links: storeLinks.filter((l) => l.platform === "unknown") },
   ].filter((g) => g.links.length > 0);
 
+  const trackedKeywords = product.trackedKeywords || [];
+  const trackedActive = trackedKeywords.filter((k) => k.status !== "paused");
+  const pausedCount = trackedKeywords.length - trackedActive.length;
+  const rankSnapshots = product.rankSnapshots || [];
+  const rankRows = overviewRankRows(trackedActive, rankSnapshots);
+  const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
+  const newestSnapshot = rankSnapshots.reduce<RankSnapshot | null>(
+    (latest, snapshot) =>
+      !latest || new Date(snapshot.checkedAt).getTime() > new Date(latest.checkedAt).getTime()
+        ? snapshot
+        : latest,
+    null,
+  );
+  const newestCheckedAt = newestSnapshot?.checkedAt || null;
+  const dataStale = newestCheckedAt ? Date.now() - new Date(newestCheckedAt).getTime() > STALE_MS : false;
+  const bestRankNow = rankRows[0]?.bestRank ?? null;
+  const releasePreview = releaseDraft?.body
+    ? releaseDraft.body
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line && !line.startsWith("#"))?.slice(0, 90) || null
+    : null;
+
   return (
     <div className="p-10 max-w-6xl mx-auto">
       {/* App identity */}
-      <div className="flex items-center gap-4 mb-8">
+      <div className="flex items-center gap-4 mb-6">
         {product.artworkUrl ? (
           <img
             src={product.artworkUrl}
@@ -438,85 +608,232 @@ function OverviewPage() {
             <span className="text-amber-500 text-xl">⌖</span>
           </div>
         )}
-        <div className="min-w-0">
-          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-            {product.trackName || project.name}
-          </h2>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2.5 mb-1">
+            <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+              {product.trackName || project.name}
+            </h2>
+            <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+              {platformLabel(product.platform)}
+            </span>
+          </div>
+          <p className="text-[13px] font-mono text-zinc-500 dark:text-zinc-400 truncate">
             {project.localPath}
           </p>
         </div>
       </div>
 
-      {/* Detected metadata */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
-        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">识别结果</h3>
+      {/* Metrics */}
+      <div className="mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <MetricBlock
+            label="跟踪关键词"
+            value={String(trackedActive.length)}
+            sub={pausedCount > 0 ? `暂停 ${pausedCount}` : "跟踪中"}
+          />
+          <MetricBlock
+            label="当前入榜"
+            value={String(rankRows.length)}
+            sub={bestRankNow !== null ? `最佳 #${bestRankNow}` : "暂无上榜"}
+          />
+          <MetricBlock label="前 10" value={String(top10Count)} highlight={top10Count > 0} />
+          <MetricBlock
+            label="最近采集"
+            value={newestCheckedAt ? formatHumanTime(newestCheckedAt) : "—"}
+            warn={dataStale}
+            sub={dataStale ? "数据已过期" : newestCheckedAt ? "36h 内" : "尚未采集"}
+          />
         </div>
-        <div className="p-6 grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
-          <Field label="产品类型" value={product.platform === "ios" ? "iOS" : product.platform === "macos" ? "macOS" : "未识别"} />
-          <Field label="商店名称" value={product.trackName || project.name} />
-        </div>
+        {schedulerInfo && (
+          <p className="mt-2 text-right text-[11px] text-zinc-400 dark:text-zinc-500">
+            调度：任务 {schedulerInfo.total}
+            {schedulerInfo.due > 0 && <> · 待执行 {schedulerInfo.due}</>}
+            {schedulerInfo.failed > 0 && (
+              <span className="text-red-500 dark:text-red-400 font-medium"> · 失败 {schedulerInfo.failed}</span>
+            )}
+            {schedulerInfo.nextDueAt && <> · 下次 {formatHumanTime(schedulerInfo.nextDueAt)}</>}
+          </p>
+        )}
       </div>
 
-      {/* Supported languages */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
-        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            支持语言（{languages.length}）
-          </h3>
+      {/* Rank overview */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-6">
+        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名概览</h3>
+          <Link to="/keywords" className="text-xs text-amber-600 dark:text-amber-400 hover:underline shrink-0">
+            查看排名 →
+          </Link>
         </div>
-        <div className="p-5 flex flex-wrap gap-2">
-          {languages.length === 0 ? (
-            <p className="text-sm text-zinc-400 dark:text-zinc-500">未识别</p>
-          ) : (
-            languages.map((l) => (
-              <span
-                key={l.code}
-                className="inline-flex items-center px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300"
+        {rankRows.length === 0 ? (
+          <div className="p-8 text-center">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              {trackedActive.length === 0
+                ? "还没有跟踪关键词"
+                : `已有 ${trackedActive.length} 个跟踪关键词，等待采集排名`}
+            </p>
+            <Link to="/keywords" className={cn(btnSecondary, "mt-4")}>
+              {trackedActive.length === 0 ? "去排名页生成关键词" : "去排名页查看"}
+            </Link>
+          </div>
+        ) : (
+          <ul>
+            {rankRows.slice(0, 8).map((row, index) => (
+              <li
+                key={`${row.language}:${row.keyword}`}
+                className={cn(
+                  "flex items-center gap-3 px-6 py-2.5 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+                  row.stale && "opacity-55",
+                )}
               >
-                {l.name}
-              </span>
-            ))
+                <span className="w-5 shrink-0 text-xs font-mono text-zinc-400 dark:text-zinc-500">
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1 flex items-center gap-2">
+                  <span className="font-mono text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                    {row.keyword}
+                  </span>
+                  {row.language === "en" ? (
+                    <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                      全局
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">
+                      {languageLabel(row.language)}
+                    </span>
+                  )}
+                </div>
+                <span
+                  className={cn(
+                    "w-10 shrink-0 text-right font-mono text-sm font-semibold",
+                    row.bestRank <= 10
+                      ? "text-amber-600 dark:text-amber-400"
+                      : "text-zinc-800 dark:text-zinc-200",
+                  )}
+                >
+                  #{row.bestRank}
+                </span>
+                <span className="w-16 shrink-0 text-right text-xs">
+                  {row.trend === "up" && (
+                    <span className="text-emerald-600 dark:text-emerald-400">▲{row.delta}</span>
+                  )}
+                  {row.trend === "down" && (
+                    <span className="text-red-500 dark:text-red-400">▼{Math.abs(row.delta ?? 0)}</span>
+                  )}
+                  {row.trend === "new" && <span className="text-amber-600 dark:text-amber-400">进榜</span>}
+                  {row.trend === "same" && <span className="text-zinc-400">—</span>}
+                </span>
+                <span
+                  className="w-24 shrink-0 text-right text-xs text-zinc-400 dark:text-zinc-500 truncate"
+                  title={row.checkedAt ? new Date(row.checkedAt).toLocaleString() : ""}
+                >
+                  {storefrontDisplayName(row.storefront)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Release status */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-6">
+        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布状态</h3>
+        </div>
+        <div className="p-6">
+          {releaseDraft ? (
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 shrink-0 rounded-xl bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center text-lg text-amber-500">
+                📦
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                  {releaseDraft.name || releaseDraft.tag}
+                </p>
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+                  {formatHumanTime(releaseDraft.publishedAt)} 更新 · RELEASE_DRAFT.md
+                </p>
+                {releasePreview && (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 line-clamp-2">
+                    {releasePreview}
+                  </p>
+                )}
+              </div>
+              <Link to="/release" className={cn(btnPrimary, "shrink-0")}>
+                打开发布工作台
+              </Link>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <p className="text-sm text-zinc-400 dark:text-zinc-500">暂无发布草稿（RELEASE_DRAFT.md）</p>
+              <Link to="/release" className={cn(btnSecondary, "shrink-0")}>
+                去发布页
+              </Link>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Store links */}
-      {storeLinks.length > 0 && (
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
-          <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店链接</h3>
-          </div>
-          <div className="p-4">
-            {storeGroups.map((group) => (
-              <div key={group.label} className="mb-4 last:mb-0">
-                <p className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                  {group.label}
-                </p>
-                <div className="space-y-1">
-                  {group.links.map((link) => (
-                    <button
-                      key={link.url}
-                      onClick={() => (window as any).appilot?.openExternal(link.url)}
-                      className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
-                    >
-                      <span className="text-zinc-800 dark:text-zinc-200">{link.name} App Store</span>
-                      <span className="text-xs text-amber-600 dark:text-amber-400">打开 ↗</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-            <p className="px-1 pt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-              链接按地区定向；页面语言会跟随你设备语言，在应用支持的语言内自动切换。
-            </p>
-          </div>
+      {/* Project profile */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">项目档案</h3>
         </div>
-      )}
-
-      <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
-        总览（副驾驶简报）将在 Phase A 后续步骤实现
+        <div className="p-6">
+          <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
+            <Field label="产品类型" value={platformLabel(product.platform)} />
+            <Field label="商店名称" value={product.trackName || project.name} />
+            {product.bundleId ? <Field label="Bundle ID" value={product.bundleId} mono /> : null}
+            {product.trackId ? <Field label="Track ID" value={product.trackId} mono /> : null}
+          </div>
+          <div className="mt-5 pt-5 border-t border-zinc-100 dark:border-zinc-800">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500 mb-2">
+              支持语言（{languages.length}）
+            </p>
+            {languages.length === 0 ? (
+              <p className="text-sm text-zinc-400 dark:text-zinc-500">未识别</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {languages.map((l) => (
+                  <span
+                    key={l.code}
+                    className="inline-flex items-center px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300"
+                  >
+                    {l.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          {storeLinks.length > 0 && (
+            <div className="mt-5 pt-5 border-t border-zinc-100 dark:border-zinc-800">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500 mb-2">
+                商店链接
+              </p>
+              {storeGroups.map((group) => (
+                <div key={group.label} className="mb-3 last:mb-0">
+                  <p className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                    {group.label}
+                  </p>
+                  <div className="space-y-1">
+                    {group.links.map((link) => (
+                      <button
+                        key={link.url}
+                        onClick={() => (window as any).appilot?.openExternal(link.url)}
+                        className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-sm text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+                      >
+                        <span className="text-zinc-800 dark:text-zinc-200">{link.name} App Store</span>
+                        <span className="text-xs text-amber-600 dark:text-amber-400">打开 ↗</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <p className="px-1 pt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                链接按地区定向；页面语言会跟随你设备语言，在应用支持的语言内自动切换。
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1856,6 +2173,43 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
   );
 }
 
+function AIProgressButton({
+  onClick,
+  disabled = false,
+  idleLabel,
+  loading,
+  progress,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  idleLabel: string;
+  loading: boolean;
+  progress: { chars: number; phase: "reasoning" | "content" } | null;
+}) {
+  return (
+    <button onClick={onClick} disabled={disabled || loading} className={btnPrimary}>
+      {loading
+        ? progress && progress.chars > 0
+          ? (
+              <span className="inline-flex items-center gap-1">
+                {progress.phase === "reasoning" ? "思考中… 已接收" : "生成中… 已接收"}
+                <span
+                  className={cn(
+                    "font-mono",
+                    progress.phase === "reasoning" ? "text-amber-300" : "text-emerald-300",
+                  )}
+                >
+                  {progress.chars}
+                </span>
+                字
+              </span>
+            )
+          : "思考中…"
+        : idleLabel}
+    </button>
+  );
+}
+
 function RankTooltip({ active, payload, label }: any) {
   if (!active || !Array.isArray(payload)) return null;
   const rows = payload.filter((item: any) => item.value != null);
@@ -1909,6 +2263,21 @@ function KeywordsPage() {
   const [curationApplied, setCurationApplied] = useState<
     { language: string; keyword: string; kind: "add" | "remove" }[]
   >([]);
+  const [submissionRef, setSubmissionRef] = useState<{
+    name: string;
+    subtitle: string;
+    submissionKeywords: string;
+  } | null>(null);
+  const [submissionPanelOpen, setSubmissionPanelOpen] = useState(false);
+  const [candidates, setCandidates] = useState<
+    { keyword: string; source: "submission" | "name" | "subtitle"; rationale: string }[]
+  >([]);
+  const [removedCandidateKeys, setRemovedCandidateKeys] = useState<Set<string>>(new Set());
+  const [submissionProgress, setSubmissionProgress] = useState<{
+    chars: number;
+    phase: "reasoning" | "content";
+  } | null>(null);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
   const [keywordProgress, setKeywordProgress] = useState<
@@ -1953,6 +2322,20 @@ function KeywordsPage() {
             phase: progress.phase === "content" ? "content" : "reasoning",
           },
         }));
+      }
+    });
+    return () => {
+      off?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onSubmissionProgress?.((progress: any) => {
+      if (typeof progress?.chars === "number") {
+        setSubmissionProgress({
+          chars: progress.chars,
+          phase: progress.phase === "content" ? "content" : "reasoning",
+        });
       }
     });
     return () => {
@@ -2057,11 +2440,16 @@ function KeywordsPage() {
       data.removals.filter((item) => item.choice === "ignore").length,
     0,
   );
-  const receivedChars = Object.values(keywordProgress).reduce(
-    (sum, item) => sum + item.chars,
-    0,
-  );
   const activeProgress = keywordProgress[currentLang];
+  const trackedCandidateKeywords = new Set(
+    (product.trackedKeywords || [])
+      .filter((k) => k.language === currentLang)
+      .map((k) => k.keyword),
+  );
+  const pendingCandidateCount = candidates.filter((candidate) => {
+    const key = `${candidate.source}\u0000${candidate.keyword}`;
+    return !removedCandidateKeys.has(key) && !trackedCandidateKeywords.has(candidate.keyword);
+  }).length;
   const appliedAddKeys = new Set(
     curationApplied
       .filter((item) => item.kind === "add")
@@ -2104,6 +2492,21 @@ function KeywordsPage() {
           {keyword.language === "en" && (
             <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
               全局
+            </span>
+          )}
+          {keyword.source === "submission" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-500/15 text-[10px] font-sans font-medium text-sky-600 dark:text-sky-400 align-middle">
+              商店
+            </span>
+          )}
+          {keyword.source === "name" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-violet-100 dark:bg-violet-500/15 text-[10px] font-sans font-medium text-violet-600 dark:text-violet-400 align-middle">
+              名称
+            </span>
+          )}
+          {keyword.source === "subtitle" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-teal-100 dark:bg-teal-500/15 text-[10px] font-sans font-medium text-teal-600 dark:text-teal-400 align-middle">
+              副标题
             </span>
           )}
           {applied === "add" && (
@@ -2306,6 +2709,72 @@ function KeywordsPage() {
     setCurationOpen(false);
   };
 
+  const openSubmissionPanel = async () => {
+    setSubmissionPanelOpen((v) => !v);
+    if (!submissionPanelOpen) {
+      setCandidates([]);
+      try {
+        const ref = await (window as any).appilot.projects.getSubmissionReference(product.id, currentLang);
+        setSubmissionRef(ref);
+      } catch (e: any) {
+        setError(e.message || "提交内容加载失败。");
+      }
+    }
+  };
+
+  const extractCandidates = async () => {
+    setCandidatesLoading(true);
+    setSubmissionProgress(null);
+    setRemovedCandidateKeys(new Set());
+    setError("");
+    try {
+      const result = await (window as any).appilot.projects.extractSubmissionCandidates(product.id, currentLang);
+      setCandidates(result?.candidates || []);
+    } catch (e: any) {
+      setError(e.message || "候选词抽取失败。");
+    } finally {
+      setCandidatesLoading(false);
+      setSubmissionProgress(null);
+    }
+  };
+
+  const removeCandidate = (source: string, keyword: string) => {
+    setRemovedCandidateKeys((prev) => {
+      const next = new Set(prev);
+      next.add(`${source}\u0000${keyword}`);
+      return next;
+    });
+  };
+
+  const addAllCandidates = async () => {
+    const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
+    const current = latest?.storeProducts?.find((p) => p.id === product.id) || product;
+    const existingKeys = new Set(
+      (current.trackedKeywords || []).map((k) => `${k.language}\u0000${k.keyword}`),
+    );
+    const toAdd = candidates.filter((candidate) => {
+      const key = `${candidate.source}\u0000${candidate.keyword}`;
+      return !removedCandidateKeys.has(key) && !existingKeys.has(`${currentLang}\u0000${candidate.keyword}`);
+    });
+    if (toAdd.length === 0) return;
+    const next = [
+      ...(current.trackedKeywords || []),
+      ...toAdd.map((candidate) => ({
+        language: currentLang,
+        keyword: candidate.keyword,
+        rationale: candidate.rationale,
+        translation: "",
+        status: "active" as const,
+        source: candidate.source as "submission" | "name" | "subtitle",
+      })),
+    ];
+    await (window as any).appilot.projects.saveTrackedKeywords(product.id, next);
+    updateTrackedKeywords(product.id, next);
+    const added = new Set(toAdd.map((c) => `${c.source}\u0000${c.keyword}`));
+    setCandidates((prev) => prev.filter((c) => !added.has(`${c.source}\u0000${c.keyword}`)));
+    setRemovedCandidateKeys(new Set());
+  };
+
   const removeTracked = async (kw: string, language: string) => {
     await removeTrackedKeyword(product.id, language, kw);
   };
@@ -2339,28 +2808,141 @@ function KeywordsPage() {
                     商店提交关键词由发布工作台负责。
                   </p>
                 </div>
-                <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
-                  {loadingLangs.size > 0
-                    ? activeProgress && activeProgress.chars > 0
-                      ? (
-                          <span className="inline-flex items-center gap-1">
-                            {activeProgress.phase === "reasoning" ? "思考中… 已接收" : "生成中… 已接收"}
-                            <span
-                              className={cn(
-                                "font-mono",
-                                activeProgress.phase === "reasoning"
-                                  ? "text-amber-300"
-                                  : "text-emerald-300",
-                              )}
-                            >
-                              {receivedChars}
-                            </span>
-                            字
-                          </span>
-                        )
-                      : "思考中…"
-                    : "为所选语言生成 / 整理"}
-                </button>
+                <div className="flex items-start gap-2">
+                  <div className="relative">
+                    <button onClick={openSubmissionPanel} className={btnSecondary}>
+                      提交内容
+                    </button>
+                    {submissionPanelOpen && (
+                      <div className="absolute right-0 top-full mt-1.5 z-40 w-[26rem] max-h-[70vh] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                            提交内容（{languageLabel(currentLang)}）
+                          </h4>
+                          <button
+                            onClick={() => setSubmissionPanelOpen(false)}
+                            className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                          >
+                            关闭
+                          </button>
+                        </div>
+                        {submissionRef ? (
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 mb-0.5">名称</p>
+                              <p className="text-sm text-zinc-700 dark:text-zinc-300 break-words">
+                                {submissionRef.name}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 mb-0.5">副标题</p>
+                              <p className="text-sm text-zinc-700 dark:text-zinc-300 break-words">
+                                {submissionRef.subtitle || "—"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 mb-0.5">商店关键词</p>
+                              <p className="text-sm text-zinc-700 dark:text-zinc-300 break-words">
+                                {submissionRef.submissionKeywords || "—"}
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                            尚未生成提交内容，请先在发布工作台确认文案。
+                          </p>
+                        )}
+                        <div className="flex items-center justify-between gap-3 pt-1">
+                          <AIProgressButton
+                            onClick={extractCandidates}
+                            disabled={!submissionRef}
+                            loading={candidatesLoading}
+                            progress={submissionProgress}
+                            idleLabel="抽取候选词"
+                          />
+                        </div>
+                        {candidates.length > 0 && (
+                          <div className="space-y-2 border-t border-zinc-100 dark:border-zinc-800 pt-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                                候选词（可删除后一键加入）
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={addAllCandidates}
+                                  disabled={pendingCandidateCount === 0}
+                                  className={btnPrimary}
+                                >
+                                  一键加入（{pendingCandidateCount}）
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setCandidates([]);
+                                    setRemovedCandidateKeys(new Set());
+                                  }}
+                                  className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                                >
+                                  清空
+                                </button>
+                              </div>
+                            </div>
+                            {(["submission", "name", "subtitle"] as const).map((source) => {
+                              const group = candidates.filter(
+                                (c) =>
+                                  c.source === source &&
+                                  !removedCandidateKeys.has(`${source}\u0000${c.keyword}`),
+                              );
+                              if (group.length === 0) return null;
+                              return (
+                                <div key={source}>
+                                  <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 mb-1">
+                                    {source === "submission" ? "商店关键词" : source === "name" ? "名称" : "副标题"}
+                                  </p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {group.map((c) => {
+                                      const exists = trackedCandidateKeywords.has(c.keyword);
+                                      return (
+                                        <span
+                                          key={`${source}:${c.keyword}`}
+                                          className={cn(
+                                            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs",
+                                            exists
+                                              ? "border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-500"
+                                              : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300",
+                                          )}
+                                          title={c.rationale}
+                                        >
+                                          {c.keyword}
+                                          {exists ? (
+                                            <span className="text-emerald-500 dark:text-emerald-400">✓</span>
+                                          ) : (
+                                            <button
+                                              onClick={() => removeCandidate(source, c.keyword)}
+                                              className="text-zinc-400 hover:text-red-500"
+                                              title="删除"
+                                            >
+                                              ✕
+                                            </button>
+                                          )}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <AIProgressButton
+                    onClick={handleGenerateAll}
+                    loading={loadingLangs.size > 0}
+                    progress={activeProgress}
+                    idleLabel="为所选语言生成 / 整理"
+                  />
+                </div>
               </div>
               <p className="mt-3 text-[11px] font-medium tracking-wider text-zinc-400 dark:text-zinc-500">
                 语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）

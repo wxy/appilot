@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld("appilot", {
     remove: (id: string): Promise<boolean> => ipcRenderer.invoke("projects:remove", id),
     generateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language),
     curateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:curateKeywords", projectId, language),
+    getSubmissionReference: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:getSubmissionReference", projectId, language),
+    extractSubmissionCandidates: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:extractSubmissionCandidates", projectId, language),
     saveTrackedKeywords: (projectId: string, trackedKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveTrackedKeywords", projectId, trackedKeywords),
     saveSubmissionKeywords: (projectId: string, submissionKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveSubmissionKeywords", projectId, submissionKeywords),
     removeTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
@@ -50,6 +52,11 @@ contextBridge.exposeInMainWorld("appilot", {
       const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
       ipcRenderer.on("projects:keywordProgress", listener);
       return () => ipcRenderer.removeListener("projects:keywordProgress", listener);
+    },
+    onSubmissionProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+      ipcRenderer.on("projects:submissionProgress", listener);
+      return () => ipcRenderer.removeListener("projects:submissionProgress", listener);
     },
   },
 

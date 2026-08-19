@@ -214,6 +214,23 @@ function findStoreSubmissionDraft(
   ) || null;
 }
 
+function submissionReferenceFor(product: any, project: any, language: string) {
+  const drafts = getStoreSubmissionDrafts(project)
+    .filter((draft) => draft.productId === product.id)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const latest = drafts[0];
+  const loc = latest?.localizations?.find((item: any) => item.language === language)
+    || latest?.localizations?.[0];
+  const fallbackSubmission = (product.submissionKeywords || []).find(
+    (item: any) => item.language === language,
+  );
+  return {
+    name: loc?.name || product.trackName || project.name,
+    subtitle: loc?.subtitle || "",
+    submissionKeywords: loc?.keywords || fallbackSubmission?.text || "",
+  };
+}
+
 function isProductPostRelease(project: any, product: any): boolean {
   const hasPublishedDraft = getStoreSubmissionDrafts(project).some(
     (draft) =>
@@ -898,6 +915,58 @@ export function registerIpcHandlers() {
         });
       }
     });
+  });
+
+  ipcMain.handle("projects:getSubmissionReference", async (_event, productId: string, language: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    if (!language) throw new Error("Missing language");
+    return submissionReferenceFor(context.product, context.project, language);
+  });
+
+  ipcMain.handle("projects:extractSubmissionCandidates", async (_event, productId: string, language: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    if (!language) throw new Error("Missing language");
+    const { project, product } = context;
+    const { AIProvider } = await import("../engine/ai/ai-provider");
+    const provider = new AIProvider({
+      baseURL: s.get("aiProviderUrl"),
+      apiKey: decryptApiKey(s.get("aiApiKey")),
+      model: s.get("aiModel"),
+    });
+    const { extractSubmissionCandidates } = await import("../engine/ai/keyword-suggester");
+
+    const ref = submissionReferenceFor(product, project, language);
+    const submissionTerms = (ref.submissionKeywords || "")
+      .split(",")
+      .map((item: string) => item.trim())
+      .filter(Boolean)
+      .map((keyword: string) => ({
+        keyword,
+        source: "submission" as const,
+        rationale: "来自商店关键词",
+      }));
+    const aiCandidates = await extractSubmissionCandidates(provider, {
+      name: ref.name,
+      subtitle: ref.subtitle,
+      language,
+      uiLanguage: "zh-Hans",
+    }, (received) => {
+      if (!_event.sender.isDestroyed()) {
+        _event.sender.send("projects:submissionProgress", {
+          productId,
+          language,
+          chars: received.chars,
+          phase: received.phase,
+        });
+      }
+    });
+    return { candidates: [...submissionTerms, ...aiCandidates] };
   });
 
   ipcMain.handle("projects:saveTrackedKeywords", async (_event, productId: string, trackedKeywords: any[]) => {
