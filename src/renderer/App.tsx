@@ -1884,7 +1884,7 @@ function ChartTick({ x, y, payload }: any) {
   const date = new Date(payload.value);
   if (Number.isNaN(date.getTime())) return null;
   return (
-    <text x={x} y={y} dy={10} textAnchor="middle" fill="#71717a" fontSize={10}>
+    <text x={x} y={y} dy={8} textAnchor="middle" fill="#71717a" fontSize={10}>
       <tspan x={x} dy={0}>{date.toLocaleDateString()}</tspan>
       <tspan x={x} dy={12}>{date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</tspan>
     </text>
@@ -1974,22 +1974,38 @@ function KeywordsPage() {
   const chartSeriesMeta = Array.from(
     new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys(),
   ).map((storefront) => ({ storefront, label: storefrontDisplayName(storefront) }));
-  // Merge all storefronts onto a shared timeline keyed by exact checkedAt:
-  // a row contains one rank per storefront present at that time, so the
-  // tooltip can list several storefronts when they share the same timestamp.
+  // Merge all storefronts onto a shared timeline bucketed by hour: each row
+  // holds the latest rank per storefront within that hour, so lines connect
+  // and the tooltip can list several storefronts collected in the same hour.
   const chartData = (() => {
     const byTime = new Map<string, Record<string, any>>();
+    const hourKey = (iso: string) => {
+      const date = new Date(iso);
+      date.setMinutes(0, 0, 0);
+      return date.toISOString();
+    };
     for (const snapshot of chartSnapshots) {
       if (snapshot.rank == null) continue;
-      const row = byTime.get(snapshot.checkedAt) || { time: snapshot.checkedAt };
+      const time = hourKey(snapshot.checkedAt);
+      const row = byTime.get(time) || { time };
       row[snapshot.storefront] = snapshot.rank;
-      byTime.set(snapshot.checkedAt, row);
+      byTime.set(time, row);
     }
     return [...byTime.values()].sort(
       (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime(),
     );
   })();
   const CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#ef4444", "#06b6d4"];
+  const chartMaxRank = chartData.reduce((max, row) => {
+    for (const [key, value] of Object.entries(row)) {
+      if (key !== "time" && typeof value === "number" && value > max) max = value;
+    }
+    return max;
+  }, 1);
+  const chartStep = Math.max(1, Math.ceil(chartMaxRank / 5));
+  const chartTicks: number[] = [];
+  for (let rank = 1; rank <= chartMaxRank; rank += chartStep) chartTicks.push(rank);
+  if (chartTicks[chartTicks.length - 1] !== chartMaxRank) chartTicks.push(chartMaxRank);
 
   const formatColumnTime = (iso: string) =>
     new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -2341,11 +2357,11 @@ function KeywordsPage() {
                       <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
                         {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
                       </h4>
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">越低越好</span>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">位置越高越好</span>
                     </div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+                        <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 12, left: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
                           <XAxis
                             dataKey="time"
@@ -2353,12 +2369,13 @@ function KeywordsPage() {
                             tickLine={false}
                             axisLine={false}
                             minTickGap={28}
-                            height={40}
+                            height={48}
                           />
                           <YAxis
                             reversed
                             domain={[1, "dataMax"]}
                             allowDecimals={false}
+                            ticks={chartTicks}
                             tick={{ fontSize: 11 }}
                             tickLine={false}
                             axisLine={false}
@@ -2374,6 +2391,7 @@ function KeywordsPage() {
                               type="monotone"
                               stroke={CHART_COLORS[index % CHART_COLORS.length]}
                               strokeWidth={2}
+                              connectNulls
                               dot={{ r: 3 }}
                               activeDot={{ r: 5 }}
                             />
