@@ -158,7 +158,7 @@ export function parseKeywordCuration(raw: string, fallbackLanguage = "en"): Keyw
           keyword: String(item?.keyword || "").trim(),
           reason: String(item?.reason || "").trim(),
         }))
-        .filter((item) => item.keyword)
+        .filter((item: { keyword: string; reason: string }) => item.keyword)
         .slice(0, 20)
     : [];
   const adds = Array.isArray(data.adds)

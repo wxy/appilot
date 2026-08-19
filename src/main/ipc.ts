@@ -829,6 +829,59 @@ export function registerIpcHandlers() {
     return result;
   });
 
+  ipcMain.handle("projects:curateKeywords", async (_event, productId: string, language: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    if (!language) throw new Error("Missing language");
+    const { project, product } = context;
+
+    const { AIProvider } = await import("../engine/ai/ai-provider");
+    const provider = new AIProvider({
+      baseURL: s.get("aiProviderUrl"),
+      apiKey: decryptApiKey(s.get("aiApiKey")),
+      model: s.get("aiModel"),
+    });
+    const { curateKeywords } = await import("../engine/ai/keyword-suggester");
+    const { readRepoDescription } = await import("../engine/app-store-discovery");
+
+    const drafts = getStoreSubmissionDrafts(project)
+      .filter((draft) => draft.productId === productId)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    const latest = drafts[0];
+    const loc = latest?.localizations?.find((item: any) => item.language === language)
+      || latest?.localizations?.[0];
+    const submission = (product.submissionKeywords || []).find((item: any) => item.language === language);
+    const submissionKeywords = (submission?.text || "")
+      .split(",")
+      .map((item: string) => item.trim())
+      .filter(Boolean);
+    const existingKeywords = (product.trackedKeywords || [])
+      .filter((item: any) => item.language === language)
+      .map((item: any) => ({
+        keyword: item.keyword,
+        language: item.language,
+        bestRank: item.bestRank ?? null,
+        lastSeenAt: item.lastSeenAt ?? null,
+        status: item.status || "active",
+      }));
+    const removedKeywords = (product.removedKeywords || [])
+      .filter((item: any) => item.language === language)
+      .map((item: any) => item.keyword);
+
+    return curateKeywords(provider, {
+      name: product.trackName || project.name,
+      subtitle: loc?.subtitle || "",
+      description: readRepoDescription(project.localPath),
+      language,
+      uiLanguage: "zh-Hans",
+      existingKeywords,
+      submissionKeywords,
+      removedKeywords,
+    });
+  });
+
   ipcMain.handle("projects:saveTrackedKeywords", async (_event, productId: string, trackedKeywords: any[]) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
