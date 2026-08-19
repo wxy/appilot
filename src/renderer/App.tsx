@@ -1892,7 +1892,7 @@ function ChartTick({ x, y, payload }: any) {
 }
 
 function KeywordsPage() {
-  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords } = useProject();
+  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, resumePausedKeyword, clearRemovedKeywords } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [litLangs, setLitLangs] = useState<string[]>(() => {
@@ -1951,10 +1951,12 @@ function KeywordsPage() {
   const currentLang = activeViewLang;
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (product.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
+  const trackedActive = tracked.filter((k) => k.status !== "paused");
+  const pausedForCurrent = tracked.filter((k) => k.status === "paused");
   const removedForCurrent = (product.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
   const storefronts = storefrontsForLanguage(currentLang);
   const rankSnapshots = product.rankSnapshots || [];
-  const matrixRows = matrixFilterKeywords(tracked, currentLang);
+  const matrixRows = matrixFilterKeywords(trackedActive, currentLang);
   const matrixColumns = storefronts.map((storefront) => ({
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
@@ -1962,7 +1964,7 @@ function KeywordsPage() {
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
-    : (ranked[0]?.row.keyword || tracked[0]?.keyword || "");
+    : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
   const chartSnapshots = rankSnapshots
     .filter(
       (snapshot) =>
@@ -2304,7 +2306,7 @@ function KeywordsPage() {
                   </>
                 )}
 
-                {removedForCurrent.length > 0 && (
+                {removedForCurrent.length + pausedForCurrent.length > 0 && (
                   <div className="mt-6 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 overflow-hidden">
                     <div className="flex items-center justify-between gap-3 px-4 py-3">
                       <button
@@ -2320,17 +2322,42 @@ function KeywordsPage() {
                         >
                           ▸
                         </span>
-                        已删除 / 已暂停关键词（{removedForCurrent.length}）
+                        已删除 / 已暂停关键词（{removedForCurrent.length + pausedForCurrent.length}）
                       </button>
-                      <button
-                        onClick={clearRemoved}
-                        className="text-xs text-zinc-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400"
-                      >
-                        清空
-                      </button>
+                      {removedForCurrent.length > 0 && (
+                        <button
+                          onClick={clearRemoved}
+                          className="text-xs text-zinc-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400"
+                        >
+                          清空
+                        </button>
+                      )}
                     </div>
                     {showRemoved && (
                       <div className="px-4 pb-4 flex flex-wrap gap-2">
+                        {pausedForCurrent.map((item) => (
+                          <span
+                            key={`paused:${item.language}:${item.keyword}`}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-200/70 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/10 text-xs text-zinc-600 dark:text-zinc-300"
+                            title={item.pausedReason || "已暂停"}
+                          >
+                            {item.keyword}
+                            <button
+                              onClick={() => resumePausedKeyword(product.id, item.language, item.keyword)}
+                              className="text-amber-600 dark:text-amber-400 hover:underline"
+                              title="恢复采集"
+                            >
+                              恢复
+                            </button>
+                            <button
+                              onClick={() => removeTracked(item.keyword, item.language)}
+                              className="text-zinc-400 hover:text-red-500"
+                              title="删除"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))}
                         {removedForCurrent.map((item) => (
                           <span
                             key={`${item.language}:${item.keyword}`}

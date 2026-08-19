@@ -915,6 +915,30 @@ export function registerIpcHandlers() {
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
+  ipcMain.handle("projects:resumePausedKeyword", async (_event, productId: string, language: string, keyword: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const nextProjects = updateProductInProjects(projects, productId, (product) => {
+      const paused = (product.trackedKeywords || []).find(
+        (item: any) => item.language === language && item.keyword === keyword,
+      );
+      if (!paused || paused.status !== "paused") throw new Error("Keyword is not paused");
+      return {
+        ...product,
+        trackedKeywords: (product.trackedKeywords || []).map((item: any) =>
+          item.language === language && item.keyword === keyword
+            ? { ...item, status: "active", pausedAt: null, pausedReason: null }
+            : item,
+        ),
+      };
+    });
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+  });
+
   ipcMain.handle("projects:clearRemovedKeywords", async (_event, productId: string, languages: string[]) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];

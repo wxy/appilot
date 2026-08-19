@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:removeTrackedKeyword", projectId, language, keyword),
     restoreTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
       ipcRenderer.invoke("projects:restoreTrackedKeyword", projectId, language, keyword),
+    resumePausedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
+      ipcRenderer.invoke("projects:resumePausedKeyword", projectId, language, keyword),
     clearRemovedKeywords: (projectId: string, languages: string[]): Promise<any> =>
       ipcRenderer.invoke("projects:clearRemovedKeywords", projectId, languages),
     collectRanks: (projectId: string, language: string, storefront: string): Promise<any> =>
