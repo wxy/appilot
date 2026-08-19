@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
 import { useProject, type RankSnapshot } from "./stores/project";
 import { cn } from "./lib/utils";
+import { trackingLanguageOptions } from "./lib/matrix";
 import { defaultStorefrontForLanguage, storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
 
 /* ── Layout ── */
@@ -1816,7 +1817,12 @@ function KeywordsPage() {
   const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords, collectRanks } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
-  const [activeLang, setActiveLang] = useState<string>("");
+  const [litLangs, setLitLangs] = useState<string[]>(() => {
+    const supported = (product?.supportedLanguages || []).map((l) => l.code);
+    const initial = supported.includes(UI_SOURCE_LANGUAGE) ? UI_SOURCE_LANGUAGE : supported[0];
+    return initial ? [initial] : [];
+  });
+  const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [rankLoading, setRankLoading] = useState(false);
@@ -1826,9 +1832,12 @@ function KeywordsPage() {
   const [rankProgress, setRankProgress] = useState<{ current: number; total: number; keyword: string; storefront: string } | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
 
-  const initialLanguage = (product?.supportedLanguages || []).some((l) => l.code === activeLang)
-    ? activeLang
-    : ((product?.supportedLanguages || [])[0]?.code || "");
+  const languages = product?.supportedLanguages || [];
+  const languageOptions = trackingLanguageOptions(languages);
+  const activeViewLang = litLangs.includes(viewLang) ? viewLang : litLangs[0] || "";
+  const optionLabel = (code: string) =>
+    languageOptions.find((option) => option.code === code)?.label || languageLabel(code);
+  const initialLanguage = activeViewLang;
   const languageDefaultStorefront = defaultStorefrontForLanguage(initialLanguage);
 
   useEffect(() => {
@@ -1863,12 +1872,24 @@ function KeywordsPage() {
     };
   }, []);
 
+  const toggleLitLang = (code: string) => {
+    setLitLangs((prev) => {
+      const next = prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code];
+      return next.length > 0 ? next : prev;
+    });
+  };
+
+  useEffect(() => {
+    if (!litLangs.includes(viewLang)) {
+      setViewLang(litLangs[0] || "");
+    }
+  }, [litLangs, viewLang]);
+
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
   }
 
-  const languages = product.supportedLanguages || [];
-  const currentLang = languages.some((l) => l.code === activeLang) ? activeLang : (languages[0]?.code || "");
+  const currentLang = activeViewLang;
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (product.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
   const removedForCurrent = (product.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
@@ -1949,7 +1970,7 @@ function KeywordsPage() {
 
   const handleGenerateAll = async () => {
     setError("");
-    const langs = languages.map((l) => l.code);
+    const langs = litLangs;
     setLoadingLangs(new Set(langs));
     const results = await Promise.all(langs.map((lang) => generateOne(lang)));
     await applyGenerations(results);
@@ -2051,7 +2072,7 @@ function KeywordsPage() {
           </p>
         </div>
         <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
-          {loadingLangs.size > 0 ? "生成中..." : "为所有语言生成"}
+          {loadingLangs.size > 0 ? "生成中..." : "为所选语言生成"}
         </button>
       </div>
 
@@ -2065,21 +2086,52 @@ function KeywordsPage() {
         <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
       ) : (
         <>
-          <div className="flex flex-wrap gap-2 mb-6">
-            {languages.map((l) => (
-              <button
-                key={l.code}
-                onClick={() => setActiveLang(l.code)}
-                className={cn(
-                  "px-3 py-1.5 text-sm rounded-lg border transition-colors",
-                  l.code === currentLang
-                    ? "bg-amber-50 dark:bg-amber-500/10 border-amber-500/50 text-amber-700 dark:text-amber-400 font-medium"
-                    : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                )}
-              >
-                {l.name}
-              </button>
-            ))}
+          <div className="space-y-3 mb-6">
+            <div>
+              <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
+                点亮语言（生成）
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {languageOptions.map((option) => {
+                  const lit = litLangs.includes(option.code);
+                  return (
+                    <button
+                      key={option.code}
+                      onClick={() => toggleLitLang(option.code)}
+                      className={cn(
+                        "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+                        lit
+                          ? "bg-amber-50 dark:bg-amber-500/10 border-amber-500/50 text-amber-700 dark:text-amber-400 font-medium"
+                          : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
+                查看
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {litLangs.map((code) => (
+                  <button
+                    key={code}
+                    onClick={() => setViewLang(code)}
+                    className={cn(
+                      "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+                      code === currentLang
+                        ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                        : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                    )}
+                  >
+                    {optionLabel(code)}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="space-y-6">
