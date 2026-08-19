@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
@@ -471,13 +471,99 @@ function overviewRankRows(
   return rows;
 }
 
+const OVERVIEW_CHART_DAYS = 14;
+const OVERVIEW_CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#ef4444"];
+const STORE_STATUS_META: Record<
+  string,
+  { label: string; tone: "muted" | "amber" | "emerald" | "red" | "blue" }
+> = {
+  prepared: { label: "未提交", tone: "muted" },
+  copied: { label: "已复制", tone: "blue" },
+  submitted: { label: "已提交", tone: "blue" },
+  in_review: { label: "审核中", tone: "amber" },
+  rejected: { label: "被驳回", tone: "red" },
+  released: { label: "已发布", tone: "emerald" },
+};
+
+function StatusChip({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "muted" | "amber" | "emerald" | "red" | "blue";
+}) {
+  const tones: Record<string, string> = {
+    muted: "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+    amber: "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    emerald: "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    red: "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400",
+    blue: "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  };
+  return (
+    <span
+      className={cn(
+        "shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium",
+        tones[tone],
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function localDayKey(iso: string): string {
+  const date = new Date(iso);
+  return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/** Best rank per day (last 14 days) for the top ranked keywords, as chart series. */
+function overviewTrendData(
+  rows: OverviewRankRow[],
+  snapshots: RankSnapshot[],
+  days = OVERVIEW_CHART_DAYS,
+): { series: { key: string; label: string }[]; data: Record<string, string | number>[] } {
+  const top = rows.slice(0, OVERVIEW_CHART_COLORS.length);
+  const series = top.map((row) => ({
+    key: `${row.language}\u0000${row.keyword}`,
+    label: row.keyword,
+  }));
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const byDay = new Map<string, Record<string, string | number>>();
+  for (const row of top) {
+    const key = `${row.language}\u0000${row.keyword}`;
+    const bestPerDay = new Map<string, number>();
+    for (const snapshot of snapshots) {
+      if (
+        snapshot.keyword !== row.keyword ||
+        snapshot.language !== row.language ||
+        snapshot.rank == null ||
+        new Date(snapshot.checkedAt).getTime() < cutoff
+      ) {
+        continue;
+      }
+      const day = localDayKey(snapshot.checkedAt);
+      const current = bestPerDay.get(day);
+      if (current === undefined || snapshot.rank < current) bestPerDay.set(day, snapshot.rank);
+    }
+    for (const [day, rank] of bestPerDay) {
+      const point = byDay.get(day) || { day };
+      point[key] = rank;
+      byDay.set(day, point);
+    }
+  }
+  const data = [...byDay.values()].sort((a, b) => String(a.day).localeCompare(String(b.day)));
+  return { series, data };
+}
+
 function MetricBlock({
+  to,
   label,
   value,
   sub,
   warn,
   highlight,
 }: {
+  to: string;
   label: string;
   value: string;
   sub?: string;
@@ -485,13 +571,14 @@ function MetricBlock({
   highlight?: boolean;
 }) {
   return (
-    <div
+    <Link
+      to={to}
+      title={`查看${label}`}
       className={cn(
-        "rounded-2xl border px-5 py-4 bg-white dark:bg-zinc-900 shadow-sm transition-opacity",
+        "block rounded-2xl border px-4 py-3 bg-white dark:bg-zinc-900 shadow-sm transition-colors hover:border-amber-500/50",
         warn
           ? "border-amber-300/70 dark:border-amber-500/30"
           : "border-zinc-200 dark:border-zinc-800",
-        warn && "opacity-90",
       )}
     >
       <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
@@ -499,7 +586,7 @@ function MetricBlock({
       </p>
       <p
         className={cn(
-          "mt-1.5 text-2xl font-mono font-semibold leading-none",
+          "mt-1 text-xl font-mono font-semibold leading-none",
           highlight || warn
             ? "text-amber-600 dark:text-amber-400"
             : "text-zinc-900 dark:text-zinc-100",
@@ -507,51 +594,55 @@ function MetricBlock({
       >
         {value}
       </p>
-      {sub && <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500 truncate">{sub}</p>}
-    </div>
+      {sub && <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500 truncate">{sub}</p>}
+    </Link>
   );
 }
 
 function OverviewPage() {
-  const { projects, currentProjectId, currentProductId } = useProject();
+  const { projects, currentProjectId, currentProductId, selectProduct } = useProject();
+  const navigate = useNavigate();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
-  const [releaseDraft, setReleaseDraft] = useState<{
-    name: string | null;
-    tag: string;
-    publishedAt: string;
-    body: string;
+  const [releaseOverview, setReleaseOverview] = useState<{
+    draft: { name: string | null; tag: string; publishedAt: string } | null;
+    submission: any | null;
   } | null>(null);
-  const [schedulerInfo, setSchedulerInfo] = useState<{
-    total: number;
-    due: number;
-    failed: number;
-    nextDueAt: string | null;
-  } | null>(null);
+  const [chartDays, setChartDays] = useState(OVERVIEW_CHART_DAYS);
 
   useEffect(() => {
     if (!project) return;
     let cancelled = false;
-    setReleaseDraft(null);
-    setSchedulerInfo(null);
+    setReleaseOverview(null);
     (window as any).appilot?.release?.list(project.id)
       .then((result: any) => {
-        if (!cancelled) setReleaseDraft(result?.latestDraft || null);
+        if (cancelled) return;
+        const latest = result?.latestDraft || null;
+        const release = (result?.releases || [])[0] || null;
+        const submission =
+          (release?.submissionDrafts || []).find(
+            (item: any) => item?.productId === product?.id,
+          ) || null;
+        setReleaseOverview(
+          latest
+            ? {
+                draft: {
+                  name: latest.name,
+                  tag: latest.tag,
+                  publishedAt: latest.publishedAt,
+                },
+                submission,
+              }
+            : null,
+        );
       })
       .catch(() => {
-        if (!cancelled) setReleaseDraft(null);
-      });
-    (window as any).appilot?.scheduler?.status()
-      .then((status: any) => {
-        if (!cancelled) setSchedulerInfo(status || null);
-      })
-      .catch(() => {
-        if (!cancelled) setSchedulerInfo(null);
+        if (!cancelled) setReleaseOverview(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [project?.id]);
+  }, [project?.id, product?.id]);
 
   if (!project || !product) {
     return (
@@ -564,18 +655,13 @@ function OverviewPage() {
 
   const languages = product.supportedLanguages || [];
   const storeLinks = product.storeLinks || [];
-  const storeGroups = [
-    { label: "macOS", links: storeLinks.filter((l) => l.platform === "macos") },
-    { label: "iOS", links: storeLinks.filter((l) => l.platform === "ios") },
-    { label: "其他", links: storeLinks.filter((l) => l.platform === "unknown") },
-  ].filter((g) => g.links.length > 0);
-
   const trackedKeywords = product.trackedKeywords || [];
   const trackedActive = trackedKeywords.filter((k) => k.status !== "paused");
   const pausedCount = trackedKeywords.length - trackedActive.length;
   const rankSnapshots = product.rankSnapshots || [];
   const rankRows = overviewRankRows(trackedActive, rankSnapshots);
   const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
+  const bestRankNow = rankRows[0]?.bestRank ?? null;
   const newestSnapshot = rankSnapshots.reduce<RankSnapshot | null>(
     (latest, snapshot) =>
       !latest || new Date(snapshot.checkedAt).getTime() > new Date(latest.checkedAt).getTime()
@@ -585,111 +671,266 @@ function OverviewPage() {
   );
   const newestCheckedAt = newestSnapshot?.checkedAt || null;
   const dataStale = newestCheckedAt ? Date.now() - new Date(newestCheckedAt).getTime() > STALE_MS : false;
-  const bestRankNow = rankRows[0]?.bestRank ?? null;
-  const releasePreview = releaseDraft?.body
-    ? releaseDraft.body
-        .split("\n")
-        .map((line) => line.trim())
-        .find((line) => line && !line.startsWith("#"))?.slice(0, 90) || null
+  const { series: chartSeries, data: chartData } = overviewTrendData(rankRows, rankSnapshots, chartDays);
+  const repoGithubUrl = project.repo?.githubUrl || null;
+  const releaseDraft = releaseOverview?.draft ?? null;
+  const submissionDraft = releaseOverview?.submission ?? null;
+  const submissionLanguages = submissionDraft ? localizationList(submissionDraft) : [];
+  const generatedLanguageCount = submissionLanguages.filter((loc: any) =>
+    [loc.name, loc.subtitle, loc.promotionalText, loc.description, loc.whatsNew, loc.keywords]
+      .some((value) => value && String(value).trim()),
+  ).length;
+  const languageTotal = languages.length || submissionLanguages.length;
+  const confirmChip = submissionDraft
+    ? submissionDraft.batchConfirmedAt
+      ? ({ label: "整批已确定", tone: "emerald" } as const)
+      : submissionDraft.masterConfirmedAt
+        ? ({ label: "母本已确定", tone: "amber" } as const)
+        : null
+    : null;
+  const storeChip = submissionDraft?.storeStatus
+    ? STORE_STATUS_META[submissionDraft.storeStatus] || null
     : null;
 
   return (
-    <div className="p-10 max-w-6xl mx-auto">
+    <div className="p-6 max-w-6xl mx-auto">
       {/* App identity */}
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center gap-3 mb-5">
         {product.artworkUrl ? (
           <img
             src={product.artworkUrl}
             alt=""
-            className="w-16 h-16 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm object-cover"
+            className="w-12 h-12 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm object-cover"
           />
         ) : (
-          <div className="w-16 h-16 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
-            <span className="text-amber-500 text-xl">⌖</span>
+          <div className="w-12 h-12 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
+            <span className="text-amber-500 text-lg">⌖</span>
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2.5 mb-1">
-            <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-              {product.trackName || project.name}
-            </h2>
-            <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
-              {platformLabel(product.platform)}
-            </span>
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+            {product.trackName || project.name}
+          </h2>
+          <div className="flex items-center gap-1 mt-0.5 text-xs font-mono text-zinc-400 dark:text-zinc-500 min-w-0">
+            <button
+              onClick={() => (window as any).appilot?.revealInFolder?.(project.localPath)}
+              className="group flex items-center gap-1 max-w-full min-w-0 truncate hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+              title="在访达中显示"
+            >
+              <span className="truncate">{project.localPath}</span>
+              <span className="shrink-0 opacity-60 group-hover:opacity-100">⌗</span>
+            </button>
+            {repoGithubUrl && (
+              <>
+                <span className="shrink-0">(</span>
+                <button
+                  onClick={() => {
+                    if (repoGithubUrl) (window as any).appilot?.openExternal(repoGithubUrl);
+                  }}
+                  className="shrink-0 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                  title="打开 GitHub 仓库"
+                >
+                  GitHub
+                </button>
+                <span className="shrink-0">)</span>
+              </>
+            )}
           </div>
-          <p className="text-[13px] font-mono text-zinc-500 dark:text-zinc-400 truncate">
-            {project.localPath}
-          </p>
+        </div>
+        <div className="flex flex-col items-end gap-1.5 shrink-0 min-w-0">
+          <div className="flex items-center gap-1.5">
+            {(project.storeProducts || []).map((item) => {
+              const active = item.id === product.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => selectProduct(item.id)}
+                  title={active ? "当前查看的平台" : `切换到 ${platformLabel(item.platform)}`}
+                  className={cn(
+                    "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors",
+                    active
+                      ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/30"
+                      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700",
+                  )}
+                >
+                  {platformLabel(item.platform)}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+            {languages.length > 0 && (
+              <span
+                className="flex items-center gap-1 min-w-0"
+                title={languages.map((l) => l.name).join(" · ")}
+              >
+                {languages.slice(0, 3).map((l) => (
+                  <span
+                    key={l.code}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-600 dark:text-zinc-300"
+                  >
+                    {l.name}
+                  </span>
+                ))}
+                {languages.length > 3 && <span className="shrink-0">+{languages.length - 3}</span>}
+              </span>
+            )}
+            {storeLinks[0] && (
+              <>
+                <span className="w-px h-3 bg-zinc-200 dark:bg-zinc-800" />
+                <button
+                  onClick={() => (window as any).appilot?.openExternal(storeLinks[0].url)}
+                  className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline shrink-0"
+                  title={storeLinks[0].name}
+                >
+                  App Store ↗
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Metrics */}
-      <div className="mb-6">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <MetricBlock
-            label="跟踪关键词"
-            value={String(trackedActive.length)}
-            sub={pausedCount > 0 ? `暂停 ${pausedCount}` : "跟踪中"}
-          />
-          <MetricBlock
-            label="当前入榜"
-            value={String(rankRows.length)}
-            sub={bestRankNow !== null ? `最佳 #${bestRankNow}` : "暂无上榜"}
-          />
-          <MetricBlock label="前 10" value={String(top10Count)} highlight={top10Count > 0} />
-          <MetricBlock
-            label="最近采集"
-            value={newestCheckedAt ? formatHumanTime(newestCheckedAt) : "—"}
-            warn={dataStale}
-            sub={dataStale ? "数据已过期" : newestCheckedAt ? "36h 内" : "尚未采集"}
-          />
-        </div>
-        {schedulerInfo && (
-          <p className="mt-2 text-right text-[11px] text-zinc-400 dark:text-zinc-500">
-            调度：任务 {schedulerInfo.total}
-            {schedulerInfo.due > 0 && <> · 待执行 {schedulerInfo.due}</>}
-            {schedulerInfo.failed > 0 && (
-              <span className="text-red-500 dark:text-red-400 font-medium"> · 失败 {schedulerInfo.failed}</span>
-            )}
-            {schedulerInfo.nextDueAt && <> · 下次 {formatHumanTime(schedulerInfo.nextDueAt)}</>}
-          </p>
-        )}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <MetricBlock
+          to="/keywords"
+          label="跟踪关键词"
+          value={String(trackedActive.length)}
+          sub={pausedCount > 0 ? `暂停 ${pausedCount}` : "跟踪中"}
+        />
+        <MetricBlock
+          to="/keywords"
+          label="当前入榜"
+          value={String(rankRows.length)}
+          sub={bestRankNow !== null ? `最佳 #${bestRankNow}` : "暂无上榜"}
+        />
+        <MetricBlock to="/keywords" label="前 10" value={String(top10Count)} highlight={top10Count > 0} />
+        <MetricBlock
+          to="/keywords"
+          label="最近采集"
+          value={newestCheckedAt ? formatHumanTime(newestCheckedAt) : "—"}
+          warn={dataStale}
+          sub={dataStale ? "数据已过期" : "排名页详情"}
+        />
       </div>
 
-      {/* Rank overview */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-6">
-        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名概览</h3>
-          <Link to="/keywords" className="text-xs text-amber-600 dark:text-amber-400 hover:underline shrink-0">
-            查看排名 →
-          </Link>
+      {/* Rank trend chart + top keywords */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <div className="lg:col-span-2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名趋势</h3>
+            <div className="flex items-center gap-2.5 shrink-0">
+              <div className="flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+                {[7, 14, 30].map((days) => (
+                  <button
+                    key={days}
+                    onClick={() => setChartDays(days)}
+                    className={cn(
+                      "px-2 py-0.5 text-[11px] font-medium transition-colors",
+                      chartDays === days
+                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        : "bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800",
+                    )}
+                  >
+                    {days}天
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                {newestCheckedAt ? (
+                  <span className={cn(dataStale && "text-amber-600 dark:text-amber-400")}>
+                    数据截至 {formatHumanTime(newestCheckedAt)}
+                  </span>
+                ) : (
+                  "暂无数据"
+                )}
+              </span>
+            </div>
+          </div>
+          {chartSeries.length === 0 || chartData.length === 0 ? (
+            <div className="h-56 flex flex-col items-center justify-center gap-3">
+              <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                {trackedActive.length === 0
+                  ? "还没有跟踪关键词"
+                  : `近 ${chartDays} 天暂无排名数据`}
+              </p>
+              <Link to="/keywords" className={btnSmSecondary}>
+                {trackedActive.length === 0 ? "去生成关键词" : "去排名页"}
+              </Link>
+            </div>
+          ) : (
+            <div className="p-3">
+              <ResponsiveContainer width="100%" height={224}>
+                <LineChart data={chartData} margin={{ top: 8, right: 16, left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
+                  <XAxis
+                    dataKey="day"
+                    tick={{ fontSize: 10, fill: "#a1a1aa" }}
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={28}
+                  />
+                  <YAxis
+                    reversed
+                    domain={[1, "dataMax"]}
+                    tick={{ fontSize: 10, fill: "#a1a1aa" }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={44}
+                  />
+                  <Tooltip
+                    contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e4e4e7" }}
+                    formatter={(value: any, name: any) => [`#${value}`, String(name)]}
+                    labelFormatter={(label) => `${label} 排名`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => navigate("/keywords")} />
+                  {chartSeries.map((entry, index) => (
+                    <Line
+                      key={entry.key}
+                      type="monotone"
+                      dataKey={entry.key}
+                      name={entry.label}
+                      stroke={OVERVIEW_CHART_COLORS[index % OVERVIEW_CHART_COLORS.length]}
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 3.5 }}
+                      connectNulls={false}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+              <p className="text-center text-[10px] text-zinc-300 dark:text-zinc-600">
+                近 {chartDays} 天 · 点击图例进入排名页
+              </p>
+            </div>
+          )}
         </div>
-        {rankRows.length === 0 ? (
-          <div className="p-8 text-center">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              {trackedActive.length === 0
-                ? "还没有跟踪关键词"
-                : `已有 ${trackedActive.length} 个跟踪关键词，等待采集排名`}
-            </p>
-            <Link to="/keywords" className={cn(btnSecondary, "mt-4")}>
-              {trackedActive.length === 0 ? "去排名页生成关键词" : "去排名页查看"}
+
+        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Top 关键词</h3>
+            <Link to="/keywords" className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline">
+              查看全部 →
             </Link>
           </div>
-        ) : (
-          <ul>
-            {rankRows.slice(0, 8).map((row, index) => (
-              <li
-                key={`${row.language}:${row.keyword}`}
-                className={cn(
-                  "flex items-center gap-3 px-6 py-2.5 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
-                  row.stale && "opacity-55",
-                )}
-              >
-                <span className="w-5 shrink-0 text-xs font-mono text-zinc-400 dark:text-zinc-500">
-                  {index + 1}
-                </span>
-                <div className="min-w-0 flex-1 flex items-center gap-2">
-                  <span className="font-mono text-sm text-zinc-800 dark:text-zinc-200 truncate">
+          {rankRows.length === 0 ? (
+            <div className="p-8 text-center text-sm text-zinc-400 dark:text-zinc-500">暂无排名数据</div>
+          ) : (
+            <ul>
+              {rankRows.slice(0, 5).map((row, index) => (
+                <Link
+                  key={`${row.language}:${row.keyword}`}
+                  to="/keywords"
+                  className={cn(
+                    "flex items-center gap-2.5 px-4 py-2 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+                    row.stale && "opacity-55",
+                  )}
+                >
+                  <span className="w-4 shrink-0 text-xs font-mono text-zinc-400 dark:text-zinc-500">
+                    {index + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 font-mono text-[13px] text-zinc-800 dark:text-zinc-200 truncate">
                     {row.keyword}
                   </span>
                   {row.language === "en" ? (
@@ -697,155 +938,87 @@ function OverviewPage() {
                       全局
                     </span>
                   ) : (
-                    <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">
+                    <span className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500">
                       {languageLabel(row.language)}
                     </span>
                   )}
-                </div>
-                <span
-                  className={cn(
-                    "w-10 shrink-0 text-right font-mono text-sm font-semibold",
-                    row.bestRank <= 10
-                      ? "text-amber-600 dark:text-amber-400"
-                      : "text-zinc-800 dark:text-zinc-200",
-                  )}
-                >
-                  #{row.bestRank}
-                </span>
-                <span className="w-16 shrink-0 text-right text-xs">
-                  {row.trend === "up" && (
-                    <span className="text-emerald-600 dark:text-emerald-400">▲{row.delta}</span>
-                  )}
-                  {row.trend === "down" && (
-                    <span className="text-red-500 dark:text-red-400">▼{Math.abs(row.delta ?? 0)}</span>
-                  )}
-                  {row.trend === "new" && <span className="text-amber-600 dark:text-amber-400">进榜</span>}
-                  {row.trend === "same" && <span className="text-zinc-400">—</span>}
-                </span>
-                <span
-                  className="w-24 shrink-0 text-right text-xs text-zinc-400 dark:text-zinc-500 truncate"
-                  title={row.checkedAt ? new Date(row.checkedAt).toLocaleString() : ""}
-                >
-                  {storefrontDisplayName(row.storefront)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+                  <span
+                    className={cn(
+                      "shrink-0 w-8 text-right font-mono text-[13px] font-semibold",
+                      row.bestRank <= 10
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-zinc-800 dark:text-zinc-200",
+                    )}
+                  >
+                    #{row.bestRank}
+                  </span>
+                  <span className="shrink-0 w-11 text-right text-[11px]">
+                    {row.trend === "up" && (
+                      <span className="text-emerald-600 dark:text-emerald-400">▲{row.delta}</span>
+                    )}
+                    {row.trend === "down" && (
+                      <span className="text-red-500 dark:text-red-400">▼{Math.abs(row.delta ?? 0)}</span>
+                    )}
+                    {row.trend === "new" && <span className="text-amber-600 dark:text-amber-400">进榜</span>}
+                    {row.trend === "same" && <span className="text-zinc-400">—</span>}
+                  </span>
+                </Link>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       {/* Release status */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-6">
-        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布状态</h3>
-        </div>
-        <div className="p-6">
-          {releaseDraft ? (
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 shrink-0 rounded-xl bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center text-lg text-amber-500">
-                📦
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm px-5 py-3.5 flex items-center gap-3 mb-4">
+        <span className="shrink-0 text-lg text-amber-500">📦</span>
+        {releaseDraft ? (
+          <>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <Link
+                  to="/release"
+                  className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                >
                   {releaseDraft.name || releaseDraft.tag}
-                </p>
-                <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
-                  {formatHumanTime(releaseDraft.publishedAt)} 更新 · RELEASE_DRAFT.md
-                </p>
-                {releasePreview && (
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 line-clamp-2">
-                    {releasePreview}
-                  </p>
+                </Link>
+                {submissionDraft && (
+                  <StatusChip
+                    label={
+                      generatedLanguageCount > 0
+                        ? `${generatedLanguageCount}/${languageTotal} 语言`
+                        : "未生成文案"
+                    }
+                    tone={
+                      languageTotal > 0 && generatedLanguageCount >= languageTotal
+                        ? "emerald"
+                        : "muted"
+                    }
+                  />
                 )}
+                {confirmChip && <StatusChip label={confirmChip.label} tone={confirmChip.tone} />}
+                {storeChip && <StatusChip label={storeChip.label} tone={storeChip.tone} />}
               </div>
-              <Link to="/release" className={cn(btnPrimary, "shrink-0")}>
-                打开发布工作台
-              </Link>
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                {formatHumanTime(releaseDraft.publishedAt)} 更新 · RELEASE_DRAFT.md
+              </p>
             </div>
-          ) : (
-            <div className="flex items-center justify-between gap-4 flex-wrap">
-              <p className="text-sm text-zinc-400 dark:text-zinc-500">暂无发布草稿（RELEASE_DRAFT.md）</p>
-              <Link to="/release" className={cn(btnSecondary, "shrink-0")}>
-                去发布页
-              </Link>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Project profile */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">项目档案</h3>
-        </div>
-        <div className="p-6">
-          <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
-            <Field label="产品类型" value={platformLabel(product.platform)} />
-            <Field label="商店名称" value={product.trackName || project.name} />
-            {product.bundleId ? <Field label="Bundle ID" value={product.bundleId} mono /> : null}
-            {product.trackId ? <Field label="Track ID" value={product.trackId} mono /> : null}
-          </div>
-          <div className="mt-5 pt-5 border-t border-zinc-100 dark:border-zinc-800">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500 mb-2">
-              支持语言（{languages.length}）
+            <Link to="/release" className={btnSmPrimary}>
+              打开发布工作台
+            </Link>
+          </>
+        ) : (
+          <>
+            <p className="flex-1 min-w-0 text-sm text-zinc-400 dark:text-zinc-500 truncate">
+              暂无发布草稿（RELEASE_DRAFT.md）
             </p>
-            {languages.length === 0 ? (
-              <p className="text-sm text-zinc-400 dark:text-zinc-500">未识别</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {languages.map((l) => (
-                  <span
-                    key={l.code}
-                    className="inline-flex items-center px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300"
-                  >
-                    {l.name}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          {storeLinks.length > 0 && (
-            <div className="mt-5 pt-5 border-t border-zinc-100 dark:border-zinc-800">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500 mb-2">
-                商店链接
-              </p>
-              {storeGroups.map((group) => (
-                <div key={group.label} className="mb-3 last:mb-0">
-                  <p className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                    {group.label}
-                  </p>
-                  <div className="space-y-1">
-                    {group.links.map((link) => (
-                      <button
-                        key={link.url}
-                        onClick={() => (window as any).appilot?.openExternal(link.url)}
-                        className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-sm text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
-                      >
-                        <span className="text-zinc-800 dark:text-zinc-200">{link.name} App Store</span>
-                        <span className="text-xs text-amber-600 dark:text-amber-400">打开 ↗</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              <p className="px-1 pt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-                链接按地区定向；页面语言会跟随你设备语言，在应用支持的语言内自动切换。
-              </p>
-            </div>
-          )}
-        </div>
+            <Link to="/release" className={btnSmSecondary}>
+              去发布页
+            </Link>
+          </>
+        )}
       </div>
-    </div>
-  );
-}
 
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mb-1">{label}</p>
-      <p className={cn("text-zinc-800 dark:text-zinc-200 truncate", mono && "font-mono")}>
-        {value}
-      </p>
     </div>
   );
 }
@@ -3429,6 +3602,8 @@ const inputClass = "w-full px-3.5 py-2.5 rounded-lg border border-zinc-200 dark:
 const inputLineClass = "w-full h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-900 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 dark:focus:border-amber-400 transition-shadow";
 const btnPrimary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed";
 const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
+const btnSmPrimary = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-all duration-150";
+const btnSmSecondary = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
 
 function SettingsPage() {
   const { theme, setTheme } = useTheme();

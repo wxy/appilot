@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("appilot", {
   platform: process.platform,
   getVersion: (): Promise<string> => ipcRenderer.invoke("app:getVersion"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+  revealInFolder: (localPath: string): Promise<boolean> =>
+    ipcRenderer.invoke("shell:revealInFolder", localPath),
 
   menu: {
     onCommand: (callback: (command: any) => void): (() => void) => {

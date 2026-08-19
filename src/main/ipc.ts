@@ -625,6 +625,13 @@ export function registerIpcHandlers() {
     return shell.openExternal(url);
   });
 
+  ipcMain.handle("shell:revealInFolder", (_event, localPath: string) => {
+    const normalized = normalizeLocalPath(localPath);
+    if (!normalized || !fs.existsSync(normalized)) return false;
+    shell.showItemInFolder(normalized);
+    return true;
+  });
+
   // ── Project selector + local repo folder picker (Phase A) ──
   ipcMain.handle("dialog:selectFolder", async () => {
     const result = await dialog.showOpenDialog({
@@ -648,6 +655,25 @@ export function registerIpcHandlers() {
     ) {
       s.set("projects", cleaned);
     }
+    // Backfill read-only repo info for projects added before this feature,
+    // then refresh it at most once a day so branch/HEAD stay roughly fresh.
+    const repoStaleMs = 24 * 60 * 60 * 1000;
+    let repoChanged = false;
+    for (const project of cleaned) {
+      const repo = project.repo || null;
+      const stale =
+        !repo?.capturedAt ||
+        Date.now() - new Date(repo.capturedAt).getTime() > repoStaleMs;
+      if (!stale) continue;
+      try {
+        const { collectRepoInfo } = await import("../engine/git-info");
+        project.repo = await collectRepoInfo(project.localPath || "");
+        repoChanged = true;
+      } catch (err: any) {
+        log.warn(`Repo info refresh failed for ${project.localPath}: ${err.message}`);
+      }
+    }
+    if (repoChanged) s.set("projects", cleaned);
     return cleaned;
   });
 
@@ -797,6 +823,13 @@ export function registerIpcHandlers() {
       project.storeLinks = primary.storeLinks;
     } catch (err: any) {
       log.warn(`Project analysis failed for ${localPath}: ${err.message}`);
+    }
+
+    try {
+      const { collectRepoInfo } = await import("../engine/git-info");
+      (project as any).repo = await collectRepoInfo(localPath);
+    } catch (err: any) {
+      log.warn(`Repo info collection failed for ${localPath}: ${err.message}`);
     }
 
     if (existingIndex >= 0) {

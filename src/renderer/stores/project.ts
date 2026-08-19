@@ -36,6 +36,18 @@ export interface RankSnapshot {
   checkedAt: string;
 }
 
+export interface RepoInfo {
+  remoteUrl: string | null;
+  githubUrl: string | null;
+  branch: string | null;
+  headSha: string | null;
+  headMessage: string | null;
+  headDate: string | null;
+  dirty: boolean;
+  description: string | null;
+  capturedAt: string;
+}
+
 export interface StoreProduct {
   id: string;
   projectId: string;
@@ -58,6 +70,7 @@ export interface Project {
   name: string;
   localPath: string;
   createdAt: string;
+  repo: RepoInfo | null;
   storeProducts: StoreProduct[];
 
   // Legacy summary fields, kept for compatibility and migration.
@@ -117,6 +130,22 @@ function normalizeRemovedKeyword(item: any): RemovedKeywordEntry {
     rationale: item.rationale || "",
     translation: item.translation || "",
     removedAt: item.removedAt || new Date().toISOString(),
+  };
+}
+
+function normalizeRepo(repo: any): RepoInfo | null {
+  if (!repo || typeof repo !== "object") return null;
+  return {
+    remoteUrl: typeof repo.remoteUrl === "string" ? repo.remoteUrl : null,
+    githubUrl: typeof repo.githubUrl === "string" ? repo.githubUrl : null,
+    branch: typeof repo.branch === "string" ? repo.branch : null,
+    headSha: typeof repo.headSha === "string" ? repo.headSha : null,
+    headMessage: typeof repo.headMessage === "string" ? repo.headMessage : null,
+    headDate: typeof repo.headDate === "string" ? repo.headDate : null,
+    dirty: Boolean(repo.dirty),
+    description: typeof repo.description === "string" ? repo.description : null,
+    capturedAt:
+      typeof repo.capturedAt === "string" ? repo.capturedAt : new Date().toISOString(),
   };
 }
 
@@ -227,6 +256,7 @@ function normalizeProject(p: any): Project {
   const products = migrateLegacyProject(p);
   return {
     ...p,
+    repo: normalizeRepo(p.repo),
     storeProducts: products,
     ...summarizeLegacyProject(products),
   };
