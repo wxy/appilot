@@ -1,6 +1,6 @@
 import type { AIProvider, ChatMessage } from "./ai-provider";
 import type { ReleaseInfo } from "../release-watcher";
-import type { StoreSubmissionContent, StoreSubmissionLocalization, TrackingKeywordChange } from "../store-submission";
+import type { StoreSubmissionContent, StoreSubmissionLocalization } from "../store-submission";
 import { EngineError } from "../errors";
 import { log } from "../logger";
 
@@ -188,7 +188,6 @@ export async function generateStoreSubmissionContent(
       language: item.language,
       text: item.keywords,
     })),
-    trackingKeywordDeltas: globalPlan.trackingKeywordDeltas,
     promotionAngles: globalPlan.promotionAngles,
   };
 }
@@ -238,7 +237,6 @@ async function generateGlobalReleasePlan(
   },
 ): Promise<{
   summary: string;
-  trackingKeywordDeltas: TrackingKeywordChange[];
   promotionAngles: string[];
 }> {
   const messages: ChatMessage[] = [
@@ -246,19 +244,11 @@ async function generateGlobalReleasePlan(
       role: "system",
       content: [
         "You are Appilot's release planner.",
-        "Given the release announcement and current product context, produce a release summary, keyword deltas, and promotion angles.",
+        "Given the release announcement and current product context, produce a release summary and promotion angles.",
         "Respond ONLY with JSON in this shape:",
         JSON.stringify(
           {
             summary: "Chinese summary of this release",
-            trackingKeywordDeltas: [
-              {
-                language: "en",
-                keyword: "night walking",
-                direction: "add",
-                reason: "short reason",
-              },
-            ],
             promotionAngles: ["short angle"],
           },
           null,
@@ -297,26 +287,9 @@ async function generateGlobalReleasePlan(
 
   try {
     const data = await parseJsonWithRepair(provider, raw);
-    const trackingKeywordDeltas: TrackingKeywordChange[] = Array.isArray(data.trackingKeywordDeltas)
-      ? data.trackingKeywordDeltas
-          .map((item: any) => ({
-            language: String(item?.language || "en").trim(),
-            keyword: String(item?.keyword || "").trim(),
-            direction: item?.direction === "remove" ? "remove" : "add",
-            reason: String(item?.reason || "").trim(),
-          }))
-          .filter(
-            (item: TrackingKeywordChange) =>
-              item.language &&
-              item.keyword &&
-              (item.direction === "add" || item.direction === "remove"),
-          )
-          .slice(0, 20)
-      : [];
 
     return {
       summary: String(data.summary || "").trim(),
-      trackingKeywordDeltas,
       promotionAngles: Array.isArray(data.promotionAngles)
         ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
         : [],

@@ -46,7 +46,7 @@
 
 ```
   ✓ 跟踪关键词来源优先级：商店提交关键词 > 产品/品牌词 > Release body 提取 > 用户补充
-  ✓ 承接发布工作台确认的 trackingKeywordDeltas（新增/删除）
+  ✓ 跟踪关键词集由跟踪页独立维护（发布工作台不再输出增删建议）
   ✓ 用户筛选后进入跟踪关键词集
   ✓ RankCollector（iTunes Search API 按「关键词 × storefront」轮询）
   ✓ keyword_rankings 时间序列 + 趋势图（升降/进榜/掉榜）
