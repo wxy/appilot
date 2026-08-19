@@ -11,6 +11,7 @@
 
 ## 2. 术语与数据约定
 
+- 页面命名：本功能在导航中显示为「排名」，页面标题为「关键词排名」；发布工作台中的提交字段统一叫「商店关键词」，避免「关键词」一词的双重含义。
 - 原「英文关键词」改称**全局关键词**：存储上仍用 `language: "en"`，展示上显示为「英文（全局）」并排在语言选项第一位。全局关键词不专属英文语言市场，在所有本地商店的展示中都出现，并带「全局」徽标标注来源。
 - 跟踪关键词条目 `KeywordEntry` 扩展（Phase 2 落地）：
   - `status: "active" | "paused"`
@@ -54,14 +55,15 @@
 
 ## 5. 自动屏蔽（Phase 2）
 
-- 规则：同一关键词连续 10 次采样（或 14 天）未进榜（rank 为 null 或 >200）→ 标记 `paused`（建议屏蔽）：停止调度采集，移入「已屏蔽」分区（含原因与时间），可恢复或删除。**只屏蔽不删数据。**
-- 判定放在调度 reconcile 时统一计算；已屏蔽词不再生成任务。
+- 规则：同一关键词在每个「采样数 ≥ 10 次」的成熟商店中，最近连续 10 次采样均未进榜（rank 为 null，即不在前 200）→ 标记 `paused`（建议屏蔽）：停止调度采集，移入「已删除 / 已暂停」折叠区（含原因与时间），可恢复或删除。**只屏蔽不删数据。**
+- 判定放在调度 reconcile 时统一计算；已屏蔽词不再生成任务；恢复后回到 `active` 并清空暂停原因。
+- `KeywordEntry` 扩展字段：`status(active/paused)`、`source(ai/submission/name/subtitle/manual)`、`addedAt`、`bestRank`、`lastSeenAt`、`pausedAt`、`pausedReason`；旧数据由主进程 normalize 自动补齐。
 
 ## 6. 采集健壮性
 
 - `rank > 200` 与「未查询」在 UI 区分（200+ vs —）。
 - 调度任务连续失败 5 次 → 暂停并标记，替代无限 30min 重试。
-- snapshots 按 (keyword, language, storefront) 去重（同轮覆盖），并按 keyword×storefront 保留窗口（约 90 天），替代产品级 5000 条粗截断。
+- snapshots 按 (keyword, language, storefront, checkedAt) 精确去重（同键新值覆盖旧值），并按 keyword×storefront 保留 90 天窗口、每键最多 120 条，替代产品级 5000 条粗截断。
 - `totalResults` 语义标注为「前 200 结果量」；竞争度/结果量第一版只在 tooltip 展示，不做排序。
 - 全局关键词在非英文商店继续采集（用户会用英文在本地商店搜索），仅做 UI 标注。
 

@@ -5,6 +5,12 @@ import { log } from "../engine/logger";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../engine/storefronts";
 import { createStoreSubmissionDraft, submissionDraftId } from "../engine/store-submission";
 import type { StoreSubmissionDraft } from "../engine/store-submission";
+import { appendRankSnapshots } from "../engine/rank-snapshots";
+import {
+  enrichKeywordFromSnapshots,
+  evaluatePause,
+  normalizeTrackedKeyword,
+} from "../engine/rank-keywords";
 import { emitProjectsChanged } from "./project-events";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
@@ -347,6 +353,7 @@ interface ScheduledTaskBase {
   executionCount: number;
   lastStatus?: "success" | "failed";
   enabled: boolean;
+  consecutiveFailures?: number;
 }
 
 interface RankScheduledTask extends ScheduledTaskBase {
@@ -410,7 +417,12 @@ async function reconcileRankTasks(store: any): Promise<void> {
     for (const product of storeProducts) {
     if (!product.trackId) continue;
     if (!isProductPostRelease(project, product)) continue;
-    const tracked: any[] = product.trackedKeywords || [];
+    let tracked: any[] = (product.trackedKeywords || []).map((item: any) => normalizeTrackedKeyword(item));
+    const snapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
+    tracked = tracked.map((keyword) => evaluatePause(enrichKeywordFromSnapshots(keyword, snapshots), snapshots));
+    if (JSON.stringify(tracked) !== JSON.stringify(product.trackedKeywords)) {
+      product.trackedKeywords = tracked;
+    }
     const supportedLanguages: { code: string }[] = product.supportedLanguages || [];
 
     for (const localization of supportedLanguages) {
@@ -419,6 +431,7 @@ async function reconcileRankTasks(store: any): Promise<void> {
       const queryLanguages = localizationCode === "en" ? ["en"] : [localizationCode, "en"];
 
       for (const keyword of tracked) {
+        if (keyword.status === "paused") continue;
         if (!queryLanguages.includes(keyword.language)) continue;
         for (const storefront of storefronts) {
           const id = rankTaskId(product.id, keyword.keyword, keyword.language, storefront);
@@ -438,6 +451,7 @@ async function reconcileRankTasks(store: any): Promise<void> {
             executionCount: previous?.executionCount || 0,
             lastStatus: previous?.lastStatus,
             enabled: previous?.enabled ?? true,
+            consecutiveFailures: previous?.consecutiveFailures || 0,
           });
         }
       }
@@ -474,7 +488,10 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
   if (!project || !product?.trackId) return;
 
   const isActive = (product.trackedKeywords || []).some(
-    (keyword: any) => keyword.keyword === task.keyword && keyword.language === task.queryLanguage,
+    (keyword: any) =>
+      keyword.keyword === task.keyword &&
+      keyword.language === task.queryLanguage &&
+      keyword.status !== "paused",
   );
   if (!isActive) {
     task.enabled = false;
@@ -500,11 +517,19 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
       checkedAt: new Date().toISOString(),
     };
     const previous = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
-    product.rankSnapshots = [...previous, snapshot].slice(-5000);
+    product.rankSnapshots = appendRankSnapshots(previous, [snapshot]);
+    product.trackedKeywords = (product.trackedKeywords || []).map((keyword: any) =>
+      enrichKeywordFromSnapshots(keyword, product.rankSnapshots),
+    );
+    task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
     log.warn(`Scheduled rank task failed for "${task.keyword}" in ${task.storefront}: ${err.message}`);
+    task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
     task.lastStatus = "failed";
+    if (task.consecutiveFailures >= 5) {
+      task.enabled = false;
+    }
   }
 
   task.lastRunAt = new Date().toISOString();
@@ -811,7 +836,7 @@ export function registerIpcHandlers() {
     if (!context) throw new Error("Store product not found");
     const nextProjects = updateProductInProjects(projects, productId, (product) => ({
       ...product,
-      trackedKeywords,
+      trackedKeywords: trackedKeywords.map((item: any) => normalizeTrackedKeyword(item)),
     }));
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -884,6 +909,30 @@ export function registerIpcHandlers() {
         (item: any) => !(item.language === language && item.keyword === keyword),
       );
       return { ...product, trackedKeywords, removedKeywords };
+    });
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+  });
+
+  ipcMain.handle("projects:resumePausedKeyword", async (_event, productId: string, language: string, keyword: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const nextProjects = updateProductInProjects(projects, productId, (product) => {
+      const paused = (product.trackedKeywords || []).find(
+        (item: any) => item.language === language && item.keyword === keyword,
+      );
+      if (!paused || paused.status !== "paused") throw new Error("Keyword is not paused");
+      return {
+        ...product,
+        trackedKeywords: (product.trackedKeywords || []).map((item: any) =>
+          item.language === language && item.keyword === keyword
+            ? { ...item, status: "active", pausedAt: null, pausedReason: null }
+            : item,
+        ),
+      };
     });
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -968,7 +1017,7 @@ export function registerIpcHandlers() {
     });
 
     const previous = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
-    product.rankSnapshots = [...previous, ...result.snapshots].slice(-5000);
+    product.rankSnapshots = appendRankSnapshots(previous, result.snapshots);
     const nextProjects = updateProductInProjects(projects, productId, (item) => ({ ...item, rankSnapshots: product.rankSnapshots }));
     s.set("projects", nextProjects);
     return nextProjects.find((item) => item.id === project.id) || project;

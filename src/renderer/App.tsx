@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
@@ -21,7 +21,7 @@ import { storefrontDisplayName, storefrontsForLanguage } from "../engine/storefr
 const NAV_ITEMS = [
   { to: "/overview", label: "总览", title: "总览" },
   { to: "/release", label: "发布", title: "发布工作台" },
-  { to: "/keywords", label: "关键词", title: "关键词" },
+  { to: "/keywords", label: "排名", title: "关键词排名" },
   { to: "/reviews", label: "评论", title: "评论" },
   { to: "/trend", label: "趋势", title: "长期效果" },
 ];
@@ -312,7 +312,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Content */}
       <main className="flex-1 overflow-auto">
-        <div className="min-h-full">{children}</div>
+        <div className="h-full">{children}</div>
       </main>
     </div>
   );
@@ -1321,7 +1321,7 @@ function ReleasePage() {
                       </div>
 
                       <div className="space-y-1.5">
-                        <FieldHeader label="关键词" text={activeLocalization.keywords} />
+                <FieldHeader label="商店关键词（提交字段）" text={activeLocalization.keywords} />
                         <input
                           value={activeLocalization.keywords}
                           onChange={(e) => updateLocalizationField("keywords", e.target.value)}
@@ -1539,7 +1539,7 @@ function TaskCenterPage() {
 
   return (
     <div className="p-10 max-w-6xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-8">
+      <div className="flex items-start justify-between gap-4 mb-5">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
@@ -1884,15 +1884,15 @@ function ChartTick({ x, y, payload }: any) {
   const date = new Date(payload.value);
   if (Number.isNaN(date.getTime())) return null;
   return (
-    <text x={x} y={y} dy={6} textAnchor="middle" fill="#71717a" fontSize={10}>
-      <tspan x={x} dy={0}>{date.toLocaleDateString()}</tspan>
+    <text x={x} y={y} textAnchor="middle" fill="#71717a" fontSize={10}>
+      <tspan x={x} dy={20}>{date.toLocaleDateString()}</tspan>
       <tspan x={x} dy={12}>{date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</tspan>
     </text>
   );
 }
 
 function KeywordsPage() {
-  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords } = useProject();
+  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, resumePausedKeyword, clearRemovedKeywords } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [litLangs, setLitLangs] = useState<string[]>(() => {
@@ -1951,18 +1951,21 @@ function KeywordsPage() {
   const currentLang = activeViewLang;
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (product.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
+  const trackedActive = tracked.filter((k) => k.status !== "paused");
+  const pausedForCurrent = tracked.filter((k) => k.status === "paused");
   const removedForCurrent = (product.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
   const storefronts = storefrontsForLanguage(currentLang);
   const rankSnapshots = product.rankSnapshots || [];
-  const matrixRows = matrixFilterKeywords(tracked, currentLang);
+  const matrixRows = matrixFilterKeywords(trackedActive, currentLang);
   const matrixColumns = storefronts.map((storefront) => ({
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
+  const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(68px, 0.9fr)) 44px`;
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
-    : (ranked[0]?.row.keyword || tracked[0]?.keyword || "");
+    : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
   const chartSnapshots = rankSnapshots
     .filter(
       (snapshot) =>
@@ -2016,18 +2019,22 @@ function KeywordsPage() {
       : "尚未查询";
 
   const renderMatrixRow = (keyword: (typeof matrixRows)[number], dimmed: boolean) => (
-    <tr
+    <div
       key={`${keyword.language}:${keyword.keyword}`}
       onClick={() => setSelectedKeyword(keyword.keyword)}
       className={cn(
-        "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+        "grid items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
         dimmed && "opacity-55",
         !dimmed && "bg-emerald-50/30 dark:bg-emerald-500/[0.04]",
         keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
       )}
+      style={{ gridTemplateColumns: matrixGridTemplate }}
     >
-      <td className="px-4 py-3 min-w-0">
-        <div className={cn("font-mono text-sm truncate", dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200")}>
+      <div className="py-3 pl-5 pr-4 min-w-0">
+        <div
+          className={cn("font-mono text-sm truncate", dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200")}
+          title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
+        >
           {keyword.keyword}
           {keyword.language === "en" && (
             <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
@@ -2035,25 +2042,23 @@ function KeywordsPage() {
             </span>
           )}
         </div>
-        {keyword.rationale && (
-          <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
-            {keyword.rationale}
-          </div>
-        )}
-      </td>
+      </div>
       {matrixColumns.map((column) => {
         const cell = matrixCellState(rankSnapshots, keyword.keyword, column.storefront);
         return (
-          <td
+          <div
             key={column.storefront}
-            className={cn("px-3 py-3 text-right", column.meta.stale && "opacity-60")}
+            className={cn(
+              "px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800",
+              column.meta.stale && "opacity-60",
+            )}
             title={cellTitle(cell)}
           >
             <MatrixCellView cell={cell} />
-          </td>
+          </div>
         );
       })}
-      <td className="px-3 py-3 text-right">
+      <div className="pl-3 pr-5 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
         <span
           role="button"
           tabIndex={0}
@@ -2072,8 +2077,8 @@ function KeywordsPage() {
         >
           ✕
         </span>
-      </td>
-    </tr>
+      </div>
+    </div>
   );
 
   const generateOne = async (lang: string): Promise<{ lang: string; gen: KeywordGeneration | null }> => {
@@ -2139,19 +2144,7 @@ function KeywordsPage() {
   };
 
   return (
-    <div className="p-10 max-w-6xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-8">
-        <div>
-          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">关键词</h2>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            跟踪关键词模拟用户搜索；商店提交关键词由发布工作台负责。
-          </p>
-        </div>
-        <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
-          {loadingLangs.size > 0 ? "生成中..." : "为所选语言生成"}
-        </button>
-      </div>
-
+    <div className="p-8 max-w-6xl mx-auto h-full flex flex-col">
       {error && (
         <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
           {error}
@@ -2162,206 +2155,233 @@ function KeywordsPage() {
         <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
       ) : (
         <>
-          <div className="mb-6">
-            <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
-              语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {languageOptions.map((option) => {
-                const lit = litLangs.includes(option.code);
-                const active = option.code === currentLang;
-                return (
-                  <div
-                    key={option.code}
-                    className={cn(
-                      "inline-flex items-center overflow-hidden rounded-lg border transition-colors",
-                      active
-                        ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                        : lit
-                          ? "border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300"
-                          : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setViewLang(option.code);
-                        setLitLangs((prev) => (prev.includes(option.code) ? prev : [...prev, option.code]));
-                      }}
-                      title={active ? "当前查看" : "点击查看该语言"}
-                      className={cn(
-                        "px-3 py-1.5 text-sm transition-colors",
-                        active ? "font-medium" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleLitLang(option.code)}
-                      title={lit ? "取消点亮（不参与生成）" : "点亮（参与生成）"}
-                      className={cn(
-                        "px-2 py-1.5 text-xs border-l border-zinc-200/70 dark:border-zinc-700/70 transition-colors",
-                        lit ? "text-amber-500" : "text-zinc-400 hover:text-amber-500",
-                      )}
-                    >
-                      {lit ? "★" : "☆"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            {/* Tracking keywords + rankings */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    跟踪关键词与排名（{tracked.length}）
-                  </h3>
+          <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+            <div className="px-5 pt-4 pb-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">关键词排名</h2>
                   <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
-                    同一张表完成生成、查看排名与趋势，不再重复列出关键词。
+                    商店提交关键词由发布工作台负责。
                   </p>
-                  {schedulerStatus && (
-                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
-                      自动任务 {schedulerStatus.enabled ? "已启用" : "未启用"} · 待执行 {schedulerStatus.due}
-                      {schedulerStatus.failed > 0 ? ` · 失败 ${schedulerStatus.failed}` : ""}
-                      {schedulerStatus.nextDueAt
-                        ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
-                        : ""}
-                    </p>
-                  )}
                 </div>
+                <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
+                  {loadingLangs.size > 0 ? "生成中..." : "为所选语言生成"}
+                </button>
+              </div>
+              <p className="mt-3 text-[11px] font-medium tracking-wider text-zinc-400 dark:text-zinc-500">
+                语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {languageOptions.map((option) => {
+                  const lit = litLangs.includes(option.code);
+                  const active = option.code === currentLang;
+                  return (
+                    <div
+                      key={option.code}
+                      className={cn(
+                        "inline-flex items-center overflow-hidden rounded-lg border transition-colors",
+                        active
+                          ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                          : lit
+                            ? "border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300"
+                            : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setViewLang(option.code);
+                          setLitLangs((prev) => (prev.includes(option.code) ? prev : [...prev, option.code]));
+                        }}
+                        title={active ? "当前查看" : "点击查看该语言"}
+                        className={cn(
+                          "px-3 py-1.5 text-sm transition-colors",
+                          active ? "font-medium" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleLitLang(option.code)}
+                        title={lit ? "取消点亮（不参与生成）" : "点亮（参与生成）"}
+                        className={cn(
+                          "px-2 py-1.5 text-xs border-l border-zinc-200/70 dark:border-zinc-700/70 transition-colors",
+                          lit ? "text-amber-500" : "text-zinc-400 hover:text-amber-500",
+                        )}
+                      >
+                        {lit ? "★" : "☆"}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
 
-              <div className="p-5">
+            </div>
+
+            <div
+              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 pr-1.5"
+              style={{ gridTemplateColumns: matrixGridTemplate }}
+            >
+              <div className="py-2.5 pl-5 pr-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                    关键词（{trackedActive.length}）
+                  </span>
+                  {removedForCurrent.length + pausedForCurrent.length > 0 && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowRemoved((v) => !v)}
+                        className={cn(
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
+                          showRemoved
+                            ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                            : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700",
+                        )}
+                      >
+                        已暂停 {pausedForCurrent.length} · 已删除 {removedForCurrent.length}
+                      </button>
+                      {showRemoved && (
+                        <div className="absolute left-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3 space-y-3">
+                          {pausedForCurrent.length > 0 && (
+                            <div>
+                              <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mb-1.5">
+                                已暂停（自动屏蔽）
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {pausedForCurrent.map((item) => (
+                                  <span
+                                    key={`paused:${item.language}:${item.keyword}`}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-200/70 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/10 text-xs text-zinc-600 dark:text-zinc-300"
+                                    title={item.pausedReason || "已暂停"}
+                                  >
+                                    {item.keyword}
+                                    <button
+                                      onClick={() => resumePausedKeyword(product.id, item.language, item.keyword)}
+                                      className="text-amber-600 dark:text-amber-400 hover:underline"
+                                      title="恢复采集"
+                                    >
+                                      恢复
+                                    </button>
+                                    <button
+                                      onClick={() => removeTracked(item.keyword, item.language)}
+                                      className="text-zinc-400 hover:text-red-500"
+                                      title="删除"
+                                    >
+                                      ✕
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {removedForCurrent.length > 0 && (
+                            <div>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                                  已删除（手动）
+                                </p>
+                                <button
+                                  onClick={clearRemoved}
+                                  className="text-[10px] text-zinc-400 hover:text-red-500"
+                                >
+                                  清空
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {removedForCurrent.map((item) => (
+                                  <span
+                                    key={`${item.language}:${item.keyword}`}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
+                                  >
+                                    {item.keyword}
+                                    <button
+                                      onClick={() => restoreTracked(item.language, item.keyword)}
+                                      className="text-amber-600 dark:text-amber-400 hover:underline"
+                                      title="恢复"
+                                    >
+                                      恢复
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {schedulerStatus && (
+                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                    {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
+                    {schedulerStatus.nextDueAt
+                      ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
+                      : ""}
+                  </span>
+                )}
+              </div>
+              {matrixColumns.map((column) => (
+                <div
+                  key={column.storefront}
+                  className={cn(
+                    "px-3 py-2 text-right border-l border-zinc-100 dark:border-zinc-800",
+                    column.meta.stale && "opacity-60",
+                  )}
+                >
+                  <div className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    {storefrontDisplayName(column.storefront)}
+                  </div>
+                  <div className="mt-0.5 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                    {column.meta.lastCheckedAt
+                      ? formatColumnTime(column.meta.lastCheckedAt)
+                      : "未查询"}
+                    {column.meta.stale ? " · 过期" : ""}
+                  </div>
+                </div>
+              ))}
+              <div className="pl-3 pr-5 py-2 text-right border-l border-zinc-100 dark:border-zinc-800 text-xs font-medium text-zinc-400 dark:text-zinc-500">
+                操作
+              </div>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
                 {matrixRows.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
                   </p>
                 ) : (
                   <>
-                    <div className="overflow-x-auto rounded-xl border border-zinc-100 dark:border-zinc-800">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30">
-                            <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400 dark:text-zinc-500">
-                              关键词
-                            </th>
-                            {matrixColumns.map((column) => (
-                              <th
-                                key={column.storefront}
-                                className={cn("px-3 py-2 text-right", column.meta.stale && "opacity-60")}
-                              >
-                                <div className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                                  {storefrontDisplayName(column.storefront)}
-                                </div>
-                                <div className="mt-0.5 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                                  {column.meta.lastCheckedAt
-                                    ? formatColumnTime(column.meta.lastCheckedAt)
-                                    : "未查询"}
-                                  {column.meta.stale ? " · 过期" : ""}
-                                </div>
-                              </th>
-                            ))}
-                            <th className="px-3 py-2 text-right text-xs font-medium text-zinc-400 dark:text-zinc-500 w-10">
-                              操作
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                          {ranked.map(({ row }) => renderMatrixRow(row, false))}
-                          {unranked.length > 0 && (
-                            <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                              <td colSpan={matrixColumns.length + 2} className="px-0 py-0">
-                                <button
-                                  type="button"
-                                  onClick={() => setShowUnranked((v) => !v)}
-                                  className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-sm text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors"
-                                >
-                                  <span>未在榜关键词（{unranked.length}）</span>
-                                  <span
-                                    className={cn(
-                                      "text-zinc-400 transition-transform",
-                                      showUnranked && "rotate-90",
-                                    )}
-                                  >
-                                    ▸
-                                  </span>
-                                </button>
-                              </td>
-                            </tr>
-                          )}
-                          {showUnranked && unranked.map((row) => renderMatrixRow(row, true))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
-                      各商店独立采集，时间可能不同；悬停查看精确查询时间与结果量。
-                    </p>
-                  </>
-                )}
-
-                {removedForCurrent.length > 0 && (
-                  <div className="mt-6 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 overflow-hidden">
-                    <div className="flex items-center justify-between gap-3 px-4 py-3">
+                    {ranked.map(({ row }) => renderMatrixRow(row, false))}
+                    {unranked.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => setShowRemoved((v) => !v)}
-                        className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
+                        onClick={() => setShowUnranked((v) => !v)}
+                        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-sm text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
                       >
+                        <span>未在榜关键词（{unranked.length}）</span>
                         <span
                           className={cn(
                             "text-zinc-400 transition-transform",
-                            showRemoved && "rotate-90",
+                            showUnranked && "rotate-90",
                           )}
                         >
                           ▸
                         </span>
-                        已删除 / 已暂停关键词（{removedForCurrent.length}）
                       </button>
-                      <button
-                        onClick={clearRemoved}
-                        className="text-xs text-zinc-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400"
-                      >
-                        清空
-                      </button>
-                    </div>
-                    {showRemoved && (
-                      <div className="px-4 pb-4 flex flex-wrap gap-2">
-                        {removedForCurrent.map((item) => (
-                          <span
-                            key={`${item.language}:${item.keyword}`}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
-                          >
-                            {item.keyword}
-                            <button
-                              onClick={() => restoreTracked(item.language, item.keyword)}
-                              className="text-amber-600 dark:text-amber-400 hover:underline"
-                              title="恢复"
-                            >
-                              恢复
-                            </button>
-                          </span>
-                        ))}
-                      </div>
                     )}
-                  </div>
+                    {showUnranked && unranked.map((row) => renderMatrixRow(row, true))}
+                  </>
                 )}
+            </div>
 
+            <div className="shrink-0 px-5 pb-5 space-y-5 border-t border-zinc-100 dark:border-zinc-800">
                 {chartKeyword && chartData.length > 0 && (
-                  <div className="mt-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                        {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
-                      </h4>
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">位置越高越好</span>
-                    </div>
+                  <div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData} margin={{ top: 24, right: 16, bottom: 28, left: 0 }}>
+                        <LineChart data={chartData} margin={{ top: 12, right: 16, bottom: 4, left: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
                           <XAxis
                             dataKey="time"
@@ -2369,7 +2389,7 @@ function KeywordsPage() {
                             tickLine={false}
                             axisLine={false}
                             minTickGap={28}
-                            height={60}
+                            height={52}
                           />
                           <YAxis
                             reversed
@@ -2383,7 +2403,6 @@ function KeywordsPage() {
                             width={34}
                           />
                           <Tooltip content={<RankTooltip />} />
-                          <Legend />
                           {chartSeriesMeta.map((series, index) => (
                             <Line
                               key={series.storefront}
@@ -2400,9 +2419,27 @@ function KeywordsPage() {
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <h4 className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
+                      </h4>
+                      <span className="text-[10px] text-zinc-400 dark:text-zinc-500">位置越高越好</span>
+                      {chartSeriesMeta.map((series, index) => (
+                        <span
+                          key={series.storefront}
+                          className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                          />
+                          {series.label}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
-              </div>
+
             </div>
 
           </div>

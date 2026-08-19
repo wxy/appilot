@@ -5,6 +5,13 @@ export interface KeywordEntry {
   keyword: string;
   rationale: string;
   translation: string;
+  status?: "active" | "paused";
+  source?: "ai" | "submission" | "name" | "subtitle" | "manual";
+  addedAt?: string;
+  bestRank?: number | null;
+  lastSeenAt?: string | null;
+  pausedAt?: string | null;
+  pausedReason?: string | null;
 }
 
 export interface SubmissionKeywordsEntry {
@@ -81,16 +88,25 @@ interface ProjectState {
   updateSubmissionKeywords: (productId: string, submission: SubmissionKeywordsEntry[]) => void;
   removeTrackedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
   restoreTrackedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
+  resumePausedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
   clearRemovedKeywords: (productId: string, languages: string[]) => Promise<void>;
   collectRanks: (productId: string, language: string, storefront: string) => Promise<RankSnapshot[]>;
 }
 
 function normalizeKeyword(item: any): KeywordEntry {
   return {
+    ...item,
     language: item.language || "unknown",
     keyword: item.keyword,
     rationale: item.rationale || "",
     translation: item.translation || "",
+    status: item.status === "paused" ? "paused" : "active",
+    source: item.source || "manual",
+    addedAt: item.addedAt || "",
+    bestRank: typeof item.bestRank === "number" ? item.bestRank : null,
+    lastSeenAt: item.lastSeenAt || null,
+    pausedAt: item.pausedAt || null,
+    pausedReason: item.pausedReason || null,
   };
 }
 
@@ -336,6 +352,15 @@ export const useProject = create<ProjectState>((set, get) => ({
   restoreTrackedKeyword: async (productId, language, keyword) => {
     const updatedProject = normalizeProject(
       await (window as any).appilot.projects.restoreTrackedKeyword(productId, language, keyword),
+    ) as unknown as Project;
+    set((s) => ({
+      projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
+    }));
+  },
+
+  resumePausedKeyword: async (productId, language, keyword) => {
+    const updatedProject = normalizeProject(
+      await (window as any).appilot.projects.resumePausedKeyword(productId, language, keyword),
     ) as unknown as Project;
     set((s) => ({
       projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
