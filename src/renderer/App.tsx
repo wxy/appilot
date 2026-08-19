@@ -14,7 +14,7 @@ import {
   trackingLanguageOptions,
   type MatrixCell,
 } from "./lib/matrix";
-import { defaultStorefrontForLanguage, storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
+import { storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
 
 /* ── Layout ── */
 
@@ -1840,24 +1840,24 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
       >
         {rankText}
       </span>
-      {trendText ? (
-        <span
-          className={cn(
-            "text-[10px] font-mono",
-            cell.trend === "up" || cell.trend === "new"
+      <span
+        className={cn(
+          "text-[10px] font-mono min-h-3.5",
+          trendText
+            ? cell.trend === "up" || cell.trend === "new"
               ? "text-emerald-600 dark:text-emerald-400"
-              : "text-red-600 dark:text-red-400",
-          )}
-        >
-          {trendText}
-        </span>
-      ) : null}
+              : "text-red-600 dark:text-red-400"
+            : "text-zinc-300 dark:text-zinc-600",
+        )}
+      >
+        {trendText ?? "—"}
+      </span>
     </span>
   );
 }
 
 function KeywordsPage() {
-  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords, collectRanks } = useProject();
+  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [litLangs, setLitLangs] = useState<string[]>(() => {
@@ -1870,31 +1870,12 @@ function KeywordsPage() {
   const [showUnranked, setShowUnranked] = useState(false);
   const [showRemoved, setShowRemoved] = useState(false);
   const [error, setError] = useState("");
-  const [rankLoading, setRankLoading] = useState(false);
-  const [rankError, setRankError] = useState("");
-  const [selectedStorefront, setSelectedStorefront] = useState<string>("us");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
-  const [rankProgress, setRankProgress] = useState<{ current: number; total: number; keyword: string; storefront: string } | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
 
   const languages = product?.supportedLanguages || [];
   const languageOptions = trackingLanguageOptions(languages);
   const activeViewLang = litLangs.includes(viewLang) ? viewLang : litLangs[0] || "";
-  const initialLanguage = activeViewLang;
-  const languageDefaultStorefront = defaultStorefrontForLanguage(initialLanguage);
-
-  useEffect(() => {
-    setSelectedStorefront(languageDefaultStorefront);
-  }, [languageDefaultStorefront]);
-
-  useEffect(() => {
-    const off = (window as any).appilot?.projects?.onRankProgress?.((progress: any) => {
-      setRankProgress(progress);
-    });
-    return () => {
-      off?.();
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1936,12 +1917,7 @@ function KeywordsPage() {
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (product.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
   const removedForCurrent = (product.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
-  const currentLoading = loadingLangs.has(currentLang);
   const storefronts = storefrontsForLanguage(currentLang);
-  const defaultStorefront = storefronts[0] || "us";
-  const activeStorefront = storefronts.includes(selectedStorefront)
-    ? selectedStorefront
-    : defaultStorefront;
   const rankSnapshots = product.rankSnapshots || [];
   const matrixRows = matrixFilterKeywords(tracked, currentLang);
   const matrixColumns = storefronts.map((storefront) => ({
@@ -1956,6 +1932,7 @@ function KeywordsPage() {
     .filter(
       (snapshot) =>
         queryLanguages.includes(snapshot.language) &&
+        storefronts.includes(snapshot.storefront) &&
         snapshot.keyword === chartKeyword,
     )
     .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
@@ -2081,18 +2058,6 @@ function KeywordsPage() {
     }
   };
 
-  const handleGenerate = async (lang: string) => {
-    setError("");
-    setLoadingLangs((prev) => new Set(prev).add(lang));
-    const result = await generateOne(lang);
-    await applyGenerations([result]);
-    setLoadingLangs((prev) => {
-      const next = new Set(prev);
-      next.delete(lang);
-      return next;
-    });
-  };
-
   const handleGenerateAll = async () => {
     setError("");
     const langs = litLangs;
@@ -2112,20 +2077,6 @@ function KeywordsPage() {
 
   const clearRemoved = async () => {
     await clearRemovedKeywords(product.id, queryLanguages);
-  };
-
-  const handleCollectRanks = async () => {
-    setRankError("");
-    setRankLoading(true);
-    setRankProgress({ current: 0, total: tracked.length, keyword: "", storefront: activeStorefront });
-    try {
-      await collectRanks(product.id, currentLang, activeStorefront);
-    } catch (e: any) {
-      setRankError(e.message || "排名采集失败。");
-    } finally {
-      setRankLoading(false);
-      setRankProgress(null);
-    }
   };
 
   return (
@@ -2224,57 +2175,9 @@ function KeywordsPage() {
                     </p>
                   )}
                 </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
-                  <select
-                    value={activeStorefront}
-                    onChange={(e) => setSelectedStorefront(e.target.value)}
-                    className={inputClass + " w-full sm:max-w-60"}
-                  >
-                    {storefronts.map((country) => (
-                      <option key={country} value={country}>
-                        {storefrontDisplayName(country)}
-                      </option>
-                    ))}
-                  </select>
-                  <button onClick={() => handleGenerate(currentLang)} disabled={currentLoading} className={btnPrimary + " justify-self-start"}>
-                    {currentLoading ? "生成中..." : "AI 生成"}
-                  </button>
-                  <button onClick={handleCollectRanks} disabled={rankLoading || tracked.length === 0} className={btnPrimary + " justify-self-start"}>
-                    {rankLoading
-                      ? `采集中 ${rankProgress?.current ?? 0}/${rankProgress?.total ?? 0}`
-                      : "采集排名"}
-                  </button>
-                </div>
               </div>
 
               <div className="p-5">
-                {rankLoading && rankProgress && (
-                  <div className="mb-4 space-y-2">
-                    <div className="flex items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-300">
-                      <span className="truncate">
-                        {rankProgress.keyword || "—"} · {storefrontDisplayName(rankProgress.storefront)}
-                      </span>
-                      <span className="font-mono shrink-0">
-                        {rankProgress.current}/{rankProgress.total}
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-amber-500 transition-all duration-200"
-                        style={{
-                          width: `${rankProgress.total > 0 ? Math.round((rankProgress.current / rankProgress.total) * 100) : 0}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {rankError && (
-                  <div className="mb-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
-                    {rankError}
-                  </div>
-                )}
-
                 {matrixRows.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。

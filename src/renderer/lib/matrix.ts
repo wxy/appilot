@@ -10,13 +10,16 @@ export function trackingLanguageOptions(
 ): { code: string; label: string }[] {
   const options = supported.map((language) =>
     language.code === "en"
-      ? { code: "en", label: "全局" }
+      ? { code: "en", label: "英文（全局）" }
       : { code: language.code, label: language.name },
   );
   if (!supported.some((language) => language.code === "en")) {
-    options.push({ code: "en", label: "全局" });
+    options.push({ code: "en", label: "英文（全局）" });
   }
-  return options;
+  return [
+    ...options.filter((option) => option.code === "en"),
+    ...options.filter((option) => option.code !== "en"),
+  ];
 }
 
 export function matrixFilterKeywords<T extends { language: string }>(
