@@ -312,7 +312,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Content */}
       <main className="flex-1 overflow-auto">
-        <div className="min-h-full">{children}</div>
+        <div className="h-full">{children}</div>
       </main>
     </div>
   );
@@ -1538,7 +1538,7 @@ function TaskCenterPage() {
   const failedGroups = groupTasks(failed);
 
   return (
-    <div className="p-8 max-w-6xl mx-auto min-h-full flex flex-col">
+    <div className="p-8 max-w-6xl mx-auto h-full flex flex-col">
       <div className="flex items-start justify-between gap-4 mb-5">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
