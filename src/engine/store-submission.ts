@@ -10,13 +10,6 @@ export type AppStoreStatus =
 
 export type GitHubReleaseStatus = "draft" | "published";
 
-export interface TrackingKeywordChange {
-  language: string;
-  keyword: string;
-  direction: "add" | "remove";
-  reason: string;
-}
-
 export interface StoreSubmissionLocalization {
   language: string;
   /** App Store 名称：建议「具体名称: 描述性短句」，≤30 字符。 */
@@ -37,7 +30,6 @@ export interface StoreSubmissionContent {
   whatsNew: string;
   description: string;
   submissionKeywords: { language: string; text: string }[];
-  trackingKeywordDeltas: TrackingKeywordChange[];
   promotionAngles: string[];
 }
 
@@ -109,7 +101,6 @@ export function createStoreSubmissionDraft(input: {
     whatsNew: input.content.whatsNew,
     description: input.content.description,
     submissionKeywords: input.content.submissionKeywords,
-    trackingKeywordDeltas: input.content.trackingKeywordDeltas,
     promotionAngles: input.content.promotionAngles,
   };
 }

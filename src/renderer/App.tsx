@@ -1,12 +1,20 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
-import { useProject, type RankSnapshot } from "./stores/project";
+import { useProject } from "./stores/project";
 import { cn } from "./lib/utils";
-import { defaultStorefrontForLanguage, storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
+import {
+  matrixCellState,
+  matrixColumnMeta,
+  matrixFilterKeywords,
+  matrixRowGroups,
+  trackingLanguageOptions,
+  type MatrixCell,
+} from "./lib/matrix";
+import { storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
 
 /* ── Layout ── */
 
@@ -1810,41 +1818,99 @@ interface KeywordSuggestion {
 
 interface KeywordGeneration {
   tracking: KeywordSuggestion[];
-  submission: string[];
+}
+
+function MatrixCellView({ cell }: { cell: MatrixCell }) {
+  const rankText = cell.beyond200 ? "200+" : cell.rank ?? "—";
+  const trendText =
+    cell.trend === "new" ? "进榜"
+    : cell.trend === "lost" ? "掉榜"
+    : cell.trend === "up" ? `▲ ${cell.delta}`
+    : cell.trend === "down" ? `▼ ${Math.abs(cell.delta ?? 0)}`
+    : null;
+  return (
+    <span className="flex flex-col items-end gap-0.5">
+      <span
+        className={cn(
+          "font-mono",
+          cell.rank !== null && cell.rank <= 10
+            ? "text-amber-600 dark:text-amber-400 font-semibold"
+            : "text-zinc-600 dark:text-zinc-300",
+        )}
+      >
+        {rankText}
+      </span>
+      <span
+        className={cn(
+          "text-[10px] font-mono min-h-3.5",
+          trendText
+            ? cell.trend === "up" || cell.trend === "new"
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-red-600 dark:text-red-400"
+            : "text-zinc-300 dark:text-zinc-600",
+        )}
+      >
+        {trendText ?? "—"}
+      </span>
+    </span>
+  );
+}
+
+function RankTooltip({ active, payload, label }: any) {
+  if (!active || !Array.isArray(payload)) return null;
+  const rows = payload.filter((item: any) => item.value != null);
+  if (rows.length === 0) return null;
+  const date = new Date(label);
+  const labelText = Number.isNaN(date.getTime())
+    ? String(label)
+    : `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return (
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-xs shadow-md">
+      <p className="mb-1 font-medium text-zinc-500 dark:text-zinc-400">{labelText}</p>
+      {rows.map((item: any) => (
+        <p key={item.dataKey} className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">
+          <span
+            className="inline-block w-2 h-2 rounded-full shrink-0"
+            style={{ backgroundColor: item.stroke || item.color }}
+          />
+          {item.name}：第 {item.value} 名
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function ChartTick({ x, y, payload }: any) {
+  const date = new Date(payload.value);
+  if (Number.isNaN(date.getTime())) return null;
+  return (
+    <text x={x} y={y} dy={6} textAnchor="middle" fill="#71717a" fontSize={10}>
+      <tspan x={x} dy={0}>{date.toLocaleDateString()}</tspan>
+      <tspan x={x} dy={12}>{date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</tspan>
+    </text>
+  );
 }
 
 function KeywordsPage() {
-  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, updateSubmissionKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords, collectRanks } = useProject();
+  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
-  const [activeLang, setActiveLang] = useState<string>("");
-  const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
+  const [litLangs, setLitLangs] = useState<string[]>(() => {
+    const supported = (product?.supportedLanguages || []).map((l) => l.code);
+    const initial = supported.includes(UI_SOURCE_LANGUAGE) ? UI_SOURCE_LANGUAGE : supported[0];
+    return initial ? [initial] : [];
+  });
+  const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
+  const [showUnranked, setShowUnranked] = useState(false);
+  const [showRemoved, setShowRemoved] = useState(false);
   const [error, setError] = useState("");
-  const [rankLoading, setRankLoading] = useState(false);
-  const [rankError, setRankError] = useState("");
-  const [selectedStorefront, setSelectedStorefront] = useState<string>("us");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
-  const [rankProgress, setRankProgress] = useState<{ current: number; total: number; keyword: string; storefront: string } | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
 
-  const initialLanguage = (product?.supportedLanguages || []).some((l) => l.code === activeLang)
-    ? activeLang
-    : ((product?.supportedLanguages || [])[0]?.code || "");
-  const languageDefaultStorefront = defaultStorefrontForLanguage(initialLanguage);
-
-  useEffect(() => {
-    setSelectedStorefront(languageDefaultStorefront);
-  }, [languageDefaultStorefront]);
-
-  useEffect(() => {
-    const off = (window as any).appilot?.projects?.onRankProgress?.((progress: any) => {
-      setRankProgress(progress);
-    });
-    return () => {
-      off?.();
-    };
-  }, []);
+  const languages = product?.supportedLanguages || [];
+  const languageOptions = trackingLanguageOptions(languages);
+  const activeViewLang = litLangs.includes(viewLang) ? viewLang : litLangs[0] || "";
 
   useEffect(() => {
     let cancelled = false;
@@ -1865,39 +1931,150 @@ function KeywordsPage() {
     };
   }, []);
 
+  const toggleLitLang = (code: string) => {
+    setLitLangs((prev) => {
+      const next = prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code];
+      return next.length > 0 ? next : prev;
+    });
+  };
+
+  useEffect(() => {
+    if (!litLangs.includes(viewLang)) {
+      setViewLang(litLangs[0] || "");
+    }
+  }, [litLangs, viewLang]);
+
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
   }
 
-  const languages = product.supportedLanguages || [];
-  const currentLang = languages.some((l) => l.code === activeLang) ? activeLang : (languages[0]?.code || "");
+  const currentLang = activeViewLang;
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (product.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
   const removedForCurrent = (product.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
-  const savedSubmission = (product.submissionKeywords || []).find((s) => s.language === currentLang);
-  const submissionText = submissionDrafts[currentLang] ?? savedSubmission?.text ?? "";
-  const charCount = submissionText.length;
-  const currentLoading = loadingLangs.has(currentLang);
   const storefronts = storefrontsForLanguage(currentLang);
-  const defaultStorefront = storefronts[0] || "us";
-  const activeStorefront = storefronts.includes(selectedStorefront)
-    ? selectedStorefront
-    : defaultStorefront;
   const rankSnapshots = product.rankSnapshots || [];
-  const ranksForCurrent = rankSnapshots.filter(
-    (snapshot) => queryLanguages.includes(snapshot.language) && snapshot.storefront === activeStorefront,
-  );
-  const chartKeyword = tracked.some((keyword) => keyword.keyword === selectedKeyword)
+  const matrixRows = matrixFilterKeywords(tracked, currentLang);
+  const matrixColumns = storefronts.map((storefront) => ({
+    storefront,
+    meta: matrixColumnMeta(rankSnapshots, storefront),
+  }));
+  const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
+  const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
-    : (tracked[0]?.keyword || "");
+    : (ranked[0]?.row.keyword || tracked[0]?.keyword || "");
   const chartSnapshots = rankSnapshots
     .filter(
       (snapshot) =>
         queryLanguages.includes(snapshot.language) &&
-        snapshot.storefront === activeStorefront &&
+        storefronts.includes(snapshot.storefront) &&
         snapshot.keyword === chartKeyword,
     )
     .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
+  const chartSeriesMeta = Array.from(
+    new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys(),
+  ).map((storefront) => ({ storefront, label: storefrontDisplayName(storefront) }));
+  // Merge all storefronts onto a shared timeline bucketed by hour: each row
+  // holds the latest rank per storefront within that hour, so lines connect
+  // and the tooltip can list several storefronts collected in the same hour.
+  const chartData = (() => {
+    const byTime = new Map<string, Record<string, any>>();
+    const hourKey = (iso: string) => {
+      const date = new Date(iso);
+      date.setMinutes(0, 0, 0);
+      return date.toISOString();
+    };
+    for (const snapshot of chartSnapshots) {
+      if (snapshot.rank == null) continue;
+      const time = hourKey(snapshot.checkedAt);
+      const row = byTime.get(time) || { time };
+      row[snapshot.storefront] = snapshot.rank;
+      byTime.set(time, row);
+    }
+    return [...byTime.values()].sort(
+      (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime(),
+    );
+  })();
+  const CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#ef4444", "#06b6d4"];
+  const chartMaxRank = chartData.reduce((max, row) => {
+    for (const [key, value] of Object.entries(row)) {
+      if (key !== "time" && typeof value === "number" && value > max) max = value;
+    }
+    return max;
+  }, 1);
+  const chartStep = Math.max(1, Math.ceil(chartMaxRank / 5));
+  const chartTicks: number[] = [];
+  for (let rank = 1; rank <= chartMaxRank; rank += chartStep) chartTicks.push(rank);
+  if (chartTicks[chartTicks.length - 1] !== chartMaxRank) chartTicks.push(chartMaxRank);
+
+  const formatColumnTime = (iso: string) =>
+    new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  const cellTitle = (cell: MatrixCell) =>
+    cell.checkedAt
+      ? `最近查询 ${new Date(cell.checkedAt).toLocaleString()} · 结果量 ${cell.totalResults ?? "—"}`
+      : "尚未查询";
+
+  const renderMatrixRow = (keyword: (typeof matrixRows)[number], dimmed: boolean) => (
+    <tr
+      key={`${keyword.language}:${keyword.keyword}`}
+      onClick={() => setSelectedKeyword(keyword.keyword)}
+      className={cn(
+        "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+        dimmed && "opacity-55",
+        !dimmed && "bg-emerald-50/30 dark:bg-emerald-500/[0.04]",
+        keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
+      )}
+    >
+      <td className="px-4 py-3 min-w-0">
+        <div className={cn("font-mono text-sm truncate", dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200")}>
+          {keyword.keyword}
+          {keyword.language === "en" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
+              全局
+            </span>
+          )}
+        </div>
+        {keyword.rationale && (
+          <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
+            {keyword.rationale}
+          </div>
+        )}
+      </td>
+      {matrixColumns.map((column) => {
+        const cell = matrixCellState(rankSnapshots, keyword.keyword, column.storefront);
+        return (
+          <td
+            key={column.storefront}
+            className={cn("px-3 py-3 text-right", column.meta.stale && "opacity-60")}
+            title={cellTitle(cell)}
+          >
+            <MatrixCellView cell={cell} />
+          </td>
+        );
+      })}
+      <td className="px-3 py-3 text-right">
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            removeTracked(keyword.keyword, keyword.language);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+              removeTracked(keyword.keyword, keyword.language);
+            }
+          }}
+          className="text-zinc-400 hover:text-red-500 text-xs cursor-pointer"
+          title="移除"
+        >
+          ✕
+        </span>
+      </td>
+    </tr>
+  );
 
   const generateOne = async (lang: string): Promise<{ lang: string; gen: KeywordGeneration | null }> => {
     try {
@@ -1913,8 +2090,6 @@ function KeywordsPage() {
     const latestProject = useProject.getState().projects.find((p) => p.id === currentProjectId);
     const latest = latestProject?.storeProducts?.find((item) => item.id === product.id) || product;
     let trackedNext = [...(latest.trackedKeywords || [])];
-    let submissionNext = [...(latest.submissionKeywords || [])];
-    const drafts: Record<string, string> = {};
 
     for (const r of results) {
       if (!r.gen) continue;
@@ -1934,39 +2109,17 @@ function KeywordsPage() {
           translation: s.translation || "",
         }));
       trackedNext = [...trackedNext, ...additions];
-
-      const submissionText = r.gen.submission.join(",").trim();
-      drafts[r.lang] = submissionText;
-      if (submissionText) {
-        submissionNext = submissionNext.filter((s) => s.language !== r.lang);
-        submissionNext.push({ language: r.lang, text: submissionText });
-      }
     }
 
     if (results.some((r) => r.gen)) {
       await (window as any).appilot.projects.saveTrackedKeywords(product.id, trackedNext);
-      await (window as any).appilot.projects.saveSubmissionKeywords(product.id, submissionNext);
       updateTrackedKeywords(product.id, trackedNext);
-      updateSubmissionKeywords(product.id, submissionNext);
     }
-    setSubmissionDrafts((prev) => ({ ...prev, ...drafts }));
-  };
-
-  const handleGenerate = async (lang: string) => {
-    setError("");
-    setLoadingLangs((prev) => new Set(prev).add(lang));
-    const result = await generateOne(lang);
-    await applyGenerations([result]);
-    setLoadingLangs((prev) => {
-      const next = new Set(prev);
-      next.delete(lang);
-      return next;
-    });
   };
 
   const handleGenerateAll = async () => {
     setError("");
-    const langs = languages.map((l) => l.code);
+    const langs = litLangs;
     setLoadingLangs(new Set(langs));
     const results = await Promise.all(langs.map((lang) => generateOne(lang)));
     await applyGenerations(results);
@@ -1985,104 +2138,17 @@ function KeywordsPage() {
     await clearRemovedKeywords(product.id, queryLanguages);
   };
 
-  const saveSubmission = async () => {
-    const next = [
-      ...(product.submissionKeywords || []).filter((s) => s.language !== currentLang),
-      { language: currentLang, text: submissionText },
-    ];
-    await (window as any).appilot.projects.saveSubmissionKeywords(product.id, next);
-    updateSubmissionKeywords(product.id, next);
-    setSubmissionDrafts((prev) => {
-      const copy = { ...prev };
-      delete copy[currentLang];
-      return copy;
-    });
-  };
-
-  const handleCollectRanks = async () => {
-    setRankError("");
-    setRankLoading(true);
-    setRankProgress({ current: 0, total: tracked.length, keyword: "", storefront: activeStorefront });
-    try {
-      await collectRanks(product.id, currentLang, activeStorefront);
-    } catch (e: any) {
-      setRankError(e.message || "排名采集失败。");
-    } finally {
-      setRankLoading(false);
-      setRankProgress(null);
-    }
-  };
-
-  const snapshotsByKeyword = new Map<string, RankSnapshot[]>();
-  for (const snapshot of ranksForCurrent) {
-    const list = snapshotsByKeyword.get(snapshot.keyword) || [];
-    list.push(snapshot);
-    snapshotsByKeyword.set(snapshot.keyword, list);
-  }
-
-  type RankTrend = "none" | "new" | "lost" | "up" | "down" | "same";
-
-  const rankSummary = (keyword: string): {
-    rank: number | null;
-    delta: number | null;
-    trend: RankTrend;
-    checkedAt: string | null;
-  } => {
-    const list = [...(snapshotsByKeyword.get(keyword) || [])].sort(
-      (a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime(),
-    );
-    const latest = list[list.length - 1] || null;
-    const previous = list.length > 1 ? list[list.length - 2] : null;
-    if (!latest) return { rank: null, delta: null, trend: "none", checkedAt: null };
-
-    let delta: number | null = null;
-    let trend: RankTrend = "same";
-
-    if (previous?.rank == null && latest.rank != null) {
-      trend = "new";
-    } else if (previous?.rank != null && latest.rank == null) {
-      trend = "lost";
-    } else if (previous?.rank != null && latest.rank != null) {
-      delta = previous.rank - latest.rank;
-      if (delta > 0) trend = "up";
-      else if (delta < 0) trend = "down";
-    }
-
-    return { rank: latest.rank, delta, trend, checkedAt: latest.checkedAt };
-  };
-
-  const trackedWithRank = tracked
-    .map((keyword) => ({
-      keyword,
-      summary: rankSummary(keyword.keyword),
-    }))
-    .sort((a, b) => {
-      const aRank = a.summary.rank ?? Number.MAX_SAFE_INTEGER;
-      const bRank = b.summary.rank ?? Number.MAX_SAFE_INTEGER;
-      if (aRank !== bRank) return aRank - bRank;
-      return a.keyword.keyword.localeCompare(b.keyword.keyword);
-    });
-
-  const formatCheckedAt = (checkedAt: string | null): { date: string; time: string } => {
-    if (!checkedAt) return { date: "—", time: "" };
-    const date = new Date(checkedAt);
-    return {
-      date: date.toLocaleDateString(),
-      time: date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-  };
-
   return (
     <div className="p-10 max-w-6xl mx-auto">
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">关键词</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            跟踪关键词模拟用户搜索；商店关键词用于提交，每语言 ≤100 字符。
+            跟踪关键词模拟用户搜索；商店提交关键词由发布工作台负责。
           </p>
         </div>
         <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
-          {loadingLangs.size > 0 ? "生成中..." : "为所有语言生成"}
+          {loadingLangs.size > 0 ? "生成中..." : "为所选语言生成"}
         </button>
       </div>
 
@@ -2096,21 +2162,55 @@ function KeywordsPage() {
         <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
       ) : (
         <>
-          <div className="flex flex-wrap gap-2 mb-6">
-            {languages.map((l) => (
-              <button
-                key={l.code}
-                onClick={() => setActiveLang(l.code)}
-                className={cn(
-                  "px-3 py-1.5 text-sm rounded-lg border transition-colors",
-                  l.code === currentLang
-                    ? "bg-amber-50 dark:bg-amber-500/10 border-amber-500/50 text-amber-700 dark:text-amber-400 font-medium"
-                    : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                )}
-              >
-                {l.name}
-              </button>
-            ))}
+          <div className="mb-6">
+            <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
+              语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {languageOptions.map((option) => {
+                const lit = litLangs.includes(option.code);
+                const active = option.code === currentLang;
+                return (
+                  <div
+                    key={option.code}
+                    className={cn(
+                      "inline-flex items-center overflow-hidden rounded-lg border transition-colors",
+                      active
+                        ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        : lit
+                          ? "border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300"
+                          : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setViewLang(option.code);
+                        setLitLangs((prev) => (prev.includes(option.code) ? prev : [...prev, option.code]));
+                      }}
+                      title={active ? "当前查看" : "点击查看该语言"}
+                      className={cn(
+                        "px-3 py-1.5 text-sm transition-colors",
+                        active ? "font-medium" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleLitLang(option.code)}
+                      title={lit ? "取消点亮（不参与生成）" : "点亮（参与生成）"}
+                      className={cn(
+                        "px-2 py-1.5 text-xs border-l border-zinc-200/70 dark:border-zinc-700/70 transition-colors",
+                        lit ? "text-amber-500" : "text-zinc-400 hover:text-amber-500",
+                      )}
+                    >
+                      {lit ? "★" : "☆"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <div className="space-y-6">
@@ -2134,154 +2234,94 @@ function KeywordsPage() {
                     </p>
                   )}
                 </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
-                  <select
-                    value={activeStorefront}
-                    onChange={(e) => setSelectedStorefront(e.target.value)}
-                    className={inputClass + " w-full sm:max-w-60"}
-                  >
-                    {storefronts.map((country) => (
-                      <option key={country} value={country}>
-                        {storefrontDisplayName(country)}
-                      </option>
-                    ))}
-                  </select>
-                  <button onClick={() => handleGenerate(currentLang)} disabled={currentLoading} className={btnPrimary + " justify-self-start"}>
-                    {currentLoading ? "生成中..." : "AI 生成"}
-                  </button>
-                  <button onClick={handleCollectRanks} disabled={rankLoading || tracked.length === 0} className={btnPrimary + " justify-self-start"}>
-                    {rankLoading
-                      ? `采集中 ${rankProgress?.current ?? 0}/${rankProgress?.total ?? 0}`
-                      : "采集排名"}
-                  </button>
-                </div>
               </div>
 
               <div className="p-5">
-                {rankLoading && rankProgress && (
-                  <div className="mb-4 space-y-2">
-                    <div className="flex items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-300">
-                      <span className="truncate">
-                        {rankProgress.keyword || "—"} · {storefrontDisplayName(rankProgress.storefront)}
-                      </span>
-                      <span className="font-mono shrink-0">
-                        {rankProgress.current}/{rankProgress.total}
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-amber-500 transition-all duration-200"
-                        style={{
-                          width: `${rankProgress.total > 0 ? Math.round((rankProgress.current / rankProgress.total) * 100) : 0}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {rankError && (
-                  <div className="mb-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
-                    {rankError}
-                  </div>
-                )}
-
-                {tracked.length === 0 ? (
+                {matrixRows.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
-                    暂无关键词，点击「AI 生成」。
+                    暂无关键词，点击「为所选语言生成」。
                   </p>
                 ) : (
-                  <div className="rounded-xl border border-zinc-100 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-100 dark:divide-zinc-800">
-                    {trackedWithRank.map(({ keyword, summary }) => {
-                      const checked = formatCheckedAt(summary.checkedAt);
-                      return (
-                        <button
-                          type="button"
-                          key={keyword.keyword}
-                          onClick={() => setSelectedKeyword(keyword.keyword)}
-                          className={cn(
-                            "w-full flex items-center gap-4 px-4 py-3 text-left cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
-                            keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
+                  <>
+                    <div className="overflow-x-auto rounded-xl border border-zinc-100 dark:border-zinc-800">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-zinc-400 dark:text-zinc-500">
+                              关键词
+                            </th>
+                            {matrixColumns.map((column) => (
+                              <th
+                                key={column.storefront}
+                                className={cn("px-3 py-2 text-right", column.meta.stale && "opacity-60")}
+                              >
+                                <div className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                                  {storefrontDisplayName(column.storefront)}
+                                </div>
+                                <div className="mt-0.5 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                                  {column.meta.lastCheckedAt
+                                    ? formatColumnTime(column.meta.lastCheckedAt)
+                                    : "未查询"}
+                                  {column.meta.stale ? " · 过期" : ""}
+                                </div>
+                              </th>
+                            ))}
+                            <th className="px-3 py-2 text-right text-xs font-medium text-zinc-400 dark:text-zinc-500 w-10">
+                              操作
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                          {ranked.map(({ row }) => renderMatrixRow(row, false))}
+                          {unranked.length > 0 && (
+                            <tr className="border-t border-zinc-100 dark:border-zinc-800">
+                              <td colSpan={matrixColumns.length + 2} className="px-0 py-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowUnranked((v) => !v)}
+                                  className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-sm text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors"
+                                >
+                                  <span>未在榜关键词（{unranked.length}）</span>
+                                  <span
+                                    className={cn(
+                                      "text-zinc-400 transition-transform",
+                                      showUnranked && "rotate-90",
+                                    )}
+                                  >
+                                    ▸
+                                  </span>
+                                </button>
+                              </td>
+                            </tr>
                           )}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="font-mono text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                              {keyword.keyword}
-                              {keyword.translation && keyword.translation !== keyword.keyword && (
-                                <span className="ml-1 font-sans text-zinc-500 dark:text-zinc-400">
-                                  ({keyword.translation})
-                                </span>
-                              )}
-                            </div>
-                            {keyword.rationale && (
-                              <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
-                                {keyword.rationale}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="w-12 text-right shrink-0">
-                            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-0.5">排名</div>
-                            <div className={cn("font-mono", summary.rank !== null && summary.rank <= 10 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-zinc-600 dark:text-zinc-300")}>
-                              {summary.rank ?? "—"}
-                            </div>
-                          </div>
-
-                          <div className="w-16 text-right shrink-0">
-                            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-0.5">变化</div>
-                            <div className="font-mono">
-                              {summary.trend === "new" ? (
-                                <span className="text-amber-600 dark:text-amber-400">进榜</span>
-                              ) : summary.trend === "lost" ? (
-                                <span className="text-red-600 dark:text-red-400">掉榜</span>
-                              ) : summary.trend === "up" ? (
-                                <span className="text-emerald-600 dark:text-emerald-400">▲ {summary.delta}</span>
-                              ) : summary.trend === "down" ? (
-                                <span className="text-red-600 dark:text-red-400">▼ {Math.abs(summary.delta ?? 0)}</span>
-                              ) : (
-                                <span className="text-zinc-400">—</span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="w-20 text-right shrink-0 hidden sm:block">
-                            <div className="text-xs text-zinc-400 dark:text-zinc-500 leading-tight">
-                              {checked.date}
-                            </div>
-                            <div className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-0.5 leading-tight">
-                              {checked.time}
-                            </div>
-                          </div>
-
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeTracked(keyword.keyword, keyword.language);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.stopPropagation();
-                                removeTracked(keyword.keyword, keyword.language);
-                              }
-                            }}
-                            className="shrink-0 text-zinc-400 hover:text-red-500 text-xs"
-                            title="移除"
-                          >
-                            ✕
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                          {showUnranked && unranked.map((row) => renderMatrixRow(row, true))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                      各商店独立采集，时间可能不同；悬停查看精确查询时间与结果量。
+                    </p>
+                  </>
                 )}
 
                 {removedForCurrent.length > 0 && (
-                  <div className="mt-6 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 p-4">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                        已删除关键词（{removedForCurrent.length}）
-                      </h4>
+                  <div className="mt-6 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 overflow-hidden">
+                    <div className="flex items-center justify-between gap-3 px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => setShowRemoved((v) => !v)}
+                        className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
+                      >
+                        <span
+                          className={cn(
+                            "text-zinc-400 transition-transform",
+                            showRemoved && "rotate-90",
+                          )}
+                        >
+                          ▸
+                        </span>
+                        已删除 / 已暂停关键词（{removedForCurrent.length}）
+                      </button>
                       <button
                         onClick={clearRemoved}
                         className="text-xs text-zinc-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400"
@@ -2289,90 +2329,78 @@ function KeywordsPage() {
                         清空
                       </button>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {removedForCurrent.map((item) => (
-                        <span
-                          key={`${item.language}:${item.keyword}`}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
-                        >
-                          {item.keyword}
-                          <button
-                            onClick={() => restoreTracked(item.language, item.keyword)}
-                            className="text-amber-600 dark:text-amber-400 hover:underline"
-                            title="恢复"
+                    {showRemoved && (
+                      <div className="px-4 pb-4 flex flex-wrap gap-2">
+                        {removedForCurrent.map((item) => (
+                          <span
+                            key={`${item.language}:${item.keyword}`}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
                           >
-                            恢复
-                          </button>
-                        </span>
-                      ))}
-                    </div>
+                            {item.keyword}
+                            <button
+                              onClick={() => restoreTracked(item.language, item.keyword)}
+                              className="text-amber-600 dark:text-amber-400 hover:underline"
+                              title="恢复"
+                            >
+                              恢复
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {chartKeyword && chartSnapshots.length > 0 && (
+                {chartKeyword && chartData.length > 0 && (
                   <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                        {chartKeyword} · 排名趋势
+                        {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
                       </h4>
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">越低越好</span>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500">位置越高越好</span>
                     </div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={chartSnapshots
-                            .filter((snapshot) => snapshot.rank !== null)
-                            .map((snapshot) => ({
-                              time: new Date(snapshot.checkedAt).toLocaleString(),
-                              rank: snapshot.rank,
-                            }))}
-                          margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
-                        >
+                        <LineChart data={chartData} margin={{ top: 24, right: 16, bottom: 28, left: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
-                          <XAxis dataKey="time" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
-                          <YAxis reversed domain={[1, "auto"]} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={34} />
-                          <Tooltip />
-                          <Line
-                            type="monotone"
-                            dataKey="rank"
-                            stroke="#f59e0b"
-                            strokeWidth={2}
-                            dot={{ r: 3 }}
-                            activeDot={{ r: 5 }}
+                          <XAxis
+                            dataKey="time"
+                            tick={<ChartTick />}
+                            tickLine={false}
+                            axisLine={false}
+                            minTickGap={28}
+                            height={60}
                           />
+                          <YAxis
+                            reversed
+                            domain={[1, "dataMax"]}
+                            allowDecimals={false}
+                            ticks={chartTicks}
+                            tick={{ fontSize: 11 }}
+                            tickMargin={8}
+                            tickLine={false}
+                            axisLine={false}
+                            width={34}
+                          />
+                          <Tooltip content={<RankTooltip />} />
+                          <Legend />
+                          {chartSeriesMeta.map((series, index) => (
+                            <Line
+                              key={series.storefront}
+                              dataKey={series.storefront}
+                              name={series.label}
+                              type="monotone"
+                              stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                              strokeWidth={2}
+                              connectNulls
+                              dot={{ r: 3 }}
+                              activeDot={{ r: 5 }}
+                            />
+                          ))}
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
-
-            {/* Submission keywords */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                <div className="flex items-center justify-between gap-4">
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店关键词（提交字段）</h3>
-                  <span className={cn("text-xs font-mono", charCount > 100 ? "text-red-500 dark:text-red-400" : "text-zinc-400 dark:text-zinc-500")}>
-                    {charCount}/100
-                  </span>
-                </div>
-              </div>
-              <div className="p-5 space-y-3">
-                <div className="flex gap-2">
-                  <input
-                    value={submissionText}
-                    onChange={(e) => setSubmissionDrafts((prev) => ({ ...prev, [currentLang]: e.target.value }))}
-                    placeholder="kw1,kw2,kw3"
-                    className={inputClass}
-                  />
-                  <button onClick={saveSubmission} className={btnPrimary}>保存</button>
-                </div>
-                <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                  逗号分隔、无空格；这是提交到 App Store 的字段，总长需 ≤100 字符。
-                </p>
-                {charCount > 100 && (
-                  <p className="text-xs text-red-600 dark:text-red-400">已超过 100 字符，请精简后再保存。</p>
                 )}
               </div>
             </div>

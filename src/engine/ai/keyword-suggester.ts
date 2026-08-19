@@ -1,9 +1,8 @@
 /**
  * ASO keyword generation (Phase A step 3).
  *
- * In ONE AI request, generate two keyword sets for a target localization:
- * - tracking: broad terms real users would search (rank observation)
- * - submission: a curated set for the App Store keyword field (≤100 chars)
+ * In ONE AI request, generate a tracking keyword set for a target localization:
+ * broad terms real users would search (rank observation).
  */
 
 import type { AIProvider, ChatMessage } from "./ai-provider";
@@ -19,7 +18,6 @@ export interface KeywordSuggestion {
 
 export interface KeywordGeneration {
   tracking: KeywordSuggestion[];
-  submission: string[];
 }
 
 function parseJsonObject(raw: string): any {
@@ -45,7 +43,7 @@ function parseJsonObject(raw: string): any {
   throw lastError || new Error("JSON parse failed");
 }
 
-/** Parse the AI's JSON response into tracking + submission keyword sets. */
+/** Parse the AI's JSON response into the tracking keyword set. */
 export function parseKeywordGeneration(raw: string, fallbackLanguage = "en"): KeywordGeneration {
   const data = parseJsonObject(raw);
 
@@ -61,14 +59,7 @@ export function parseKeywordGeneration(raw: string, fallbackLanguage = "en"): Ke
         .slice(0, 30)
     : [];
 
-  const submission: string[] = Array.isArray(data.submission)
-    ? data.submission
-        .map((x: any) => String(x).trim())
-        .filter(Boolean)
-        .slice(0, 30)
-    : [];
-
-  return { tracking, submission };
+  return { tracking };
 }
 
 export async function generateKeywords(
@@ -87,12 +78,11 @@ export async function generateKeywords(
     {
       role: "system",
       content: [
-        "You are Appilot's ASO keyword analyst. In ONE response, generate two keyword sets for the target localization language:",
+        "You are Appilot's ASO keyword analyst. In ONE response, generate a tracking keyword set for the target localization language:",
         "1. `tracking`: realistic SEARCH PHRASES (2-4 words, spaces allowed) a user would type and this app could plausibly rank for. If the target localization is English, return 10-20 English phrases with `language` set to 'en'. Otherwise return 8-12 phrases in the target localization language and 8-12 English phrases, each item marked with its own `language` field. Prefer specific product phrases, category+function phrases, and use-case phrases. Avoid single generic words like 'ai', 'code', or 'tracker' unless part of a longer phrase. Do not include competitor brand names.",
-        "2. `submission`: a curated set to put into the App Store keyword field. It must total 100 characters MAXIMUM (comma-separated, no spaces). Choose only high-value descriptive terms that fit the limit; do NOT include competitor brand names.",
         "Each tracking term needs a `language`, a `keyword`, a `translation` of that keyword into the UI language, and a `rationale` written in the UI language.",
         'Respond ONLY with a JSON object in this exact shape:',
-        '{"tracking":[{"language":"zh-Hans","keyword":"...","translation":"...","rationale":"..."},{"language":"en","keyword":"...","translation":"...","rationale":"..."}],"submission":["kw1","kw2","kw3"]}',
+        '{"tracking":[{"language":"zh-Hans","keyword":"...","translation":"...","rationale":"..."},{"language":"en","keyword":"...","translation":"...","rationale":"..."}]}',
       ].join("\n"),
     },
     {

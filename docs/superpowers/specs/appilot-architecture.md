@@ -73,8 +73,7 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | `keyword_rankings` | keywordId, storefront, rank, date | 排名时间序列 |
 | `reviews` | projectId, storefront, author, rating, title, body, date | 评论快照 |
 | `releases` | projectId, tag, publishedAt, body, appVersion, buildNumber, isDraft, status, summary | 检测到的 `RELEASE_DRAFT.md` |
-| `store_submission_drafts` | id, projectId, productId, appVersion, buildNumber, releaseTag, githubDraftStatus, localizations, trackingKeywordDeltas, storeStatus, reviewFeedback, revision, createdAt, updatedAt | 每个预发布公告修改时间 + 产品的权威商店提交草稿 |
-| `tracking_keyword_changes` | draftId, productId, language, keyword, direction(add/remove), reason, status | 发布时提出的跟踪关键词增删建议 |
+| `store_submission_drafts` | id, projectId, productId, appVersion, buildNumber, releaseTag, githubDraftStatus, localizations, storeStatus, reviewFeedback, revision, createdAt, updatedAt | 每个预发布公告修改时间 + 产品的权威商店提交草稿 |
 | `agent_runs` | projectId, startedAt, inputSummary, outputBrief, status | 每次 agent run 记录 |
 | `ai_actions` | 沿用（AI 调用审计 + token/cost） | 模型路由下的用量统计 |
 
@@ -95,7 +94,6 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 | `whatsNew` | 本次新增变化 | ≤ 4000 字符 |
 | `description` | App 描述 | ≤ 4000 字符 |
 | `submissionKeywords` | 随商店版本提交的关键词 | ≤ 100 字符/语言 |
-| `trackingKeywordDeltas` | 对现有跟踪关键词的增删建议 | `add: night mode` / `remove: torch` |
 | `storeStatus` | App Store 提交状态 | `prepared` / `copied` / `submitted` / `in_review` / `rejected` / `released` |
 | `reviewFeedback` | 驳回意见 | 供重新生成文案时作为上下文 |
 | `revision` | 同一提交工作单的修订次数 | `1` / `2` / `3` |
@@ -106,9 +104,8 @@ Appilot 的架构核心从「分层的桌面应用」转为一个 **agent loop**
 - **文件存在触发，文件删除结束**：仓库根目录存在 `RELEASE_DRAFT.md` 时生成/更新提交文案；仓库删除该文件后，Appilot 不再生成文案。
 - **一个公告一份草稿**：公告被编辑，或 App Store 驳回后重新提交，都更新同一个 draft，不创建多条半成品。
 - **驳回不是失败**：`rejected` 是状态机的一部分，携带 `reviewFeedback`，触发同一 draft 的重新生成。
-- **关键词增删不立即写入跟踪集**：先生成 `tracking_keyword_changes`，用户确认后再更新关键词状态。
 
-`AgentOrchestrator` 后续把已 `released` 的 draft 与 `tracking_keyword_changes` 纳入周报和长期效果时间线。
+`AgentOrchestrator` 后续把已 `released` 的 draft 纳入周报和长期效果时间线。
 
 ---
 
