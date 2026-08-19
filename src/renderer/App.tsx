@@ -1911,7 +1911,9 @@ function KeywordsPage() {
   >([]);
   const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
-  const [keywordProgress, setKeywordProgress] = useState<Record<string, number>>({});
+  const [keywordProgress, setKeywordProgress] = useState<
+    Record<string, { chars: number; phase: "reasoning" | "content" }>
+  >({});
   const [showUnranked, setShowUnranked] = useState(false);
   const [showRemoved, setShowRemoved] = useState(false);
   const [error, setError] = useState("");
@@ -1944,7 +1946,13 @@ function KeywordsPage() {
   useEffect(() => {
     const off = (window as any).appilot?.projects?.onKeywordProgress?.((progress: any) => {
       if (progress?.language && typeof progress.chars === "number") {
-        setKeywordProgress((prev) => ({ ...prev, [progress.language]: progress.chars }));
+        setKeywordProgress((prev) => ({
+          ...prev,
+          [progress.language]: {
+            chars: progress.chars,
+            phase: progress.phase === "content" ? "content" : "reasoning",
+          },
+        }));
       }
     });
     return () => {
@@ -2049,7 +2057,11 @@ function KeywordsPage() {
       data.removals.filter((item) => item.choice === "ignore").length,
     0,
   );
-  const receivedChars = Object.values(keywordProgress).reduce((sum, chars) => sum + chars, 0);
+  const receivedChars = Object.values(keywordProgress).reduce(
+    (sum, item) => sum + item.chars,
+    0,
+  );
+  const activeProgress = keywordProgress[currentLang];
   const appliedAddKeys = new Set(
     curationApplied
       .filter((item) => item.kind === "add")
@@ -2329,8 +2341,23 @@ function KeywordsPage() {
                 </div>
                 <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
                   {loadingLangs.size > 0
-                    ? receivedChars > 0
-                      ? `处理中… 已接收 ${receivedChars} 字`
+                    ? activeProgress && activeProgress.chars > 0
+                      ? (
+                          <span className="inline-flex items-center gap-1">
+                            {activeProgress.phase === "reasoning" ? "思考中… 已接收" : "生成中… 已接收"}
+                            <span
+                              className={cn(
+                                "font-mono",
+                                activeProgress.phase === "reasoning"
+                                  ? "text-amber-300"
+                                  : "text-emerald-300",
+                              )}
+                            >
+                              {receivedChars}
+                            </span>
+                            字
+                          </span>
+                        )
                       : "思考中…"
                     : "为所选语言生成 / 整理"}
                 </button>

@@ -47,7 +47,7 @@ function parseJsonObject(raw: string): any {
 async function parseJsonWithRepair(
   provider: AIProvider,
   raw: string,
-  onProgress?: (received: { chars: number }) => void,
+  onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<any> {
   try {
     return parseJsonObject(raw);
@@ -107,7 +107,7 @@ export async function generateKeywords(
     existingKeywords?: { keyword: string }[];
     removedKeywords?: string[];
   },
-  onProgress?: (received: { chars: number }) => void,
+  onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<KeywordGeneration> {
   log.info(`Generating ASO keywords for ${context.name} (${context.language})`);
 
@@ -231,7 +231,7 @@ export async function curateKeywords(
     submissionKeywords: string[];
     removedKeywords: string[];
   },
-  onProgress?: (received: { chars: number }) => void,
+  onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<KeywordCuration> {
   const messages: ChatMessage[] = [
     {

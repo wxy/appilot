@@ -831,6 +831,7 @@ export function registerIpcHandlers() {
           productId,
           language,
           chars: received.chars,
+          phase: received.phase,
         });
       }
     });
@@ -893,6 +894,7 @@ export function registerIpcHandlers() {
           productId,
           language,
           chars: received.chars,
+          phase: received.phase,
         });
       }
     });

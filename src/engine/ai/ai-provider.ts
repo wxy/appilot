@@ -82,7 +82,7 @@ export class AIProvider {
       maxTokens?: number;
       thinking?: ThinkingEffort;
       responseFormat?: "json_object";
-      onProgress?: (received: { chars: number }) => void;
+      onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void;
     },
   ): Promise<string> {
     const isDeepSeek = this.config.baseURL.includes("deepseek");
@@ -107,6 +107,7 @@ export class AIProvider {
         if (opts?.onProgress) {
           const consumeStream = async (stream: any) => {
             let chars = 0;
+            let lastPhase: "reasoning" | "content" | null = null;
             for await (const chunk of stream) {
               const delta = chunk?.choices?.[0]?.delta;
               // DeepSeek streams reasoning separately from content; count both
@@ -118,9 +119,12 @@ export class AIProvider {
               if (deltaText && deltaText.length > 0) {
                 if (typeof delta?.content === "string" && delta.content.length > 0) {
                   content = (content || "") + delta.content;
+                  lastPhase = "content";
+                } else {
+                  lastPhase = "reasoning";
                 }
                 chars += deltaText.length;
-                opts?.onProgress?.({ chars });
+                if (lastPhase) opts?.onProgress?.({ chars, phase: lastPhase });
               }
               if (chunk?.choices?.[0]?.finish_reason) {
                 finishReason = chunk.choices[0].finish_reason;
@@ -161,7 +165,7 @@ export class AIProvider {
             finishReason = response.choices[0]?.finish_reason;
             promptTokens = response.usage?.prompt_tokens ?? 0;
             completionTokens = (response.usage?.total_tokens ?? 0) - promptTokens;
-            if (content) opts.onProgress({ chars: content.length });
+            if (content) opts.onProgress({ chars: content.length, phase: "content" });
           }
         } else {
           const response = await this.client.chat.completions.create(request as any);
