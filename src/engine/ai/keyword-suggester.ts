@@ -65,7 +65,7 @@ async function parseJsonWithRepair(
       ],
       {
         temperature: 0,
-        maxTokens: 8000,
+        maxTokens: 32000,
         thinking: "disabled",
         responseFormat: "json_object",
         onProgress,
@@ -144,7 +144,7 @@ export async function generateKeywords(
   try {
     raw = await provider.chat(messages, {
       temperature: 0.4,
-      maxTokens: 8000,
+      maxTokens: 32000,
       thinking: "low",
       responseFormat: "json_object",
       onProgress,
@@ -156,7 +156,7 @@ export async function generateKeywords(
       );
       raw = await provider.chat(messages, {
         temperature: 0.4,
-        maxTokens: 8000,
+        maxTokens: 32000,
         thinking: "disabled",
         responseFormat: "json_object",
         onProgress,
@@ -264,7 +264,7 @@ export async function curateKeywords(
   try {
     raw = await provider.chat(messages, {
       temperature: 0.4,
-      maxTokens: 8000,
+      maxTokens: 32000,
       thinking: "low",
       responseFormat: "json_object",
       onProgress,
@@ -276,7 +276,7 @@ export async function curateKeywords(
       );
       raw = await provider.chat(messages, {
         temperature: 0.4,
-        maxTokens: 8000,
+        maxTokens: 32000,
         thinking: "disabled",
         responseFormat: "json_object",
         onProgress,

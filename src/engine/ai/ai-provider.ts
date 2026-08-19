@@ -185,8 +185,8 @@ export class AIProvider {
       // The response was cut off before producing any text (reasoning consumed
       // the whole budget). Double the cap on the next attempt so the model has
       // room to finish, capped to avoid runaway cost.
-      if (finishReason === "length" && maxTokens < 12000) {
-        maxTokens = Math.min(maxTokens * 2, 12000);
+      if (finishReason === "length" && maxTokens < 64000) {
+        maxTokens = Math.min(maxTokens * 2, 64000);
       }
       if (attempt < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
