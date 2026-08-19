@@ -1900,8 +1900,20 @@ function KeywordsPage() {
     const initial = supported.includes(UI_SOURCE_LANGUAGE) ? UI_SOURCE_LANGUAGE : supported[0];
     return initial ? [initial] : [];
   });
+  const [curation, setCuration] = useState<Record<string, {
+    removals: { keyword: string; reason: string; choice: "accept" | "ignore" }[];
+    adds: (KeywordSuggestion & { choice: "accept" | "ignore" })[];
+  }>>({});
+  const [curationOpen, setCurationOpen] = useState(false);
+  const [curationConfirm, setCurationConfirm] = useState<null | "apply" | "discard">(null);
+  const [curationApplied, setCurationApplied] = useState<
+    { language: string; keyword: string; kind: "add" | "remove" }[]
+  >([]);
   const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
+  const [keywordProgress, setKeywordProgress] = useState<
+    Record<string, { chars: number; phase: "reasoning" | "content" }>
+  >({});
   const [showUnranked, setShowUnranked] = useState(false);
   const [showRemoved, setShowRemoved] = useState(false);
   const [error, setError] = useState("");
@@ -1928,6 +1940,23 @@ function KeywordsPage() {
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onKeywordProgress?.((progress: any) => {
+      if (progress?.language && typeof progress.chars === "number") {
+        setKeywordProgress((prev) => ({
+          ...prev,
+          [progress.language]: {
+            chars: progress.chars,
+            phase: progress.phase === "content" ? "content" : "reasoning",
+          },
+        }));
+      }
+    });
+    return () => {
+      off?.();
     };
   }, []);
 
@@ -2013,12 +2042,44 @@ function KeywordsPage() {
   const formatColumnTime = (iso: string) =>
     new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+  const acceptedAdds = Object.values(curation).reduce(
+    (sum, data) => sum + data.adds.filter((item) => item.choice === "accept").length,
+    0,
+  );
+  const acceptedRemovals = Object.values(curation).reduce(
+    (sum, data) => sum + data.removals.filter((item) => item.choice === "accept").length,
+    0,
+  );
+  const ignoredCount = Object.values(curation).reduce(
+    (sum, data) =>
+      sum +
+      data.adds.filter((item) => item.choice === "ignore").length +
+      data.removals.filter((item) => item.choice === "ignore").length,
+    0,
+  );
+  const receivedChars = Object.values(keywordProgress).reduce(
+    (sum, item) => sum + item.chars,
+    0,
+  );
+  const activeProgress = keywordProgress[currentLang];
+  const appliedAddKeys = new Set(
+    curationApplied
+      .filter((item) => item.kind === "add")
+      .map((item) => `${item.language}\u0000${item.keyword}`),
+  );
+  const appliedKindFor = (row: (typeof matrixRows)[number]): "add" | null =>
+    appliedAddKeys.has(`${row.language}\u0000${row.keyword}`) ? "add" : null;
+
   const cellTitle = (cell: MatrixCell) =>
     cell.checkedAt
       ? `最近查询 ${new Date(cell.checkedAt).toLocaleString()} · 结果量 ${cell.totalResults ?? "—"}`
       : "尚未查询";
 
-  const renderMatrixRow = (keyword: (typeof matrixRows)[number], dimmed: boolean) => (
+  const renderMatrixRow = (
+    keyword: (typeof matrixRows)[number],
+    dimmed: boolean,
+    applied?: "add" | "remove" | null,
+  ) => (
     <div
       key={`${keyword.language}:${keyword.keyword}`}
       onClick={() => setSelectedKeyword(keyword.keyword)}
@@ -2032,13 +2093,27 @@ function KeywordsPage() {
     >
       <div className="py-3 pl-5 pr-4 min-w-0">
         <div
-          className={cn("font-mono text-sm truncate", dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200")}
+          className={cn(
+            "font-mono text-sm truncate",
+            dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200",
+            applied === "remove" && "line-through",
+          )}
           title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
         >
           {keyword.keyword}
           {keyword.language === "en" && (
             <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
               全局
+            </span>
+          )}
+          {applied === "add" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/15 text-[10px] font-sans font-medium text-emerald-600 dark:text-emerald-400 align-middle">
+              新增
+            </span>
+          )}
+          {applied === "remove" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-500/15 text-[10px] font-sans font-medium text-red-600 dark:text-red-400 align-middle">
+              已删除
             </span>
           )}
         </div>
@@ -2124,11 +2199,111 @@ function KeywordsPage() {
 
   const handleGenerateAll = async () => {
     setError("");
-    const langs = litLangs;
-    setLoadingLangs(new Set(langs));
-    const results = await Promise.all(langs.map((lang) => generateOne(lang)));
-    await applyGenerations(results);
+    setKeywordProgress({});
+    const lang = currentLang;
+    const tracked = product.trackedKeywords || [];
+    const hasKeywords = tracked.some((k) => k.language === lang);
+    setLoadingLangs(new Set([lang]));
+    const nextCuration: Record<string, any> = {};
+    if (!hasKeywords) {
+      const result = await generateOne(lang);
+      await applyGenerations([result]);
+    } else {
+      try {
+        const result = await (window as any).appilot.projects.curateKeywords(product.id, lang);
+        nextCuration[lang] = {
+          removals: (result.removals || []).map((item: any) => ({ ...item, choice: "accept" })),
+          adds: (result.adds || []).map((item: any) => ({ ...item, choice: "accept" })),
+        };
+      } catch (e: any) {
+        setError(e.message || "关键词整理失败。");
+      }
+    }
+    setCuration((prev) => ({ ...prev, ...nextCuration }));
+    setCurationOpen(Object.keys(nextCuration).length > 0);
+    setCurationConfirm(null);
     setLoadingLangs(new Set());
+    setKeywordProgress({});
+  };
+
+  const setItemChoice = (
+    lang: string,
+    key: "removals" | "adds",
+    keyword: string,
+    choice: "accept" | "ignore",
+  ) => {
+    setCuration((prev) => {
+      const langData = prev[lang];
+      if (!langData) return prev;
+      return {
+        ...prev,
+        [lang]: {
+          ...langData,
+          [key]: langData[key].map((item) =>
+            item.keyword === keyword ? { ...item, choice } : item,
+          ),
+        },
+      };
+    });
+  };
+
+  const selectAllCuration = (choice: "accept" | "ignore") => {
+    setCuration((prev) => {
+      const next: Record<string, any> = {};
+      for (const [lang, data] of Object.entries(prev)) {
+        next[lang] = {
+          removals: data.removals.map((item) => ({ ...item, choice })),
+          adds: data.adds.map((item) => ({ ...item, choice })),
+        };
+      }
+      return next;
+    });
+  };
+
+  const applyCuration = async () => {
+    setCurationConfirm(null);
+    const applied: { language: string; keyword: string; kind: "add" | "remove" }[] = [];
+    for (const [lang, data] of Object.entries(curation)) {
+      for (const item of data.adds) {
+        if (item.choice !== "accept") continue;
+        applied.push({ language: lang, keyword: item.keyword, kind: "add" });
+        const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
+        const current = latest?.storeProducts?.find((p) => p.id === product.id) || product;
+        const existingKeys = new Set(
+          (current.trackedKeywords || []).map((k) => `${k.language}\u0000${k.keyword}`),
+        );
+        if (existingKeys.has(`${lang}\u0000${item.keyword}`)) continue;
+        const next = [
+          ...(current.trackedKeywords || []),
+          {
+            language: lang,
+            keyword: item.keyword,
+            rationale: item.rationale,
+            translation: item.translation || "",
+            status: "active" as const,
+            source: "ai" as const,
+          },
+        ];
+        await (window as any).appilot.projects.saveTrackedKeywords(product.id, next);
+        updateTrackedKeywords(product.id, next);
+      }
+      for (const item of data.removals) {
+        if (item.choice === "accept") {
+          applied.push({ language: lang, keyword: item.keyword, kind: "remove" });
+          await removeTracked(item.keyword, lang);
+        }
+      }
+    }
+    setCurationApplied((prev) => [...prev, ...applied]);
+    setShowUnranked(true);
+    setCuration({});
+    setCurationOpen(false);
+  };
+
+  const discardCuration = () => {
+    setCurationConfirm(null);
+    setCuration({});
+    setCurationOpen(false);
   };
 
   const removeTracked = async (kw: string, language: string) => {
@@ -2165,7 +2340,26 @@ function KeywordsPage() {
                   </p>
                 </div>
                 <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
-                  {loadingLangs.size > 0 ? "生成中..." : "为所选语言生成"}
+                  {loadingLangs.size > 0
+                    ? activeProgress && activeProgress.chars > 0
+                      ? (
+                          <span className="inline-flex items-center gap-1">
+                            {activeProgress.phase === "reasoning" ? "思考中… 已接收" : "生成中… 已接收"}
+                            <span
+                              className={cn(
+                                "font-mono",
+                                activeProgress.phase === "reasoning"
+                                  ? "text-amber-300"
+                                  : "text-emerald-300",
+                              )}
+                            >
+                              {receivedChars}
+                            </span>
+                            字
+                          </span>
+                        )
+                      : "思考中…"
+                    : "为所选语言生成 / 整理"}
                 </button>
               </div>
               <p className="mt-3 text-[11px] font-medium tracking-wider text-zinc-400 dark:text-zinc-500">
@@ -2371,7 +2565,17 @@ function KeywordsPage() {
                         </span>
                       </button>
                     )}
-                    {showUnranked && unranked.map((row) => renderMatrixRow(row, true))}
+                    {showUnranked && unranked.map((row) => renderMatrixRow(row, true, appliedKindFor(row)))}
+                    {showUnranked &&
+                      curationApplied
+                        .filter((item) => item.kind === "remove" && queryLanguages.includes(item.language))
+                        .map((item) =>
+                          renderMatrixRow(
+                            { language: item.language, keyword: item.keyword, rationale: "", translation: "" } as any,
+                            true,
+                            "remove",
+                          ),
+                        )}
                   </>
                 )}
             </div>
@@ -2444,6 +2648,185 @@ function KeywordsPage() {
 
           </div>
         </>
+      )}
+
+      {curationOpen && Object.keys(curation).length > 0 && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+          <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">关键词整理建议</h3>
+              <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                新增 {acceptedAdds} · 移除 {acceptedRemovals} · 忽略/保留 {ignoredCount}
+              </span>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
+              {Object.entries(curation).map(([lang, data]) => (
+                <div key={lang} className="space-y-2">
+                  <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{languageLabel(lang)}</p>
+                  {data.removals.map((item) => (
+                    <div
+                      key={`rm:${item.keyword}`}
+                      className={cn(
+                        "flex items-start justify-between gap-3 rounded-lg border px-3 py-2 transition-colors",
+                        item.choice === "accept"
+                          ? "border-red-200/70 dark:border-red-500/40 bg-red-50/40 dark:bg-red-500/5"
+                          : "opacity-60 border-zinc-200 dark:border-zinc-700",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm text-zinc-800 dark:text-zinc-200">
+                          {item.keyword}
+                          <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-500/15 text-[10px] font-medium text-red-600 dark:text-red-400 align-middle">
+                            移除
+                          </span>
+                        </p>
+                        <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">{item.reason}</p>
+                      </div>
+                      <div className="flex shrink-0 gap-1.5">
+                        <button
+                          onClick={() => setItemChoice(lang, "removals", item.keyword, "accept")}
+                          className={cn(
+                            "px-2.5 py-1 text-xs rounded-lg border transition-colors",
+                            item.choice === "accept"
+                              ? "border-red-300 dark:border-red-500/50 bg-red-500 text-white"
+                              : "border-red-200 dark:border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10",
+                          )}
+                        >
+                          采纳移除
+                        </button>
+                        <button
+                          onClick={() => setItemChoice(lang, "removals", item.keyword, "ignore")}
+                          className={cn(
+                            "px-2.5 py-1 text-xs rounded-lg border transition-colors",
+                            item.choice === "ignore"
+                              ? "border-zinc-400 dark:border-zinc-500 bg-zinc-500 text-white"
+                              : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                          )}
+                        >
+                          保留
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {data.adds.map((item) => (
+                    <div
+                      key={`add:${item.keyword}`}
+                      className={cn(
+                        "flex items-start justify-between gap-3 rounded-lg border px-3 py-2 transition-colors",
+                        item.choice === "accept"
+                          ? "border-emerald-200/70 dark:border-emerald-500/40 bg-emerald-50/40 dark:bg-emerald-500/5"
+                          : "opacity-60 border-zinc-200 dark:border-zinc-700",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm text-zinc-800 dark:text-zinc-200">
+                          {item.keyword}
+                          {item.translation && item.translation !== item.keyword ? `（${item.translation}）` : ""}
+                          <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/15 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 align-middle">
+                            新增
+                          </span>
+                        </p>
+                        <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{item.rationale}</p>
+                      </div>
+                      <div className="flex shrink-0 gap-1.5">
+                        <button
+                          onClick={() => setItemChoice(lang, "adds", item.keyword, "accept")}
+                          className={cn(
+                            "px-2.5 py-1 text-xs rounded-lg border transition-colors",
+                            item.choice === "accept"
+                              ? "border-emerald-300 dark:border-emerald-500/50 bg-emerald-500 text-white"
+                              : "border-emerald-200 dark:border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10",
+                          )}
+                        >
+                          采纳新增
+                        </button>
+                        <button
+                          onClick={() => setItemChoice(lang, "adds", item.keyword, "ignore")}
+                          className={cn(
+                            "px-2.5 py-1 text-xs rounded-lg border transition-colors",
+                            item.choice === "ignore"
+                              ? "border-zinc-400 dark:border-zinc-500 bg-zinc-500 text-white"
+                              : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                          )}
+                        >
+                          忽略
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            <div className="px-5 py-4 border-t border-zinc-100 dark:border-zinc-800 space-y-3">
+              {curationConfirm === "apply" && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200/70 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/10 px-3 py-2">
+                  <p className="text-xs text-zinc-700 dark:text-zinc-300">
+                    将新增 {acceptedAdds} 个、移除 {acceptedRemovals} 个关键词，确认执行？
+                  </p>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      onClick={() => applyCuration()}
+                      className="text-xs font-medium text-amber-600 dark:text-amber-400 hover:underline"
+                    >
+                      确认
+                    </button>
+                    <button
+                      onClick={() => setCurationConfirm(null)}
+                      className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
+              {curationConfirm === "discard" && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 px-3 py-2">
+                  <p className="text-xs text-zinc-600 dark:text-zinc-300">关闭后将丢弃本次建议，确认？</p>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      onClick={() => discardCuration()}
+                      className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline"
+                    >
+                      确认丢弃
+                    </button>
+                    <button
+                      onClick={() => setCurationConfirm(null)}
+                      className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => selectAllCuration("accept")}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                  >
+                    全部采纳/移除
+                  </button>
+                  <button
+                    onClick={() => selectAllCuration("ignore")}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                  >
+                    全部忽略/保留
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setCurationConfirm("apply")} className={btnPrimary}>
+                    确定
+                  </button>
+                  <button onClick={() => setCurationConfirm("discard")} className={btnSecondary}>
+                    关闭
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
