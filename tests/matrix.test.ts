@@ -3,6 +3,7 @@ import {
   matrixCellState,
   matrixColumnMeta,
   matrixFilterKeywords,
+  matrixRowGroups,
   trackingLanguageOptions,
   STALE_MS,
 } from "../src/renderer/lib/matrix";
@@ -61,5 +62,27 @@ const staleTime = new Date(now - STALE_MS * 2).toISOString();
 const metaStale = matrixColumnMeta([{ storefront: "us", checkedAt: staleTime }], "us");
 assert.equal(metaStale.stale, true);
 assert.equal(metaStale.lastCheckedAt, staleTime);
+
+console.log("✅ PASS: matrixRowGroups splits ranked (best first) and unranked");
+const groups = matrixRowGroups(
+  [{ keyword: "deep link" }, { keyword: "记账" }, { keyword: "night walk" }],
+  [{ storefront: "us" }, { storefront: "cn" }],
+  [
+    { keyword: "night walk", storefront: "us", rank: 5, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
+    { keyword: "记账", storefront: "cn", rank: 2, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
+    { keyword: "deep link", storefront: "us", rank: null, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
+  ],
+);
+assert.deepEqual(
+  groups.ranked.map((item) => item.row.keyword),
+  ["记账", "night walk"],
+  "ranked sorted by best rank ascending",
+);
+assert.equal(groups.ranked[0].bestRank, 2);
+assert.deepEqual(
+  groups.unranked.map((item) => item.keyword),
+  ["deep link"],
+  "unranked keeps no-rank keywords",
+);
 
 console.log("🎉 All matrix helper tests passed!");

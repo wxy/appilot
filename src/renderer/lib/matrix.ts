@@ -98,3 +98,23 @@ export function matrixColumnMeta(
     stale: Date.now() - last > STALE_MS,
   };
 }
+
+export function matrixRowGroups<T extends { keyword: string }>(
+  rows: T[],
+  columns: { storefront: string }[],
+  snapshots: MatrixSnapshot[],
+): { ranked: { row: T; bestRank: number }[]; unranked: T[] } {
+  const ranked: { row: T; bestRank: number }[] = [];
+  const unranked: T[] = [];
+  for (const row of rows) {
+    let best = Number.POSITIVE_INFINITY;
+    for (const column of columns) {
+      const cell = matrixCellState(snapshots, row.keyword, column.storefront);
+      if (cell.rank != null && cell.rank < best) best = cell.rank;
+    }
+    if (best === Number.POSITIVE_INFINITY) unranked.push(row);
+    else ranked.push({ row, bestRank: best });
+  }
+  ranked.sort((a, b) => a.bestRank - b.bestRank);
+  return { ranked, unranked };
+}
