@@ -302,3 +302,60 @@ export async function curateKeywords(
     }
   }
 }
+
+export interface SubmissionCandidate {
+  keyword: string;
+  source: "name" | "subtitle";
+  rationale: string;
+}
+
+export function parseSubmissionCandidates(raw: string): SubmissionCandidate[] {
+  const data = parseJsonObject(raw);
+  const candidates = Array.isArray(data.candidates)
+    ? data.candidates
+        .map((x: any) => ({
+          keyword: String(x?.keyword || "").trim(),
+          source: x?.source === "subtitle" ? ("subtitle" as const) : ("name" as const),
+          rationale: String(x?.rationale || "").trim(),
+        }))
+        .filter((item: SubmissionCandidate) => item.keyword)
+        .slice(0, 20)
+    : [];
+  return candidates;
+}
+
+/** 从名称 / 副标题抽取可作为跟踪候选的搜索意图词。 */
+export async function extractSubmissionCandidates(
+  provider: AIProvider,
+  context: { name: string; subtitle?: string; language: string; uiLanguage: string },
+  onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+): Promise<SubmissionCandidate[]> {
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content: [
+        "You are Appilot's ASO candidate extractor. Extract realistic SEARCH KEYWORDS from the app name and subtitle.",
+        "Output candidates as search intents a user would actually type (2-4 words preferred). Mark each with its source: terms derived from the app name → 'name', from the subtitle → 'subtitle'.",
+        "Keep candidates ≤20. Do not include competitor brand names. Do not output whole sentences.",
+        "Respond ONLY with JSON: {\"candidates\":[{\"keyword\":\"...\",\"source\":\"name|subtitle\",\"rationale\":\"...\"}]}",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        `App name: ${context.name}`,
+        `App subtitle: ${context.subtitle || "N/A"}`,
+        `Target localization: ${context.language}`,
+        `UI language (write rationale in this language): ${context.uiLanguage}`,
+      ].join("\n"),
+    },
+  ];
+  const raw = await provider.chat(messages, {
+    temperature: 0.3,
+    maxTokens: 8000,
+    thinking: "low",
+    responseFormat: "json_object",
+    onProgress,
+  });
+  return parseSubmissionCandidates(raw);
+}

@@ -1856,6 +1856,43 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
   );
 }
 
+function AIProgressButton({
+  onClick,
+  disabled = false,
+  idleLabel,
+  loading,
+  progress,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  idleLabel: string;
+  loading: boolean;
+  progress: { chars: number; phase: "reasoning" | "content" } | null;
+}) {
+  return (
+    <button onClick={onClick} disabled={disabled || loading} className={btnPrimary}>
+      {loading
+        ? progress && progress.chars > 0
+          ? (
+              <span className="inline-flex items-center gap-1">
+                {progress.phase === "reasoning" ? "思考中… 已接收" : "生成中… 已接收"}
+                <span
+                  className={cn(
+                    "font-mono",
+                    progress.phase === "reasoning" ? "text-amber-300" : "text-emerald-300",
+                  )}
+                >
+                  {progress.chars}
+                </span>
+                字
+              </span>
+            )
+          : "思考中…"
+        : idleLabel}
+    </button>
+  );
+}
+
 function RankTooltip({ active, payload, label }: any) {
   if (!active || !Array.isArray(payload)) return null;
   const rows = payload.filter((item: any) => item.value != null);
@@ -1909,6 +1946,21 @@ function KeywordsPage() {
   const [curationApplied, setCurationApplied] = useState<
     { language: string; keyword: string; kind: "add" | "remove" }[]
   >([]);
+  const [submissionRef, setSubmissionRef] = useState<{
+    name: string;
+    subtitle: string;
+    submissionKeywords: string;
+  } | null>(null);
+  const [submissionPanelOpen, setSubmissionPanelOpen] = useState(false);
+  const [candidates, setCandidates] = useState<
+    { keyword: string; source: "submission" | "name" | "subtitle"; rationale: string }[]
+  >([]);
+  const [removedCandidateKeys, setRemovedCandidateKeys] = useState<Set<string>>(new Set());
+  const [submissionProgress, setSubmissionProgress] = useState<{
+    chars: number;
+    phase: "reasoning" | "content";
+  } | null>(null);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
   const [keywordProgress, setKeywordProgress] = useState<
@@ -1953,6 +2005,20 @@ function KeywordsPage() {
             phase: progress.phase === "content" ? "content" : "reasoning",
           },
         }));
+      }
+    });
+    return () => {
+      off?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onSubmissionProgress?.((progress: any) => {
+      if (typeof progress?.chars === "number") {
+        setSubmissionProgress({
+          chars: progress.chars,
+          phase: progress.phase === "content" ? "content" : "reasoning",
+        });
       }
     });
     return () => {
@@ -2057,11 +2123,16 @@ function KeywordsPage() {
       data.removals.filter((item) => item.choice === "ignore").length,
     0,
   );
-  const receivedChars = Object.values(keywordProgress).reduce(
-    (sum, item) => sum + item.chars,
-    0,
-  );
   const activeProgress = keywordProgress[currentLang];
+  const trackedCandidateKeywords = new Set(
+    (product.trackedKeywords || [])
+      .filter((k) => k.language === currentLang)
+      .map((k) => k.keyword),
+  );
+  const pendingCandidateCount = candidates.filter((candidate) => {
+    const key = `${candidate.source}\u0000${candidate.keyword}`;
+    return !removedCandidateKeys.has(key) && !trackedCandidateKeywords.has(candidate.keyword);
+  }).length;
   const appliedAddKeys = new Set(
     curationApplied
       .filter((item) => item.kind === "add")
@@ -2104,6 +2175,21 @@ function KeywordsPage() {
           {keyword.language === "en" && (
             <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
               全局
+            </span>
+          )}
+          {keyword.source === "submission" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-500/15 text-[10px] font-sans font-medium text-sky-600 dark:text-sky-400 align-middle">
+              商店
+            </span>
+          )}
+          {keyword.source === "name" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-violet-100 dark:bg-violet-500/15 text-[10px] font-sans font-medium text-violet-600 dark:text-violet-400 align-middle">
+              名称
+            </span>
+          )}
+          {keyword.source === "subtitle" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-teal-100 dark:bg-teal-500/15 text-[10px] font-sans font-medium text-teal-600 dark:text-teal-400 align-middle">
+              副标题
             </span>
           )}
           {applied === "add" && (
@@ -2306,6 +2392,72 @@ function KeywordsPage() {
     setCurationOpen(false);
   };
 
+  const openSubmissionPanel = async () => {
+    setSubmissionPanelOpen((v) => !v);
+    if (!submissionPanelOpen) {
+      setCandidates([]);
+      try {
+        const ref = await (window as any).appilot.projects.getSubmissionReference(product.id, currentLang);
+        setSubmissionRef(ref);
+      } catch (e: any) {
+        setError(e.message || "提交内容加载失败。");
+      }
+    }
+  };
+
+  const extractCandidates = async () => {
+    setCandidatesLoading(true);
+    setSubmissionProgress(null);
+    setRemovedCandidateKeys(new Set());
+    setError("");
+    try {
+      const result = await (window as any).appilot.projects.extractSubmissionCandidates(product.id, currentLang);
+      setCandidates(result?.candidates || []);
+    } catch (e: any) {
+      setError(e.message || "候选词抽取失败。");
+    } finally {
+      setCandidatesLoading(false);
+      setSubmissionProgress(null);
+    }
+  };
+
+  const removeCandidate = (source: string, keyword: string) => {
+    setRemovedCandidateKeys((prev) => {
+      const next = new Set(prev);
+      next.add(`${source}\u0000${keyword}`);
+      return next;
+    });
+  };
+
+  const addAllCandidates = async () => {
+    const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
+    const current = latest?.storeProducts?.find((p) => p.id === product.id) || product;
+    const existingKeys = new Set(
+      (current.trackedKeywords || []).map((k) => `${k.language}\u0000${k.keyword}`),
+    );
+    const toAdd = candidates.filter((candidate) => {
+      const key = `${candidate.source}\u0000${candidate.keyword}`;
+      return !removedCandidateKeys.has(key) && !existingKeys.has(`${currentLang}\u0000${candidate.keyword}`);
+    });
+    if (toAdd.length === 0) return;
+    const next = [
+      ...(current.trackedKeywords || []),
+      ...toAdd.map((candidate) => ({
+        language: currentLang,
+        keyword: candidate.keyword,
+        rationale: candidate.rationale,
+        translation: "",
+        status: "active" as const,
+        source: candidate.source as "submission" | "name" | "subtitle",
+      })),
+    ];
+    await (window as any).appilot.projects.saveTrackedKeywords(product.id, next);
+    updateTrackedKeywords(product.id, next);
+    const added = new Set(toAdd.map((c) => `${c.source}\u0000${c.keyword}`));
+    setCandidates((prev) => prev.filter((c) => !added.has(`${c.source}\u0000${c.keyword}`)));
+    setRemovedCandidateKeys(new Set());
+  };
+
   const removeTracked = async (kw: string, language: string) => {
     await removeTrackedKeyword(product.id, language, kw);
   };
@@ -2339,28 +2491,141 @@ function KeywordsPage() {
                     商店提交关键词由发布工作台负责。
                   </p>
                 </div>
-                <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
-                  {loadingLangs.size > 0
-                    ? activeProgress && activeProgress.chars > 0
-                      ? (
-                          <span className="inline-flex items-center gap-1">
-                            {activeProgress.phase === "reasoning" ? "思考中… 已接收" : "生成中… 已接收"}
-                            <span
-                              className={cn(
-                                "font-mono",
-                                activeProgress.phase === "reasoning"
-                                  ? "text-amber-300"
-                                  : "text-emerald-300",
-                              )}
-                            >
-                              {receivedChars}
-                            </span>
-                            字
-                          </span>
-                        )
-                      : "思考中…"
-                    : "为所选语言生成 / 整理"}
-                </button>
+                <div className="flex items-start gap-2">
+                  <div className="relative">
+                    <button onClick={openSubmissionPanel} className={btnSecondary}>
+                      提交内容
+                    </button>
+                    {submissionPanelOpen && (
+                      <div className="absolute right-0 top-full mt-1.5 z-40 w-[26rem] max-h-[70vh] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                            提交内容（{languageLabel(currentLang)}）
+                          </h4>
+                          <button
+                            onClick={() => setSubmissionPanelOpen(false)}
+                            className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                          >
+                            关闭
+                          </button>
+                        </div>
+                        {submissionRef ? (
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 mb-0.5">名称</p>
+                              <p className="text-sm text-zinc-700 dark:text-zinc-300 break-words">
+                                {submissionRef.name}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 mb-0.5">副标题</p>
+                              <p className="text-sm text-zinc-700 dark:text-zinc-300 break-words">
+                                {submissionRef.subtitle || "—"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 mb-0.5">商店关键词</p>
+                              <p className="text-sm text-zinc-700 dark:text-zinc-300 break-words">
+                                {submissionRef.submissionKeywords || "—"}
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                            尚未生成提交内容，请先在发布工作台确认文案。
+                          </p>
+                        )}
+                        <div className="flex items-center justify-between gap-3 pt-1">
+                          <AIProgressButton
+                            onClick={extractCandidates}
+                            disabled={!submissionRef}
+                            loading={candidatesLoading}
+                            progress={submissionProgress}
+                            idleLabel="抽取候选词"
+                          />
+                        </div>
+                        {candidates.length > 0 && (
+                          <div className="space-y-2 border-t border-zinc-100 dark:border-zinc-800 pt-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                                候选词（可删除后一键加入）
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={addAllCandidates}
+                                  disabled={pendingCandidateCount === 0}
+                                  className={btnPrimary}
+                                >
+                                  一键加入（{pendingCandidateCount}）
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setCandidates([]);
+                                    setRemovedCandidateKeys(new Set());
+                                  }}
+                                  className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                                >
+                                  清空
+                                </button>
+                              </div>
+                            </div>
+                            {(["submission", "name", "subtitle"] as const).map((source) => {
+                              const group = candidates.filter(
+                                (c) =>
+                                  c.source === source &&
+                                  !removedCandidateKeys.has(`${source}\u0000${c.keyword}`),
+                              );
+                              if (group.length === 0) return null;
+                              return (
+                                <div key={source}>
+                                  <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 mb-1">
+                                    {source === "submission" ? "商店关键词" : source === "name" ? "名称" : "副标题"}
+                                  </p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {group.map((c) => {
+                                      const exists = trackedCandidateKeywords.has(c.keyword);
+                                      return (
+                                        <span
+                                          key={`${source}:${c.keyword}`}
+                                          className={cn(
+                                            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs",
+                                            exists
+                                              ? "border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-500"
+                                              : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300",
+                                          )}
+                                          title={c.rationale}
+                                        >
+                                          {c.keyword}
+                                          {exists ? (
+                                            <span className="text-emerald-500 dark:text-emerald-400">✓</span>
+                                          ) : (
+                                            <button
+                                              onClick={() => removeCandidate(source, c.keyword)}
+                                              className="text-zinc-400 hover:text-red-500"
+                                              title="删除"
+                                            >
+                                              ✕
+                                            </button>
+                                          )}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <AIProgressButton
+                    onClick={handleGenerateAll}
+                    loading={loadingLangs.size > 0}
+                    progress={activeProgress}
+                    idleLabel="为所选语言生成 / 整理"
+                  />
+                </div>
               </div>
               <p className="mt-3 text-[11px] font-medium tracking-wider text-zinc-400 dark:text-zinc-500">
                 语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
