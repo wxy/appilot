@@ -1961,7 +1961,7 @@ function KeywordsPage() {
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
-  const matrixGridTemplate = `minmax(180px, 1.4fr) repeat(${matrixColumns.length}, minmax(96px, 1fr)) 48px`;
+  const matrixGridTemplate = `minmax(200px, 2fr) repeat(${matrixColumns.length}, minmax(90px, 1fr)) 48px`;
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
@@ -2031,7 +2031,10 @@ function KeywordsPage() {
       style={{ gridTemplateColumns: matrixGridTemplate }}
     >
       <div className="py-3 pr-4 min-w-0">
-        <div className={cn("font-mono text-sm truncate", dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200")}>
+        <div
+          className={cn("font-mono text-sm truncate", dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200")}
+          title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
+        >
           {keyword.keyword}
           {keyword.language === "en" && (
             <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
@@ -2039,11 +2042,6 @@ function KeywordsPage() {
             </span>
           )}
         </div>
-        {keyword.rationale && (
-          <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">
-            {keyword.rationale}
-          </div>
-        )}
       </div>
       {matrixColumns.map((column) => {
         const cell = matrixCellState(rankSnapshots, keyword.keyword, column.storefront);
@@ -2220,7 +2218,7 @@ function KeywordsPage() {
               </div>
 
               <div
-                className="grid items-stretch mt-4 border-t border-zinc-100 dark:border-zinc-800"
+                className="grid items-start mt-4 border-t border-zinc-100 dark:border-zinc-800"
                 style={{ gridTemplateColumns: matrixGridTemplate }}
               >
                 <div className="py-2.5 pr-4">
@@ -2228,12 +2226,11 @@ function KeywordsPage() {
                     关键词（{trackedActive.length}）
                   </span>
                   <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                    跟踪提交内容中的搜索词在各商店的排名；点击行查看趋势折线。
+                    点击行查看趋势折线
                   </span>
                   {schedulerStatus && (
                     <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                      自动任务 {schedulerStatus.enabled ? "已启用" : "未启用"} · 待执行 {schedulerStatus.due}
-                      {schedulerStatus.failed > 0 ? ` · 失败 ${schedulerStatus.failed}` : ""}
+                      {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
                       {schedulerStatus.nextDueAt
                         ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
                         : ""}
