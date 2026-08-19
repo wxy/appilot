@@ -2379,29 +2379,9 @@ function KeywordsPage() {
             <div className="shrink-0 px-5 pb-5 space-y-5 border-t border-zinc-100 dark:border-zinc-800">
                 {chartKeyword && chartData.length > 0 && (
                   <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                        {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
-                      </h4>
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">位置越高越好</span>
-                    </div>
-                    <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1">
-                      {chartSeriesMeta.map((series, index) => (
-                        <span
-                          key={series.storefront}
-                          className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
-                        >
-                          <span
-                            className="w-2 h-2 rounded-full"
-                            style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
-                          />
-                          {series.label}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="h-56">
+                    <div className="h-48">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData} margin={{ top: 24, right: 16, bottom: 28, left: 0 }}>
+                        <LineChart data={chartData} margin={{ top: 12, right: 16, bottom: 4, left: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
                           <XAxis
                             dataKey="time"
@@ -2409,7 +2389,7 @@ function KeywordsPage() {
                             tickLine={false}
                             axisLine={false}
                             minTickGap={28}
-                            height={60}
+                            height={44}
                           />
                           <YAxis
                             reversed
@@ -2438,6 +2418,24 @@ function KeywordsPage() {
                           ))}
                         </LineChart>
                       </ResponsiveContainer>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <h4 className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
+                      </h4>
+                      <span className="text-[10px] text-zinc-400 dark:text-zinc-500">位置越高越好</span>
+                      {chartSeriesMeta.map((series, index) => (
+                        <span
+                          key={series.storefront}
+                          className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                          />
+                          {series.label}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 )}
