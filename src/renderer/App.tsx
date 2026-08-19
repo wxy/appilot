@@ -1856,6 +1856,41 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
   );
 }
 
+function RankTooltip({ active, payload, label }: any) {
+  if (!active || !Array.isArray(payload)) return null;
+  const rows = payload.filter((item: any) => item.value != null);
+  if (rows.length === 0) return null;
+  const date = new Date(label);
+  const labelText = Number.isNaN(date.getTime())
+    ? String(label)
+    : `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return (
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-xs shadow-md">
+      <p className="mb-1 font-medium text-zinc-500 dark:text-zinc-400">{labelText}</p>
+      {rows.map((item: any) => (
+        <p key={item.dataKey} className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">
+          <span
+            className="inline-block w-2 h-2 rounded-full shrink-0"
+            style={{ backgroundColor: item.stroke || item.color }}
+          />
+          {item.name}：第 {item.value} 名
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function ChartTick({ x, y, payload }: any) {
+  const date = new Date(payload.value);
+  if (Number.isNaN(date.getTime())) return null;
+  return (
+    <text x={x} y={y} dy={10} textAnchor="middle" fill="#71717a" fontSize={10}>
+      <tspan x={x} dy={0}>{date.toLocaleDateString()}</tspan>
+      <tspan x={x} dy={12}>{date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</tspan>
+    </text>
+  );
+}
+
 function KeywordsPage() {
   const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
@@ -1936,16 +1971,24 @@ function KeywordsPage() {
         snapshot.keyword === chartKeyword,
     )
     .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
-  const chartSeries = Array.from(new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys())
-    .map((storefront) => ({
-      storefront,
-      label: storefrontDisplayName(storefront),
-      points: chartSnapshots
-        .filter((s) => s.storefront === storefront && s.rank !== null)
-        .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime())
-        .map((s) => ({ time: new Date(s.checkedAt).toLocaleString(), rank: s.rank })),
-    }))
-    .filter((series) => series.points.length > 0);
+  const chartSeriesMeta = Array.from(
+    new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys(),
+  ).map((storefront) => ({ storefront, label: storefrontDisplayName(storefront) }));
+  // Merge all storefronts onto a shared timeline keyed by exact checkedAt:
+  // a row contains one rank per storefront present at that time, so the
+  // tooltip can list several storefronts when they share the same timestamp.
+  const chartData = (() => {
+    const byTime = new Map<string, Record<string, any>>();
+    for (const snapshot of chartSnapshots) {
+      if (snapshot.rank == null) continue;
+      const row = byTime.get(snapshot.checkedAt) || { time: snapshot.checkedAt };
+      row[snapshot.storefront] = snapshot.rank;
+      byTime.set(snapshot.checkedAt, row);
+    }
+    return [...byTime.values()].sort(
+      (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime(),
+    );
+  })();
   const CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#ef4444", "#06b6d4"];
 
   const formatColumnTime = (iso: string) =>
@@ -2292,27 +2335,41 @@ function KeywordsPage() {
                   </div>
                 )}
 
-                {chartKeyword && chartSeries.length > 0 && (
+                {chartKeyword && chartData.length > 0 && (
                   <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                        {chartKeyword} · 排名趋势（{chartSeries.length} 个商店）
+                        {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
                       </h4>
                       <span className="text-xs text-zinc-400 dark:text-zinc-500">越低越好</span>
                     </div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+                        <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
-                          <XAxis dataKey="time" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
-                          <YAxis reversed domain={[1, "auto"]} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={34} />
-                          <Tooltip />
+                          <XAxis
+                            dataKey="time"
+                            tick={<ChartTick />}
+                            tickLine={false}
+                            axisLine={false}
+                            minTickGap={28}
+                            height={40}
+                          />
+                          <YAxis
+                            reversed
+                            domain={[1, "dataMax"]}
+                            allowDecimals={false}
+                            tick={{ fontSize: 11 }}
+                            tickLine={false}
+                            axisLine={false}
+                            width={34}
+                          />
+                          <Tooltip content={<RankTooltip />} />
                           <Legend />
-                          {chartSeries.map((series, index) => (
+                          {chartSeriesMeta.map((series, index) => (
                             <Line
                               key={series.storefront}
-                              data={series.points}
-                              dataKey="rank"
+                              dataKey={series.storefront}
                               name={series.label}
                               type="monotone"
                               stroke={CHART_COLORS[index % CHART_COLORS.length]}
