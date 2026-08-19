@@ -87,6 +87,7 @@ export class AIProvider {
     const isDeepSeek = this.config.baseURL.includes("deepseek");
     const thinkingEffort: ThinkingEffort = opts?.thinking ?? (isDeepSeek ? "low" : "disabled");
     const maxAttempts = 3;
+    let maxTokens = opts?.maxTokens ?? 2000;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       let response: OpenAI.Chat.Completions.ChatCompletion;
@@ -95,7 +96,7 @@ export class AIProvider {
           model: this.config.model,
           messages,
           temperature: opts?.temperature ?? 0.7,
-          max_tokens: opts?.maxTokens ?? 2000,
+          max_tokens: maxTokens,
           ...(opts?.responseFormat ? { response_format: { type: opts.responseFormat } } : {}),
           ...deepSeekThinkingParams(this.config.baseURL, thinkingEffort),
         } as any);
@@ -140,6 +141,12 @@ export class AIProvider {
       log.warn(
         `AI returned empty content (attempt ${attempt}/${maxAttempts}, finish_reason=${response.choices[0]?.finish_reason})`,
       );
+      // The response was cut off before producing any text (reasoning consumed
+      // the whole budget). Double the cap on the next attempt so the model has
+      // room to finish, capped to avoid runaway cost.
+      if (response.choices[0]?.finish_reason === "length" && maxTokens < 8000) {
+        maxTokens = Math.min(maxTokens * 2, 8000);
+      }
       if (attempt < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
       }

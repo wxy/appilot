@@ -111,7 +111,7 @@ export async function generateKeywords(
   try {
     raw = await provider.chat(messages, {
       temperature: 0.4,
-      maxTokens: 3000,
+      maxTokens: 4000,
       thinking: "low",
       responseFormat: "json_object",
     });
@@ -122,7 +122,7 @@ export async function generateKeywords(
       );
       raw = await provider.chat(messages, {
         temperature: 0.4,
-        maxTokens: 3000,
+        maxTokens: 4000,
         thinking: "disabled",
         responseFormat: "json_object",
       });
@@ -216,11 +216,28 @@ export async function curateKeywords(
       ].join("\n"),
     },
   ];
-  const raw = await provider.chat(messages, {
-    temperature: 0.4,
-    maxTokens: 3000,
-    thinking: "low",
-    responseFormat: "json_object",
-  });
+  let raw: string;
+  try {
+    raw = await provider.chat(messages, {
+      temperature: 0.4,
+      maxTokens: 4000,
+      thinking: "low",
+      responseFormat: "json_object",
+    });
+  } catch (err) {
+    if (err instanceof EngineError && err.code === "AI_EMPTY_RESPONSE") {
+      log.warn(
+        `Low-thinking keyword curation returned no content for ${context.name}; falling back to disabled thinking`,
+      );
+      raw = await provider.chat(messages, {
+        temperature: 0.4,
+        maxTokens: 4000,
+        thinking: "disabled",
+        responseFormat: "json_object",
+      });
+    } else {
+      throw err;
+    }
+  }
   return parseKeywordCuration(raw, context.language);
 }
