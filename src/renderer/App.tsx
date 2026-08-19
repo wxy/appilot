@@ -1810,15 +1810,13 @@ interface KeywordSuggestion {
 
 interface KeywordGeneration {
   tracking: KeywordSuggestion[];
-  submission: string[];
 }
 
 function KeywordsPage() {
-  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, updateSubmissionKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords, collectRanks } = useProject();
+  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, clearRemovedKeywords, collectRanks } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [activeLang, setActiveLang] = useState<string>("");
-  const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [rankLoading, setRankLoading] = useState(false);
@@ -1874,9 +1872,6 @@ function KeywordsPage() {
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (product.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
   const removedForCurrent = (product.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
-  const savedSubmission = (product.submissionKeywords || []).find((s) => s.language === currentLang);
-  const submissionText = submissionDrafts[currentLang] ?? savedSubmission?.text ?? "";
-  const charCount = submissionText.length;
   const currentLoading = loadingLangs.has(currentLang);
   const storefronts = storefrontsForLanguage(currentLang);
   const defaultStorefront = storefronts[0] || "us";
@@ -1913,8 +1908,6 @@ function KeywordsPage() {
     const latestProject = useProject.getState().projects.find((p) => p.id === currentProjectId);
     const latest = latestProject?.storeProducts?.find((item) => item.id === product.id) || product;
     let trackedNext = [...(latest.trackedKeywords || [])];
-    let submissionNext = [...(latest.submissionKeywords || [])];
-    const drafts: Record<string, string> = {};
 
     for (const r of results) {
       if (!r.gen) continue;
@@ -1934,22 +1927,12 @@ function KeywordsPage() {
           translation: s.translation || "",
         }));
       trackedNext = [...trackedNext, ...additions];
-
-      const submissionText = r.gen.submission.join(",").trim();
-      drafts[r.lang] = submissionText;
-      if (submissionText) {
-        submissionNext = submissionNext.filter((s) => s.language !== r.lang);
-        submissionNext.push({ language: r.lang, text: submissionText });
-      }
     }
 
     if (results.some((r) => r.gen)) {
       await (window as any).appilot.projects.saveTrackedKeywords(product.id, trackedNext);
-      await (window as any).appilot.projects.saveSubmissionKeywords(product.id, submissionNext);
       updateTrackedKeywords(product.id, trackedNext);
-      updateSubmissionKeywords(product.id, submissionNext);
     }
-    setSubmissionDrafts((prev) => ({ ...prev, ...drafts }));
   };
 
   const handleGenerate = async (lang: string) => {
@@ -1983,20 +1966,6 @@ function KeywordsPage() {
 
   const clearRemoved = async () => {
     await clearRemovedKeywords(product.id, queryLanguages);
-  };
-
-  const saveSubmission = async () => {
-    const next = [
-      ...(product.submissionKeywords || []).filter((s) => s.language !== currentLang),
-      { language: currentLang, text: submissionText },
-    ];
-    await (window as any).appilot.projects.saveSubmissionKeywords(product.id, next);
-    updateSubmissionKeywords(product.id, next);
-    setSubmissionDrafts((prev) => {
-      const copy = { ...prev };
-      delete copy[currentLang];
-      return copy;
-    });
   };
 
   const handleCollectRanks = async () => {
@@ -2078,7 +2047,7 @@ function KeywordsPage() {
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">关键词</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            跟踪关键词模拟用户搜索；商店关键词用于提交，每语言 ≤100 字符。
+            跟踪关键词模拟用户搜索；商店提交关键词由发布工作台负责。
           </p>
         </div>
         <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
@@ -2344,35 +2313,6 @@ function KeywordsPage() {
                       </ResponsiveContainer>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
-
-            {/* Submission keywords */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                <div className="flex items-center justify-between gap-4">
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店关键词（提交字段）</h3>
-                  <span className={cn("text-xs font-mono", charCount > 100 ? "text-red-500 dark:text-red-400" : "text-zinc-400 dark:text-zinc-500")}>
-                    {charCount}/100
-                  </span>
-                </div>
-              </div>
-              <div className="p-5 space-y-3">
-                <div className="flex gap-2">
-                  <input
-                    value={submissionText}
-                    onChange={(e) => setSubmissionDrafts((prev) => ({ ...prev, [currentLang]: e.target.value }))}
-                    placeholder="kw1,kw2,kw3"
-                    className={inputClass}
-                  />
-                  <button onClick={saveSubmission} className={btnPrimary}>保存</button>
-                </div>
-                <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                  逗号分隔、无空格；这是提交到 App Store 的字段，总长需 ≤100 字符。
-                </p>
-                {charCount > 100 && (
-                  <p className="text-xs text-red-600 dark:text-red-400">已超过 100 字符，请精简后再保存。</p>
                 )}
               </div>
             </div>

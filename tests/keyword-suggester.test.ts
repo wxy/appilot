@@ -10,7 +10,7 @@ function assert(condition: boolean, msg: string) {
   else { console.log(`✅ PASS: ${msg}`); }
 }
 
-// 1. valid JSON with tracking + submission
+// 1. valid JSON with tracking (submission field is ignored)
 const g1 = parseKeywordGeneration(
   '{"tracking":[{"keyword":"flashlight","rationale":"core use case"},{"keyword":"nightwalk","rationale":"search term"}],"submission":["flashlight","nightwalk","pedometer"]}',
 );
@@ -18,29 +18,27 @@ assert(g1.tracking.length === 2, "parse: 2 tracking keywords");
 assert(g1.tracking[0].keyword === "flashlight", "parse: tracking keyword");
 assert(g1.tracking[0].rationale === "core use case", "parse: tracking rationale");
 assert(g1.tracking[0].language === "en", "parse: defaults language to en");
-assert(g1.submission.join(",") === "flashlight,nightwalk,pedometer", "parse: submission list");
 
 // 2. markdown-fenced JSON is unwrapped
 const g2 = parseKeywordGeneration(
   '```json\n{"tracking":[{"keyword":"foo","rationale":"bar"}],"submission":["foo"]}\n```',
 );
-assert(g2.tracking.length === 1 && g2.submission[0] === "foo", "parse: markdown fence unwrapped");
+assert(g2.tracking.length === 1, "parse: markdown fence unwrapped");
 
 // 3. extra prose around JSON is tolerated
 const g3 = parseKeywordGeneration(
   'Sure! Here you go:\n{"tracking":[],"submission":["kw"]}',
 );
-assert(g3.submission[0] === "kw", "parse: ignores surrounding prose");
+assert(g3.tracking.length === 0, "parse: ignores surrounding prose");
 
 // 4. empty / missing fields → empty sets
 const g4 = parseKeywordGeneration("{}");
-assert(g4.tracking.length === 0 && g4.submission.length === 0, "parse: empty object");
+assert(g4.tracking.length === 0, "parse: empty object");
 
-// 5. cap at 30 tracking and 30 submission terms
+// 5. cap at 30 tracking terms
 const tracking = Array.from({ length: 40 }, (_, i) => `{"keyword":"kw${i}","rationale":""}`).join(",");
-const submission = Array.from({ length: 40 }, (_, i) => `"s${i}"`).join(",");
-const g5 = parseKeywordGeneration(`{"tracking":[${tracking}],"submission":[${submission}]}`);
-assert(g5.tracking.length === 30 && g5.submission.length === 30, "parse: caps at 30");
+const g5 = parseKeywordGeneration(`{"tracking":[${tracking}]}`);
+assert(g5.tracking.length === 30, "parse: caps at 30");
 
 // 6. mixed local + English tracking keywords
 const g6 = parseKeywordGeneration(
@@ -50,6 +48,13 @@ const g6 = parseKeywordGeneration(
 assert(g6.tracking[0].language === "zh-Hans", "parse: keeps local language");
 assert(g6.tracking[1].language === "en", "parse: keeps English language");
 assert(g6.tracking[1].translation === "AI 成本追踪器", "parse: keeps translation when provided");
+
+// 7. response with a submission field only yields tracking
+const g7 = parseKeywordGeneration(
+  '{"tracking":[{"keyword":"flashlight","rationale":"core use case"}],"submission":["flashlight","torch"]}',
+);
+assert(g7.tracking.length === 1, "parse: ignores submission field");
+assert((g7 as any).submission === undefined, "parse: no submission in result");
 
 console.log(`\n${errors === 0 ? "🎉 All keyword-suggester tests passed!" : `❌ ${errors} test(s) failed`}`);
 process.exit(errors > 0 ? 1 : 0);
