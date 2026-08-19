@@ -2141,19 +2141,7 @@ function KeywordsPage() {
   };
 
   return (
-    <div className="p-10 max-w-6xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-8">
-        <div>
-          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">关键词排名</h2>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            跟踪提交内容中的搜索词在各商店的排名；商店提交关键词由发布工作台负责。
-          </p>
-        </div>
-        <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
-          {loadingLangs.size > 0 ? "生成中..." : "为所选语言生成"}
-        </button>
-      </div>
-
+    <div className="p-8 max-w-6xl mx-auto min-h-full flex flex-col">
       {error && (
         <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
           {error}
@@ -2164,76 +2152,67 @@ function KeywordsPage() {
         <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
       ) : (
         <>
-          <div className="mb-4">
-            <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
-              语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {languageOptions.map((option) => {
-                const lit = litLangs.includes(option.code);
-                const active = option.code === currentLang;
-                return (
-                  <div
-                    key={option.code}
-                    className={cn(
-                      "inline-flex items-center overflow-hidden rounded-lg border transition-colors",
-                      active
-                        ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                        : lit
-                          ? "border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300"
-                          : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setViewLang(option.code);
-                        setLitLangs((prev) => (prev.includes(option.code) ? prev : [...prev, option.code]));
-                      }}
-                      title={active ? "当前查看" : "点击查看该语言"}
-                      className={cn(
-                        "px-3 py-1.5 text-sm transition-colors",
-                        active ? "font-medium" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleLitLang(option.code)}
-                      title={lit ? "取消点亮（不参与生成）" : "点亮（参与生成）"}
-                      className={cn(
-                        "px-2 py-1.5 text-xs border-l border-zinc-200/70 dark:border-zinc-700/70 transition-colors",
-                        lit ? "text-amber-500" : "text-zinc-400 hover:text-amber-500",
-                      )}
-                    >
-                      {lit ? "★" : "☆"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
           <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-            <div className="px-6 py-3.5 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  关键词排名（{trackedActive.length}）
-                </h3>
-                <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
-                  跟踪提交内容中的搜索词在各商店的排名；点击行查看趋势折线。
-                </p>
+            <div className="px-6 pt-4 pb-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">关键词排名</h2>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+                    商店提交关键词由发布工作台负责。
+                  </p>
+                </div>
+                <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
+                  {loadingLangs.size > 0 ? "生成中..." : "为所选语言生成"}
+                </button>
               </div>
-              {schedulerStatus && (
-                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0 text-right">
-                  自动任务 {schedulerStatus.enabled ? "已启用" : "未启用"} · 待执行 {schedulerStatus.due}
-                  {schedulerStatus.failed > 0 ? ` · 失败 ${schedulerStatus.failed}` : ""}
-                  {schedulerStatus.nextDueAt
-                    ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
-                    : ""}
-                </p>
-              )}
+              <p className="mt-3 text-[11px] font-medium tracking-wider text-zinc-400 dark:text-zinc-500">
+                语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {languageOptions.map((option) => {
+                  const lit = litLangs.includes(option.code);
+                  const active = option.code === currentLang;
+                  return (
+                    <div
+                      key={option.code}
+                      className={cn(
+                        "inline-flex items-center overflow-hidden rounded-lg border transition-colors",
+                        active
+                          ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                          : lit
+                            ? "border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300"
+                            : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setViewLang(option.code);
+                          setLitLangs((prev) => (prev.includes(option.code) ? prev : [...prev, option.code]));
+                        }}
+                        title={active ? "当前查看" : "点击查看该语言"}
+                        className={cn(
+                          "px-3 py-1.5 text-sm transition-colors",
+                          active ? "font-medium" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleLitLang(option.code)}
+                        title={lit ? "取消点亮（不参与生成）" : "点亮（参与生成）"}
+                        className={cn(
+                          "px-2 py-1.5 text-xs border-l border-zinc-200/70 dark:border-zinc-700/70 transition-colors",
+                          lit ? "text-amber-500" : "text-zinc-400 hover:text-amber-500",
+                        )}
+                      >
+                        {lit ? "★" : "☆"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="flex-1 min-h-0 overflow-auto">
@@ -2248,8 +2227,22 @@ function KeywordsPage() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30">
-                            <th className="sticky top-0 z-10 px-4 py-3 text-left text-xs font-medium text-zinc-400 dark:text-zinc-500 bg-zinc-50 dark:bg-zinc-900">
-                              关键词
+                            <th className="sticky top-0 z-10 px-4 py-2.5 text-left align-top bg-zinc-50 dark:bg-zinc-900">
+                              <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                                关键词（{trackedActive.length}）
+                              </span>
+                              <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                                跟踪提交内容中的搜索词在各商店的排名；点击行查看趋势折线。
+                              </span>
+                              {schedulerStatus && (
+                                <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                                  自动任务 {schedulerStatus.enabled ? "已启用" : "未启用"} · 待执行 {schedulerStatus.due}
+                                  {schedulerStatus.failed > 0 ? ` · 失败 ${schedulerStatus.failed}` : ""}
+                                  {schedulerStatus.nextDueAt
+                                    ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
+                                    : ""}
+                                </span>
+                              )}
                             </th>
                             {matrixColumns.map((column) => (
                               <th
