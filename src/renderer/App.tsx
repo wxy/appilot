@@ -1538,7 +1538,7 @@ function TaskCenterPage() {
   const failedGroups = groupTasks(failed);
 
   return (
-    <div className="p-8 max-w-6xl mx-auto h-full flex flex-col">
+    <div className="p-10 max-w-6xl mx-auto">
       <div className="flex items-start justify-between gap-4 mb-5">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
@@ -2146,7 +2146,7 @@ function KeywordsPage() {
   };
 
   return (
-    <div className="p-8 max-w-6xl mx-auto min-h-full flex flex-col">
+    <div className="p-8 max-w-6xl mx-auto h-full flex flex-col">
       {error && (
         <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
           {error}
