@@ -113,10 +113,18 @@ export class AIProvider {
             } as any);
             let chars = 0;
             for await (const chunk of stream as any) {
-              const delta = chunk?.choices?.[0]?.delta?.content;
-              if (typeof delta === "string" && delta.length > 0) {
-                content = (content || "") + delta;
-                chars += delta.length;
+              const delta = chunk?.choices?.[0]?.delta;
+              // DeepSeek streams reasoning separately from content; count both
+              // so the UI shows live progress while the model is thinking.
+              const deltaText =
+                typeof delta?.content === "string" ? delta.content
+                : typeof delta?.reasoning_content === "string" ? delta.reasoning_content
+                : null;
+              if (deltaText && deltaText.length > 0) {
+                if (typeof delta?.content === "string" && delta.content.length > 0) {
+                  content = (content || "") + delta.content;
+                }
+                chars += deltaText.length;
                 opts.onProgress({ chars });
               }
               if (chunk?.choices?.[0]?.finish_reason) {

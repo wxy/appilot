@@ -1906,6 +1906,9 @@ function KeywordsPage() {
   }>>({});
   const [curationOpen, setCurationOpen] = useState(false);
   const [curationConfirm, setCurationConfirm] = useState<null | "apply" | "discard">(null);
+  const [curationApplied, setCurationApplied] = useState<
+    { language: string; keyword: string; kind: "add" | "remove" }[]
+  >([]);
   const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
   const [keywordProgress, setKeywordProgress] = useState<Record<string, number>>({});
@@ -2039,13 +2042,24 @@ function KeywordsPage() {
     (sum, data) => sum + data.removals.filter((item) => item.choice === "accept").length,
     0,
   );
+  const appliedAddKeys = new Set(
+    curationApplied
+      .filter((item) => item.kind === "add")
+      .map((item) => `${item.language}\u0000${item.keyword}`),
+  );
+  const appliedKindFor = (row: (typeof matrixRows)[number]): "add" | null =>
+    appliedAddKeys.has(`${row.language}\u0000${row.keyword}`) ? "add" : null;
 
   const cellTitle = (cell: MatrixCell) =>
     cell.checkedAt
       ? `最近查询 ${new Date(cell.checkedAt).toLocaleString()} · 结果量 ${cell.totalResults ?? "—"}`
       : "尚未查询";
 
-  const renderMatrixRow = (keyword: (typeof matrixRows)[number], dimmed: boolean) => (
+  const renderMatrixRow = (
+    keyword: (typeof matrixRows)[number],
+    dimmed: boolean,
+    applied?: "add" | "remove" | null,
+  ) => (
     <div
       key={`${keyword.language}:${keyword.keyword}`}
       onClick={() => setSelectedKeyword(keyword.keyword)}
@@ -2059,13 +2073,27 @@ function KeywordsPage() {
     >
       <div className="py-3 pl-5 pr-4 min-w-0">
         <div
-          className={cn("font-mono text-sm truncate", dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200")}
+          className={cn(
+            "font-mono text-sm truncate",
+            dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200",
+            applied === "remove" && "line-through",
+          )}
           title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
         >
           {keyword.keyword}
           {keyword.language === "en" && (
             <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
               全局
+            </span>
+          )}
+          {applied === "add" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/15 text-[10px] font-sans font-medium text-emerald-600 dark:text-emerald-400 align-middle">
+              新增
+            </span>
+          )}
+          {applied === "remove" && (
+            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-500/15 text-[10px] font-sans font-medium text-red-600 dark:text-red-400 align-middle">
+              已删除
             </span>
           )}
         </div>
@@ -2215,9 +2243,11 @@ function KeywordsPage() {
 
   const applyCuration = async () => {
     setCurationConfirm(null);
+    const applied: { language: string; keyword: string; kind: "add" | "remove" }[] = [];
     for (const [lang, data] of Object.entries(curation)) {
       for (const item of data.adds) {
         if (item.choice !== "accept") continue;
+        applied.push({ language: lang, keyword: item.keyword, kind: "add" });
         const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
         const current = latest?.storeProducts?.find((p) => p.id === product.id) || product;
         const existingKeys = new Set(
@@ -2239,9 +2269,14 @@ function KeywordsPage() {
         updateTrackedKeywords(product.id, next);
       }
       for (const item of data.removals) {
-        if (item.choice === "accept") await removeTracked(item.keyword, lang);
+        if (item.choice === "accept") {
+          applied.push({ language: lang, keyword: item.keyword, kind: "remove" });
+          await removeTracked(item.keyword, lang);
+        }
       }
     }
+    setCurationApplied((prev) => [...prev, ...applied]);
+    setShowUnranked(true);
     setCuration({});
     setCurationOpen(false);
   };
@@ -2494,7 +2529,17 @@ function KeywordsPage() {
                         </span>
                       </button>
                     )}
-                    {showUnranked && unranked.map((row) => renderMatrixRow(row, true))}
+                    {showUnranked && unranked.map((row) => renderMatrixRow(row, true, appliedKindFor(row)))}
+                    {showUnranked &&
+                      curationApplied
+                        .filter((item) => item.kind === "remove" && queryLanguages.includes(item.language))
+                        .map((item) =>
+                          renderMatrixRow(
+                            { language: item.language, keyword: item.keyword, rationale: "", translation: "" } as any,
+                            true,
+                            "remove",
+                          ),
+                        )}
                   </>
                 )}
             </div>
