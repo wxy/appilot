@@ -1961,7 +1961,7 @@ function KeywordsPage() {
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
-  const matrixGridTemplate = `minmax(200px, 2fr) repeat(${matrixColumns.length}, minmax(90px, 1fr)) 48px`;
+  const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(68px, 0.9fr)) 44px`;
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
@@ -2023,7 +2023,7 @@ function KeywordsPage() {
       key={`${keyword.language}:${keyword.keyword}`}
       onClick={() => setSelectedKeyword(keyword.keyword)}
       className={cn(
-        "grid items-center cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+        "grid items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
         dimmed && "opacity-55",
         !dimmed && "bg-emerald-50/30 dark:bg-emerald-500/[0.04]",
         keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
@@ -2270,35 +2270,39 @@ function KeywordsPage() {
                   </p>
                 ) : (
                   <>
-                    <div className="rounded-xl border border-zinc-100 dark:border-zinc-800 overflow-hidden">
-                      {ranked.map(({ row }) => renderMatrixRow(row, false))}
-                      {unranked.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setShowUnranked((v) => !v)}
-                          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-sm text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors border-t border-zinc-100 dark:border-zinc-800"
+                    {ranked.map(({ row }) => renderMatrixRow(row, false))}
+                    {unranked.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowUnranked((v) => !v)}
+                        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-sm text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
+                      >
+                        <span>未在榜关键词（{unranked.length}）</span>
+                        <span
+                          className={cn(
+                            "text-zinc-400 transition-transform",
+                            showUnranked && "rotate-90",
+                          )}
                         >
-                          <span>未在榜关键词（{unranked.length}）</span>
-                          <span
-                            className={cn(
-                              "text-zinc-400 transition-transform",
-                              showUnranked && "rotate-90",
-                            )}
-                          >
-                            ▸
-                          </span>
-                        </button>
-                      )}
-                      {showUnranked && unranked.map((row) => renderMatrixRow(row, true))}
-                    </div>
-                    <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
-                      各商店独立采集，时间可能不同；悬停查看精确查询时间与结果量。
-                    </p>
+                          ▸
+                        </span>
+                      </button>
+                    )}
+                    {showUnranked && unranked.map((row) => renderMatrixRow(row, true))}
                   </>
                 )}
+              </div>
+            </div>
+
+            <div className="shrink-0 px-5 pb-5 space-y-5 border-t border-zinc-100 dark:border-zinc-800">
+              {matrixRows.length > 0 && (
+                <p className="pt-4 text-[11px] text-zinc-400 dark:text-zinc-500">
+                  各商店独立采集，时间可能不同；悬停查看精确查询时间与结果量。
+                </p>
+              )}
 
                 {chartKeyword && chartData.length > 0 && (
-                  <div className="mt-6">
+                  <div>
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
                         {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
@@ -2350,7 +2354,7 @@ function KeywordsPage() {
                 )}
 
                 {removedForCurrent.length + pausedForCurrent.length > 0 && (
-                  <div className="mt-6 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 overflow-hidden">
+                  <div className="rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 overflow-hidden">
                     <div className="flex items-center justify-between gap-3 px-4 py-3">
                       <button
                         type="button"
@@ -2438,7 +2442,6 @@ function KeywordsPage() {
                     )}
                   </div>
                 )}
-              </div>
             </div>
 
           </div>
