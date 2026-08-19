@@ -60,6 +60,15 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.on("projects:submissionProgress", listener);
       return () => ipcRenderer.removeListener("projects:submissionProgress", listener);
     },
+    generateBrief: (projectId: string, productId: string): Promise<any> =>
+      ipcRenderer.invoke("projects:generateBrief", projectId, productId),
+    recordBriefAction: (projectId: string, payload: any): Promise<any> =>
+      ipcRenderer.invoke("projects:recordBriefAction", projectId, payload),
+    onBriefProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+      ipcRenderer.on("projects:briefProgress", listener);
+      return () => ipcRenderer.removeListener("projects:briefProgress", listener);
+    },
   },
 
   release: {
