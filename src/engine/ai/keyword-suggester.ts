@@ -238,8 +238,8 @@ export async function curateKeywords(
       role: "system",
       content: [
         "You are Appilot's ASO keyword curator. Review the existing tracking keywords for one localization and produce a curated suggestion set.",
-        "1. `removals`: keywords that are badly chosen or clearly ineffective. Common reasons: never ranked after many checks, irrelevant to the app, duplicate of the name/subtitle, or too generic. Give one short reason each.",
-        "2. `adds`: NEW keywords to track. Cover gaps (name/subtitle/submission-keyword intents), high-value scenarios from the description, and similar variants of keywords that HAVE ranked before. Never repeat existing or removed keywords.",
+        "1. `removals`: keywords that are badly chosen or clearly ineffective. Common reasons: never ranked after many checks, irrelevant to the app, too generic, or competitor brands. Give one short reason each.",
+        "2. `adds`: NEW keywords to track. Especially track terms that appear in the app name, subtitle, or submission keywords — those are high-value because they verify whether the submitted metadata helps ranking. Also cover high-value scenarios from the description and similar variants of keywords that HAVE ranked before. Never repeat existing or removed keywords.",
         "Keep removals ≤20 and adds ≤30. Do not include competitor brand names.",
         "Respond ONLY with JSON: {\"removals\":[{\"keyword\":\"...\",\"reason\":\"...\"}],\"adds\":[{\"language\":\"...\",\"keyword\":\"...\",\"translation\":\"...\",\"rationale\":\"...\"}]}",
       ].join("\n"),

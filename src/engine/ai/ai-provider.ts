@@ -105,14 +105,9 @@ export class AIProvider {
           ...deepSeekThinkingParams(this.config.baseURL, thinkingEffort),
         };
         if (opts?.onProgress) {
-          try {
-            const stream = await this.client.chat.completions.create({
-              ...request,
-              stream: true,
-              stream_options: { include_usage: true },
-            } as any);
+          const consumeStream = async (stream: any) => {
             let chars = 0;
-            for await (const chunk of stream as any) {
+            for await (const chunk of stream) {
               const delta = chunk?.choices?.[0]?.delta;
               // DeepSeek streams reasoning separately from content; count both
               // so the UI shows live progress while the model is thinking.
@@ -125,7 +120,7 @@ export class AIProvider {
                   content = (content || "") + delta.content;
                 }
                 chars += deltaText.length;
-                opts.onProgress({ chars });
+                opts?.onProgress?.({ chars });
               }
               if (chunk?.choices?.[0]?.finish_reason) {
                 finishReason = chunk.choices[0].finish_reason;
@@ -135,8 +130,32 @@ export class AIProvider {
                 completionTokens = (chunk.usage.total_tokens || 0) - promptTokens;
               }
             }
-          } catch (err: any) {
-            log.warn(`Streaming AI call failed (${err?.message}); falling back to non-streaming`);
+          };
+          const streamAttempts: any[] = [
+            { ...request, stream: true, stream_options: { include_usage: true } },
+            { ...request, stream: true },
+          ];
+          // Some OpenAI-compatible servers reject response_format combined with
+          // streaming; retry streaming without it (JSON repair still applies
+          // downstream if the output is malformed).
+          if (request.response_format) {
+            const { response_format: _dropped, ...withoutFormat } = request;
+            streamAttempts.push({ ...withoutFormat, stream: true });
+          }
+          let streamed = false;
+          for (const attempt of streamAttempts) {
+            try {
+              await consumeStream(
+                await this.client.chat.completions.create(attempt as any),
+              );
+              streamed = true;
+              break;
+            } catch (err: any) {
+              log.warn(`AI streaming attempt failed (${err?.message})`);
+            }
+          }
+          if (!streamed) {
+            log.warn("All AI streaming attempts failed; falling back to non-streaming");
             const response = await this.client.chat.completions.create(request as any);
             content = response.choices[0]?.message?.content ?? null;
             finishReason = response.choices[0]?.finish_reason;

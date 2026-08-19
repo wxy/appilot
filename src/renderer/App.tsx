@@ -2042,6 +2042,14 @@ function KeywordsPage() {
     (sum, data) => sum + data.removals.filter((item) => item.choice === "accept").length,
     0,
   );
+  const ignoredCount = Object.values(curation).reduce(
+    (sum, data) =>
+      sum +
+      data.adds.filter((item) => item.choice === "ignore").length +
+      data.removals.filter((item) => item.choice === "ignore").length,
+    0,
+  );
+  const receivedChars = Object.values(keywordProgress).reduce((sum, chars) => sum + chars, 0);
   const appliedAddKeys = new Set(
     curationApplied
       .filter((item) => item.kind === "add")
@@ -2180,26 +2188,25 @@ function KeywordsPage() {
   const handleGenerateAll = async () => {
     setError("");
     setKeywordProgress({});
+    const lang = currentLang;
     const tracked = product.trackedKeywords || [];
-    const toGenerate = litLangs.filter((lang) => !tracked.some((k) => k.language === lang));
-    const toCurate = litLangs.filter((lang) => tracked.some((k) => k.language === lang));
-    setLoadingLangs(new Set([...toGenerate, ...toCurate]));
-    const generated = await Promise.all(toGenerate.map((lang) => generateOne(lang)));
-    await applyGenerations(generated);
+    const hasKeywords = tracked.some((k) => k.language === lang);
+    setLoadingLangs(new Set([lang]));
     const nextCuration: Record<string, any> = {};
-    await Promise.all(
-      toCurate.map(async (lang) => {
-        try {
-          const result = await (window as any).appilot.projects.curateKeywords(product.id, lang);
-          nextCuration[lang] = {
-            removals: (result.removals || []).map((item: any) => ({ ...item, choice: "accept" })),
-            adds: (result.adds || []).map((item: any) => ({ ...item, choice: "accept" })),
-          };
-        } catch (e: any) {
-          setError(e.message || "关键词整理失败。");
-        }
-      }),
-    );
+    if (!hasKeywords) {
+      const result = await generateOne(lang);
+      await applyGenerations([result]);
+    } else {
+      try {
+        const result = await (window as any).appilot.projects.curateKeywords(product.id, lang);
+        nextCuration[lang] = {
+          removals: (result.removals || []).map((item: any) => ({ ...item, choice: "accept" })),
+          adds: (result.adds || []).map((item: any) => ({ ...item, choice: "accept" })),
+        };
+      } catch (e: any) {
+        setError(e.message || "关键词整理失败。");
+      }
+    }
     setCuration((prev) => ({ ...prev, ...nextCuration }));
     setCurationOpen(Object.keys(nextCuration).length > 0);
     setCurationConfirm(null);
@@ -2322,7 +2329,9 @@ function KeywordsPage() {
                 </div>
                 <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
                   {loadingLangs.size > 0
-                    ? `处理中… 已接收 ${Object.values(keywordProgress).reduce((sum, chars) => sum + chars, 0)} 字`
+                    ? receivedChars > 0
+                      ? `处理中… 已接收 ${receivedChars} 字`
+                      : "思考中…"
                     : "为所选语言生成 / 整理"}
                 </button>
               </div>
@@ -2620,8 +2629,7 @@ function KeywordsPage() {
             <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
               <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">关键词整理建议</h3>
               <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                {Object.values(curation).reduce((n, d) => n + d.adds.length, 0)} 新增 ·{" "}
-                {Object.values(curation).reduce((n, d) => n + d.removals.length, 0)} 移除
+                新增 {acceptedAdds} · 移除 {acceptedRemovals} · 忽略/保留 {ignoredCount}
               </span>
             </div>
 
@@ -2669,7 +2677,7 @@ function KeywordsPage() {
                               : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
                           )}
                         >
-                          忽略
+                          保留
                         </button>
                       </div>
                     </div>
@@ -2771,13 +2779,13 @@ function KeywordsPage() {
                     onClick={() => selectAllCuration("accept")}
                     className="px-3 py-1.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
                   >
-                    全部采纳
+                    全部采纳/移除
                   </button>
                   <button
                     onClick={() => selectAllCuration("ignore")}
                     className="px-3 py-1.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
                   >
-                    全部忽略
+                    全部忽略/保留
                   </button>
                 </div>
                 <div className="flex gap-2">
