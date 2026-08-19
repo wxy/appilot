@@ -31,6 +31,7 @@ function parseJsonObject(raw: string): any {
     s.replace(/,\s*([}\]])/g, "$1"),
     s.replace(/}\s*{/g, "},{"),
     s.replace(/]\s*\[/g, "],["),
+    s.replace(/([{,]\s*)([A-Za-z_$][\w$]*)(\s*:)/g, '$1"$2"$3'),
   ];
   let lastError: any = null;
   for (const candidate of repairs) {
@@ -41,6 +42,32 @@ function parseJsonObject(raw: string): any {
     }
   }
   throw lastError || new Error("JSON parse failed");
+}
+
+async function parseJsonWithRepair(provider: AIProvider, raw: string): Promise<any> {
+  try {
+    return parseJsonObject(raw);
+  } catch {
+    const repaired = await provider.chat(
+      [
+        {
+          role: "user",
+          content: [
+            "The following response was supposed to be a single JSON object, but it could not be parsed.",
+            "Return ONLY the corrected JSON object. Do not wrap it in markdown. Do not add commentary.",
+            raw,
+          ].join("\n\n"),
+        },
+      ],
+      {
+        temperature: 0,
+        maxTokens: 4000,
+        thinking: "disabled",
+        responseFormat: "json_object",
+      },
+    );
+    return parseJsonObject(repaired);
+  }
 }
 
 /** Parse the AI's JSON response into the tracking keyword set. */
@@ -136,7 +163,15 @@ export async function generateKeywords(
     log.warn(
       `Failed to parse keyword generation for ${context.name}: ${err.message}\nRaw response: ${raw.slice(0, 1200)}`,
     );
-    throw new Error("AI 关键词响应无法解析，请重试。");
+    try {
+      const data = await parseJsonWithRepair(provider, raw);
+      return parseKeywordGeneration(JSON.stringify(data), context.language);
+    } catch (repairErr: any) {
+      log.warn(
+        `Keyword generation JSON repair failed for ${context.name}: ${repairErr.message}`,
+      );
+      throw new Error("AI 关键词响应无法解析，请重试。");
+    }
   }
 }
 
@@ -239,5 +274,20 @@ export async function curateKeywords(
       throw err;
     }
   }
-  return parseKeywordCuration(raw, context.language);
+  try {
+    return parseKeywordCuration(raw, context.language);
+  } catch (err: any) {
+    log.warn(
+      `Failed to parse keyword curation for ${context.name}: ${err.message}\nRaw response: ${raw.slice(0, 1200)}`,
+    );
+    try {
+      const data = await parseJsonWithRepair(provider, raw);
+      return parseKeywordCuration(JSON.stringify(data), context.language);
+    } catch (repairErr: any) {
+      log.warn(
+        `Keyword curation JSON repair failed for ${context.name}: ${repairErr.message}`,
+      );
+      throw new Error("AI 关键词整理结果无法解析，请重试。");
+    }
+  }
 }
