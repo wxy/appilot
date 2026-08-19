@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
@@ -2030,7 +2030,7 @@ function KeywordsPage() {
       )}
       style={{ gridTemplateColumns: matrixGridTemplate }}
     >
-      <div className="py-3 pr-4 min-w-0">
+      <div className="py-3 pl-5 pr-4 min-w-0">
         <div
           className={cn("font-mono text-sm truncate", dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200")}
           title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
@@ -2058,7 +2058,7 @@ function KeywordsPage() {
           </div>
         );
       })}
-      <div className="pl-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
+      <div className="pl-3 pr-5 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
         <span
           role="button"
           tabIndex={0}
@@ -2217,53 +2217,136 @@ function KeywordsPage() {
                 })}
               </div>
 
-              <div
-                className="grid items-start mt-4 border-t border-zinc-100 dark:border-zinc-800"
-                style={{ gridTemplateColumns: matrixGridTemplate }}
-              >
-                <div className="py-2.5 pr-4">
+            </div>
+
+            <div
+              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 pr-1.5"
+              style={{ gridTemplateColumns: matrixGridTemplate }}
+            >
+              <div className="py-2.5 pl-5 pr-4">
+                <div className="flex items-center justify-between gap-2">
                   <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                     关键词（{trackedActive.length}）
                   </span>
-                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                    点击行查看趋势折线
-                  </span>
-                  {schedulerStatus && (
-                    <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                      {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
-                      {schedulerStatus.nextDueAt
-                        ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
-                        : ""}
-                    </span>
+                  {removedForCurrent.length + pausedForCurrent.length > 0 && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowRemoved((v) => !v)}
+                        className={cn(
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
+                          showRemoved
+                            ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                            : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700",
+                        )}
+                      >
+                        已暂停 {pausedForCurrent.length} · 已删除 {removedForCurrent.length}
+                      </button>
+                      {showRemoved && (
+                        <div className="absolute left-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3 space-y-3">
+                          {pausedForCurrent.length > 0 && (
+                            <div>
+                              <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mb-1.5">
+                                已暂停（自动屏蔽）
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {pausedForCurrent.map((item) => (
+                                  <span
+                                    key={`paused:${item.language}:${item.keyword}`}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-200/70 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/10 text-xs text-zinc-600 dark:text-zinc-300"
+                                    title={item.pausedReason || "已暂停"}
+                                  >
+                                    {item.keyword}
+                                    <button
+                                      onClick={() => resumePausedKeyword(product.id, item.language, item.keyword)}
+                                      className="text-amber-600 dark:text-amber-400 hover:underline"
+                                      title="恢复采集"
+                                    >
+                                      恢复
+                                    </button>
+                                    <button
+                                      onClick={() => removeTracked(item.keyword, item.language)}
+                                      className="text-zinc-400 hover:text-red-500"
+                                      title="删除"
+                                    >
+                                      ✕
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {removedForCurrent.length > 0 && (
+                            <div>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                                  已删除（手动）
+                                </p>
+                                <button
+                                  onClick={clearRemoved}
+                                  className="text-[10px] text-zinc-400 hover:text-red-500"
+                                >
+                                  清空
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {removedForCurrent.map((item) => (
+                                  <span
+                                    key={`${item.language}:${item.keyword}`}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
+                                  >
+                                    {item.keyword}
+                                    <button
+                                      onClick={() => restoreTracked(item.language, item.keyword)}
+                                      className="text-amber-600 dark:text-amber-400 hover:underline"
+                                      title="恢复"
+                                    >
+                                      恢复
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-                {matrixColumns.map((column) => (
-                  <div
-                    key={column.storefront}
-                    className={cn(
-                      "px-3 py-2 text-right border-l border-zinc-100 dark:border-zinc-800",
-                      column.meta.stale && "opacity-60",
-                    )}
-                  >
-                    <div className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                      {storefrontDisplayName(column.storefront)}
-                    </div>
-                    <div className="mt-0.5 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                      {column.meta.lastCheckedAt
-                        ? formatColumnTime(column.meta.lastCheckedAt)
-                        : "未查询"}
-                      {column.meta.stale ? " · 过期" : ""}
-                    </div>
+                {schedulerStatus && (
+                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                    {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
+                    {schedulerStatus.nextDueAt
+                      ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
+                      : ""}
+                  </span>
+                )}
+              </div>
+              {matrixColumns.map((column) => (
+                <div
+                  key={column.storefront}
+                  className={cn(
+                    "px-3 py-2 text-right border-l border-zinc-100 dark:border-zinc-800",
+                    column.meta.stale && "opacity-60",
+                  )}
+                >
+                  <div className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    {storefrontDisplayName(column.storefront)}
                   </div>
-                ))}
-                <div className="pl-3 py-2 text-right border-l border-zinc-100 dark:border-zinc-800 text-xs font-medium text-zinc-400 dark:text-zinc-500">
-                  操作
+                  <div className="mt-0.5 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                    {column.meta.lastCheckedAt
+                      ? formatColumnTime(column.meta.lastCheckedAt)
+                      : "未查询"}
+                    {column.meta.stale ? " · 过期" : ""}
+                  </div>
                 </div>
+              ))}
+              <div className="pl-3 pr-5 py-2 text-right border-l border-zinc-100 dark:border-zinc-800 text-xs font-medium text-zinc-400 dark:text-zinc-500">
+                操作
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-auto">
-              <div className="p-5">
+            <div className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
                 {matrixRows.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
@@ -2291,16 +2374,9 @@ function KeywordsPage() {
                     {showUnranked && unranked.map((row) => renderMatrixRow(row, true))}
                   </>
                 )}
-              </div>
             </div>
 
             <div className="shrink-0 px-5 pb-5 space-y-5 border-t border-zinc-100 dark:border-zinc-800">
-              {matrixRows.length > 0 && (
-                <p className="pt-4 text-[11px] text-zinc-400 dark:text-zinc-500">
-                  各商店独立采集，时间可能不同；悬停查看精确查询时间与结果量。
-                </p>
-              )}
-
                 {chartKeyword && chartData.length > 0 && (
                   <div>
                     <div className="flex items-center justify-between mb-3">
@@ -2308,6 +2384,20 @@ function KeywordsPage() {
                         {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
                       </h4>
                       <span className="text-xs text-zinc-400 dark:text-zinc-500">位置越高越好</span>
+                    </div>
+                    <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1">
+                      {chartSeriesMeta.map((series, index) => (
+                        <span
+                          key={series.storefront}
+                          className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                          />
+                          {series.label}
+                        </span>
+                      ))}
                     </div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
@@ -2333,7 +2423,6 @@ function KeywordsPage() {
                             width={34}
                           />
                           <Tooltip content={<RankTooltip />} />
-                          <Legend />
                           {chartSeriesMeta.map((series, index) => (
                             <Line
                               key={series.storefront}
@@ -2353,95 +2442,6 @@ function KeywordsPage() {
                   </div>
                 )}
 
-                {removedForCurrent.length + pausedForCurrent.length > 0 && (
-                  <div className="rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-900/30 overflow-hidden">
-                    <div className="flex items-center justify-between gap-3 px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => setShowRemoved((v) => !v)}
-                        className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
-                      >
-                        <span
-                          className={cn(
-                            "text-zinc-400 transition-transform",
-                            showRemoved && "rotate-90",
-                          )}
-                        >
-                          ▸
-                        </span>
-                        已暂停 {pausedForCurrent.length} · 已删除 {removedForCurrent.length}
-                      </button>
-                      {removedForCurrent.length > 0 && (
-                        <button
-                          onClick={clearRemoved}
-                          className="text-xs text-zinc-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400"
-                        >
-                          清空
-                        </button>
-                      )}
-                    </div>
-                    {showRemoved && (
-                      <div className="px-4 pb-4 space-y-3">
-                        {pausedForCurrent.length > 0 && (
-                          <div>
-                            <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mb-1.5">
-                              已暂停（自动屏蔽）
-                            </p>
-                            <div className="flex flex-wrap gap-2">
-                              {pausedForCurrent.map((item) => (
-                                <span
-                                  key={`paused:${item.language}:${item.keyword}`}
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-200/70 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/10 text-xs text-zinc-600 dark:text-zinc-300"
-                                  title={item.pausedReason || "已暂停"}
-                                >
-                                  {item.keyword}
-                                  <button
-                                    onClick={() => resumePausedKeyword(product.id, item.language, item.keyword)}
-                                    className="text-amber-600 dark:text-amber-400 hover:underline"
-                                    title="恢复采集"
-                                  >
-                                    恢复
-                                  </button>
-                                  <button
-                                    onClick={() => removeTracked(item.keyword, item.language)}
-                                    className="text-zinc-400 hover:text-red-500"
-                                    title="删除"
-                                  >
-                                    ✕
-                                  </button>
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {removedForCurrent.length > 0 && (
-                          <div>
-                            <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5">
-                              已删除（手动）
-                            </p>
-                            <div className="flex flex-wrap gap-2">
-                              {removedForCurrent.map((item) => (
-                                <span
-                                  key={`${item.language}:${item.keyword}`}
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
-                                >
-                                  {item.keyword}
-                                  <button
-                                    onClick={() => restoreTracked(item.language, item.keyword)}
-                                    className="text-amber-600 dark:text-amber-400 hover:underline"
-                                    title="恢复"
-                                  >
-                                    恢复
-                                  </button>
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
             </div>
 
           </div>
