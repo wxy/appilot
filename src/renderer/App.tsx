@@ -1884,7 +1884,7 @@ function ChartTick({ x, y, payload }: any) {
   const date = new Date(payload.value);
   if (Number.isNaN(date.getTime())) return null;
   return (
-    <text x={x} y={y} dy={6} textAnchor="middle" fill="#71717a" fontSize={10}>
+    <text x={x} y={y} dy={8} textAnchor="middle" fill="#71717a" fontSize={10}>
       <tspan x={x} dy={0}>{date.toLocaleDateString()}</tspan>
       <tspan x={x} dy={12}>{date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</tspan>
     </text>
@@ -2379,7 +2379,7 @@ function KeywordsPage() {
             <div className="shrink-0 px-5 pb-5 space-y-5 border-t border-zinc-100 dark:border-zinc-800">
                 {chartKeyword && chartData.length > 0 && (
                   <div>
-                    <div className="h-48">
+                    <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData} margin={{ top: 12, right: 16, bottom: 4, left: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
@@ -2389,7 +2389,7 @@ function KeywordsPage() {
                             tickLine={false}
                             axisLine={false}
                             minTickGap={28}
-                            height={44}
+                            height={52}
                           />
                           <YAxis
                             reversed
