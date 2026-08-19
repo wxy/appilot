@@ -21,7 +21,7 @@ import { storefrontDisplayName, storefrontsForLanguage } from "../engine/storefr
 const NAV_ITEMS = [
   { to: "/overview", label: "总览", title: "总览" },
   { to: "/release", label: "发布", title: "发布工作台" },
-  { to: "/keywords", label: "关键词", title: "关键词" },
+  { to: "/keywords", label: "排名", title: "关键词排名" },
   { to: "/reviews", label: "评论", title: "评论" },
   { to: "/trend", label: "趋势", title: "长期效果" },
 ];
@@ -1321,7 +1321,7 @@ function ReleasePage() {
                       </div>
 
                       <div className="space-y-1.5">
-                        <FieldHeader label="关键词" text={activeLocalization.keywords} />
+                <FieldHeader label="商店关键词（提交字段）" text={activeLocalization.keywords} />
                         <input
                           value={activeLocalization.keywords}
                           onChange={(e) => updateLocalizationField("keywords", e.target.value)}
@@ -2144,9 +2144,9 @@ function KeywordsPage() {
     <div className="p-10 max-w-6xl mx-auto">
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
-          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">关键词</h2>
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">关键词排名</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            跟踪关键词模拟用户搜索；商店提交关键词由发布工作台负责。
+            跟踪提交内容中的搜索词在各商店的排名；商店提交关键词由发布工作台负责。
           </p>
         </div>
         <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
