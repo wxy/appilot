@@ -825,6 +825,14 @@ export function registerIpcHandlers() {
       productType: context.product.platform || "unknown",
       language,
       uiLanguage: "zh-Hans",
+    }, (received) => {
+      if (!_event.sender.isDestroyed()) {
+        _event.sender.send("projects:keywordProgress", {
+          productId,
+          language,
+          chars: received.chars,
+        });
+      }
     });
     return result;
   });
@@ -879,6 +887,14 @@ export function registerIpcHandlers() {
       existingKeywords,
       submissionKeywords,
       removedKeywords,
+    }, (received) => {
+      if (!_event.sender.isDestroyed()) {
+        _event.sender.send("projects:keywordProgress", {
+          productId,
+          language,
+          chars: received.chars,
+        });
+      }
     });
   });
 

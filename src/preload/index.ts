@@ -46,6 +46,11 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.on("projects:collectRanksProgress", listener);
       return () => ipcRenderer.removeListener("projects:collectRanksProgress", listener);
     },
+    onKeywordProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+      ipcRenderer.on("projects:keywordProgress", listener);
+      return () => ipcRenderer.removeListener("projects:keywordProgress", listener);
+    },
   },
 
   release: {

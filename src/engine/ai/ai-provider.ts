@@ -82,6 +82,7 @@ export class AIProvider {
       maxTokens?: number;
       thinking?: ThinkingEffort;
       responseFormat?: "json_object";
+      onProgress?: (received: { chars: number }) => void;
     },
   ): Promise<string> {
     const isDeepSeek = this.config.baseURL.includes("deepseek");
@@ -90,16 +91,58 @@ export class AIProvider {
     let maxTokens = opts?.maxTokens ?? 2000;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      let response: OpenAI.Chat.Completions.ChatCompletion;
+      let content: string | null = null;
+      let finishReason: string | undefined;
+      let promptTokens = 0;
+      let completionTokens = 0;
       try {
-        response = await this.client.chat.completions.create({
+        const request = {
           model: this.config.model,
           messages,
           temperature: opts?.temperature ?? 0.7,
           max_tokens: maxTokens,
           ...(opts?.responseFormat ? { response_format: { type: opts.responseFormat } } : {}),
           ...deepSeekThinkingParams(this.config.baseURL, thinkingEffort),
-        } as any);
+        };
+        if (opts?.onProgress) {
+          try {
+            const stream = await this.client.chat.completions.create({
+              ...request,
+              stream: true,
+              stream_options: { include_usage: true },
+            } as any);
+            let chars = 0;
+            for await (const chunk of stream as any) {
+              const delta = chunk?.choices?.[0]?.delta?.content;
+              if (typeof delta === "string" && delta.length > 0) {
+                content = (content || "") + delta;
+                chars += delta.length;
+                opts.onProgress({ chars });
+              }
+              if (chunk?.choices?.[0]?.finish_reason) {
+                finishReason = chunk.choices[0].finish_reason;
+              }
+              if (chunk?.usage) {
+                promptTokens = chunk.usage.prompt_tokens || 0;
+                completionTokens = (chunk.usage.total_tokens || 0) - promptTokens;
+              }
+            }
+          } catch (err: any) {
+            log.warn(`Streaming AI call failed (${err?.message}); falling back to non-streaming`);
+            const response = await this.client.chat.completions.create(request as any);
+            content = response.choices[0]?.message?.content ?? null;
+            finishReason = response.choices[0]?.finish_reason;
+            promptTokens = response.usage?.prompt_tokens ?? 0;
+            completionTokens = (response.usage?.total_tokens ?? 0) - promptTokens;
+            if (content) opts.onProgress({ chars: content.length });
+          }
+        } else {
+          const response = await this.client.chat.completions.create(request as any);
+          content = response.choices[0]?.message?.content ?? null;
+          finishReason = response.choices[0]?.finish_reason;
+          promptTokens = response.usage?.prompt_tokens ?? 0;
+          completionTokens = (response.usage?.total_tokens ?? 0) - promptTokens;
+        }
       } catch (err: any) {
         if (err instanceof EngineError || err instanceof ApiError) throw err;
         const status = err.status || err.response?.status;
@@ -122,30 +165,28 @@ export class AIProvider {
         });
       }
 
-      const usage = response.usage;
-      if (usage) {
+      if (promptTokens || completionTokens) {
         const prev = this.totalUsage;
         this.totalUsage = {
-          promptTokens: (prev?.promptTokens ?? 0) + usage.prompt_tokens,
-          completionTokens: (prev?.completionTokens ?? 0) + usage.completion_tokens,
-          totalTokens: (prev?.totalTokens ?? 0) + usage.total_tokens,
+          promptTokens: (prev?.promptTokens ?? 0) + promptTokens,
+          completionTokens: (prev?.completionTokens ?? 0) + completionTokens,
+          totalTokens: (prev?.totalTokens ?? 0) + promptTokens + completionTokens,
           estimatedCost:
             (prev?.estimatedCost ?? 0) +
-            estimateCost(this.config.model, usage.prompt_tokens, usage.completion_tokens),
+            estimateCost(this.config.model, promptTokens, completionTokens),
         };
       }
 
-      const content = response.choices[0]?.message?.content;
       if (content) return content;
 
       log.warn(
-        `AI returned empty content (attempt ${attempt}/${maxAttempts}, finish_reason=${response.choices[0]?.finish_reason})`,
+        `AI returned empty content (attempt ${attempt}/${maxAttempts}, finish_reason=${finishReason})`,
       );
       // The response was cut off before producing any text (reasoning consumed
       // the whole budget). Double the cap on the next attempt so the model has
       // room to finish, capped to avoid runaway cost.
-      if (response.choices[0]?.finish_reason === "length" && maxTokens < 8000) {
-        maxTokens = Math.min(maxTokens * 2, 8000);
+      if (finishReason === "length" && maxTokens < 12000) {
+        maxTokens = Math.min(maxTokens * 2, 12000);
       }
       if (attempt < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, 250 * attempt));

@@ -1906,6 +1906,7 @@ function KeywordsPage() {
   }>>({});
   const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
+  const [keywordProgress, setKeywordProgress] = useState<Record<string, number>>({});
   const [showUnranked, setShowUnranked] = useState(false);
   const [showRemoved, setShowRemoved] = useState(false);
   const [error, setError] = useState("");
@@ -1932,6 +1933,17 @@ function KeywordsPage() {
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onKeywordProgress?.((progress: any) => {
+      if (progress?.language && typeof progress.chars === "number") {
+        setKeywordProgress((prev) => ({ ...prev, [progress.language]: progress.chars }));
+      }
+    });
+    return () => {
+      off?.();
     };
   }, []);
 
@@ -2128,6 +2140,7 @@ function KeywordsPage() {
 
   const handleGenerateAll = async () => {
     setError("");
+    setKeywordProgress({});
     const tracked = product.trackedKeywords || [];
     const toGenerate = litLangs.filter((lang) => !tracked.some((k) => k.language === lang));
     const toCurate = litLangs.filter((lang) => tracked.some((k) => k.language === lang));
@@ -2147,6 +2160,7 @@ function KeywordsPage() {
     );
     setCuration((prev) => ({ ...prev, ...nextCuration }));
     setLoadingLangs(new Set());
+    setKeywordProgress({});
   };
 
   const dismissCurationItem = (lang: string, key: "removals" | "adds", keyword: string) => {
@@ -2226,7 +2240,9 @@ function KeywordsPage() {
                   </p>
                 </div>
                 <button onClick={handleGenerateAll} disabled={loadingLangs.size > 0} className={btnPrimary}>
-                  {loadingLangs.size > 0 ? "处理中..." : "为所选语言生成 / 整理"}
+                  {loadingLangs.size > 0
+                    ? `处理中… 已接收 ${Object.values(keywordProgress).reduce((sum, chars) => sum + chars, 0)} 字`
+                    : "为所选语言生成 / 整理"}
                 </button>
               </div>
               <p className="mt-3 text-[11px] font-medium tracking-wider text-zinc-400 dark:text-zinc-500">

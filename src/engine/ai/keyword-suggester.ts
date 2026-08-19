@@ -44,7 +44,11 @@ function parseJsonObject(raw: string): any {
   throw lastError || new Error("JSON parse failed");
 }
 
-async function parseJsonWithRepair(provider: AIProvider, raw: string): Promise<any> {
+async function parseJsonWithRepair(
+  provider: AIProvider,
+  raw: string,
+  onProgress?: (received: { chars: number }) => void,
+): Promise<any> {
   try {
     return parseJsonObject(raw);
   } catch {
@@ -61,9 +65,10 @@ async function parseJsonWithRepair(provider: AIProvider, raw: string): Promise<a
       ],
       {
         temperature: 0,
-        maxTokens: 4000,
+        maxTokens: 8000,
         thinking: "disabled",
         responseFormat: "json_object",
+        onProgress,
       },
     );
     return parseJsonObject(repaired);
@@ -102,6 +107,7 @@ export async function generateKeywords(
     existingKeywords?: { keyword: string }[];
     removedKeywords?: string[];
   },
+  onProgress?: (received: { chars: number }) => void,
 ): Promise<KeywordGeneration> {
   log.info(`Generating ASO keywords for ${context.name} (${context.language})`);
 
@@ -138,9 +144,10 @@ export async function generateKeywords(
   try {
     raw = await provider.chat(messages, {
       temperature: 0.4,
-      maxTokens: 4000,
+      maxTokens: 8000,
       thinking: "low",
       responseFormat: "json_object",
+      onProgress,
     });
   } catch (err) {
     if (err instanceof EngineError && err.code === "AI_EMPTY_RESPONSE") {
@@ -149,9 +156,10 @@ export async function generateKeywords(
       );
       raw = await provider.chat(messages, {
         temperature: 0.4,
-        maxTokens: 4000,
+        maxTokens: 8000,
         thinking: "disabled",
         responseFormat: "json_object",
+        onProgress,
       });
     } else {
       throw err;
@@ -164,7 +172,7 @@ export async function generateKeywords(
       `Failed to parse keyword generation for ${context.name}: ${err.message}\nRaw response: ${raw.slice(0, 1200)}`,
     );
     try {
-      const data = await parseJsonWithRepair(provider, raw);
+      const data = await parseJsonWithRepair(provider, raw, onProgress);
       return parseKeywordGeneration(JSON.stringify(data), context.language);
     } catch (repairErr: any) {
       log.warn(
@@ -223,6 +231,7 @@ export async function curateKeywords(
     submissionKeywords: string[];
     removedKeywords: string[];
   },
+  onProgress?: (received: { chars: number }) => void,
 ): Promise<KeywordCuration> {
   const messages: ChatMessage[] = [
     {
@@ -255,9 +264,10 @@ export async function curateKeywords(
   try {
     raw = await provider.chat(messages, {
       temperature: 0.4,
-      maxTokens: 4000,
+      maxTokens: 8000,
       thinking: "low",
       responseFormat: "json_object",
+      onProgress,
     });
   } catch (err) {
     if (err instanceof EngineError && err.code === "AI_EMPTY_RESPONSE") {
@@ -266,9 +276,10 @@ export async function curateKeywords(
       );
       raw = await provider.chat(messages, {
         temperature: 0.4,
-        maxTokens: 4000,
+        maxTokens: 8000,
         thinking: "disabled",
         responseFormat: "json_object",
+        onProgress,
       });
     } else {
       throw err;
@@ -281,7 +292,7 @@ export async function curateKeywords(
       `Failed to parse keyword curation for ${context.name}: ${err.message}\nRaw response: ${raw.slice(0, 1200)}`,
     );
     try {
-      const data = await parseJsonWithRepair(provider, raw);
+      const data = await parseJsonWithRepair(provider, raw, onProgress);
       return parseKeywordCuration(JSON.stringify(data), context.language);
     } catch (repairErr: any) {
       log.warn(
