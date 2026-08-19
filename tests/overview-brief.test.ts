@@ -9,6 +9,7 @@ import {
   buildBriefMessages,
   generateOverviewBrief,
 } from "../src/engine/ai/overview-brief";
+import { briefRuleSignals } from "../src/renderer/lib/overview-brief";
 
 let errors = 0;
 function assert(condition: boolean, msg: string) {
@@ -56,7 +57,28 @@ const joined = messages.map((m) => m.content).join("\n");
 assert(joined.includes("GloWalk") && joined.includes("night walk") && joined.includes("v1.2.0"), "buildBriefMessages: context embedded");
 assert(messages[0].role === "system", "buildBriefMessages: system prompt first");
 
-// 3. generateOverviewBrief with a stub provider
+// 3. Renderer rule signals
+const signals = briefRuleSignals({
+  rankRows: [
+    { keyword: "night walk", language: "en", bestRank: 12, trend: "down" },
+    { keyword: "记账", language: "zh-Hans", bestRank: 3, trend: "up" },
+  ],
+  trackedActiveCount: 8,
+  pausedCount: 2,
+  languageTotal: 8,
+  generatedLanguageCount: 3,
+});
+assert(signals.length === 3, "rules: emits up to 3 signals");
+assert(signals[0].action === "keywords" && signals[0].target === "night walk", "rules: dropout first");
+assert(signals[1].action === "release", "rules: incomplete languages signal");
+assert(signals[2].id === "rule-paused", "rules: paused signal when keywords exist");
+assert(
+  briefRuleSignals({ rankRows: [], trackedActiveCount: 0, pausedCount: 0, languageTotal: 0, generatedLanguageCount: 0 })
+    .some((s) => s.id === "rule-no-keywords"),
+  "rules: no-keywords signal when empty",
+);
+
+// 4. generateOverviewBrief with a stub provider
 void (async () => {
   let captured: any = null;
   const stubProvider: any = {
