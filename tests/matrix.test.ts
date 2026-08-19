@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { matrixFilterKeywords, trackingLanguageOptions } from "../src/renderer/lib/matrix";
+import {
+  matrixCellState,
+  matrixColumnMeta,
+  matrixFilterKeywords,
+  trackingLanguageOptions,
+  STALE_MS,
+} from "../src/renderer/lib/matrix";
 
 console.log("✅ PASS: trackingLanguageOptions labels en as 全局");
 const opts = trackingLanguageOptions([
@@ -25,5 +31,35 @@ const filtered = matrixFilterKeywords(
   "zh-Hans",
 );
 assert.deepEqual(filtered, [{ language: "zh-Hans" }, { language: "en" }]);
+
+console.log("✅ PASS: matrixCellState reports rank, delta and beyond200");
+const snap = [
+  { keyword: "night walk", storefront: "us", rank: 5, totalResults: 200, checkedAt: "2026-08-18T10:00:00.000Z" },
+  { keyword: "night walk", storefront: "us", rank: 3, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
+  { keyword: "deep link", storefront: "us", rank: null, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
+];
+const cell = matrixCellState(snap, "night walk", "us");
+assert.equal(cell.rank, 3);
+assert.equal(cell.delta, 2); // 5 -> 3
+assert.equal(cell.trend, "up");
+assert.equal(cell.beyond200, false);
+const lost = matrixCellState(snap, "deep link", "us");
+assert.equal(lost.rank, null);
+assert.equal(lost.beyond200, true);
+const none = matrixCellState(snap, "记账", "us");
+assert.equal(none.rank, null);
+assert.equal(none.beyond200, false);
+
+console.log("✅ PASS: matrixColumnMeta detects stale column");
+const now = Date.now();
+const metaFresh = matrixColumnMeta(
+  [{ storefront: "us", checkedAt: new Date(now - STALE_MS / 2).toISOString() }],
+  "us",
+);
+assert.equal(metaFresh.stale, false);
+const staleTime = new Date(now - STALE_MS * 2).toISOString();
+const metaStale = matrixColumnMeta([{ storefront: "us", checkedAt: staleTime }], "us");
+assert.equal(metaStale.stale, true);
+assert.equal(metaStale.lastCheckedAt, staleTime);
 
 console.log("🎉 All matrix helper tests passed!");
