@@ -1884,8 +1884,8 @@ function ChartTick({ x, y, payload }: any) {
   const date = new Date(payload.value);
   if (Number.isNaN(date.getTime())) return null;
   return (
-    <text x={x} y={y} dy={20} textAnchor="middle" fill="#71717a" fontSize={10}>
-      <tspan x={x} dy={0}>{date.toLocaleDateString()}</tspan>
+    <text x={x} y={y} textAnchor="middle" fill="#71717a" fontSize={10}>
+      <tspan x={x} dy={20}>{date.toLocaleDateString()}</tspan>
       <tspan x={x} dy={12}>{date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</tspan>
     </text>
   );
