@@ -1,5 +1,5 @@
 /**
- * Release material (boundary-based, no tags/token) integration tests
+ * Release material (boundary + branch-merge signal) integration tests
  * Run: npm test (tsx tests/release-material.test.ts)
  */
 
@@ -33,47 +33,53 @@ function setupRepo(): string {
   run(dir, ["init", "-q"]);
   run(dir, ["config", "user.email", "test@example.com"]);
   run(dir, ["config", "user.name", "Test"]);
-  commit(dir, "a.txt", "feat: initial (#1)");
-  commit(dir, "b.txt", "feat: night walk support (#2)");
+  commit(dir, "a.txt", "chore: initial commit");
   return dir;
 }
 
 async function runTests() {
   const dir = setupRepo();
   try {
-    const material = await collectReleaseMaterial(dir, "HEAD~1");
-    assert(material.commits.length === 1, "collectReleaseMaterial: commits since boundary");
-    assert(material.commits[0].subject.includes("night walk support"), "collectReleaseMaterial: subject parsed");
-    assert(material.pullRequests.some((pr) => pr.number === 2), "collectReleaseMaterial: PR ref extracted");
-    assert(material.since === "HEAD~1", "collectReleaseMaterial: since recorded");
-
     const first = await checkForRelease(dir, null);
-    assert(first.latest?.source === "git-commits", "checkForRelease: source is git-commits");
-    assert((first.latest?.tag || "").startsWith("head-"), "checkForRelease: candidate keyed by HEAD");
-    const firstBody = first.latest?.body || "";
+    assert(first.latest?.source === "git-commits", "first run: source is git-commits");
     assert(
-      firstBody.includes("feat: initial (#1)") && firstBody.includes("night walk support"),
-      "checkForRelease: first run uses recent history",
+      (first.latest?.body || "").includes("no merge detected"),
+      "first run: no merge signal yet",
     );
-    assert(first.isNew === true, "checkForRelease: no boundary → new");
+    const boundary = first.latest?.commitSha || null;
+    assert(typeof boundary === "string" && boundary.length > 0, "first run: boundary captured");
 
-    const head = first.latest?.commitSha || null;
-    assert(typeof head === "string" && head.length > 0, "checkForRelease: head sha exposed");
+    // Direct commit on main only → NOT a release candidate.
+    commit(dir, "b.txt", "fix: typo");
+    const directOnly = await checkForRelease(dir, boundary);
+    assert(directOnly.latest === null && directOnly.releases.length === 0, "direct commit alone: no release");
 
-    const same = await checkForRelease(dir, head);
-    assert(same.isNew === false, "checkForRelease: same head not new");
+    // Merge a feature branch (--no-ff) → release candidate with merge material.
+    run(dir, ["checkout", "-q", "-b", "feature"]);
+    commit(dir, "c.txt", "feat: night walk support (#2)");
+    run(dir, ["checkout", "-q", "-"]);
+    run(dir, ["merge", "--no-ff", "feature", "-m", "Merge branch 'feature'"]);
 
-    commit(dir, "c.txt", "fix: dark mode (#3)");
-    const next = await checkForRelease(dir, head);
-    assert(next.isNew === true, "checkForRelease: new commits after boundary → new");
-    const nextBody = next.latest?.body || "";
+    const merged = await checkForRelease(dir, boundary);
+    const mergedBody = merged.latest?.body || "";
+    assert(merged.latest !== null, "merge: candidate created");
+    assert(merged.isNew === true, "merge: new release");
+    assert(mergedBody.includes("Merged into main"), "merge: body labels merged commits");
+    assert(mergedBody.includes("feat: night walk support (#2)"), "merge: feature commit in material");
+    assert(mergedBody.includes("Direct commits on the main line (excluded): 1"), "merge: direct commit excluded");
+    assert(mergedBody.includes("#2"), "merge: PR ref listed in body");
+
+    // Squash-style commit (single parent + PR ref) also counts as merge-like.
+    commit(dir, "d.txt", "feat: dark mode (#3)");
+    const squash = await checkForRelease(dir, boundary);
+    const squashBody = squash.latest?.body || "";
+    assert(squashBody.includes("feat: dark mode (#3)"), "squash-style: PR-referenced commit counted");
+
+    const material = await collectReleaseMaterial(dir, boundary);
+    assert(material.commits.some((c) => c.parents >= 2), "collectReleaseMaterial: merge parents detected");
     assert(
-      nextBody.includes("fix: dark mode (#3)") && !nextBody.includes("feat: initial"),
-      "checkForRelease: material only since boundary",
-    );
-    assert(
-      nextBody.includes("since the last generated release"),
-      "checkForRelease: boundary wording used",
+      material.mergeCommits.length >= 2,
+      "collectReleaseMaterial: merge-like filtering (merge commit + PR commit)",
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

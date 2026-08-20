@@ -1137,7 +1137,7 @@ function OverviewPage() {
                 {storeChip && <StatusChip label={storeChip.label} tone={storeChip.tone} />}
               </div>
               <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                {formatHumanTime(releaseDraft.publishedAt)} 更新 · RELEASE_DRAFT.md
+                {formatHumanTime(releaseDraft.publishedAt)} 更新 · 提交素材
               </p>
             </div>
             <Link to="/release" className={btnSmPrimary}>
@@ -1147,7 +1147,7 @@ function OverviewPage() {
         ) : (
           <>
             <p className="flex-1 min-w-0 text-sm text-zinc-400 dark:text-zinc-500 truncate">
-              暂无发布草稿（RELEASE_DRAFT.md）
+              暂无待处理发布（分支合入主分支后自动发现素材）
             </p>
             <Link to="/release" className={btnSmSecondary}>
               去发布页
@@ -1561,9 +1561,7 @@ function ReleasePage() {
   const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
   const selectedProduct = products.find((item) => item.id === productId) || null;
   const currentReleaseLabel =
-    selectedRelease?.name && selectedRelease.name !== "RELEASE_DRAFT.md"
-      ? selectedRelease.name
-      : formatVersionDate(selectedRelease?.publishedAt) || selectedTag;
+    selectedRelease?.name || formatVersionDate(selectedRelease?.publishedAt) || selectedTag;
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
@@ -1756,7 +1754,7 @@ function ReleasePage() {
         <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">发布工作台</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            读取仓库根目录的 RELEASE_DRAFT.md，由你确认后再生成 App Store 提交文案。
+            分支合入主分支后的提交与 PR 素材，由你确认后再生成 App Store 提交文案。
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1792,7 +1790,7 @@ function ReleasePage() {
       )}
 
       {releases.length === 0 ? (
-        <EmptyState title="尚未检测到预发布公告" desc="请在仓库根目录创建 RELEASE_DRAFT.md，然后点击检查发布。" />
+        <EmptyState title="尚未检测到新的发布" desc="分支合入主分支后，这里会自动生成发布文案素材。" />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0">
@@ -1803,15 +1801,15 @@ function ReleasePage() {
               {selectedRelease && (
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   <ReferenceSection
-                    title="预发布公告"
+                    title="发布素材"
                     meta={`更新于 ${formatHumanTime(selectedRelease.publishedAt)}`}
                     checked={step > 1}
                     defaultOpen
                   >
                     <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-                      {selectedRelease.name || "RELEASE_DRAFT.md"}
+                      {selectedRelease.name || "发布素材"}
                     </p>
-                    <MarkdownView text={selectedRelease?.body || "没有预发布公告内容"} />
+                    <MarkdownView text={selectedRelease?.body || "没有发布素材"} />
                   </ReferenceSection>
 
                   {releaseContext && step <= 2 && (

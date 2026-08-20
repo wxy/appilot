@@ -43,11 +43,14 @@ export interface ReleaseMaterialCommit {
   body: string;
   author: string;
   date: string;
+  parents: number;
 }
 
 export interface ReleaseMaterial {
   since: string | null;
   commits: ReleaseMaterialCommit[];
+  /** Commits that represent a branch merge into the main line. */
+  mergeCommits: ReleaseMaterialCommit[];
   pullRequests: { number: number; title: string | null }[];
   diffStat: string;
 }
@@ -84,7 +87,7 @@ export async function collectReleaseMaterial(
       "log",
       range,
       `--max-count=${MAX_MATERIAL_COMMITS}`,
-      "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI",
+      "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1f%P",
     ]).catch(() => ""),
     git(localPath, ["diff", "--stat", range]).catch(() => ""),
   ]);
@@ -93,16 +96,20 @@ export async function collectReleaseMaterial(
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [sha, subject, body, author, date] = line.split("\x1f");
+      const [sha, subject, body, author, date, parents] = line.split("\x1f");
       return {
         sha: sha || "",
         subject: subject || "",
         body: (body || "").trim(),
         author: author || "",
         date: date || "",
+        parents: parents ? parents.split(/\s+/).filter(Boolean).length : 0,
       };
     })
     .filter((commit) => commit.sha);
+
+  const isMergeLike = (commit: ReleaseMaterialCommit): boolean =>
+    commit.parents >= 2 || /#\d+/.test(commit.subject);
 
   const prNumbers = Array.from(
     new Set(
@@ -115,6 +122,7 @@ export async function collectReleaseMaterial(
   return {
     since: since || null,
     commits,
+    mergeCommits: commits.filter(isMergeLike),
     pullRequests: prNumbers.map((number) => ({ number, title: null })),
     diffStat: diffOut.slice(0, 800),
   };
@@ -129,15 +137,25 @@ function materialToBody(material: ReleaseMaterial, head: string): string {
         .join(", ")}`,
     );
   }
-  if (material.commits.length > 0) {
+  if (material.mergeCommits.length > 0) {
     lines.push(
       material.since
-        ? `Commits since the last generated release (${material.since}):`
-        : "Commits (recent history):",
+        ? "Merged into main since the last generated release:"
+        : "Merged into main (recent history):",
     );
-    for (const commit of material.commits) {
+    for (const commit of material.mergeCommits) {
       lines.push(`- ${commit.subject} (${commit.sha})`);
       if (commit.body) lines.push(`  ${commit.body.split("\n")[0]}`);
+    }
+    if (material.mergeCommits.length > 0 && material.commits.length > material.mergeCommits.length) {
+      lines.push(
+        `Direct commits on the main line (excluded): ${material.commits.length - material.mergeCommits.length}`,
+      );
+    }
+  } else if (material.commits.length > 0) {
+    lines.push("Commits (no merge detected; recent history):");
+    for (const commit of material.commits) {
+      lines.push(`- ${commit.subject} (${commit.sha})`);
     }
   }
   if (material.diffStat) {
@@ -199,6 +217,16 @@ export async function checkForRelease(
 
   if (head) {
     const material = await collectReleaseMaterial(localPath, lastSeenSha || null);
+    // A merge into the main line is the release signal; direct commits alone
+    // (no merge commit, no PR reference) do not create a release candidate.
+    if (lastSeenSha && material.mergeCommits.length === 0) {
+      return {
+        latest: null,
+        isNew: false,
+        lastSeenTag: lastSeenSha,
+        releases: [],
+      };
+    }
     const latestCommit = material.commits[0] || null;
     const release: ReleaseInfo = {
       id: `head-${head}`,
