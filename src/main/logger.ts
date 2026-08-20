@@ -46,10 +46,10 @@ export function setupLogger(): Logger {
 
   // Create the logger adapter implementing our engine Logger interface
   const logger: Logger = {
-    debug: (msg, meta) => log.debug(msg, meta),
-    info: (msg, meta) => log.info(msg, meta),
-    warn: (msg, meta) => log.warn(msg, meta),
-    error: (msg, meta) => log.error(msg, meta),
+    debug: (msg, meta) => (meta ? log.debug(msg, meta) : log.debug(msg)),
+    info: (msg, meta) => (meta ? log.info(msg, meta) : log.info(msg)),
+    warn: (msg, meta) => (meta ? log.warn(msg, meta) : log.warn(msg)),
+    error: (msg, meta) => (meta ? log.error(msg, meta) : log.error(msg)),
   };
 
   initLogger(logger);
