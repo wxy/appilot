@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
-import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
+import { Routes, Route, Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -764,10 +764,24 @@ function OverviewPage() {
         status,
       });
       if (status === "adopted") {
-        navigate(suggestion.action === "release" ? "/release" : "/keywords");
+        if (suggestion.action === "release") {
+          navigate(
+            releaseDraft?.tag
+              ? `/release?tag=${encodeURIComponent(releaseDraft.tag)}`
+              : "/release",
+          );
+        } else if (suggestion.action === "trend") {
+          navigate("/trend");
+        } else {
+          navigate(
+            suggestion.target
+              ? `/keywords?keyword=${encodeURIComponent(suggestion.target)}`
+              : "/keywords",
+          );
+        }
       }
     },
-    [project?.id, recordBriefAction, navigate],
+    [project?.id, recordBriefAction, navigate, releaseDraft?.tag],
   );
 
   return (
@@ -931,18 +945,18 @@ function OverviewPage() {
       {/* Metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <MetricBlock
-          to="/keywords"
+          to="/keywords?scope=tracked"
           label="跟踪关键词"
           value={String(trackedActive.length)}
           sub={pausedCount > 0 ? `暂停 ${pausedCount}` : "跟踪中"}
         />
         <MetricBlock
-          to="/keywords"
+          to="/keywords?scope=ranked"
           label="当前入榜"
           value={String(rankRows.length)}
           sub={bestRankNow !== null ? `最佳 #${bestRankNow}` : "暂无上榜"}
         />
-        <MetricBlock to="/keywords" label="前 10" value={String(top10Count)} highlight={top10Count > 0} />
+        <MetricBlock to="/keywords?scope=top10" label="前 10" value={String(top10Count)} highlight={top10Count > 0} />
         <MetricBlock
           to="/keywords"
           label="最近采集"
@@ -1021,7 +1035,20 @@ function OverviewPage() {
                     formatter={(value: any, name: any) => [`#${value}`, String(name)]}
                     labelFormatter={(label) => `${label} 排名`}
                   />
-                  <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => navigate("/keywords")} />
+                  <Legend
+                    wrapperStyle={{ fontSize: 11 }}
+                    onClick={(entry: any) => {
+                      const key = typeof entry?.dataKey === "string" ? entry.dataKey : "";
+                      const sep = key.indexOf("\u0000");
+                      if (sep > 0) {
+                        navigate(
+                          `/keywords?keyword=${encodeURIComponent(key.slice(sep + 1))}&lang=${encodeURIComponent(key.slice(0, sep))}`,
+                        );
+                      } else {
+                        navigate("/keywords");
+                      }
+                    }}
+                  />
                   {chartSeries.map((entry, index) => (
                     <Line
                       key={entry.key}
@@ -1058,7 +1085,7 @@ function OverviewPage() {
               {rankRows.slice(0, 5).map((row, index) => (
                 <Link
                   key={`${row.language}:${row.keyword}`}
-                  to="/keywords"
+                  to={`/keywords?keyword=${encodeURIComponent(row.keyword)}&lang=${encodeURIComponent(row.language)}`}
                   className={cn(
                     "flex items-center gap-2.5 px-4 py-2 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
                     row.stale && "opacity-55",
@@ -1114,7 +1141,7 @@ function OverviewPage() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap min-w-0">
                 <Link
-                  to="/release"
+                  to={releaseDraft?.tag ? `/release?tag=${encodeURIComponent(releaseDraft.tag)}` : "/release"}
                   className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
                 >
                   {releaseDraft.name || releaseDraft.tag}
@@ -1140,7 +1167,10 @@ function OverviewPage() {
                 {formatHumanTime(releaseDraft.publishedAt)} 更新 · RELEASE_DRAFT.md
               </p>
             </div>
-            <Link to="/release" className={btnSmPrimary}>
+            <Link
+              to={releaseDraft?.tag ? `/release?tag=${encodeURIComponent(releaseDraft.tag)}` : "/release"}
+              className={btnSmPrimary}
+            >
               打开发布工作台
             </Link>
           </>
@@ -1478,6 +1508,8 @@ function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
 
 function ReleasePage() {
   const { projects, currentProjectId, currentProductId } = useProject();
+  const [searchParams] = useSearchParams();
+  const urlTag = searchParams.get("tag") || "";
   const project = projects.find((item) => item.id === currentProjectId);
   const products = project?.storeProducts || [];
   const [productId, setProductId] = useState(currentProductId || products[0]?.id || "");
@@ -1511,6 +1543,9 @@ function ReleasePage() {
       });
       const draft = next.releases?.find((item: any) => item.draft) || next.releases?.[0];
       setSelectedTag((current) => {
+        if (urlTag && next.releases?.some((item: any) => item.tag === urlTag)) {
+          return urlTag;
+        }
         if (current && next.releases?.some((item: any) => item.tag === current)) {
           return current;
         }
@@ -1525,7 +1560,7 @@ function ReleasePage() {
 
   useEffect(() => {
     void loadReleases();
-  }, [project?.id]);
+  }, [project?.id, searchParams]);
 
   useEffect(() => {
     setSourceLanguage(UI_SOURCE_LANGUAGE);
@@ -2598,6 +2633,10 @@ function KeywordsPage() {
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlKeyword = searchParams.get("keyword") || "";
+  const urlLang = searchParams.get("lang") || "";
+  const urlScope = searchParams.get("scope") || "";
 
   const languages = product?.supportedLanguages || [];
   const languageOptions = trackingLanguageOptions(languages);
@@ -2666,6 +2705,29 @@ function KeywordsPage() {
     }
   }, [litLangs, viewLang]);
 
+  // Apply navigation params from the overview page: locate a keyword in a
+  // language view, and/or narrow the matrix scope.
+  useEffect(() => {
+    if (!product) return;
+    if (urlLang && languageOptions.some((option) => option.code === urlLang)) {
+      setViewLang(urlLang);
+      setLitLangs((prev) => (prev.includes(urlLang) ? prev : [...prev, urlLang]));
+    }
+    if (urlKeyword) {
+      setSelectedKeyword(urlKeyword);
+      requestAnimationFrame(() => {
+        document
+          .querySelector(
+            `[data-keyword="${CSS.escape(urlKeyword)}"][data-language="${CSS.escape(urlLang || "")}"]`,
+          )
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    }
+    if (urlScope === "paused") {
+      setShowRemoved(true);
+    }
+  }, [product?.id, urlKeyword, urlLang, urlScope]);
+
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
   }
@@ -2685,6 +2747,8 @@ function KeywordsPage() {
   }));
   const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(68px, 0.9fr)) 44px`;
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
+  const scopeFilteredRanked =
+    urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
     : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
@@ -2780,6 +2844,8 @@ function KeywordsPage() {
   ) => (
     <div
       key={`${keyword.language}:${keyword.keyword}`}
+      data-keyword={keyword.keyword}
+      data-language={keyword.language}
       onClick={() => setSelectedKeyword(keyword.keyword)}
       className={cn(
         "grid items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
@@ -3314,6 +3380,33 @@ function KeywordsPage() {
                   <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                     关键词（{trackedActive.length}）
                   </span>
+                  {urlScope === "top10" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = new URLSearchParams(searchParams);
+                        next.delete("scope");
+                        setSearchParams(next);
+                      }}
+                      className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px] font-medium hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors"
+                    >
+                      前 10 ✕
+                    </button>
+                  )}
+                  {urlScope === "paused" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowRemoved(false);
+                        const next = new URLSearchParams(searchParams);
+                        next.delete("scope");
+                        setSearchParams(next);
+                      }}
+                      className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px] font-medium hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors"
+                    >
+                      已暂停 ✕
+                    </button>
+                  )}
                   {removedForCurrent.length + pausedForCurrent.length > 0 && (
                     <div className="relative">
                       <button
@@ -3437,9 +3530,13 @@ function KeywordsPage() {
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
                   </p>
+                ) : scopeFilteredRanked.length === 0 ? (
+                  <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
+                    该筛选范围内暂无关键词。
+                  </p>
                 ) : (
                   <>
-                    {ranked.map(({ row }) => renderMatrixRow(row, false))}
+                    {scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))}
                     {unranked.length > 0 && (
                       <button
                         type="button"
