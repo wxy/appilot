@@ -1,13 +1,14 @@
 /**
- * Release watcher — a new local git tag is the release signal.
+ * Release watcher — first-principles model.
  *
- * Rationale: creating a GitHub release always creates a tag, so a new tag is
- * the developer's explicit "this is a release" action — no convention file,
- * no merge heuristics, no token. The release announcement body is not
- * available locally, so the material is all commits (+ PR references + diff
- * stat) since the previous tag; AI drafts the announcement from that.
- * `RELEASE_DRAFT.md` remains only as a last-resort fallback for repos without
- * any tags yet (migration path).
+ * - The material boundary is Appilot's own memory (`lastSeenSha` = the HEAD
+ *   sha at the last draft generation). What's-new always covers EVERYTHING
+ *   committed since then, so missed tags/releases never lose content.
+ * - A main-line git tag is only a *signal and a name*: the newest tag
+ *   reachable from HEAD (and not already generated) names the candidate;
+ *   tags on side/backport branches are filtered out by ancestry.
+ * - No token, no convention file. `RELEASE_DRAFT.md` remains as a last-resort
+ *   fallback for repos git cannot read.
  */
 
 import { execFile } from "child_process";
@@ -26,14 +27,13 @@ export interface ReleaseInfo {
   url: string;
   body: string;
   material: ReleaseMaterial | null;
-  source: "git-tag" | "release-draft-file";
+  source: "git-tag" | "git-commits" | "release-draft-file";
   draft: boolean;
   commitSha: string | null;
 }
 
 export interface ReleaseCheckResult {
   latest: ReleaseInfo | null;
-  isNew: boolean;
   lastSeenTag: string | null;
   releases: ReleaseInfo[];
 }
@@ -72,6 +72,15 @@ async function git(localPath: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+async function isAncestor(localPath: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await git(localPath, ["merge-base", "--is-ancestor", ancestor, descendant]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Sync remote tags into the local repo. Read-only: only adds/updates refs,
  * never touches the user's branches or working tree. Silent no-op when the
@@ -105,7 +114,7 @@ export async function listGitTags(localPath: string): Promise<GitTagInfo[]> {
     return raw
       .split("\n")
       .filter(Boolean)
-      .slice(0, 10)
+      .slice(0, 20)
       .map((line) => {
         const [name, sha, date] = line.split("\t");
         return { name: name || "", sha: sha || "", date: date || "" };
@@ -115,6 +124,15 @@ export async function listGitTags(localPath: string): Promise<GitTagInfo[]> {
     log.warn(`listGitTags failed for ${localPath}: ${err.message}`);
     return [];
   }
+}
+
+/** Tags reachable from HEAD — backport/side-branch tags are filtered out. */
+async function mainLineTags(localPath: string, tags: GitTagInfo[], head: string): Promise<GitTagInfo[]> {
+  const result: GitTagInfo[] = [];
+  for (const tag of tags) {
+    if (await isAncestor(localPath, tag.sha, head)) result.push(tag);
+  }
+  return result;
 }
 
 /** Commits + PR references + diff stat in `since..end` (or up to `end`). */
@@ -178,8 +196,8 @@ function materialToBody(material: ReleaseMaterial): string {
   if (material.commits.length > 0) {
     lines.push(
       material.since
-        ? `Commits since the previous release (${material.since}):`
-        : "Commits up to the first release:",
+        ? `Commits since the last generated release (${material.since}):`
+        : "Commits (recent history):",
     );
     for (const commit of material.commits) {
       lines.push(`- ${commit.subject} (${commit.sha})`);
@@ -233,59 +251,63 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
 }
 
 /**
- * Detect the latest release:
- * 1. newest git tag → release with commit/PR material since the previous tag;
- * 2. no tags → legacy RELEASE_DRAFT.md fallback.
+ * Detect the current release candidate:
+ * - material = commits since `lastSeenSha` (the last generation point);
+ * - the newest main-line tag not yet generated names the candidate;
+ * - no changes since the boundary → no candidate;
+ * - git unavailable → RELEASE_DRAFT.md fallback.
  */
 export async function checkForRelease(
   localPath: string,
-  lastSeenTag?: string | null,
+  lastSeenSha?: string | null,
   _legacyGithubToken?: string | null,
   options: { fetchTags?: boolean } = {},
 ): Promise<ReleaseCheckResult> {
-  if (options.fetchTags !== false) {
+  if (options.fetchTags) {
     await fetchRemoteTags(localPath);
   }
-  const tags = await listGitTags(localPath);
-  const latestTag = tags[0] || null;
-  const previousTag = tags[1]?.name || null;
 
-  if (latestTag) {
-    const material = await collectReleaseMaterial(localPath, previousTag, latestTag.name);
-    const release: ReleaseInfo = {
-      id: `tag-${latestTag.sha}`,
-      tag: latestTag.name,
-      name: latestTag.name,
-      publishedAt: latestTag.date || new Date().toISOString(),
-      url: "",
-      body: materialToBody(material),
-      material,
-      source: "git-tag",
-      draft: true,
-      commitSha: latestTag.sha,
-    };
-    // A moved tag (same name, different commit) redefines the release
-    // boundary, so identity is name@sha; a plain-name match still counts as
-    // seen for legacy stored values.
-    const tagKey = `${release.tag}@${release.commitSha}`;
-    const seen =
-      tagKey === lastSeenTag ||
-      (Boolean(lastSeenTag) && release.tag === lastSeenTag);
-    return {
-      latest: release,
-      isNew: !seen,
-      lastSeenTag: lastSeenTag || null,
-      releases: [release],
-    };
+  const head = await git(localPath, ["rev-parse", "--short", "HEAD"]).catch(() => "");
+  if (!head) {
+    const draft = readReleaseDraft(localPath);
+    const releases = draft ? [draft] : [];
+    return { latest: draft || null, lastSeenTag: lastSeenSha || null, releases };
   }
 
-  const draft = readReleaseDraft(localPath);
-  const releases = draft ? [draft] : [];
-  const latest = draft || null;
+  const material = await collectReleaseMaterial(localPath, lastSeenSha || null, "HEAD");
+  if (material.commits.length === 0) {
+    return { latest: null, lastSeenTag: lastSeenSha || null, releases: [] };
+  }
+
+  // Newest main-line tag that is NOT already inside the generated history.
+  const allTags = await listGitTags(localPath);
+  const onMain = await mainLineTags(localPath, allTags, head);
+  let releaseTag: GitTagInfo | null = null;
+  for (const tag of onMain) {
+    const alreadyGenerated = lastSeenSha
+      ? await isAncestor(localPath, tag.sha, lastSeenSha)
+      : false;
+    if (!alreadyGenerated) {
+      releaseTag = tag;
+      break;
+    }
+  }
+
+  const release: ReleaseInfo = {
+    id: releaseTag ? `tag-${releaseTag.sha}` : `head-${head}`,
+    tag: releaseTag?.name || `head-${head}`,
+    name: releaseTag?.name || `基于 ${head}`,
+    publishedAt: releaseTag?.date || material.commits[0]?.date || new Date().toISOString(),
+    url: "",
+    body: materialToBody(material),
+    material,
+    source: releaseTag ? "git-tag" : "git-commits",
+    draft: true,
+    commitSha: head,
+  };
   return {
-    latest,
-    isNew: Boolean(latest && latest.tag !== lastSeenTag),
-    lastSeenTag: lastSeenTag || null,
-    releases,
+    latest: release,
+    lastSeenTag: lastSeenSha || null,
+    releases: [release],
   };
 }

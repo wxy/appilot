@@ -1,5 +1,6 @@
 /**
- * Release material (new-tag signal) integration tests
+ * Release material (boundary = last generated; main-line tag as signal/name)
+ * integration tests.
  * Run: npm test (tsx tests/release-material.test.ts)
  */
 
@@ -35,73 +36,81 @@ function setupRepo(): string {
   run(dir, ["init", "-q"]);
   run(dir, ["config", "user.email", "test@example.com"]);
   run(dir, ["config", "user.name", "Test"]);
+  run(dir, ["config", "commit.gpgsign", "false"]);
   commit(dir, "a.txt", "chore: initial");
   commit(dir, "b.txt", "feat: walk (#1)");
   run(dir, ["tag", "v1.0.0"]);
   commit(dir, "c.txt", "feat: night walk support (#2)");
-  commit(dir, "d.txt", "fix: map loading (#3)");
   run(dir, ["tag", "-a", "v1.1.0", "-m", "v1.1.0 release"]);
-  commit(dir, "e.txt", "chore: post-tag work");
+  commit(dir, "d.txt", "fix: map loading (#3)");
   return dir;
 }
 
 async function runTests() {
   const dir = setupRepo();
   try {
-    const tags = await listGitTags(dir);
-    assert(tags.length === 2 && tags[0].name === "v1.1.0" && tags[1].name === "v1.0.0", "listGitTags: newest first");
-
-    const between = await collectReleaseMaterial(dir, "v1.0.0", "v1.1.0");
-    assert(between.commits.length === 2, "collectReleaseMaterial: commits between tags");
+    // First run (no boundary): material = recent history, named by newest main-line tag.
+    const first = await checkForRelease(dir, null);
+    const firstBody = first.latest?.body || "";
+    assert(first.latest?.tag === "v1.1.0", "first run: named by newest main-line tag");
+    assert(first.latest?.source === "git-tag", "first run: source git-tag");
     assert(
-      between.commits.every((c) => !c.subject.includes("chore: initial")),
-      "collectReleaseMaterial: excludes pre-previous-tag commits",
+      firstBody.includes("feat: night walk support") && firstBody.includes("fix: map loading"),
+      "first run: material covers history",
     );
-    assert(between.pullRequests.some((pr) => pr.number === 2), "collectReleaseMaterial: PR ref extracted");
+    const boundary = first.latest?.commitSha || null;
+    assert(typeof boundary === "string" && boundary.length > 0, "first run: boundary captured");
 
-    const first = await collectReleaseMaterial(dir, null, "v1.0.0");
-    assert(first.commits.length === 2, "collectReleaseMaterial: first tag covers history up to it");
+    // No new commits → no candidate.
+    assert((await checkForRelease(dir, boundary)).latest === null, "no changes: no candidate");
 
-    const result = await checkForRelease(dir, null);
-    assert(result.latest?.tag === "v1.1.0", "checkForRelease: newest tag wins");
-    assert(result.latest?.source === "git-tag", "checkForRelease: source is git-tag");
-    const body = result.latest?.body || "";
-    assert(body.includes("since the previous release (v1.0.0)"), "checkForRelease: boundary wording");
+    // New commits after boundary: candidate named head-<sha>, material only since boundary.
+    commit(dir, "e.txt", "feat: dark mode (#4)");
+    const untagged = await checkForRelease(dir, boundary);
+    assert((untagged.latest?.tag || "").startsWith("head-"), "untagged: head-named candidate");
+    assert(untagged.latest?.source === "git-commits", "untagged: source git-commits");
+    const untaggedBody = untagged.latest?.body || "";
     assert(
-      body.includes("feat: night walk support (#2)") &&
-        body.includes("fix: map loading (#3)") &&
-        !body.includes("chore: initial") &&
-        !body.includes("post-tag work"),
-      "checkForRelease: material exactly between tags",
+      untaggedBody.includes("feat: dark mode (#4)") && !untaggedBody.includes("chore: initial"),
+      "untagged: material only since boundary",
     );
-    assert(result.isNew === true, "checkForRelease: unseen tag is new");
-    assert((await checkForRelease(dir, "v1.1.0")).isNew === false, "checkForRelease: same tag not new");
-    assert((await checkForRelease(dir, "v1.0.0")).isNew === true, "checkForRelease: older seen tag still new");
 
-    // A new tag after more commits becomes the next release candidate.
+    // New main-line tag names the candidate.
     run(dir, ["tag", "v1.2.0"]);
-    const next = await checkForRelease(dir, "v1.1.0");
-    const nextBody = next.latest?.body || "";
-    assert(next.latest?.tag === "v1.2.0", "checkForRelease: latest tag after new tag");
-    assert(
-      nextBody.includes("post-tag work") && !nextBody.includes("feat: night walk support"),
-      "checkForRelease: next release material since v1.1.0",
-    );
+    const tagged = await checkForRelease(dir, boundary);
+    assert(tagged.latest?.tag === "v1.2.0" && tagged.latest?.source === "git-tag", "tagged: tag names candidate");
 
-    // Moved tag (same name, new commit) redefines the boundary → new release.
-    const v120Key = `${next.latest?.tag}@${next.latest?.commitSha}`;
-    commit(dir, "f.txt", "fix: review feedback (#4)");
+    // Backport tag on an old branch must NOT hijack the candidate.
+    run(dir, ["checkout", "-q", "-b", "hotfix", "v1.0.0"]);
+    commit(dir, "h.txt", "fix: hotfix (#9)");
+    run(dir, ["tag", "v1.0.1"]);
+    run(dir, ["checkout", "-q", "-"]);
+    const backport = await checkForRelease(dir, boundary);
+    assert(backport.latest?.tag === "v1.2.0", "backport: v1.0.1 filtered off the main line");
+
+    // A tag on an already-generated commit does not rename the candidate.
+    run(dir, ["tag", "v1.1.1", "HEAD~2"]);
+    const oldTag = await checkForRelease(dir, boundary);
+    const oldTagName = oldTag.latest?.tag || "";
+    assert(oldTagName !== "v1.1.1", "old tag on generated history: not chosen as the name");
+    assert(oldTagName === "v1.2.0", "old tag on generated history: newest ungenerated tag still wins");
+
+    // Moved tag re-anchors: new commit + force-move the tag.
+    commit(dir, "f.txt", "fix: review feedback (#10)");
     run(dir, ["tag", "-f", "v1.2.0", "-m", "v1.2.0 re-release"]);
-    const moved = await checkForRelease(dir, v120Key);
-    assert(moved.isNew === true, "moved tag: is new (boundary redefined)");
+    const moved = await checkForRelease(dir, boundary);
+    assert(moved.latest?.tag === "v1.2.0", "moved tag: still names the candidate");
     assert(
-      (moved.latest?.body || "").includes("fix: review feedback (#4)"),
+      (moved.latest?.body || "").includes("fix: review feedback (#10)"),
       "moved tag: material includes post-move commits",
     );
-    const movedKey = `${moved.latest?.tag}@${moved.latest?.commitSha}`;
-    assert((await checkForRelease(dir, movedKey)).isNew === false, "moved tag: same key not new");
 
-    // fetchRemoteTags: a tag published on the remote appears locally after fetch.
+    // collectReleaseMaterial honors an explicit since-boundary.
+    const material = await collectReleaseMaterial(dir, boundary);
+    assert(material.commits.length === 2, "collectReleaseMaterial: commits since boundary");
+    assert(material.pullRequests.some((pr) => pr.number === 10), "collectReleaseMaterial: PR ref extracted");
+
+    // fetchRemoteTags: a tag published on the remote appears locally after sync.
     const originDir = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-origin-"));
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-work-"));
     run(originDir, ["init", "-q", "--bare"]);
@@ -109,6 +118,7 @@ async function runTests() {
     run(workDir, ["remote", "add", "origin", originDir]);
     run(workDir, ["config", "user.email", "test@example.com"]);
     run(workDir, ["config", "user.name", "Test"]);
+    run(workDir, ["config", "commit.gpgsign", "false"]);
     commit(workDir, "g.txt", "feat: remote work (#5)");
     run(workDir, ["push", "-q", "origin", "HEAD"]);
     run(workDir, ["tag", "v9.9.9"]);

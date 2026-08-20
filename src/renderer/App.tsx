@@ -1147,7 +1147,7 @@ function OverviewPage() {
         ) : (
           <>
             <p className="flex-1 min-w-0 text-sm text-zinc-400 dark:text-zinc-500 truncate">
-              暂无待处理发布（创建新 tag / 发布后自动发现素材）
+              暂无待处理发布（有新提交或新 tag 后自动发现素材）
             </p>
             <Link to="/release" className={btnSmSecondary}>
               去发布页
@@ -1848,7 +1848,7 @@ function ReleasePage() {
       )}
 
       {releases.length === 0 ? (
-        <EmptyState title="尚未检测到新的发布" desc="创建新 tag（GitHub 发布会自动打 tag）并同步后，这里会自动生成发布文案素材。" />
+        <EmptyState title="尚未检测到新的发布" desc="有新提交或创建新 tag（GitHub 发布会自动打 tag）后，这里会自动生成发布文案素材。" />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0">

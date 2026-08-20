@@ -1188,7 +1188,7 @@ export function registerIpcHandlers() {
     const { readRepoDescription } = await import("../engine/app-store-discovery");
     const { checkForRelease } = await import("../engine/release-watcher");
 
-    const releaseResult = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    const releaseResult = await checkForRelease(project.localPath, project.lastReleaseSha || null);
     const drafts = getStoreSubmissionDrafts(project)
       .filter((item: any) => item.productId === productId)
       .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -1360,7 +1360,9 @@ export function registerIpcHandlers() {
     if (!project) throw new Error("Project not found");
 
     const { checkForRelease } = await import("../engine/release-watcher");
-    const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
+      fetchTags: true,
+    });
     return {
       releases: result.releases.map((release) => ({
         ...release,
@@ -1387,7 +1389,7 @@ export function registerIpcHandlers() {
 
       const { checkForRelease } = await import("../engine/release-watcher");
       const { readFullReadme } = await import("../engine/app-store-discovery");
-      const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+      const result = await checkForRelease(project.localPath, project.lastReleaseSha || null);
       const release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) throw new Error("Release not found");
 
@@ -1456,7 +1458,7 @@ export function registerIpcHandlers() {
       phase: "read_draft",
       status: "started",
     });
-    const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null);
     const release = result.releases.find((item) => item.tag === releaseTag) || null;
     _event.sender.send("release:generateProgress", {
       kind: "phase",
@@ -1484,9 +1486,9 @@ export function registerIpcHandlers() {
         );
         // Remember the tag (+ its commit) we generated for: name@sha identity
         // so a moved tag redefines the boundary and triggers regeneration.
-        project.lastReleaseTag = release.commitSha
-          ? `${release.tag}@${release.commitSha}`
-          : release.tag || null;
+        // Remember the HEAD we generated from: what's-new always covers
+        // everything committed after this point.
+        project.lastReleaseSha = release.commitSha || null;
         upsertStoreSubmissionDraft(project, draft);
         s.set("projects", projects);
         return { release, draft, actionable: true };
@@ -1539,7 +1541,7 @@ export function registerIpcHandlers() {
         phase: "read_draft",
         status: "started",
       });
-      const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+      const result = await checkForRelease(project.localPath, project.lastReleaseSha || null);
       const release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) throw new Error("Release not found");
       _event.sender.send("release:generateProgress", {
