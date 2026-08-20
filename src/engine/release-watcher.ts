@@ -1,12 +1,13 @@
 /**
- * Release watcher — detects release points and collects the material used to
- * draft the release announcement.
+ * Release watcher — detects release candidates from the local repository
+ * WITHOUT requiring tags, releases, tokens, or any developer convention.
  *
- * Source of truth (new flow): local git tags. A new tag marks a release; the
- * announcement material is the commits (+ PR references) since the previous
- * tag, so Appilot does NOT depend on the developer writing an announcement
- * file or a draft release. `RELEASE_DRAFT.md` remains as a fallback for repos
- * without any tags yet (migration path).
+ * The boundary is Appilot's own memory: the HEAD sha at the moment the last
+ * release draft was generated (`project.lastReleaseSha`). Everything committed
+ * since that boundary is the material for the next release announcement
+ * (commits + PR references + diff stat). On first run (no boundary yet), the
+ * recent commit history is used. `RELEASE_DRAFT.md` remains only as a
+ * last-resort fallback for repos git cannot read.
  */
 
 import { execFile } from "child_process";
@@ -24,7 +25,7 @@ export interface ReleaseInfo {
   publishedAt: string;
   url: string;
   body: string;
-  source: "git-tag" | "release-draft-file";
+  source: "git-commits" | "release-draft-file";
   draft: boolean;
   commitSha: string | null;
 }
@@ -36,12 +37,6 @@ export interface ReleaseCheckResult {
   releases: ReleaseInfo[];
 }
 
-export interface GitTagInfo {
-  name: string;
-  sha: string;
-  date: string;
-}
-
 export interface ReleaseMaterialCommit {
   sha: string;
   subject: string;
@@ -51,7 +46,7 @@ export interface ReleaseMaterialCommit {
 }
 
 export interface ReleaseMaterial {
-  sinceTag: string | null;
+  since: string | null;
   commits: ReleaseMaterialCommit[];
   pullRequests: { number: number; title: string | null }[];
   diffStat: string;
@@ -69,39 +64,21 @@ async function git(localPath: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-/** Latest tags first; date is the tag's creatordate. */
-export async function listGitTags(localPath: string): Promise<GitTagInfo[]> {
+async function headSha(localPath: string): Promise<string | null> {
   try {
-    const raw = await git(
-      localPath,
-      [
-        "for-each-ref",
-        "--sort=-creatordate",
-        "--format=%(refname:short)%09%(objectname:short)%09%(creatordate:iso8601)",
-        "refs/tags",
-      ],
-    );
-    return raw
-      .split("\n")
-      .filter(Boolean)
-      .slice(0, 10)
-      .map((line) => {
-        const [name, sha, date] = line.split("\t");
-        return { name: name || "", sha: sha || "", date: date || "" };
-      })
-      .filter((tag) => tag.name);
+    return (await git(localPath, ["rev-parse", "--short", "HEAD"])) || null;
   } catch (err: any) {
-    log.warn(`listGitTags failed for ${localPath}: ${err.message}`);
-    return [];
+    log.warn(`headSha failed for ${localPath}: ${err.message}`);
+    return null;
   }
 }
 
-/** Commits + PR references + diff stat since a previous tag (or the whole history). */
+/** Commits + PR references + diff stat since a boundary sha (or recent history). */
 export async function collectReleaseMaterial(
   localPath: string,
-  sinceTag?: string | null,
+  since?: string | null,
 ): Promise<ReleaseMaterial> {
-  const range = sinceTag ? `${sinceTag}..HEAD` : "HEAD";
+  const range = since ? `${since}..HEAD` : "HEAD";
   const [logOut, diffOut] = await Promise.all([
     git(localPath, [
       "log",
@@ -136,14 +113,14 @@ export async function collectReleaseMaterial(
   ).slice(0, 10);
 
   return {
-    sinceTag: sinceTag || null,
+    since: since || null,
     commits,
     pullRequests: prNumbers.map((number) => ({ number, title: null })),
     diffStat: diffOut.slice(0, 800),
   };
 }
 
-function materialToBody(material: ReleaseMaterial, tagName: string): string {
+function materialToBody(material: ReleaseMaterial, head: string): string {
   const lines: string[] = [];
   if (material.pullRequests.length > 0) {
     lines.push(
@@ -153,7 +130,11 @@ function materialToBody(material: ReleaseMaterial, tagName: string): string {
     );
   }
   if (material.commits.length > 0) {
-    lines.push(`Commits (since ${material.sinceTag || "the beginning"}):`);
+    lines.push(
+      material.since
+        ? `Commits since the last generated release (${material.since}):`
+        : "Commits (recent history):",
+    );
     for (const commit of material.commits) {
       lines.push(`- ${commit.subject} (${commit.sha})`);
       if (commit.body) lines.push(`  ${commit.body.split("\n")[0]}`);
@@ -162,7 +143,7 @@ function materialToBody(material: ReleaseMaterial, tagName: string): string {
   if (material.diffStat) {
     lines.push(`Diff summary:\n${material.diffStat}`);
   }
-  return lines.join("\n") || `Release ${tagName} (no commits collected)`;
+  return lines.join("\n") || `Release at ${head} (no commits collected)`;
 }
 
 function firstHeading(content: string): string | null {
@@ -205,36 +186,35 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
 }
 
 /**
- * Detect the latest release:
- * 1. newest git tag → release from commit/PR material since the previous tag;
- * 2. no tags → legacy RELEASE_DRAFT.md fallback.
+ * Detect the current release candidate:
+ * - HEAD sha (when available) with commit/PR material since `lastSeenSha`;
+ * - fallback to RELEASE_DRAFT.md only when git cannot be read.
  */
 export async function checkForRelease(
   localPath: string,
-  lastSeenTag?: string | null,
+  lastSeenSha?: string | null,
   _legacyGithubToken?: string | null,
 ): Promise<ReleaseCheckResult> {
-  const tags = await listGitTags(localPath);
-  const latestTag = tags[0] || null;
-  const previousTag = tags[1]?.name || null;
+  const head = await headSha(localPath);
 
-  if (latestTag) {
-    const material = await collectReleaseMaterial(localPath, previousTag);
+  if (head) {
+    const material = await collectReleaseMaterial(localPath, lastSeenSha || null);
+    const latestCommit = material.commits[0] || null;
     const release: ReleaseInfo = {
-      id: `tag-${latestTag.sha}`,
-      tag: latestTag.name,
-      name: latestTag.name,
-      publishedAt: latestTag.date || new Date().toISOString(),
+      id: `head-${head}`,
+      tag: `head-${head}`,
+      name: `基于 ${head}`,
+      publishedAt: latestCommit?.date || new Date().toISOString(),
       url: "",
-      body: materialToBody(material, latestTag.name),
-      source: "git-tag",
+      body: materialToBody(material, head),
+      source: "git-commits",
       draft: true,
-      commitSha: latestTag.sha,
+      commitSha: head,
     };
     return {
       latest: release,
-      isNew: release.tag !== lastSeenTag,
-      lastSeenTag: lastSeenTag || null,
+      isNew: release.commitSha !== (lastSeenSha || null),
+      lastSeenTag: lastSeenSha || null,
       releases: [release],
     };
   }
@@ -244,8 +224,8 @@ export async function checkForRelease(
   const latest = draft || null;
   return {
     latest,
-    isNew: Boolean(latest && latest.tag !== lastSeenTag),
-    lastSeenTag: lastSeenTag || null,
+    isNew: Boolean(latest && latest.tag !== lastSeenSha),
+    lastSeenTag: lastSeenSha || null,
     releases,
   };
 }
