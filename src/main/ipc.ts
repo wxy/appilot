@@ -1388,7 +1388,7 @@ export function registerIpcHandlers() {
       if (!product) throw new Error("Store product not found");
 
       const { checkForRelease } = await import("../engine/release-watcher");
-      const { readFullReadme } = await import("../engine/app-store-discovery");
+      const { readFullReadme, readRepoDescription } = await import("../engine/app-store-discovery");
       const result = await checkForRelease(project.localPath, project.lastReleaseSha || null);
       const release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) throw new Error("Release not found");
@@ -1420,6 +1420,7 @@ export function registerIpcHandlers() {
 
       return {
         readme,
+        description: readRepoDescription(project.localPath),
         readmeModifiedAt,
         drafts: draftSummaries,
         previousDescription: previous?.description || "",

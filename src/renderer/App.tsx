@@ -18,6 +18,8 @@ import {
 import { storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
 import { briefRuleSignals } from "./lib/overview-brief";
 import type { BriefSuggestion } from "../engine/ai/overview-brief";
+import { summarizeChanges, CHANGE_TYPE_META } from "./lib/release-summary";
+import type { ChangeSummaryItem } from "./lib/release-summary";
 
 /* ── Layout ── */
 
@@ -1263,12 +1265,14 @@ function ReferenceSection({
   meta,
   checked = false,
   defaultOpen = false,
+  action,
   children,
 }: {
   title: string;
   meta?: string;
   checked?: boolean;
   defaultOpen?: boolean;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -1286,22 +1290,25 @@ function ReferenceSection({
             <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{meta}</span>
           ) : null}
         </span>
-        <svg
-          viewBox="0 0 16 16"
-          fill="none"
-          className={cn(
-            "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
-            open && "rotate-180",
-          )}
-        >
-          <path
-            d="M4 6l4 4 4-4"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <span className="flex items-center gap-2 shrink-0">
+          {action}
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            className={cn(
+              "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
+              open && "rotate-180",
+            )}
+          >
+            <path
+              d="M4 6l4 4 4-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
       </button>
       {open ? <div className="px-5 pb-5">{children}</div> : null}
     </div>
@@ -1416,31 +1423,7 @@ function HistoryPanel({
   );
 }
 
-function CurrentCopyEntry({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left transition-colors",
-        active ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-      )}
-    >
-      <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">当前文案</span>
-      <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{label}</span>
-    </button>
-  );
-}
-
-function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
+function HistoryViewer({ draft }: { draft: any }) {
   const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
   const activeLanguage = localizations.some((item: any) => item.language === language)
@@ -1457,13 +1440,6 @@ function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
             {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onBack}
-          className="text-sm text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-        >
-          返回当前文案
-        </button>
       </div>
       <div className="p-6 space-y-6">
         {localizations.length > 1 && (
@@ -1569,6 +1545,7 @@ function ReleasePage() {
   const [historyDraft, setHistoryDraft] = useState<any>(null);
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
+  const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
 
   const loadReleases = async () => {
     if (!project?.id) return;
@@ -1662,6 +1639,42 @@ function ReleasePage() {
     batchConfirmed ||
     (masterConfirmed && activeLocalization?.language === primaryLanguage);
   const busy = generating || loadingDraft;
+  const summaryItems: ChangeSummaryItem[] = selectedRelease?.material
+    ? summarizeChanges(selectedRelease.material)
+    : [];
+  const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
+
+  useEffect(() => {
+    setSummaryChecked(new Set(draft?.summaryChecklist || []));
+  }, [draft?.id]);
+
+  const persistSummaryChecklist = async (ids: string[]) => {
+    const current = active?.draft;
+    if (!current || !project?.id) return;
+    const nextDraft = { ...current, summaryChecklist: ids };
+    setActive((prev: any) => ({ ...prev, draft: nextDraft }));
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, nextDraft);
+      setActive((prev: any) => ({ ...prev, draft: saved }));
+    } catch {
+      // Keep the local state; persistence retries on the next toggle.
+    }
+  };
+
+  const toggleSummaryItem = async (id: string) => {
+    const next = new Set(summaryChecked);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSummaryChecked(next);
+    await persistSummaryChecklist([...next]);
+  };
+
+  const setAllSummaryChecked = async (checked: boolean) => {
+    const next = new Set<string>();
+    if (checked) summaryItems.forEach((item) => next.add(item.id));
+    setSummaryChecked(next);
+    await persistSummaryChecklist([...next]);
+  };
 
   useEffect(() => {
     if (!activeLanguage && localizations[0]?.language) {
@@ -1875,14 +1888,87 @@ function ReleasePage() {
               {selectedRelease && (
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   <ReferenceSection
-                    title="发布素材"
-                    meta={`上次生成 @ ${selectedRelease.material?.since || "首次"} · ${selectedRelease.material?.commits?.length ?? 0} 次提交`}
+                    title="变更摘要"
+                    meta={summaryItems.length > 0 ? `已确认 ${checkedCount}/${summaryItems.length}` : "无变更"}
                     checked={step > 1}
                     defaultOpen
+                    action={
+                      summaryItems.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => void setAllSummaryChecked(checkedCount < summaryItems.length)}
+                          className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+                        >
+                          {checkedCount < summaryItems.length ? "全部确认" : "清除确认"}
+                        </button>
+                      ) : undefined
+                    }
                   >
-                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-                      {selectedRelease.name || "发布素材"}
-                    </p>
+                    {summaryItems.length === 0 ? (
+                      <p className="text-sm text-zinc-400 dark:text-zinc-500">本次无变更</p>
+                    ) : (
+                      <>
+                        <div className="space-y-1">
+                          {summaryItems.map((item) => {
+                            const checked = summaryChecked.has(item.id);
+                            const tone = CHANGE_TYPE_META[item.type].tone;
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => void toggleSummaryItem(item.id)}
+                                title={checked ? "取消确认" : "确认 what's-new 已覆盖此项"}
+                                className={cn(
+                                  "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
+                                  checked && "opacity-55",
+                                )}
+                              >
+                                <span
+                                  className={cn(
+                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors",
+                                    checked
+                                      ? "bg-amber-500 border-amber-500 text-white"
+                                      : "border-zinc-300 dark:border-zinc-600",
+                                  )}
+                                >
+                                  {checked ? "✓" : ""}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
+                                    {item.title}
+                                  </span>
+                                  <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                                    {item.refs.join(" · ")}
+                                  </span>
+                                </span>
+                                <span
+                                  className={cn(
+                                    "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
+                                    tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                                    tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                                    tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
+                                    tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+                                  )}
+                                >
+                                  {CHANGE_TYPE_META[item.type].label}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {draft && checkedCount < summaryItems.length && (
+                          <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                            还有 {summaryItems.length - checkedCount} 项未确认（建议对照 what's-new 勾选）
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </ReferenceSection>
+
+                  <ReferenceSection
+                    title="溯源明细"
+                    meta={`${selectedRelease.material?.commits?.length ?? 0} 次提交 · ${selectedRelease.material?.pullRequests?.length ?? 0} PR`}
+                  >
                     {selectedRelease.material ? (
                       <ReleaseMaterialView material={selectedRelease.material} />
                     ) : (
@@ -1893,17 +1979,45 @@ function ReleasePage() {
                   {releaseContext && step <= 2 && (
                     <>
                       <ReferenceSection
-                        title="README"
-                        meta={`更新于 ${formatHumanTime(releaseContext.readmeModifiedAt)}`}
-                        checked={step > 1}
+                        title="产品档案"
+                        defaultOpen
                       >
-                        <MarkdownView text={releaseContext.readme || "没有 README 内容"} />
+                        <div className="flex items-center gap-2.5 mb-2">
+                          {selectedProduct?.artworkUrl ? (
+                            <img
+                              src={selectedProduct.artworkUrl}
+                              alt=""
+                              className="w-8 h-8 rounded-lg object-cover border border-zinc-200 dark:border-zinc-800"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-lg bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center text-amber-500 text-sm">
+                              ⌖
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                              {selectedProduct?.trackName || project.name}
+                            </p>
+                            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                              {platformLabel(selectedProduct?.platform || "unknown")} ·{" "}
+                              {selectedProduct?.supportedLanguages?.length ?? 0} 语言
+                            </p>
+                          </div>
+                        </div>
+                        {releaseContext.description && (
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+                            {releaseContext.description}
+                          </p>
+                        )}
+                        <details className="group">
+                          <summary className="cursor-pointer text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline list-none">
+                            全文 README ▸
+                          </summary>
+                          <div className="mt-2">
+                            <MarkdownView text={releaseContext.readme || "没有 README 内容"} />
+                          </div>
+                        </details>
                       </ReferenceSection>
-                      <CurrentCopyEntry
-                        label={currentReleaseLabel}
-                        active={!historyDraft}
-                        onClick={() => setHistoryDraft(null)}
-                      />
                       <HistoryPanel
                         drafts={(releaseContext.drafts || []).filter(
                           (item: any) => item.releaseTag !== selectedTag,
@@ -1919,8 +2033,44 @@ function ReleasePage() {
           </aside>
 
           <div className="min-w-0 space-y-6">
+            {selectedRelease && (
+              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm px-5 py-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">文档</span>
+                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                    {historyDraft
+                      ? `历史文案 · ${draftVersionLabel(historyDraft)}`
+                      : `当前文案 · ${currentReleaseLabel}`}
+                  </span>
+                  {!historyDraft && (
+                    <span className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      {masterConfirmed && !batchConfirmed && (
+                        <StatusChip label="母本已确定" tone="amber" />
+                      )}
+                      {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
+                      {draft?.storeStatus && STORE_STATUS_META[draft.storeStatus] && (
+                        <StatusChip
+                          label={STORE_STATUS_META[draft.storeStatus].label}
+                          tone={STORE_STATUS_META[draft.storeStatus].tone}
+                        />
+                      )}
+                      {draft && localizations.length > 0 && (
+                        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                          {localizations.length}/{availableLanguages.length} 语言
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {historyDraft && (
+                  <button type="button" onClick={() => setHistoryDraft(null)} className={btnSmSecondary}>
+                    ← 返回当前文案
+                  </button>
+                )}
+              </div>
+            )}
             {historyDraft ? (
-              <HistoryViewer draft={historyDraft} onBack={() => setHistoryDraft(null)} />
+              <HistoryViewer draft={historyDraft} />
             ) : (
               <>
             {selectedRelease && step === 1 && (
