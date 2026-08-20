@@ -16,6 +16,8 @@ import {
   type MatrixCell,
 } from "./lib/matrix";
 import { storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
+import { briefRuleSignals } from "./lib/overview-brief";
+import type { BriefSuggestion } from "../engine/ai/overview-brief";
 
 /* ── Layout ── */
 
@@ -600,7 +602,7 @@ function MetricBlock({
 }
 
 function OverviewPage() {
-  const { projects, currentProjectId, currentProductId, selectProduct } = useProject();
+  const { projects, currentProjectId, currentProductId, selectProduct, recordBriefAction } = useProject();
   const navigate = useNavigate();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
@@ -609,6 +611,12 @@ function OverviewPage() {
     submission: any | null;
   } | null>(null);
   const [chartDays, setChartDays] = useState(OVERVIEW_CHART_DAYS);
+  const [briefState, setBriefState] = useState<{
+    status: "idle" | "loading" | "ready" | "error";
+    suggestions: BriefSuggestion[];
+    progress: { chars: number; phase: "reasoning" | "content" } | null;
+    error: string;
+  }>({ status: "idle", suggestions: [], progress: null, error: "" });
 
   useEffect(() => {
     if (!project) return;
@@ -691,6 +699,76 @@ function OverviewPage() {
   const storeChip = submissionDraft?.storeStatus
     ? STORE_STATUS_META[submissionDraft.storeStatus] || null
     : null;
+  const handledBriefIds = new Set(
+    (project.briefActions || []).map((item) => item.id),
+  );
+  const ruleSignals = briefRuleSignals({
+    rankRows,
+    trackedActiveCount: trackedActive.length,
+    pausedCount,
+    languageTotal,
+    generatedLanguageCount,
+  }).filter((signal) => !handledBriefIds.has(signal.id));
+  const briefSuggestions = briefState.suggestions.filter(
+    (item) => !handledBriefIds.has(item.id),
+  );
+  const showRuleSignals =
+    briefState.status === "idle" || briefState.status === "error";
+  const visibleBriefItems = showRuleSignals ? ruleSignals : briefSuggestions;
+
+  const handleGenerateBrief = useCallback(async () => {
+    if (!project || !product) return;
+    setBriefState({ status: "loading", suggestions: [], progress: null, error: "" });
+    try {
+      const result = await (window as any).appilot?.projects?.generateBrief(
+        project.id,
+        product.id,
+      );
+      setBriefState({
+        status: "ready",
+        suggestions: result?.suggestions || [],
+        progress: null,
+        error: "",
+      });
+    } catch (err: any) {
+      setBriefState({
+        status: "error",
+        suggestions: [],
+        progress: null,
+        error: err?.message || "生成失败",
+      });
+    }
+  }, [project?.id, product?.id]);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onBriefProgress?.((progress: any) => {
+      if (progress && typeof progress.chars === "number") {
+        setBriefState((prev) => ({
+          ...prev,
+          progress: {
+            chars: progress.chars,
+            phase: progress.phase === "content" ? "content" : "reasoning",
+          },
+        }));
+      }
+    });
+    return () => off?.();
+  }, []);
+
+  const handleBriefAction = useCallback(
+    async (suggestion: BriefSuggestion, status: "adopted" | "ignored") => {
+      if (!project) return;
+      await recordBriefAction(project.id, {
+        id: suggestion.id,
+        action: suggestion.action,
+        status,
+      });
+      if (status === "adopted") {
+        navigate(suggestion.action === "release" ? "/release" : "/keywords");
+      }
+    },
+    [project?.id, recordBriefAction, navigate],
+  );
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -789,6 +867,65 @@ function OverviewPage() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Copilot brief */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-4">
+        <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">副驾驶简报</h3>
+          {briefState.status === "loading" ? (
+            <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
+              {briefState.progress?.phase === "content" ? "生成中" : "思考中"} · {briefState.progress?.chars ?? 0} 字
+            </span>
+          ) : (
+            <button onClick={handleGenerateBrief} className={btnSmSecondary}>
+              生成简报
+            </button>
+          )}
+        </div>
+        {briefState.status === "error" && (
+          <p className="px-5 py-2 text-[11px] text-red-500 dark:text-red-400 border-b border-zinc-100 dark:border-zinc-800">
+            {briefState.error}（已显示规则信号）
+          </p>
+        )}
+        {briefState.status === "loading" ? (
+          <div className="px-5 py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            AI 正在分析排名与发布状态…
+          </div>
+        ) : visibleBriefItems.length === 0 ? (
+          <div className="px-5 py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            {briefState.status === "ready" ? "本周事项已清空" : "暂无建议，点「生成简报」让副驾驶看路"}
+          </div>
+        ) : (
+          <ul>
+            {visibleBriefItems.map((item, index) => (
+              <li
+                key={item.id}
+                className="flex items-center gap-3 px-5 py-2 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
+              >
+                <span className="w-4 shrink-0 text-xs font-mono text-zinc-400 dark:text-zinc-500">{index + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{item.title}</p>
+                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500 truncate" title={item.reason}>
+                    {item.reason}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleBriefAction(item, "adopted")}
+                  className={cn(btnSmSecondary, "!px-2.5 !py-1")}
+                >
+                  采纳
+                </button>
+                <button
+                  onClick={() => handleBriefAction(item, "ignored")}
+                  className="px-2.5 py-1 text-xs text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                >
+                  忽略
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* Metrics */}

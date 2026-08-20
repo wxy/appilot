@@ -20,7 +20,7 @@ export interface KeywordGeneration {
   tracking: KeywordSuggestion[];
 }
 
-function parseJsonObject(raw: string): any {
+export function parseJsonObject(raw: string): any {
   let s = raw.trim();
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();

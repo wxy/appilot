@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { BriefActionRecord } from "../lib/overview-brief";
 
 export interface KeywordEntry {
   language: string;
@@ -71,6 +72,7 @@ export interface Project {
   localPath: string;
   createdAt: string;
   repo: RepoInfo | null;
+  briefActions: BriefActionRecord[];
   storeProducts: StoreProduct[];
 
   // Legacy summary fields, kept for compatibility and migration.
@@ -103,6 +105,10 @@ interface ProjectState {
   restoreTrackedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
   resumePausedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
   clearRemovedKeywords: (productId: string, languages: string[]) => Promise<void>;
+  recordBriefAction: (
+    projectId: string,
+    payload: { id: string; action: string; status: "adopted" | "ignored" },
+  ) => Promise<void>;
   collectRanks: (productId: string, language: string, storefront: string) => Promise<RankSnapshot[]>;
 }
 
@@ -147,6 +153,18 @@ function normalizeRepo(repo: any): RepoInfo | null {
     capturedAt:
       typeof repo.capturedAt === "string" ? repo.capturedAt : new Date().toISOString(),
   };
+}
+
+function normalizeBriefActions(raw: any): BriefActionRecord[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item) => item && typeof item.id === "string")
+    .map((item) => ({
+      id: item.id,
+      action: ["keywords", "release", "trend"].includes(item.action) ? item.action : "keywords",
+      status: item.status === "ignored" ? "ignored" : "adopted",
+      createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+    }));
 }
 
 function normalizeStoreProduct(product: any, projectId: string): StoreProduct {
@@ -257,6 +275,7 @@ function normalizeProject(p: any): Project {
   return {
     ...p,
     repo: normalizeRepo(p.repo),
+    briefActions: normalizeBriefActions(p.briefActions),
     storeProducts: products,
     ...summarizeLegacyProject(products),
   };
@@ -400,6 +419,15 @@ export const useProject = create<ProjectState>((set, get) => ({
   clearRemovedKeywords: async (productId, languages) => {
     const updatedProject = normalizeProject(
       await (window as any).appilot.projects.clearRemovedKeywords(productId, languages),
+    ) as unknown as Project;
+    set((s) => ({
+      projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
+    }));
+  },
+
+  recordBriefAction: async (projectId, payload) => {
+    const updatedProject = normalizeProject(
+      await (window as any).appilot.projects.recordBriefAction(projectId, payload),
     ) as unknown as Project;
     set((s) => ({
       projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),

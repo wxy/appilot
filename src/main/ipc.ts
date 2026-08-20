@@ -1129,6 +1129,83 @@ export function registerIpcHandlers() {
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
+  ipcMain.handle("projects:generateBrief", async (_event, projectId: string, productId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const { project, product } = context;
+
+    const { AIProvider } = await import("../engine/ai/ai-provider");
+    const provider = new AIProvider({
+      baseURL: s.get("aiProviderUrl"),
+      apiKey: decryptApiKey(s.get("aiApiKey")),
+      model: s.get("aiModel"),
+    });
+    const { generateOverviewBrief } = await import("../engine/ai/overview-brief");
+    const { buildBriefInput } = await import("../engine/overview-summary");
+    const { readRepoDescription } = await import("../engine/app-store-discovery");
+    const { checkForRelease } = await import("../engine/release-watcher");
+
+    const releaseResult = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    const drafts = getStoreSubmissionDrafts(project)
+      .filter((item: any) => item.productId === productId)
+      .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    const submissionDraft = drafts[0] || null;
+
+    const input = buildBriefInput({
+      projectName: project.name,
+      productName: product.trackName || project.name,
+      description: readRepoDescription(project.localPath),
+      platform: product.platform || "unknown",
+      supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
+      trackedKeywords: product.trackedKeywords || [],
+      rankSnapshots: product.rankSnapshots || [],
+      releaseDraft: releaseResult.latest
+        ? { name: releaseResult.latest.name, tag: releaseResult.latest.tag }
+        : null,
+      submissionDraft,
+      submissionKeywords: product.submissionKeywords || [],
+    });
+
+    const suggestions = await generateOverviewBrief(provider, input, (received) => {
+      if (!_event.sender.isDestroyed()) {
+        _event.sender.send("projects:briefProgress", {
+          chars: received.chars,
+          phase: received.phase,
+        });
+      }
+    });
+    return { suggestions, generatedAt: new Date().toISOString() };
+  });
+
+  ipcMain.handle(
+    "projects:recordBriefAction",
+    async (_event, projectId: string, payload: { id: string; action: string; status: string }) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      const actionId = assertNonEmptyString(payload?.id, "id");
+      const action = assertNonEmptyString(payload?.action, "action");
+      const status = payload?.status === "ignored" ? "ignored" : "adopted";
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const index = projects.findIndex((p: any) => p.id === projectId);
+      if (index < 0) throw new Error("Project not found");
+      const project = projects[index];
+      const existing = Array.isArray(project.briefActions) ? project.briefActions : [];
+      const rest = existing.filter((item: any) => item.id !== actionId);
+      project.briefActions = [
+        { id: actionId, action, status, createdAt: new Date().toISOString() },
+        ...rest,
+      ].slice(0, 200);
+      projects[index] = project;
+      s.set("projects", projects);
+      emitProjectsChanged();
+      return project;
+    },
+  );
+
   ipcMain.handle("projects:collectRanks", async (event, productId: string, language?: string, storefront?: string) => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
