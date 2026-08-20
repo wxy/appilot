@@ -296,7 +296,7 @@ export async function checkForRelease(
   const release: ReleaseInfo = {
     id: releaseTag ? `tag-${releaseTag.sha}` : `head-${head}`,
     tag: releaseTag?.name || `head-${head}`,
-    name: releaseTag?.name || `基于 ${head}`,
+    name: releaseTag?.name || "待处理变更",
     publishedAt: releaseTag?.date || material.commits[0]?.date || new Date().toISOString(),
     url: "",
     body: materialToBody(material),

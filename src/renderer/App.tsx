@@ -607,7 +607,7 @@ function OverviewPage() {
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [releaseOverview, setReleaseOverview] = useState<{
-    draft: { name: string | null; tag: string; publishedAt: string } | null;
+    draft: { name: string | null; tag: string; publishedAt: string; commitCount: number } | null;
     submission: any | null;
   } | null>(null);
   const [chartDays, setChartDays] = useState(OVERVIEW_CHART_DAYS);
@@ -638,6 +638,9 @@ function OverviewPage() {
                   name: latest.name,
                   tag: latest.tag,
                   publishedAt: latest.publishedAt,
+                  commitCount: Array.isArray(latest.material?.commits)
+                    ? latest.material.commits.length
+                    : 0,
                 },
                 submission,
               }
@@ -1119,6 +1122,11 @@ function OverviewPage() {
                 >
                   {releaseDraft.name || releaseDraft.tag}
                 </Link>
+                {releaseDraft.commitCount > 0 && (
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
+                    · {releaseDraft.commitCount} 次提交
+                  </span>
+                )}
                 {submissionDraft && (
                   <StatusChip
                     label={
@@ -1194,6 +1202,14 @@ function ReleaseMaterialView({ material }: { material: any }) {
 
   return (
     <div className="space-y-3">
+      {material?.since ? (
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          上次生成 @ <span className="font-mono text-zinc-600 dark:text-zinc-300">{material.since}</span>
+          {" → "}当前 @ <span className="font-mono text-zinc-600 dark:text-zinc-300">{material.end}</span>
+        </p>
+      ) : (
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">首次生成（取最近提交作为素材）</p>
+      )}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
           {commits.length} 次提交
@@ -1812,7 +1828,7 @@ function ReleasePage() {
         <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">发布工作台</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            新 tag 以来的提交与 PR 素材，由你确认后再生成 App Store 提交文案。
+            自上次生成以来的提交与 PR 素材，由你确认后生成 App Store 提交文案。
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1860,7 +1876,7 @@ function ReleasePage() {
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   <ReferenceSection
                     title="发布素材"
-                    meta={`${selectedRelease.material?.commits?.length ?? 0} 次提交 · 更新于 ${formatHumanTime(selectedRelease.publishedAt)}`}
+                    meta={`上次生成 @ ${selectedRelease.material?.since || "首次"} · ${selectedRelease.material?.commits?.length ?? 0} 次提交`}
                     checked={step > 1}
                     defaultOpen
                   >
