@@ -1579,6 +1579,39 @@ function ReleasePage() {
         : `${Math.max(1, Math.round(sinceMs / 3600000))} 小时`
       : "";
   const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
+  const fixedMaterialRows = (() => {
+    const rows: { label: string; meta: string }[] = [];
+    rows.push({
+      label: "README 全文",
+      meta: releaseContext?.readme ? `${releaseContext.readme.length.toLocaleString()} 字符` : "无",
+    });
+    rows.push({
+      label: "产品档案",
+      meta: `${selectedProduct?.trackName || project?.name || ""} · ${platformLabel(selectedProduct?.platform || "unknown")} · ${selectedProduct?.supportedLanguages?.length ?? 0} 语言`,
+    });
+    const historyDrafts = releaseContext?.drafts || [];
+    rows.push({
+      label: "历史文案（含历次发布公告）",
+      meta:
+        historyDrafts.length > 0
+          ? `最近 ${historyDrafts.length} 份${historyDrafts[0]?.appVersion ? `（最新 v${String(historyDrafts[0].appVersion).replace(/^v/i, "")}）` : ""}`
+          : "无",
+    });
+    const activeKeywordCount = (selectedProduct?.trackedKeywords || []).filter(
+      (keyword: any) => keyword.status !== "paused",
+    ).length;
+    rows.push({
+      label: "跟踪关键词与排名",
+      meta: activeKeywordCount > 0 ? `${activeKeywordCount} 个关键词` : "无",
+    });
+    if (draft?.reviewFeedback) {
+      rows.push({
+        label: "驳回意见",
+        meta: String(draft.reviewFeedback).split("\n")[0].slice(0, 40),
+      });
+    }
+    return rows;
+  })();
 
   useEffect(() => {
     const items = selectedRelease?.material ? summarizeChanges(selectedRelease.material) : [];
@@ -1971,6 +2004,31 @@ function ReleasePage() {
 
                   {releaseContext && step <= 2 && (
                     <>
+                      <ReferenceSection title="固定素材" meta="始终发送给 AI" defaultOpen>
+                        <ul className="space-y-1.5">
+                          {fixedMaterialRows.map((row) => (
+                            <li
+                              key={row.label}
+                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-zinc-50/60 dark:bg-zinc-800/30"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-xs text-zinc-700 dark:text-zinc-300 truncate">
+                                  {row.label}
+                                </span>
+                                <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                                  {row.meta}
+                                </span>
+                              </span>
+                              <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                始终发送
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                          这些素材无需逐项查看；如需调整素材范围，可在上方变更摘要中取消对应条目。
+                        </p>
+                      </ReferenceSection>
                       <HistoryPanel
                         drafts={(releaseContext.drafts || []).filter(
                           (item: any) => item.releaseTag !== selectedTag,
