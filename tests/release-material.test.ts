@@ -64,14 +64,16 @@ async function runTests() {
     const boundary = first.latest?.commitSha || null;
     assert(typeof boundary === "string" && boundary.length > 0, "first run: boundary captured");
 
-    // No new commits → no candidate.
-    assert((await checkForRelease(dir, boundary)).latest === null, "no changes: no candidate");
+    // No new commits → identity stays, material is empty.
+    const unchanged = await checkForRelease(dir, boundary);
+    assert(unchanged.latest?.tag === "v1.1.0", "no changes: identity stable");
+    assert(unchanged.latest?.material?.commits?.length === 0, "no changes: empty material");
 
     // New commits after boundary: candidate named head-<sha>, material only since boundary.
     commit(dir, "e.txt", "feat: dark mode (#4)");
     const untagged = await checkForRelease(dir, boundary);
-    assert((untagged.latest?.tag || "").startsWith("head-"), "untagged: head-named candidate");
-    assert(untagged.latest?.source === "git-commits", "untagged: source git-commits");
+    assert(untagged.latest?.tag === "v1.1.0", "new commits: identity stays the latest tag");
+    assert(untagged.latest?.source === "git-tag", "new commits: source git-tag");
     const untaggedBody = untagged.latest?.body || "";
     assert(
       untaggedBody.includes("feat: dark mode (#4)") && !untaggedBody.includes("chore: initial"),
@@ -194,6 +196,48 @@ async function runTests() {
     fs.rmSync(syncOrigin, { recursive: true, force: true });
     fs.rmSync(syncWork, { recursive: true, force: true });
     fs.rmSync(syncCloneRoot, { recursive: true, force: true });
+
+    // Multi-line commit bodies must not corrupt record parsing.
+    const bodyRepo = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-body-"));
+    run(bodyRepo, ["init", "-q"]);
+    run(bodyRepo, ["config", "user.email", "test@example.com"]);
+    run(bodyRepo, ["config", "user.name", "Test"]);
+    run(bodyRepo, ["config", "commit.gpgsign", "false"]);
+    fs.writeFileSync(path.join(bodyRepo, "x.txt"), "1");
+    run(bodyRepo, ["add", "."]);
+    run(bodyRepo, ["commit", "-q", "-m", "feat: single (#1)"]);
+    fs.writeFileSync(path.join(bodyRepo, "y.txt"), "2");
+    run(bodyRepo, ["add", "."]);
+    run(bodyRepo, ["commit", "-q", "-m", "feat: multi-line body (#2)\n\nFirst paragraph\nSecond line"]);
+    const bodyMaterial = await collectReleaseMaterial(bodyRepo, null);
+    assert(bodyMaterial.commits.length === 2, "multi-line body: both commits parsed");
+    assert(bodyMaterial.commits.every((c) => c.date.length > 0), "multi-line body: dates preserved");
+    assert(
+      bodyMaterial.commits.some((c) => c.body.includes("First paragraph")),
+      "multi-line body: body text captured",
+    );
+    fs.rmSync(bodyRepo, { recursive: true, force: true });
+
+    // No tags at all → head-named candidate; identity stable across generations.
+    const headRepo = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-head-"));
+    run(headRepo, ["init", "-q"]);
+    run(headRepo, ["config", "user.email", "test@example.com"]);
+    run(headRepo, ["config", "user.name", "Test"]);
+    run(headRepo, ["config", "commit.gpgsign", "false"]);
+    fs.writeFileSync(path.join(headRepo, "a.txt"), "1");
+    run(headRepo, ["add", "."]);
+    run(headRepo, ["commit", "-q", "-m", "feat: first (#1)"]);
+    const headFirst = await checkForRelease(headRepo, null);
+    assert((headFirst.latest?.tag || "").startsWith("head-"), "no tags: head-named candidate");
+    assert(headFirst.latest?.source === "git-commits", "no tags: source git-commits");
+    const headBoundary = headFirst.latest?.commitSha || null;
+    fs.writeFileSync(path.join(headRepo, "b.txt"), "2");
+    run(headRepo, ["add", "."]);
+    run(headRepo, ["commit", "-q", "-m", "feat: second (#2)"]);
+    const headNext = await checkForRelease(headRepo, headBoundary);
+    assert((headNext.latest?.tag || "").startsWith("head-"), "no tags: identity stays head-named");
+    assert((headNext.latest?.material?.commits || []).length === 1, "no tags: material since boundary");
+    fs.rmSync(headRepo, { recursive: true, force: true });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

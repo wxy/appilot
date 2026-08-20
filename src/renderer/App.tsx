@@ -1462,6 +1462,10 @@ function ReleasePage() {
   const [checking, setChecking] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<{
+    chars: number;
+    phase: "reasoning" | "content";
+  } | null>(null);
   const [error, setError] = useState("");
   const [activeLanguage, setActiveLanguage] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("");
@@ -1472,6 +1476,18 @@ function ReleasePage() {
   const translatingRef = useRef<Set<string>>(new Set());
   const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
   const [pendingVersion, setPendingVersion] = useState("");
+
+  useEffect(() => {
+    const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
+      if (progress?.kind === "chars" && typeof progress.chars === "number") {
+        setGenerationProgress({
+          chars: progress.chars,
+          phase: progress.phase === "content" ? "content" : "reasoning",
+        });
+      }
+    });
+    return () => off?.();
+  }, []);
 
   const loadReleases = async () => {
     if (!project?.id) return;
@@ -1705,6 +1721,7 @@ function ReleasePage() {
     if (!project || !productId || !selectedTag) return;
     if (force) {
       setGenerating(true);
+      setGenerationProgress(null);
     } else {
       setLoadingDraft(true);
     }
@@ -2134,9 +2151,19 @@ function ReleasePage() {
                 </div>
 
                 {selectedRelease.draft && !draft && (
-                  <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
-                    {generating ? "生成中..." : "下一步：生成文案"}
-                  </button>
+                  summaryItems.length > 0 ? (
+                    <AIProgressButton
+                      onClick={() => handleLoad(true)}
+                      disabled={busy && !generating}
+                      loading={generating}
+                      progress={generationProgress}
+                      idleLabel="下一步：生成文案"
+                    />
+                  ) : (
+                    <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                      本次无变更，无需生成新文案。
+                    </p>
+                  )
                 )}
 
                 {!selectedRelease.draft && (
@@ -2353,9 +2380,13 @@ function ReleasePage() {
                     />
                     {!feedbackReadOnly && (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
-                          {generating ? "重新生成中..." : "重新生成"}
-                        </button>
+                        <AIProgressButton
+                          onClick={() => handleLoad(true)}
+                          disabled={busy && !generating}
+                          loading={generating}
+                          progress={generationProgress}
+                          idleLabel="重新生成"
+                        />
                       </div>
                     )}
                   </FieldBlock>

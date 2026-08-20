@@ -234,7 +234,8 @@ export async function collectReleaseMaterial(
       "log",
       range,
       `--max-count=${MAX_MATERIAL_COMMITS}`,
-      "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI",
+      // \x1e record separator keeps multi-line bodies from corrupting records.
+      "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
     ]).catch(() => ""),
     git(localPath, ["diff", "--stat", range]).catch(() => ""),
   ]);
@@ -243,10 +244,10 @@ export async function collectReleaseMaterial(
     : "";
 
   const commits: ReleaseMaterialCommit[] = logOut
-    .split("\n")
+    .split("\x1e")
     .filter(Boolean)
-    .map((line) => {
-      const [sha, subject, body, author, date] = line.split("\x1f");
+    .map((record) => {
+      const [sha, subject, body, author, date] = record.split("\x1f");
       return {
         sha: sha || "",
         subject: subject || "",
@@ -412,23 +413,14 @@ export async function checkForRelease(
   const endRefs = remoteTip && remoteTip !== tip ? `${tip} ${remoteTip}` : tip;
 
   const material = await collectReleaseMaterial(localPath, lastSeenSha || null, endRefs);
-  if (material.commits.length === 0) {
-    return { latest: null, lastSeenTag: lastSeenSha || null, releases: [] };
-  }
 
-  // Newest main-line tag that is NOT already inside the generated history.
+  // The release identity is the newest main-line tag (or the head when there
+  // are no tags). It stays stable across the generation boundary, so the
+  // workbench keeps surfacing the draft it generated for — material being
+  // empty (no new commits since the last generation) does NOT hide it.
   const allTags = await listGitTags(localPath);
   const onMain = await mainLineTags(localPath, allTags, endRefs);
-  let releaseTag: GitTagInfo | null = null;
-  for (const tag of onMain) {
-    const alreadyGenerated = lastSeenSha
-      ? await isAncestor(localPath, tag.sha, lastSeenSha)
-      : false;
-    if (!alreadyGenerated) {
-      releaseTag = tag;
-      break;
-    }
-  }
+  const releaseTag: GitTagInfo | null = onMain[0] || null;
 
   const enrichedMaterial = releaseTag
     ? {
