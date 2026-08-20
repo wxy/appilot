@@ -1322,20 +1322,25 @@ function HistoryPanel({
   drafts,
   selectedDraft,
   onSelect,
+  currentTag,
 }: {
   drafts: any[];
   selectedDraft: any;
   onSelect: (draft: any) => void;
+  currentTag?: string;
 }) {
   const merged = mergeHistoryDrafts(drafts);
   return (
-    <ReferenceSection title="历史文案" meta={merged.length > 0 ? `${merged.length} 个版本` : "暂无历史文案"} defaultOpen>
+    <ReferenceSection title="文案列表" meta={merged.length > 0 ? `${merged.length} 个版本` : "暂无文案"} defaultOpen>
       {merged.length === 0 ? (
-        <p className="text-sm text-zinc-400 dark:text-zinc-500 py-1">还没有可参考的历史版本。</p>
+        <p className="text-sm text-zinc-400 dark:text-zinc-500 py-1">还没有文案。</p>
       ) : (
         <div className="space-y-1">
           {merged.map((item: any, index: number) => {
-            const active = selectedDraft?.releaseTag === item.releaseTag;
+            const isCurrent = item.releaseTag === currentTag;
+            const active =
+              selectedDraft?.releaseTag === item.releaseTag ||
+              (!selectedDraft && isCurrent);
             const languages = (item.localizations || [])
               .map((loc: any) => String(loc?.language || "").trim())
               .filter(Boolean);
@@ -1343,7 +1348,7 @@ function HistoryPanel({
               <button
                 key={item.releaseTag || index}
                 type="button"
-                onClick={() => onSelect(item)}
+                onClick={() => onSelect(isCurrent ? null : item)}
                 className={cn(
                   "w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left transition-colors",
                   active
@@ -1353,6 +1358,11 @@ function HistoryPanel({
               >
                 <span className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium truncate">{draftVersionLabel(item)}</span>
+                  {isCurrent && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shrink-0">
+                      当前
+                    </span>
+                  )}
                   <span className="text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
                     {formatHumanTime(item.updatedAt)}
                   </span>
@@ -1390,7 +1400,7 @@ function HistoryViewer({ draft }: { draft: any }) {
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">历史文案</h3>
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案列表</h3>
           <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">
             {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
           </span>
@@ -1652,7 +1662,7 @@ function ReleasePage() {
     });
     const historyDrafts = releaseContext?.drafts || [];
     rows.push({
-      label: "历史文案（含历次发布公告）",
+      label: "文案列表（含历次发布公告）",
       meta:
         historyDrafts.length > 0
           ? `最近 ${historyDrafts.length} 份${historyDrafts[0]?.appVersion ? `（最新 v${String(historyDrafts[0].appVersion).replace(/^v/i, "")}）` : ""}`
@@ -2102,11 +2112,10 @@ function ReleasePage() {
                         </p>
                       </ReferenceSection>
                       <HistoryPanel
-                        drafts={(releaseContext.drafts || []).filter(
-                          (item: any) => item.releaseTag !== selectedTag,
-                        )}
+                        drafts={releaseContext.drafts || []}
                         selectedDraft={historyDraft}
                         onSelect={(draft: any) => setHistoryDraft(draft)}
+                        currentTag={selectedTag}
                       />
                     </>
                   )}
@@ -2122,7 +2131,7 @@ function ReleasePage() {
                   <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">文档</span>
                   <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                     {historyDraft
-                      ? `历史文案 · ${draftVersionLabel(historyDraft)}`
+                      ? `文案列表 · ${draftVersionLabel(historyDraft)}`
                       : `当前文案 · ${draft?.appVersion || "版本待定"}`}
                   </span>
                   {!historyDraft && (
@@ -2173,7 +2182,7 @@ function ReleasePage() {
                     className={inputLineClass + " max-w-32"}
                   />
                   <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {draft ? "历史文案将按此版本标识" : "生成文案时将写入此版本"}
+                    {draft ? "文案列表将按此版本标识" : "生成文案时将写入此版本"}
                   </span>
                 </div>
                 <div>
@@ -2215,10 +2224,10 @@ function ReleasePage() {
                   <div>
                     {selectedExistingDraft ? (
                       <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
-                        {loadingDraft ? "加载中..." : "查看历史文案"}
+                        {loadingDraft ? "加载中..." : "查看文案列表"}
                       </button>
                     ) : (
-                      <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有历史文案</span>
+                      <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有文案</span>
                     )}
                   </div>
                 )}
@@ -2228,7 +2237,7 @@ function ReleasePage() {
             {!draft ? (
               selectedRelease && step > 1 ? (
                 <EmptyState
-                  title={selectedRelease.draft ? "等待生成提交文案" : "该正式发布没有历史文案"}
+                  title={selectedRelease.draft ? "等待生成提交文案" : "该正式发布没有文案"}
                   desc={selectedRelease.draft ? "确认后由 AI 生成名称、副标题、Promotional Text、描述、What's New 和关键词。" : "正式发布只作为完成信号，不再生成新的商店文案。"}
                 />
               ) : null
