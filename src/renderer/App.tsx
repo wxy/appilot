@@ -2402,7 +2402,16 @@ function ReleasePage() {
                             )}
                           >
                             {languageLabel(language)}
-                            {translating ? " ..." : generated ? " ✓" : ""}
+                            {translating ? (
+                              <span className="inline-flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                                {formatKilo(generationProgress?.chars || 0)}
+                              </span>
+                            ) : generated ? (
+                              " ✓"
+                            ) : (
+                              ""
+                            )}
                           </button>
                         );
                       })}
@@ -2899,6 +2908,17 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
   );
 }
 
+function formatKilo(chars: number): string {
+  return `${(chars / 1000).toFixed(1).replace(/\.0$/, "")}K字`;
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}秒`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}分${s > 0 ? `${String(s).padStart(2, "0")}秒` : ""}`;
+}
+
 function AIProgressButton({
   onClick,
   disabled = false,
@@ -2912,13 +2932,19 @@ function AIProgressButton({
   loading: boolean;
   progress: { chars: number; phase: "reasoning" | "content" } | null;
 }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!loading) return;
+    setElapsed(0);
+    const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [loading]);
   const chars = progress?.chars || 0;
-  const kLabel = `${(chars / 1000).toFixed(1).replace(/\.0$/, "")}K字`;
   return (
     <button
       onClick={onClick}
       disabled={disabled || loading}
-      className={cn(btnPrimary, "min-w-36 whitespace-nowrap")}
+      className={cn(btnPrimary, "h-10 min-w-36 whitespace-nowrap", loading && "py-1")}
     >
       {loading ? (
         <span className="flex flex-col items-center text-[11px] leading-tight">
@@ -2926,7 +2952,7 @@ function AIProgressButton({
             <span className="w-2.5 h-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
             处理中
           </span>
-          <span className="mt-0.5 font-mono">{kLabel}</span>
+          <span className="mt-0.5 font-mono">{formatKilo(chars)} · {formatElapsed(elapsed)}</span>
         </span>
       ) : (
         idleLabel
