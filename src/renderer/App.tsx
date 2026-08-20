@@ -2904,7 +2904,7 @@ function AIProgressButton({
   disabled = false,
   idleLabel,
   loading,
-  progress: _progress,
+  progress,
 }: {
   onClick: () => void;
   disabled?: boolean;
@@ -2913,20 +2913,35 @@ function AIProgressButton({
   progress: { chars: number; phase: "reasoning" | "content" } | null;
 }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled || loading}
-      className={cn(btnPrimary, "min-w-36 whitespace-nowrap")}
-    >
-      {loading ? (
-        <span className="inline-flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-          处理中…
-        </span>
-      ) : (
-        idleLabel
-      )}
-    </button>
+    <span className="inline-flex items-center gap-2">
+      <button
+        onClick={onClick}
+        disabled={disabled || loading}
+        className={cn(btnPrimary, "min-w-36 whitespace-nowrap")}
+      >
+        {loading ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+            处理中…
+          </span>
+        ) : (
+          idleLabel
+        )}
+      </button>
+      <span
+        className={cn(
+          "w-36 shrink-0 text-left text-[11px] font-mono text-zinc-400 dark:text-zinc-500 truncate",
+          !loading && "invisible",
+        )}
+        title={loading && progress ? `已接收 ${progress.chars.toLocaleString()} 字` : undefined}
+      >
+        {loading
+          ? progress && progress.chars > 0
+            ? `已接收 ${progress.chars.toLocaleString()} 字`
+            : "正在连接…"
+          : ""}
+      </span>
+    </span>
   );
 }
 
