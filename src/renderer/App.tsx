@@ -3861,7 +3861,7 @@ function KeywordsPage() {
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
                   </p>
-                ) : scopeFilteredRanked.length === 0 ? (
+                ) : scopeFilteredRanked.length === 0 && unranked.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     该筛选范围内暂无关键词。
                   </p>
