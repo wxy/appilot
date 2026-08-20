@@ -11,6 +11,8 @@ export interface ChangeSummaryItem {
   title: string;
   type: ChangeType;
   refs: string[];
+  /** Underlying commits (sha / date / body) for on-demand detail inspection. */
+  commits: { sha: string; date: string; body: string }[];
 }
 
 const TYPE_ORDER: ChangeType[] = ["feature", "fix", "perf", "chore"];
@@ -39,11 +41,14 @@ function parseType(subject: string): { type: ChangeType; title: string } {
 
 /** Group commits into a coverage list: PRs aggregate their commits; sort feature→chore. */
 export function summarizeChanges(
-  material: { commits: { sha: string; subject: string; body: string }[] } | null | undefined,
+  material: { commits: { sha: string; subject: string; body: string; date: string }[] } | null | undefined,
 ): ChangeSummaryItem[] {
   const commits = material?.commits || [];
-  const prGroups = new Map<number, { title: string; type: ChangeType; refs: string[] }>();
-  const standalone: { sha: string; subject: string }[] = [];
+  const prGroups = new Map<
+    number,
+    { title: string; type: ChangeType; refs: string[]; commits: ChangeSummaryItem["commits"] }
+  >();
+  const standalone: { sha: string; subject: string; date: string; body: string }[] = [];
 
   for (const commit of commits) {
     const prMatch = commit.subject.match(/#(\d+)/);
@@ -58,15 +63,22 @@ export function summarizeChanges(
           existing.title = parsed.title;
         }
         existing.refs.push(commit.sha);
+        existing.commits.push({ sha: commit.sha, date: commit.date, body: commit.body });
       } else {
         prGroups.set(number, {
           title: parsed.title || `PR #${number}`,
           type: parsed.type,
           refs: [commit.sha],
+          commits: [{ sha: commit.sha, date: commit.date, body: commit.body }],
         });
       }
     } else {
-      standalone.push({ sha: commit.sha, subject: commit.subject });
+      standalone.push({
+        sha: commit.sha,
+        subject: commit.subject,
+        date: commit.date,
+        body: commit.body,
+      });
     }
   }
 
@@ -77,6 +89,7 @@ export function summarizeChanges(
       title: group.title,
       type: group.type,
       refs: [`#${number}`, ...group.refs],
+      commits: group.commits,
     });
   }
   for (const commit of standalone) {
@@ -86,6 +99,7 @@ export function summarizeChanges(
       title: parsed.title,
       type: parsed.type,
       refs: [commit.sha],
+      commits: [{ sha: commit.sha, date: commit.date, body: commit.body }],
     });
   }
 

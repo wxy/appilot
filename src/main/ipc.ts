@@ -1439,6 +1439,7 @@ export function registerIpcHandlers() {
       releaseTag: string,
       force = false,
       language?: string,
+      includeShas?: string[],
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -1472,11 +1473,19 @@ export function registerIpcHandlers() {
     const existing = findStoreSubmissionDraft(project, productId, releaseTag);
     if (release.draft) {
       if (force) {
+        // Respect the user's include/exclude checklist: only the checked
+        // commits are fed to the AI as release material.
+        let generationRelease = release;
+        if (Array.isArray(includeShas) && release.material) {
+          const { filterMaterial, materialToBody } = await import("../engine/release-watcher");
+          const filtered = filterMaterial(release.material, includeShas);
+          generationRelease = { ...release, material: filtered, body: materialToBody(filtered) };
+        }
         const draft = await generateStoreSubmissionDraft(
           s,
           project,
           product,
-          release,
+          generationRelease,
           existing,
           (progress) => {
             if (!_event.sender.isDestroyed()) {

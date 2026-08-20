@@ -13,6 +13,7 @@ import {
   collectReleaseMaterial,
   checkForRelease,
   fetchRemoteTags,
+  filterMaterial,
 } from "../src/engine/release-watcher";
 
 let errors = 0;
@@ -109,6 +110,13 @@ async function runTests() {
     const material = await collectReleaseMaterial(dir, boundary);
     assert(material.commits.length === 2, "collectReleaseMaterial: commits since boundary");
     assert(material.pullRequests.some((pr) => pr.number === 10), "collectReleaseMaterial: PR ref extracted");
+    assert(typeof material.sinceDate === "string" && material.sinceDate.length > 0, "collectReleaseMaterial: sinceDate populated");
+
+    // filterMaterial keeps only the chosen commits and re-derives PRs.
+    const reviewSha = material.commits.find((c) => c.subject.includes("review feedback"))?.sha || "";
+    const filtered = filterMaterial(material, [reviewSha]);
+    assert(filtered.commits.length === 1, "filterMaterial: only included commits kept");
+    assert(filtered.pullRequests.some((pr) => pr.number === 10), "filterMaterial: PR list re-derived");
 
     // fetchRemoteTags: a tag published on the remote appears locally after sync.
     const originDir = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-origin-"));

@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
 import { useProject, type RankSnapshot } from "./stores/project";
 import { cn } from "./lib/utils";
@@ -1186,80 +1184,6 @@ function localizationList(draft: any): any[] {
   ];
 }
 
-function MarkdownView({ text }: { text: string }) {
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div>
-  );
-}
-
-/** Structured view of the release material (commits + PRs + diff summary). */
-function ReleaseMaterialView({ material }: { material: any }) {
-  const [showAll, setShowAll] = useState(false);
-  const commits: { sha: string; subject: string; body: string }[] = material?.commits || [];
-  const prs: { number: number }[] = material?.pullRequests || [];
-  const visible = showAll ? commits : commits.slice(0, 8);
-  const diffLine = String(material?.diffStat || "").trim().split("\n").pop() || "";
-
-  return (
-    <div className="space-y-3">
-      {material?.since ? (
-        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-          上次生成 @ <span className="font-mono text-zinc-600 dark:text-zinc-300">{material.since}</span>
-          {" → "}当前 @ <span className="font-mono text-zinc-600 dark:text-zinc-300">{material.end}</span>
-        </p>
-      ) : (
-        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">首次生成（取最近提交作为素材）</p>
-      )}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-        <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
-          {commits.length} 次提交
-        </span>
-        {prs.length > 0 && <span>· {prs.length} 个 PR</span>}
-        {diffLine && <span className="min-w-0 truncate">· {diffLine}</span>}
-      </div>
-      {prs.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {prs.map((pr) => {
-            const owner = commits.find((commit) => commit.subject.includes(`#${pr.number}`));
-            return (
-              <span
-                key={pr.number}
-                title={owner?.subject || `PR #${pr.number}`}
-                className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[11px] font-medium"
-              >
-                #{pr.number}
-              </span>
-            );
-          })}
-        </div>
-      )}
-      <ul className="space-y-1">
-        {visible.map((commit) => (
-          <li
-            key={commit.sha}
-            className="flex items-baseline gap-2 text-xs"
-            title={commit.body ? `${commit.subject}\n${commit.body}` : commit.subject}
-          >
-            <span className="font-mono text-zinc-400 dark:text-zinc-500 shrink-0">{commit.sha}</span>
-            <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-300">{commit.subject}</span>
-          </li>
-        ))}
-      </ul>
-      {commits.length > 8 && (
-        <button
-          type="button"
-          onClick={() => setShowAll((value) => !value)}
-          className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
-        >
-          {showAll ? "收起" : `展开全部 ${commits.length} 条`}
-        </button>
-      )}
-    </div>
-  );
-}
-
 function ReferenceSection({
   title,
   meta,
@@ -1278,19 +1202,20 @@ function ReferenceSection({
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left"
-      >
-        <span className="flex items-center gap-2.5 min-w-0">
+      <div className="w-full flex items-center justify-between gap-3 px-5 py-3.5">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-2.5 min-w-0 text-left"
+          title={open ? "折叠" : "展开"}
+        >
           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{title}</span>
           {checked ? <span className="text-xs text-emerald-500 shrink-0">✓</span> : null}
           {meta ? (
             <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{meta}</span>
           ) : null}
-        </span>
-        <span className="flex items-center gap-2 shrink-0">
+        </button>
+        <span className="flex items-center gap-1.5 shrink-0">
           {action}
           <svg
             viewBox="0 0 16 16"
@@ -1309,7 +1234,7 @@ function ReferenceSection({
             />
           </svg>
         </span>
-      </button>
+      </div>
       {open ? <div className="px-5 pb-5">{children}</div> : null}
     </div>
   );
@@ -1546,6 +1471,7 @@ function ReleasePage() {
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
   const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
+  const [expandedSummaryId, setExpandedSummaryId] = useState("");
 
   const loadReleases = async () => {
     if (!project?.id) return;
@@ -1611,8 +1537,6 @@ function ReleasePage() {
   const batchConfirmed = Boolean(draft?.batchConfirmedAt);
   const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
   const selectedProduct = products.find((item) => item.id === productId) || null;
-  const currentReleaseLabel =
-    selectedRelease?.name || formatVersionDate(selectedRelease?.publishedAt) || selectedTag;
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
@@ -1639,14 +1563,31 @@ function ReleasePage() {
     batchConfirmed ||
     (masterConfirmed && activeLocalization?.language === primaryLanguage);
   const busy = generating || loadingDraft;
-  const summaryItems: ChangeSummaryItem[] = selectedRelease?.material
-    ? summarizeChanges(selectedRelease.material)
+  const summaryMaterial = selectedRelease?.material || null;
+  const summaryItems: ChangeSummaryItem[] = summaryMaterial
+    ? summarizeChanges(summaryMaterial)
     : [];
+  const summaryPrCount = summaryMaterial?.pullRequests?.length ?? 0;
+  const summaryCommitCount = summaryMaterial?.commits?.length ?? 0;
+  const sinceMs = summaryMaterial?.sinceDate
+    ? Date.now() - new Date(summaryMaterial.sinceDate).getTime()
+    : null;
+  const durationLabel =
+    sinceMs != null && sinceMs >= 0
+      ? sinceMs >= 86400000
+        ? `${Math.round(sinceMs / 86400000)} 天`
+        : `${Math.max(1, Math.round(sinceMs / 3600000))} 小时`
+      : "";
   const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
 
   useEffect(() => {
-    setSummaryChecked(new Set(draft?.summaryChecklist || []));
-  }, [draft?.id]);
+    const items = selectedRelease?.material ? summarizeChanges(selectedRelease.material) : [];
+    const stored = draft?.summaryChecklist;
+    setSummaryChecked(
+      new Set(stored && stored.length > 0 ? stored : items.map((item) => item.id)),
+    );
+    setExpandedSummaryId("");
+  }, [draft?.id, selectedRelease?.tag]);
 
   const persistSummaryChecklist = async (ids: string[]) => {
     const current = active?.draft;
@@ -1658,6 +1599,17 @@ function ReleasePage() {
       setActive((prev: any) => ({ ...prev, draft: saved }));
     } catch {
       // Keep the local state; persistence retries on the next toggle.
+    }
+  };
+
+  const persistCurrentDraft = async () => {
+    const current = active?.draft;
+    if (!current || !project?.id) return;
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, current);
+      setActive((prev: any) => ({ ...prev, draft: saved }));
+    } catch {
+      // Keep the local edit; persistence retries on the next blur.
     }
   };
 
@@ -1726,6 +1678,11 @@ function ReleasePage() {
         selectedTag,
         force,
         force ? sourceLanguage : undefined,
+        force
+          ? summaryItems.flatMap((item) =>
+              summaryChecked.has(item.id) ? item.commits.map((commit) => commit.sha) : [],
+            )
+          : undefined,
       );
       setActive(next);
       setStep(2);
@@ -1889,7 +1846,11 @@ function ReleasePage() {
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   <ReferenceSection
                     title="变更摘要"
-                    meta={summaryItems.length > 0 ? `已确认 ${checkedCount}/${summaryItems.length}` : "无变更"}
+                    meta={
+                      summaryItems.length > 0
+                        ? `${summaryPrCount} PR · ${summaryCommitCount} 提交${durationLabel ? ` · ${durationLabel}` : ""}`
+                        : "无变更"
+                    }
                     checked={step > 1}
                     defaultOpen
                     action={
@@ -1899,7 +1860,7 @@ function ReleasePage() {
                           onClick={() => void setAllSummaryChecked(checkedCount < summaryItems.length)}
                           className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
                         >
-                          {checkedCount < summaryItems.length ? "全部确认" : "清除确认"}
+                          {checkedCount < summaryItems.length ? "全部确认" : "全部取消"}
                         </button>
                       ) : undefined
                     }
@@ -1910,114 +1871,106 @@ function ReleasePage() {
                       <>
                         <div className="space-y-1">
                           {summaryItems.map((item) => {
-                            const checked = summaryChecked.has(item.id);
+                            const included = summaryChecked.has(item.id);
+                            const expanded = expandedSummaryId === item.id;
                             const tone = CHANGE_TYPE_META[item.type].tone;
+                            const latestDate = item.commits[item.commits.length - 1]?.date || "";
+                            const subLine =
+                              item.commits.length > 1
+                                ? `${item.refs.join(" · ")} · ${item.commits.length} 次提交${latestDate ? ` · 最新 ${formatHumanTime(latestDate)}` : ""}`
+                                : `${item.refs.join(" · ")}${latestDate ? ` · ${formatHumanTime(latestDate)}` : ""}`;
                             return (
-                              <button
-                                key={item.id}
-                                type="button"
-                                onClick={() => void toggleSummaryItem(item.id)}
-                                title={checked ? "取消确认" : "确认 what's-new 已覆盖此项"}
-                                className={cn(
-                                  "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
-                                  checked && "opacity-55",
+                              <div key={item.id}>
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => setExpandedSummaryId(expanded ? "" : item.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      setExpandedSummaryId(expanded ? "" : item.id);
+                                    }
+                                  }}
+                                  className={cn(
+                                    "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/40 cursor-pointer",
+                                    !included && "opacity-55",
+                                  )}
+                                  title={expanded ? "折叠详情" : "查看提交详情"}
+                                >
+                                  <span
+                                    role="checkbox"
+                                    aria-checked={included}
+                                    tabIndex={-1}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void toggleSummaryItem(item.id);
+                                    }}
+                                    title={included ? "从 AI 素材中排除" : "作为 AI 素材提供"}
+                                    className={cn(
+                                      "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors",
+                                      included
+                                        ? "bg-amber-500 border-amber-500 text-white"
+                                        : "border-zinc-300 dark:border-zinc-600",
+                                    )}
+                                  >
+                                    {included ? "✓" : ""}
+                                  </span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
+                                      {item.title}
+                                    </span>
+                                    <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                                      {subLine}
+                                    </span>
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
+                                      tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                                      tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                                      tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
+                                      tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+                                    )}
+                                  >
+                                    {CHANGE_TYPE_META[item.type].label}
+                                  </span>
+                                </div>
+                                {expanded && (
+                                  <ul className="ml-8 mt-0.5 space-y-1 pb-1">
+                                    {item.commits.map((commit) => (
+                                      <li
+                                        key={commit.sha}
+                                        className="text-[10px] text-zinc-400 dark:text-zinc-500"
+                                        title={commit.body || commit.sha}
+                                      >
+                                        <span className="font-mono text-zinc-500 dark:text-zinc-400">
+                                          {commit.sha}
+                                        </span>
+                                        {commit.date && (
+                                          <span className="mx-1">· {formatHumanTime(commit.date)}</span>
+                                        )}
+                                        {commit.body && (
+                                          <span className="block pl-3 text-zinc-400 dark:text-zinc-500">
+                                            {commit.body.split("\n")[0]}
+                                          </span>
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
                                 )}
-                              >
-                                <span
-                                  className={cn(
-                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors",
-                                    checked
-                                      ? "bg-amber-500 border-amber-500 text-white"
-                                      : "border-zinc-300 dark:border-zinc-600",
-                                  )}
-                                >
-                                  {checked ? "✓" : ""}
-                                </span>
-                                <span className="min-w-0 flex-1">
-                                  <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
-                                    {item.title}
-                                  </span>
-                                  <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                                    {item.refs.join(" · ")}
-                                  </span>
-                                </span>
-                                <span
-                                  className={cn(
-                                    "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
-                                    tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
-                                    tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-                                    tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
-                                    tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
-                                  )}
-                                >
-                                  {CHANGE_TYPE_META[item.type].label}
-                                </span>
-                              </button>
+                              </div>
                             );
                           })}
                         </div>
-                        {draft && checkedCount < summaryItems.length && (
-                          <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
-                            还有 {summaryItems.length - checkedCount} 项未确认（建议对照 what's-new 勾选）
-                          </p>
-                        )}
+                        <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                          以上 {checkedCount}/{summaryItems.length} 项将作为素材提供给 AI；未勾选项不会进入文案生成。
+                        </p>
                       </>
-                    )}
-                  </ReferenceSection>
-
-                  <ReferenceSection
-                    title="溯源明细"
-                    meta={`${selectedRelease.material?.commits?.length ?? 0} 次提交 · ${selectedRelease.material?.pullRequests?.length ?? 0} PR`}
-                  >
-                    {selectedRelease.material ? (
-                      <ReleaseMaterialView material={selectedRelease.material} />
-                    ) : (
-                      <MarkdownView text={selectedRelease?.body || "没有发布素材"} />
                     )}
                   </ReferenceSection>
 
                   {releaseContext && step <= 2 && (
                     <>
-                      <ReferenceSection
-                        title="产品档案"
-                        defaultOpen
-                      >
-                        <div className="flex items-center gap-2.5 mb-2">
-                          {selectedProduct?.artworkUrl ? (
-                            <img
-                              src={selectedProduct.artworkUrl}
-                              alt=""
-                              className="w-8 h-8 rounded-lg object-cover border border-zinc-200 dark:border-zinc-800"
-                            />
-                          ) : (
-                            <div className="w-8 h-8 rounded-lg bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center text-amber-500 text-sm">
-                              ⌖
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                              {selectedProduct?.trackName || project.name}
-                            </p>
-                            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                              {platformLabel(selectedProduct?.platform || "unknown")} ·{" "}
-                              {selectedProduct?.supportedLanguages?.length ?? 0} 语言
-                            </p>
-                          </div>
-                        </div>
-                        {releaseContext.description && (
-                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-                            {releaseContext.description}
-                          </p>
-                        )}
-                        <details className="group">
-                          <summary className="cursor-pointer text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline list-none">
-                            全文 README ▸
-                          </summary>
-                          <div className="mt-2">
-                            <MarkdownView text={releaseContext.readme || "没有 README 内容"} />
-                          </div>
-                        </details>
-                      </ReferenceSection>
                       <HistoryPanel
                         drafts={(releaseContext.drafts || []).filter(
                           (item: any) => item.releaseTag !== selectedTag,
@@ -2040,7 +1993,7 @@ function ReleasePage() {
                   <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                     {historyDraft
                       ? `历史文案 · ${draftVersionLabel(historyDraft)}`
-                      : `当前文案 · ${currentReleaseLabel}`}
+                      : `当前文案 · ${draft?.appVersion || "版本待定"}`}
                   </span>
                   {!historyDraft && (
                     <span className="flex items-center gap-1.5 shrink-0 flex-wrap">
@@ -2075,6 +2028,23 @@ function ReleasePage() {
               <>
             {selectedRelease && step === 1 && (
               <>
+                {draft && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
+                      目标版本
+                    </span>
+                    <input
+                      value={draft.appVersion || ""}
+                      onChange={(e) => updateDraftField("appVersion", e.target.value)}
+                      onBlur={() => void persistCurrentDraft()}
+                      placeholder="如 1.2.6"
+                      className={inputLineClass + " max-w-32"}
+                    />
+                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                      历史文案将按此版本标识
+                    </span>
+                  </div>
+                )}
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">语言</p>
                   <div className="flex flex-wrap gap-2">

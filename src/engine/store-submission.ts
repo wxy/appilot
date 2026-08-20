@@ -63,7 +63,8 @@ export function submissionDraftId(projectId: string, productId: string, releaseT
 }
 
 export function inferAppVersion(release: ReleaseInfo): string {
-  return release.tag.replace(/^v/i, "");
+  const tag = String(release.tag || "").trim();
+  return /^v?\d+(\.\d+)*$/.test(tag) ? tag.replace(/^v/i, "") : "";
 }
 
 export function releaseFingerprint(release: ReleaseInfo): string {

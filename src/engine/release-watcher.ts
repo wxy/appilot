@@ -54,6 +54,7 @@ export interface ReleaseMaterialCommit {
 
 export interface ReleaseMaterial {
   since: string | null;
+  sinceDate: string | null;
   end: string;
   commits: ReleaseMaterialCommit[];
   pullRequests: { number: number; title: string | null }[];
@@ -151,6 +152,9 @@ export async function collectReleaseMaterial(
     ]).catch(() => ""),
     git(localPath, ["diff", "--stat", range]).catch(() => ""),
   ]);
+  const sinceDate = since
+    ? await git(localPath, ["log", "-1", "--format=%cI", since]).catch(() => "")
+    : "";
 
   const commits: ReleaseMaterialCommit[] = logOut
     .split("\n")
@@ -177,6 +181,7 @@ export async function collectReleaseMaterial(
 
   return {
     since: since || null,
+    sinceDate: sinceDate || null,
     end,
     commits,
     pullRequests: prNumbers.map((number) => ({ number, title: null })),
@@ -184,7 +189,7 @@ export async function collectReleaseMaterial(
   };
 }
 
-function materialToBody(material: ReleaseMaterial): string {
+export function materialToBody(material: ReleaseMaterial): string {
   const lines: string[] = [];
   if (material.pullRequests.length > 0) {
     lines.push(
@@ -208,6 +213,28 @@ function materialToBody(material: ReleaseMaterial): string {
     lines.push(`Diff summary:\n${material.diffStat}`);
   }
   return lines.join("\n") || `Release ${material.end} (no commits collected)`;
+}
+
+/** Keep only the commits the user chose to feed to the AI (PR list re-derived). */
+export function filterMaterial(
+  material: ReleaseMaterial,
+  includeShas: string[] | null | undefined,
+): ReleaseMaterial {
+  if (!includeShas) return material;
+  const set = new Set(includeShas);
+  const commits = material.commits.filter((commit) => set.has(commit.sha));
+  const prNumbers = Array.from(
+    new Set(
+      commits.flatMap((commit) =>
+        Array.from(commit.subject.matchAll(/#(\d+)/g), (match) => Number(match[1])),
+      ),
+    ),
+  ).slice(0, 10);
+  return {
+    ...material,
+    commits,
+    pullRequests: prNumbers.map((number) => ({ number, title: null })),
+  };
 }
 
 function firstHeading(content: string): string | null {

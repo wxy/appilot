@@ -13,12 +13,12 @@ function assert(condition: boolean, msg: string) {
 
 const material = {
   commits: [
-    { sha: "111", subject: "feat: night mode (#23)", body: "" },
-    { sha: "222", subject: "fix: map loading (#22)", body: "" },
-    { sha: "333", subject: "feat(ios): offline tracks (#24)", body: "" },
-    { sha: "444", subject: "perf: faster startup (#21)", body: "" },
-    { sha: "555", subject: "docs: update readme", body: "" },
-    { sha: "666", subject: "chore: bump version", body: "" },
+    { sha: "111", subject: "feat: night mode (#23)", body: "", date: "2026-08-01T00:00:00.000Z" },
+    { sha: "222", subject: "fix: map loading (#22)", body: "", date: "2026-08-02T00:00:00.000Z" },
+    { sha: "333", subject: "feat(ios): offline tracks (#24)", body: "", date: "2026-08-03T00:00:00.000Z" },
+    { sha: "444", subject: "perf: faster startup (#21)", body: "", date: "2026-08-04T00:00:00.000Z" },
+    { sha: "555", subject: "docs: update readme", body: "", date: "2026-08-05T00:00:00.000Z" },
+    { sha: "666", subject: "chore: bump version", body: "", date: "2026-08-06T00:00:00.000Z" },
   ],
 };
 
@@ -35,16 +35,18 @@ assert(
   "summarize: sorted feature → fix → perf → chore",
 );
 assert(items[0].refs.includes("#23") && items[0].refs.includes("111"), "summarize: PR ref + sha recorded");
+assert(items[0].commits.length === 1 && items[0].commits[0].date === "2026-08-01T00:00:00.000Z", "summarize: commit detail carries date");
 
 // PR aggregation: two commits of the same PR become one item.
 const aggregated = summarizeChanges({
   commits: [
-    { sha: "aaa", subject: "feat: dark mode (#30)", body: "" },
-    { sha: "bbb", subject: "fix: dark mode contrast (#30)", body: "" },
+    { sha: "aaa", subject: "feat: dark mode (#30)", body: "", date: "2026-08-07T00:00:00.000Z" },
+    { sha: "bbb", subject: "fix: dark mode contrast (#30)", body: "", date: "2026-08-08T00:00:00.000Z" },
   ],
 } as any);
 assert(aggregated.length === 1, "aggregate: same PR merged into one item");
 assert(aggregated[0].refs.includes("#30") && aggregated[0].refs.includes("aaa") && aggregated[0].refs.includes("bbb"), "aggregate: refs merged");
+assert(aggregated[0].commits.length === 2, "aggregate: both commits kept as detail");
 
 // Empty + cap.
 assert(summarizeChanges(null).length === 0, "summarize: null material → empty");
