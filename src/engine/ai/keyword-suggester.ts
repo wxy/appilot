@@ -6,8 +6,10 @@
  */
 
 import type { AIProvider, ChatMessage } from "./ai-provider";
+import { parseJsonObject, requestJson, MAX_OUTPUT_TOKENS } from "./ai-request";
+import type { ProjectProfile } from "../project-profile";
+import { profileToPromptBlock } from "../project-profile";
 import { log } from "../logger";
-import { EngineError } from "../errors";
 
 export interface KeywordSuggestion {
   language: string;
@@ -20,65 +22,12 @@ export interface KeywordGeneration {
   tracking: KeywordSuggestion[];
 }
 
-function parseJsonObject(raw: string): any {
-  let s = raw.trim();
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) s = fence[1].trim();
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start >= 0 && end > start) s = s.slice(start, end + 1);
-  const repairs = [
-    s.replace(/,\s*([}\]])/g, "$1"),
-    s.replace(/}\s*{/g, "},{"),
-    s.replace(/]\s*\[/g, "],["),
-    s.replace(/([{,]\s*)([A-Za-z_$][\w$]*)(\s*:)/g, '$1"$2"$3'),
-  ];
-  let lastError: any = null;
-  for (const candidate of repairs) {
-    try {
-      return JSON.parse(candidate);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError || new Error("JSON parse failed");
-}
-
-async function parseJsonWithRepair(
-  provider: AIProvider,
-  raw: string,
-  onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
-): Promise<any> {
-  try {
-    return parseJsonObject(raw);
-  } catch {
-    const repaired = await provider.chat(
-      [
-        {
-          role: "user",
-          content: [
-            "The following response was supposed to be a single JSON object, but it could not be parsed.",
-            "Return ONLY the corrected JSON object. Do not wrap it in markdown. Do not add commentary.",
-            raw,
-          ].join("\n\n"),
-        },
-      ],
-      {
-        temperature: 0,
-        maxTokens: 32000,
-        thinking: "disabled",
-        responseFormat: "json_object",
-        onProgress,
-      },
-    );
-    return parseJsonObject(repaired);
-  }
-}
-
 /** Parse the AI's JSON response into the tracking keyword set. */
 export function parseKeywordGeneration(raw: string, fallbackLanguage = "en"): KeywordGeneration {
-  const data = parseJsonObject(raw);
+  return normalizeKeywordGeneration(parseJsonObject(raw), fallbackLanguage);
+}
 
+export function normalizeKeywordGeneration(data: any, fallbackLanguage = "en"): KeywordGeneration {
   const tracking: KeywordSuggestion[] = Array.isArray(data.tracking)
     ? data.tracking
         .filter((x: any) => x && typeof x.keyword === "string" && x.keyword.trim())
@@ -106,6 +55,7 @@ export async function generateKeywords(
     submissionKeywords?: string[];
     existingKeywords?: { keyword: string }[];
     removedKeywords?: string[];
+    profile?: ProjectProfile;
   },
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<KeywordGeneration> {
@@ -125,10 +75,14 @@ export async function generateKeywords(
     {
       role: "user",
       content: [
-        `App name: ${context.name}`,
-        `App subtitle: ${context.subtitle || "N/A"}`,
-        `Platform: ${context.productType}`,
-        `Description: ${context.description || "N/A"}`,
+        ...(context.profile
+          ? [profileToPromptBlock(context.profile), ""]
+          : [
+              `App name: ${context.name}`,
+              `App subtitle: ${context.subtitle || "N/A"}`,
+              `Platform: ${context.productType}`,
+              `Description: ${context.description || "N/A"}`,
+            ]),
         `Submission keywords: ${(context.submissionKeywords || []).join(", ") || "N/A"}`,
         `Existing tracked keywords (do not repeat): ${(context.existingKeywords || [])
           .map((item) => item.keyword)
@@ -140,46 +94,20 @@ export async function generateKeywords(
     },
   ];
 
-  let raw: string;
   try {
-    raw = await provider.chat(messages, {
+    const data = await requestJson(provider, messages, {
       temperature: 0.4,
-      maxTokens: 32000,
+      maxTokens: MAX_OUTPUT_TOKENS,
       thinking: "low",
-      responseFormat: "json_object",
+      retryWithoutThinking: true,
       onProgress,
     });
-  } catch (err) {
-    if (err instanceof EngineError && err.code === "AI_EMPTY_RESPONSE") {
-      log.warn(
-        `Low-thinking keyword generation returned no content for ${context.name}; falling back to disabled thinking`,
-      );
-      raw = await provider.chat(messages, {
-        temperature: 0.4,
-        maxTokens: 32000,
-        thinking: "disabled",
-        responseFormat: "json_object",
-        onProgress,
-      });
-    } else {
-      throw err;
-    }
-  }
-  try {
-    return parseKeywordGeneration(raw, context.language);
+    return normalizeKeywordGeneration(data, context.language);
   } catch (err: any) {
     log.warn(
-      `Failed to parse keyword generation for ${context.name}: ${err.message}\nRaw response: ${raw.slice(0, 1200)}`,
+      `Keyword generation failed for ${context.name}: ${err.message}`,
     );
-    try {
-      const data = await parseJsonWithRepair(provider, raw, onProgress);
-      return parseKeywordGeneration(JSON.stringify(data), context.language);
-    } catch (repairErr: any) {
-      log.warn(
-        `Keyword generation JSON repair failed for ${context.name}: ${repairErr.message}`,
-      );
-      throw new Error("AI 关键词响应无法解析，请重试。");
-    }
+    throw new Error("AI 关键词响应无法解析，请重试。");
   }
 }
 
@@ -194,7 +122,10 @@ export interface KeywordCuration {
 }
 
 export function parseKeywordCuration(raw: string, fallbackLanguage = "en"): KeywordCuration {
-  const data = parseJsonObject(raw);
+  return normalizeKeywordCuration(parseJsonObject(raw), fallbackLanguage);
+}
+
+export function normalizeKeywordCuration(data: any, fallbackLanguage = "en"): KeywordCuration {
   const removals = Array.isArray(data.removals)
     ? data.removals
         .map((item: any) => ({
@@ -230,6 +161,7 @@ export async function curateKeywords(
     existingKeywords: { keyword: string; language: string; bestRank: number | null; lastSeenAt: string | null; status: string }[];
     submissionKeywords: string[];
     removedKeywords: string[];
+    profile?: ProjectProfile;
   },
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<KeywordCuration> {
@@ -247,11 +179,15 @@ export async function curateKeywords(
     {
       role: "user",
       content: [
-        `App name: ${context.name}`,
-        `App subtitle: ${context.subtitle || "N/A"}`,
+        ...(context.profile
+          ? [profileToPromptBlock(context.profile), ""]
+          : [
+              `App name: ${context.name}`,
+              `App subtitle: ${context.subtitle || "N/A"}`,
+              `Description: ${context.description || "N/A"}`,
+            ]),
         `Target localization: ${context.language}`,
         `UI language (write rationale in this language): ${context.uiLanguage}`,
-        `Description: ${context.description || "N/A"}`,
         `Submission keywords: ${context.submissionKeywords.join(", ") || "N/A"}`,
         `Existing tracked keywords (keyword|bestRank|lastSeenAt|status):\n${context.existingKeywords
           .map((k) => `${k.keyword}|${k.bestRank ?? "—"}|${k.lastSeenAt ?? "—"}|${k.status}`)
@@ -260,46 +196,20 @@ export async function curateKeywords(
       ].join("\n"),
     },
   ];
-  let raw: string;
   try {
-    raw = await provider.chat(messages, {
+    const data = await requestJson(provider, messages, {
       temperature: 0.4,
-      maxTokens: 32000,
+      maxTokens: MAX_OUTPUT_TOKENS,
       thinking: "low",
-      responseFormat: "json_object",
+      retryWithoutThinking: true,
       onProgress,
     });
-  } catch (err) {
-    if (err instanceof EngineError && err.code === "AI_EMPTY_RESPONSE") {
-      log.warn(
-        `Low-thinking keyword curation returned no content for ${context.name}; falling back to disabled thinking`,
-      );
-      raw = await provider.chat(messages, {
-        temperature: 0.4,
-        maxTokens: 32000,
-        thinking: "disabled",
-        responseFormat: "json_object",
-        onProgress,
-      });
-    } else {
-      throw err;
-    }
-  }
-  try {
-    return parseKeywordCuration(raw, context.language);
+    return normalizeKeywordCuration(data, context.language);
   } catch (err: any) {
     log.warn(
-      `Failed to parse keyword curation for ${context.name}: ${err.message}\nRaw response: ${raw.slice(0, 1200)}`,
+      `Keyword curation failed for ${context.name}: ${err.message}`,
     );
-    try {
-      const data = await parseJsonWithRepair(provider, raw, onProgress);
-      return parseKeywordCuration(JSON.stringify(data), context.language);
-    } catch (repairErr: any) {
-      log.warn(
-        `Keyword curation JSON repair failed for ${context.name}: ${repairErr.message}`,
-      );
-      throw new Error("AI 关键词整理结果无法解析，请重试。");
-    }
+    throw new Error("AI 关键词整理结果无法解析，请重试。");
   }
 }
 
@@ -310,7 +220,10 @@ export interface SubmissionCandidate {
 }
 
 export function parseSubmissionCandidates(raw: string): SubmissionCandidate[] {
-  const data = parseJsonObject(raw);
+  return normalizeSubmissionCandidates(parseJsonObject(raw));
+}
+
+export function normalizeSubmissionCandidates(data: any): SubmissionCandidate[] {
   const candidates = Array.isArray(data.candidates)
     ? data.candidates
         .map((x: any) => ({
@@ -350,12 +263,11 @@ export async function extractSubmissionCandidates(
       ].join("\n"),
     },
   ];
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.3,
-    maxTokens: 8000,
+    maxTokens: 16000,
     thinking: "low",
-    responseFormat: "json_object",
     onProgress,
   });
-  return parseSubmissionCandidates(raw);
+  return normalizeSubmissionCandidates(data);
 }

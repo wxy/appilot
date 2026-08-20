@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { BriefActionRecord } from "../lib/overview-brief";
 
 export interface KeywordEntry {
   language: string;
@@ -36,6 +37,18 @@ export interface RankSnapshot {
   checkedAt: string;
 }
 
+export interface RepoInfo {
+  remoteUrl: string | null;
+  githubUrl: string | null;
+  branch: string | null;
+  headSha: string | null;
+  headMessage: string | null;
+  headDate: string | null;
+  dirty: boolean;
+  description: string | null;
+  capturedAt: string;
+}
+
 export interface StoreProduct {
   id: string;
   projectId: string;
@@ -58,6 +71,8 @@ export interface Project {
   name: string;
   localPath: string;
   createdAt: string;
+  repo: RepoInfo | null;
+  briefActions: BriefActionRecord[];
   storeProducts: StoreProduct[];
 
   // Legacy summary fields, kept for compatibility and migration.
@@ -90,6 +105,10 @@ interface ProjectState {
   restoreTrackedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
   resumePausedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
   clearRemovedKeywords: (productId: string, languages: string[]) => Promise<void>;
+  recordBriefAction: (
+    projectId: string,
+    payload: { id: string; action: string; status: "adopted" | "ignored" },
+  ) => Promise<void>;
   collectRanks: (productId: string, language: string, storefront: string) => Promise<RankSnapshot[]>;
 }
 
@@ -118,6 +137,34 @@ function normalizeRemovedKeyword(item: any): RemovedKeywordEntry {
     translation: item.translation || "",
     removedAt: item.removedAt || new Date().toISOString(),
   };
+}
+
+function normalizeRepo(repo: any): RepoInfo | null {
+  if (!repo || typeof repo !== "object") return null;
+  return {
+    remoteUrl: typeof repo.remoteUrl === "string" ? repo.remoteUrl : null,
+    githubUrl: typeof repo.githubUrl === "string" ? repo.githubUrl : null,
+    branch: typeof repo.branch === "string" ? repo.branch : null,
+    headSha: typeof repo.headSha === "string" ? repo.headSha : null,
+    headMessage: typeof repo.headMessage === "string" ? repo.headMessage : null,
+    headDate: typeof repo.headDate === "string" ? repo.headDate : null,
+    dirty: Boolean(repo.dirty),
+    description: typeof repo.description === "string" ? repo.description : null,
+    capturedAt:
+      typeof repo.capturedAt === "string" ? repo.capturedAt : new Date().toISOString(),
+  };
+}
+
+function normalizeBriefActions(raw: any): BriefActionRecord[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item) => item && typeof item.id === "string")
+    .map((item) => ({
+      id: item.id,
+      action: ["keywords", "release", "trend"].includes(item.action) ? item.action : "keywords",
+      status: item.status === "ignored" ? "ignored" : "adopted",
+      createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+    }));
 }
 
 function normalizeStoreProduct(product: any, projectId: string): StoreProduct {
@@ -227,6 +274,8 @@ function normalizeProject(p: any): Project {
   const products = migrateLegacyProject(p);
   return {
     ...p,
+    repo: normalizeRepo(p.repo),
+    briefActions: normalizeBriefActions(p.briefActions),
     storeProducts: products,
     ...summarizeLegacyProject(products),
   };
@@ -370,6 +419,15 @@ export const useProject = create<ProjectState>((set, get) => ({
   clearRemovedKeywords: async (productId, languages) => {
     const updatedProject = normalizeProject(
       await (window as any).appilot.projects.clearRemovedKeywords(productId, languages),
+    ) as unknown as Project;
+    set((s) => ({
+      projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
+    }));
+  },
+
+  recordBriefAction: async (projectId, payload) => {
+    const updatedProject = normalizeProject(
+      await (window as any).appilot.projects.recordBriefAction(projectId, payload),
     ) as unknown as Project;
     set((s) => ({
       projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),

@@ -1,6 +1,24 @@
+/**
+ * Release watcher — first-principles model.
+ *
+ * - The material boundary is Appilot's own memory (`lastSeenSha` = the HEAD
+ *   sha at the last draft generation). What's-new always covers EVERYTHING
+ *   committed since then, so missed tags/releases never lose content.
+ * - A main-line git tag is only a *signal and a name*: the newest tag
+ *   reachable from HEAD (and not already generated) names the candidate;
+ *   tags on side/backport branches are filtered out by ancestry.
+ * - No token, no convention file. `RELEASE_DRAFT.md` remains as a last-resort
+ *   fallback for repos git cannot read.
+ */
+
+import { execFile } from "child_process";
+import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import { log } from "./logger";
+import { normalizeGitHubUrl } from "./git-info";
+
+const execFileAsync = promisify(execFile);
 
 export interface ReleaseInfo {
   id: string;
@@ -9,18 +27,311 @@ export interface ReleaseInfo {
   publishedAt: string;
   url: string;
   body: string;
-  source: "release-draft-file";
+  material: ReleaseMaterial | null;
+  source: "git-tag" | "git-commits" | "release-draft-file";
   draft: boolean;
+  commitSha: string | null;
 }
 
 export interface ReleaseCheckResult {
   latest: ReleaseInfo | null;
-  isNew: boolean;
   lastSeenTag: string | null;
   releases: ReleaseInfo[];
 }
 
+export interface GitTagInfo {
+  name: string;
+  sha: string;
+  date: string;
+}
+
+export interface ReleaseMaterialCommit {
+  sha: string;
+  subject: string;
+  body: string;
+  author: string;
+  date: string;
+}
+
+export interface ReleaseMaterial {
+  since: string | null;
+  sinceDate: string | null;
+  end: string;
+  commits: ReleaseMaterialCommit[];
+  pullRequests: { number: number; title: string | null }[];
+  diffStat: string;
+  /** Official GitHub release announcement, when publicly fetchable. */
+  githubRelease: GitHubReleaseInfo | null;
+}
+
+export interface GitHubReleaseInfo {
+  name: string | null;
+  body: string;
+  publishedAt: string | null;
+  url: string | null;
+}
+
 const RELEASE_DRAFT_FILENAME = "RELEASE_DRAFT.md";
+const MAX_MATERIAL_COMMITS = 60;
+
+async function git(localPath: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", localPath, ...args], {
+    timeout: 8000,
+    maxBuffer: 4 * 1024 * 1024,
+    windowsHide: true,
+  });
+  return stdout.trim();
+}
+
+async function isAncestor(localPath: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await git(localPath, ["merge-base", "--is-ancestor", ancestor, descendant]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sync remote tags into the local repo. Read-only: only adds/updates refs,
+ * never touches the user's branches or working tree. Silent no-op when the
+ * repo has no remote or the network is unavailable.
+ */
+export async function fetchRemoteTags(localPath: string): Promise<boolean> {
+  try {
+    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
+    if (!remote) return false;
+    await git(localPath, ["fetch", "--tags"]);
+    return true;
+  } catch (err: any) {
+    log.warn(`fetchRemoteTags failed for ${localPath}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Update the local repo before determining release data: fetch remote branches
+ * and tags, then fast-forward the current local branch when the working tree
+ * is clean (never force, never touch dirty work). Silent no-op on failure.
+ */
+export async function syncLocalRepo(localPath: string): Promise<boolean> {
+  try {
+    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
+    if (!remote) return false;
+    await git(localPath, ["fetch", "--tags"]);
+    const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(() => "");
+    if (branch) {
+      const dirty = await git(localPath, ["status", "--porcelain"]).catch(() => "");
+      if (!dirty) {
+        await git(localPath, ["merge", "--ff-only", `origin/${branch}`]).catch(() => {
+          log.warn(`Fast-forward ${branch} failed; using local state as-is`);
+        });
+      }
+    }
+    return true;
+  } catch (err: any) {
+    log.warn(`syncLocalRepo failed for ${localPath}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Best-effort fetch of the public GitHub release announcement for a tag.
+ * Returns null silently for private repos, drafts, rate limits, or offline.
+ */
+export async function fetchPublicGitHubRelease(
+  localPath: string,
+  tag: string,
+): Promise<GitHubReleaseInfo | null> {
+  try {
+    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
+    const repoUrl = normalizeGitHubUrl(remote);
+    if (!repoUrl) return null;
+    const ownerRepo = repoUrl.replace("https://github.com/", "");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${ownerRepo}/releases/tags/${encodeURIComponent(tag)}`,
+        {
+          headers: {
+            Accept: "application/vnd.github+json",
+            "User-Agent": "appilot",
+          },
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (!data || typeof data.tag_name !== "string") return null;
+      return {
+        name: typeof data.name === "string" ? data.name : null,
+        body: typeof data.body === "string" ? data.body : "",
+        publishedAt: typeof data.published_at === "string" ? data.published_at : null,
+        url: typeof data.html_url === "string" ? data.html_url : null,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err: any) {
+    log.warn(`fetchPublicGitHubRelease failed for ${tag}: ${err.message}`);
+    return null;
+  }
+}
+
+/** Latest tags first; date is the tag's creatordate. */
+export async function listGitTags(localPath: string): Promise<GitTagInfo[]> {
+  try {
+    const raw = await git(
+      localPath,
+      [
+        "for-each-ref",
+        "--sort=-creatordate",
+        "--sort=-version:refname",
+        "--format=%(refname:short)%09%(objectname:short)%09%(creatordate:iso8601)",
+        "refs/tags",
+      ],
+    );
+    return raw
+      .split("\n")
+      .filter(Boolean)
+      .slice(0, 20)
+      .map((line) => {
+        const [name, sha, date] = line.split("\t");
+        return { name: name || "", sha: sha || "", date: date || "" };
+      })
+      .filter((tag) => tag.name);
+  } catch (err: any) {
+    log.warn(`listGitTags failed for ${localPath}: ${err.message}`);
+    return [];
+  }
+}
+
+/** Tags reachable from any of the given refs (HEAD / remote tip). */
+async function mainLineTags(localPath: string, tags: GitTagInfo[], refs: string): Promise<GitTagInfo[]> {
+  const result: GitTagInfo[] = [];
+  const refList = refs.split(/\s+/).filter(Boolean);
+  for (const tag of tags) {
+    for (const ref of refList) {
+      if (await isAncestor(localPath, tag.sha, ref)) {
+        result.push(tag);
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+/** Commits + PR references + diff stat in `since..end` (or up to `end`). */
+export async function collectReleaseMaterial(
+  localPath: string,
+  since?: string | null,
+  end = "HEAD",
+): Promise<ReleaseMaterial> {
+  const range = since ? `${since}..${end}` : end;
+  const [logOut, diffOut] = await Promise.all([
+    git(localPath, [
+      "log",
+      range,
+      `--max-count=${MAX_MATERIAL_COMMITS}`,
+      // \x1e record separator keeps multi-line bodies from corrupting records.
+      "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
+    ]).catch(() => ""),
+    git(localPath, ["diff", "--stat", range]).catch(() => ""),
+  ]);
+  const sinceDate = since
+    ? await git(localPath, ["log", "-1", "--format=%cI", since]).catch(() => "")
+    : "";
+
+  const commits: ReleaseMaterialCommit[] = logOut
+    .split("\x1e")
+    .filter(Boolean)
+    .map((record) => {
+      const [sha, subject, body, author, date] = record.split("\x1f");
+      return {
+        sha: sha || "",
+        subject: subject || "",
+        body: (body || "").trim(),
+        author: author || "",
+        date: date || "",
+      };
+    })
+    .filter((commit) => commit.sha);
+
+  const prNumbers = Array.from(
+    new Set(
+      commits.flatMap((commit) =>
+        Array.from(commit.subject.matchAll(/#(\d+)/g), (match) => Number(match[1])),
+      ),
+    ),
+  ).slice(0, 10);
+
+  return {
+    since: since || null,
+    sinceDate: sinceDate || null,
+    end,
+    commits,
+    pullRequests: prNumbers.map((number) => ({ number, title: null })),
+    diffStat: diffOut.slice(0, 800),
+    githubRelease: null,
+  };
+}
+
+export function materialToBody(material: ReleaseMaterial): string {
+  const lines: string[] = [];
+  if (material.githubRelease) {
+    lines.push(
+      `Official release announcement (GitHub):\n${
+        material.githubRelease.body || material.githubRelease.name || "(empty announcement)"
+      }`,
+    );
+    lines.push("");
+  }
+  if (material.pullRequests.length > 0) {
+    lines.push(
+      `Pull requests in this release: ${material.pullRequests
+        .map((pr) => `#${pr.number}`)
+        .join(", ")}`,
+    );
+  }
+  if (material.commits.length > 0) {
+    lines.push(
+      material.since
+        ? `Commits since the last generated release (${material.since}):`
+        : "Commits (recent history):",
+    );
+    for (const commit of material.commits) {
+      lines.push(`- ${commit.subject} (${commit.sha})`);
+      if (commit.body) lines.push(`  ${commit.body.split("\n")[0]}`);
+    }
+  }
+  if (material.diffStat) {
+    lines.push(`Diff summary:\n${material.diffStat}`);
+  }
+  return lines.join("\n") || `Release ${material.end} (no commits collected)`;
+}
+
+/** Keep only the commits the user chose to feed to the AI (PR list re-derived). */
+export function filterMaterial(
+  material: ReleaseMaterial,
+  includeShas: string[] | null | undefined,
+): ReleaseMaterial {
+  if (!includeShas) return material;
+  const set = new Set(includeShas);
+  const commits = material.commits.filter((commit) => set.has(commit.sha));
+  const prNumbers = Array.from(
+    new Set(
+      commits.flatMap((commit) =>
+        Array.from(commit.subject.matchAll(/#(\d+)/g), (match) => Number(match[1])),
+      ),
+    ),
+  ).slice(0, 10);
+  return {
+    ...material,
+    commits,
+    pullRequests: prNumbers.map((number) => ({ number, title: null })),
+  };
+}
 
 function firstHeading(content: string): string | null {
   const lines = content.split(/\r?\n/);
@@ -42,7 +353,6 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
     const stat = fs.statSync(filePath);
     const modifiedAt = stat.mtime.toISOString();
     const draftId = `draft-${stat.mtimeMs}`;
-
     return {
       id: draftId,
       tag: draftId,
@@ -50,8 +360,10 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
       publishedAt: modifiedAt,
       url: "",
       body: content,
+      material: null,
       source: "release-draft-file",
       draft: true,
+      commitSha: null,
     };
   } catch (err: any) {
     if (err?.code !== "ENOENT") {
@@ -61,20 +373,76 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
   }
 }
 
+/**
+ * Detect the current release candidate:
+ * - material = commits since `lastSeenSha` (the last generation point);
+ * - the newest main-line tag not yet generated names the candidate;
+ * - no changes since the boundary → no candidate;
+ * - git unavailable → RELEASE_DRAFT.md fallback.
+ */
 export async function checkForRelease(
   localPath: string,
-  lastSeenTag?: string | null,
+  lastSeenSha?: string | null,
   _legacyGithubToken?: string | null,
+  options: { sync?: boolean } = {},
 ): Promise<ReleaseCheckResult> {
-  const draft = readReleaseDraft(localPath);
-  const releases = draft ? [draft] : [];
-  const latest = draft || null;
-  const isNew = Boolean(latest && latest.tag !== lastSeenTag);
+  if (options.sync) {
+    await syncLocalRepo(localPath);
+  }
 
+  const head = await git(localPath, ["rev-parse", "--short", "HEAD"]).catch(() => "");
+  if (!head) {
+    const draft = readReleaseDraft(localPath);
+    const releases = draft ? [draft] : [];
+    return { latest: draft || null, lastSeenTag: lastSeenSha || null, releases };
+  }
+
+  // Include the remote tip too: with a dirty/stale local branch, material
+  // still covers the freshest remote commits without touching the worktree.
+  let remoteTip: string | null = null;
+  if (options.sync) {
+    const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(() => "");
+    if (branch) {
+      remoteTip = await git(localPath, ["rev-parse", "--short", `origin/${branch}`]).catch(() => "");
+    }
+  }
+  let tip = head;
+  if (remoteTip && remoteTip !== head && !(await isAncestor(localPath, remoteTip, head))) {
+    tip = remoteTip;
+  }
+  const endRefs = remoteTip && remoteTip !== tip ? `${tip} ${remoteTip}` : tip;
+
+  const material = await collectReleaseMaterial(localPath, lastSeenSha || null, endRefs);
+
+  // The release identity is the newest main-line tag (or the head when there
+  // are no tags). It stays stable across the generation boundary, so the
+  // workbench keeps surfacing the draft it generated for — material being
+  // empty (no new commits since the last generation) does NOT hide it.
+  const allTags = await listGitTags(localPath);
+  const onMain = await mainLineTags(localPath, allTags, endRefs);
+  const releaseTag: GitTagInfo | null = onMain[0] || null;
+
+  const enrichedMaterial = releaseTag
+    ? {
+        ...material,
+        githubRelease: await fetchPublicGitHubRelease(localPath, releaseTag.name),
+      }
+    : material;
+  const release: ReleaseInfo = {
+    id: releaseTag ? `tag-${releaseTag.sha}` : `head-${head}`,
+    tag: releaseTag?.name || `head-${head}`,
+    name: releaseTag?.name || "待处理变更",
+    publishedAt: releaseTag?.date || material.commits[0]?.date || new Date().toISOString(),
+    url: "",
+    body: materialToBody(enrichedMaterial),
+    material: enrichedMaterial,
+    source: releaseTag ? "git-tag" : "git-commits",
+    draft: true,
+    commitSha: tip,
+  };
   return {
-    latest,
-    isNew,
-    lastSeenTag: lastSeenTag || null,
-    releases,
+    latest: release,
+    lastSeenTag: lastSeenSha || null,
+    releases: [release],
   };
 }

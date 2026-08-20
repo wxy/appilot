@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
-import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Routes, Route, Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { useTheme } from "./stores/theme";
-import { useProject } from "./stores/project";
+import { useProject, type RankSnapshot } from "./stores/project";
 import { cn } from "./lib/utils";
 import {
+  STALE_MS,
   matrixCellState,
   matrixColumnMeta,
   matrixFilterKeywords,
@@ -15,6 +14,10 @@ import {
   type MatrixCell,
 } from "./lib/matrix";
 import { storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
+import { briefRuleSignals } from "./lib/overview-brief";
+import type { BriefSuggestion } from "../engine/ai/overview-brief";
+import { summarizeChanges, CHANGE_TYPE_META } from "./lib/release-summary";
+import type { ChangeSummaryItem } from "./lib/release-summary";
 
 /* ── Layout ── */
 
@@ -401,10 +404,256 @@ function HomePage() {
   );
 }
 
+interface OverviewRankRow {
+  keyword: string;
+  language: string;
+  bestRank: number;
+  storefront: string;
+  trend: "up" | "down" | "same" | "new";
+  delta: number | null;
+  checkedAt: string | null;
+  stale: boolean;
+}
+
+/**
+ * Per-keyword rank summary across every storefront: the best *current* rank
+ * (latest snapshot per storefront), the storefront it was achieved in, and
+ * the trend vs. that storefront's previous snapshot.
+ */
+function overviewRankRows(
+  keywords: { keyword: string; language: string }[],
+  snapshots: RankSnapshot[],
+): OverviewRankRow[] {
+  const rows: OverviewRankRow[] = [];
+  for (const keyword of keywords) {
+    const own = snapshots
+      .filter((s) => s.keyword === keyword.keyword && s.language === keyword.language)
+      .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
+    const byStorefront = new Map<string, RankSnapshot[]>();
+    for (const snapshot of own) {
+      const list = byStorefront.get(snapshot.storefront) || [];
+      list.push(snapshot);
+      byStorefront.set(snapshot.storefront, list);
+    }
+    let bestRank: number | null = null;
+    let bestStorefront = "";
+    let bestTrend: OverviewRankRow["trend"] = "same";
+    let bestDelta: number | null = null;
+    let bestCheckedAt: string | null = null;
+    for (const [storefront, list] of byStorefront) {
+      const latest = list[list.length - 1];
+      if (latest.rank == null) continue;
+      if (bestRank !== null && latest.rank >= bestRank) continue;
+      const previous = list[list.length - 2];
+      bestRank = latest.rank;
+      bestStorefront = storefront;
+      bestCheckedAt = latest.checkedAt;
+      if (!previous || previous.rank == null) {
+        bestTrend = "new";
+        bestDelta = null;
+      } else {
+        bestDelta = previous.rank - latest.rank;
+        bestTrend = bestDelta > 0 ? "up" : bestDelta < 0 ? "down" : "same";
+      }
+    }
+    if (bestRank !== null) {
+      rows.push({
+        keyword: keyword.keyword,
+        language: keyword.language,
+        bestRank,
+        storefront: bestStorefront,
+        trend: bestTrend,
+        delta: bestDelta,
+        checkedAt: bestCheckedAt,
+        stale: bestCheckedAt ? Date.now() - new Date(bestCheckedAt).getTime() > STALE_MS : true,
+      });
+    }
+  }
+  rows.sort((a, b) => a.bestRank - b.bestRank);
+  return rows;
+}
+
+const OVERVIEW_CHART_DAYS = 14;
+const OVERVIEW_CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#ef4444"];
+const STORE_STATUS_META: Record<
+  string,
+  { label: string; tone: "muted" | "amber" | "emerald" | "red" | "blue" }
+> = {
+  prepared: { label: "未提交", tone: "muted" },
+  copied: { label: "已复制", tone: "blue" },
+  submitted: { label: "已提交", tone: "blue" },
+  in_review: { label: "审核中", tone: "amber" },
+  rejected: { label: "被驳回", tone: "red" },
+  released: { label: "已发布", tone: "emerald" },
+};
+
+function StatusChip({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "muted" | "amber" | "emerald" | "red" | "blue";
+}) {
+  const tones: Record<string, string> = {
+    muted: "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+    amber: "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    emerald: "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    red: "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400",
+    blue: "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  };
+  return (
+    <span
+      className={cn(
+        "shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium",
+        tones[tone],
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function localDayKey(iso: string): string {
+  const date = new Date(iso);
+  return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/** Best rank per day (last 14 days) for the top ranked keywords, as chart series. */
+function overviewTrendData(
+  rows: OverviewRankRow[],
+  snapshots: RankSnapshot[],
+  days = OVERVIEW_CHART_DAYS,
+): { series: { key: string; label: string }[]; data: Record<string, string | number>[] } {
+  const top = rows.slice(0, OVERVIEW_CHART_COLORS.length);
+  const series = top.map((row) => ({
+    key: `${row.language}\u0000${row.keyword}`,
+    label: row.keyword,
+  }));
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const byDay = new Map<string, Record<string, string | number>>();
+  for (const row of top) {
+    const key = `${row.language}\u0000${row.keyword}`;
+    const bestPerDay = new Map<string, number>();
+    for (const snapshot of snapshots) {
+      if (
+        snapshot.keyword !== row.keyword ||
+        snapshot.language !== row.language ||
+        snapshot.rank == null ||
+        new Date(snapshot.checkedAt).getTime() < cutoff
+      ) {
+        continue;
+      }
+      const day = localDayKey(snapshot.checkedAt);
+      const current = bestPerDay.get(day);
+      if (current === undefined || snapshot.rank < current) bestPerDay.set(day, snapshot.rank);
+    }
+    for (const [day, rank] of bestPerDay) {
+      const point = byDay.get(day) || { day };
+      point[key] = rank;
+      byDay.set(day, point);
+    }
+  }
+  const data = [...byDay.values()].sort((a, b) => String(a.day).localeCompare(String(b.day)));
+  return { series, data };
+}
+
+function MetricBlock({
+  to,
+  label,
+  value,
+  sub,
+  warn,
+  highlight,
+}: {
+  to: string;
+  label: string;
+  value: string;
+  sub?: string;
+  warn?: boolean;
+  highlight?: boolean;
+}) {
+  return (
+    <Link
+      to={to}
+      title={`查看${label}`}
+      className={cn(
+        "block rounded-2xl border px-4 py-3 bg-white dark:bg-zinc-900 shadow-sm transition-colors hover:border-amber-500/50",
+        warn
+          ? "border-amber-300/70 dark:border-amber-500/30"
+          : "border-zinc-200 dark:border-zinc-800",
+      )}
+    >
+      <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-1 text-xl font-mono font-semibold leading-none",
+          highlight || warn
+            ? "text-amber-600 dark:text-amber-400"
+            : "text-zinc-900 dark:text-zinc-100",
+        )}
+      >
+        {value}
+      </p>
+      {sub && <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500 truncate">{sub}</p>}
+    </Link>
+  );
+}
+
 function OverviewPage() {
-  const { projects, currentProjectId, currentProductId } = useProject();
+  const { projects, currentProjectId, currentProductId, selectProduct, recordBriefAction } = useProject();
+  const navigate = useNavigate();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
+  const [releaseOverview, setReleaseOverview] = useState<{
+    draft: { name: string | null; tag: string; publishedAt: string; commitCount: number } | null;
+    submission: any | null;
+  } | null>(null);
+  const [chartDays, setChartDays] = useState(OVERVIEW_CHART_DAYS);
+  const [briefState, setBriefState] = useState<{
+    status: "idle" | "loading" | "ready" | "error";
+    suggestions: BriefSuggestion[];
+    progress: { chars: number; phase: "reasoning" | "content" } | null;
+    error: string;
+  }>({ status: "idle", suggestions: [], progress: null, error: "" });
+
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+    setReleaseOverview(null);
+    (window as any).appilot?.release?.list(project.id)
+      .then((result: any) => {
+        if (cancelled) return;
+        const latest = result?.latestDraft || null;
+        const release = (result?.releases || [])[0] || null;
+        const submission =
+          (release?.submissionDrafts || []).find(
+            (item: any) => item?.productId === product?.id,
+          ) || null;
+        setReleaseOverview(
+          latest
+            ? {
+                draft: {
+                  name: latest.name,
+                  tag: latest.tag,
+                  publishedAt: latest.publishedAt,
+                  commitCount: Array.isArray(latest.material?.commits)
+                    ? latest.material.commits.length
+                    : 0,
+                },
+                submission,
+              }
+            : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setReleaseOverview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, product?.id]);
 
   if (!project || !product) {
     return (
@@ -417,118 +666,534 @@ function OverviewPage() {
 
   const languages = product.supportedLanguages || [];
   const storeLinks = product.storeLinks || [];
-  const storeGroups = [
-    { label: "macOS", links: storeLinks.filter((l) => l.platform === "macos") },
-    { label: "iOS", links: storeLinks.filter((l) => l.platform === "ios") },
-    { label: "其他", links: storeLinks.filter((l) => l.platform === "unknown") },
-  ].filter((g) => g.links.length > 0);
+  const trackedKeywords = product.trackedKeywords || [];
+  const trackedActive = trackedKeywords.filter((k) => k.status !== "paused");
+  const pausedCount = trackedKeywords.length - trackedActive.length;
+  const rankSnapshots = product.rankSnapshots || [];
+  const rankRows = overviewRankRows(trackedActive, rankSnapshots);
+  const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
+  const bestRankNow = rankRows[0]?.bestRank ?? null;
+  const newestSnapshot = rankSnapshots.reduce<RankSnapshot | null>(
+    (latest, snapshot) =>
+      !latest || new Date(snapshot.checkedAt).getTime() > new Date(latest.checkedAt).getTime()
+        ? snapshot
+        : latest,
+    null,
+  );
+  const newestCheckedAt = newestSnapshot?.checkedAt || null;
+  const dataStale = newestCheckedAt ? Date.now() - new Date(newestCheckedAt).getTime() > STALE_MS : false;
+  const { series: chartSeries, data: chartData } = overviewTrendData(rankRows, rankSnapshots, chartDays);
+  const repoGithubUrl = project.repo?.githubUrl || null;
+  const releaseDraft = releaseOverview?.draft ?? null;
+  const submissionDraft = releaseOverview?.submission ?? null;
+  const submissionLanguages = submissionDraft ? localizationList(submissionDraft) : [];
+  const generatedLanguageCount = submissionLanguages.filter((loc: any) =>
+    [loc.name, loc.subtitle, loc.promotionalText, loc.description, loc.whatsNew, loc.keywords]
+      .some((value) => value && String(value).trim()),
+  ).length;
+  const languageTotal = languages.length || submissionLanguages.length;
+  const confirmChip = submissionDraft
+    ? submissionDraft.batchConfirmedAt
+      ? ({ label: "整批已确定", tone: "emerald" } as const)
+      : submissionDraft.masterConfirmedAt
+        ? ({ label: "母本已确定", tone: "amber" } as const)
+        : null
+    : null;
+  const storeChip = submissionDraft?.storeStatus
+    ? STORE_STATUS_META[submissionDraft.storeStatus] || null
+    : null;
+  const handledBriefIds = new Set(
+    (project.briefActions || []).map((item) => item.id),
+  );
+  const ruleSignals = briefRuleSignals({
+    rankRows,
+    trackedActiveCount: trackedActive.length,
+    pausedCount,
+    languageTotal,
+    generatedLanguageCount,
+  }).filter((signal) => !handledBriefIds.has(signal.id));
+  const briefSuggestions = briefState.suggestions.filter(
+    (item) => !handledBriefIds.has(item.id),
+  );
+  const showRuleSignals =
+    briefState.status === "idle" || briefState.status === "error";
+  const visibleBriefItems = showRuleSignals ? ruleSignals : briefSuggestions;
+
+  const handleGenerateBrief = useCallback(async () => {
+    if (!project || !product) return;
+    setBriefState({ status: "loading", suggestions: [], progress: null, error: "" });
+    try {
+      const result = await (window as any).appilot?.projects?.generateBrief(
+        project.id,
+        product.id,
+      );
+      setBriefState({
+        status: "ready",
+        suggestions: result?.suggestions || [],
+        progress: null,
+        error: "",
+      });
+    } catch (err: any) {
+      setBriefState({
+        status: "error",
+        suggestions: [],
+        progress: null,
+        error: err?.message || "生成失败",
+      });
+    }
+  }, [project?.id, product?.id]);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onBriefProgress?.((progress: any) => {
+      if (progress && typeof progress.chars === "number") {
+        setBriefState((prev) => ({
+          ...prev,
+          progress: {
+            chars: progress.chars,
+            phase: progress.phase === "content" ? "content" : "reasoning",
+          },
+        }));
+      }
+    });
+    return () => off?.();
+  }, []);
+
+  const handleBriefAction = useCallback(
+    async (suggestion: BriefSuggestion, status: "adopted" | "ignored") => {
+      if (!project) return;
+      await recordBriefAction(project.id, {
+        id: suggestion.id,
+        action: suggestion.action,
+        status,
+      });
+      if (status === "adopted") {
+        if (suggestion.action === "release") {
+          navigate(
+            releaseDraft?.tag
+              ? `/release?tag=${encodeURIComponent(releaseDraft.tag)}`
+              : "/release",
+          );
+        } else if (suggestion.action === "trend") {
+          navigate("/trend");
+        } else {
+          navigate(
+            suggestion.target
+              ? `/keywords?keyword=${encodeURIComponent(suggestion.target)}`
+              : "/keywords",
+          );
+        }
+      }
+    },
+    [project?.id, recordBriefAction, navigate, releaseDraft?.tag],
+  );
 
   return (
-    <div className="p-10 max-w-6xl mx-auto">
+    <div className="p-6 max-w-6xl mx-auto">
       {/* App identity */}
-      <div className="flex items-center gap-4 mb-8">
+      <div className="flex items-center gap-3 mb-5">
         {product.artworkUrl ? (
           <img
             src={product.artworkUrl}
             alt=""
-            className="w-16 h-16 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm object-cover"
+            className="w-12 h-12 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm object-cover"
           />
         ) : (
-          <div className="w-16 h-16 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
-            <span className="text-amber-500 text-xl">⌖</span>
+          <div className="w-12 h-12 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
+            <span className="text-amber-500 text-lg">⌖</span>
           </div>
         )}
-        <div className="min-w-0">
-          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 truncate">
             {product.trackName || project.name}
           </h2>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
-            {project.localPath}
-          </p>
+          <div className="flex items-center gap-1 mt-0.5 text-xs font-mono text-zinc-400 dark:text-zinc-500 min-w-0">
+            <button
+              onClick={() => (window as any).appilot?.revealInFolder?.(project.localPath)}
+              className="group flex items-center gap-1 max-w-full min-w-0 truncate hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+              title="在访达中显示"
+            >
+              <span className="truncate">{project.localPath}</span>
+              <span className="shrink-0 opacity-60 group-hover:opacity-100">⌗</span>
+            </button>
+            {repoGithubUrl && (
+              <>
+                <span className="shrink-0">(</span>
+                <button
+                  onClick={() => {
+                    if (repoGithubUrl) (window as any).appilot?.openExternal(repoGithubUrl);
+                  }}
+                  className="shrink-0 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                  title="打开 GitHub 仓库"
+                >
+                  GitHub
+                </button>
+                <span className="shrink-0">)</span>
+              </>
+            )}
+          </div>
         </div>
-      </div>
-
-      {/* Detected metadata */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
-        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">识别结果</h3>
-        </div>
-        <div className="p-6 grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
-          <Field label="产品类型" value={product.platform === "ios" ? "iOS" : product.platform === "macos" ? "macOS" : "未识别"} />
-          <Field label="商店名称" value={product.trackName || project.name} />
-        </div>
-      </div>
-
-      {/* Supported languages */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
-        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            支持语言（{languages.length}）
-          </h3>
-        </div>
-        <div className="p-5 flex flex-wrap gap-2">
-          {languages.length === 0 ? (
-            <p className="text-sm text-zinc-400 dark:text-zinc-500">未识别</p>
-          ) : (
-            languages.map((l) => (
+        <div className="flex flex-col items-end gap-1.5 shrink-0 min-w-0">
+          <div className="flex items-center gap-1.5">
+            {(project.storeProducts || []).map((item) => {
+              const active = item.id === product.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => selectProduct(item.id)}
+                  title={active ? "当前查看的平台" : `切换到 ${platformLabel(item.platform)}`}
+                  className={cn(
+                    "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors",
+                    active
+                      ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/30"
+                      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700",
+                  )}
+                >
+                  {platformLabel(item.platform)}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+            {languages.length > 0 && (
               <span
-                key={l.code}
-                className="inline-flex items-center px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300"
+                className="flex items-center gap-1 min-w-0"
+                title={languages.map((l) => l.name).join(" · ")}
               >
-                {l.name}
+                {languages.slice(0, 3).map((l) => (
+                  <span
+                    key={l.code}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-600 dark:text-zinc-300"
+                  >
+                    {l.name}
+                  </span>
+                ))}
+                {languages.length > 3 && <span className="shrink-0">+{languages.length - 3}</span>}
               </span>
-            ))
+            )}
+            {storeLinks[0] && (
+              <>
+                <span className="w-px h-3 bg-zinc-200 dark:bg-zinc-800" />
+                <button
+                  onClick={() => (window as any).appilot?.openExternal(storeLinks[0].url)}
+                  className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline shrink-0"
+                  title={storeLinks[0].name}
+                >
+                  App Store ↗
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Copilot brief */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-4">
+        <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">副驾驶简报</h3>
+          {briefState.status === "loading" ? (
+            <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
+              {briefState.progress?.phase === "content" ? "生成中" : "思考中"} · {briefState.progress?.chars ?? 0} 字
+            </span>
+          ) : (
+            <button onClick={handleGenerateBrief} className={btnSmSecondary}>
+              生成简报
+            </button>
+          )}
+        </div>
+        {briefState.status === "error" && (
+          <p className="px-5 py-2 text-[11px] text-red-500 dark:text-red-400 border-b border-zinc-100 dark:border-zinc-800">
+            {briefState.error}（已显示规则信号）
+          </p>
+        )}
+        {briefState.status === "loading" ? (
+          <div className="px-5 py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            AI 正在分析排名与发布状态…
+          </div>
+        ) : visibleBriefItems.length === 0 ? (
+          <div className="px-5 py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            {briefState.status === "ready" ? "本周事项已清空" : "暂无建议，点「生成简报」让副驾驶看路"}
+          </div>
+        ) : (
+          <ul>
+            {visibleBriefItems.map((item, index) => (
+              <li
+                key={item.id}
+                className="flex items-center gap-3 px-5 py-2 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
+              >
+                <span className="w-4 shrink-0 text-xs font-mono text-zinc-400 dark:text-zinc-500">{index + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{item.title}</p>
+                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500 truncate" title={item.reason}>
+                    {item.reason}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleBriefAction(item, "adopted")}
+                  className={cn(btnSmSecondary, "!px-2.5 !py-1")}
+                >
+                  采纳
+                </button>
+                <button
+                  onClick={() => handleBriefAction(item, "ignored")}
+                  className="px-2.5 py-1 text-xs text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                >
+                  忽略
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Metrics */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <MetricBlock
+          to="/keywords?scope=tracked"
+          label="跟踪关键词"
+          value={String(trackedActive.length)}
+          sub={pausedCount > 0 ? `暂停 ${pausedCount}` : "跟踪中"}
+        />
+        <MetricBlock
+          to="/keywords?scope=ranked"
+          label="当前入榜"
+          value={String(rankRows.length)}
+          sub={bestRankNow !== null ? `最佳 #${bestRankNow}` : "暂无上榜"}
+        />
+        <MetricBlock to="/keywords?scope=top10" label="前 10" value={String(top10Count)} highlight={top10Count > 0} />
+        <MetricBlock
+          to="/keywords"
+          label="最近采集"
+          value={newestCheckedAt ? formatHumanTime(newestCheckedAt) : "—"}
+          warn={dataStale}
+          sub={dataStale ? "数据已过期" : "排名页详情"}
+        />
+      </div>
+
+      {/* Rank trend chart + top keywords */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <div className="lg:col-span-2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名趋势</h3>
+            <div className="flex items-center gap-2.5 shrink-0">
+              <div className="flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+                {[7, 14, 30].map((days) => (
+                  <button
+                    key={days}
+                    onClick={() => setChartDays(days)}
+                    className={cn(
+                      "px-2 py-0.5 text-[11px] font-medium transition-colors",
+                      chartDays === days
+                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        : "bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800",
+                    )}
+                  >
+                    {days}天
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                {newestCheckedAt ? (
+                  <span className={cn(dataStale && "text-amber-600 dark:text-amber-400")}>
+                    数据截至 {formatHumanTime(newestCheckedAt)}
+                  </span>
+                ) : (
+                  "暂无数据"
+                )}
+              </span>
+            </div>
+          </div>
+          {chartSeries.length === 0 || chartData.length === 0 ? (
+            <div className="h-56 flex flex-col items-center justify-center gap-3">
+              <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                {trackedActive.length === 0
+                  ? "还没有跟踪关键词"
+                  : `近 ${chartDays} 天暂无排名数据`}
+              </p>
+              <Link to="/keywords" className={btnSmSecondary}>
+                {trackedActive.length === 0 ? "去生成关键词" : "去排名页"}
+              </Link>
+            </div>
+          ) : (
+            <div className="p-3">
+              <ResponsiveContainer width="100%" height={224}>
+                <LineChart data={chartData} margin={{ top: 8, right: 16, left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
+                  <XAxis
+                    dataKey="day"
+                    tick={{ fontSize: 10, fill: "#a1a1aa" }}
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={28}
+                  />
+                  <YAxis
+                    reversed
+                    domain={[1, "dataMax"]}
+                    tick={{ fontSize: 10, fill: "#a1a1aa" }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={44}
+                  />
+                  <Tooltip
+                    contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e4e4e7" }}
+                    formatter={(value: any, name: any) => [`#${value}`, String(name)]}
+                    labelFormatter={(label) => `${label} 排名`}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: 11 }}
+                    onClick={(entry: any) => {
+                      const key = typeof entry?.dataKey === "string" ? entry.dataKey : "";
+                      const sep = key.indexOf("\u0000");
+                      if (sep > 0) {
+                        navigate(
+                          `/keywords?keyword=${encodeURIComponent(key.slice(sep + 1))}&lang=${encodeURIComponent(key.slice(0, sep))}`,
+                        );
+                      } else {
+                        navigate("/keywords");
+                      }
+                    }}
+                  />
+                  {chartSeries.map((entry, index) => (
+                    <Line
+                      key={entry.key}
+                      type="monotone"
+                      dataKey={entry.key}
+                      name={entry.label}
+                      stroke={OVERVIEW_CHART_COLORS[index % OVERVIEW_CHART_COLORS.length]}
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 3.5 }}
+                      connectNulls={false}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+              <p className="text-center text-[10px] text-zinc-300 dark:text-zinc-600">
+                近 {chartDays} 天 · 点击图例进入排名页
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Top 关键词</h3>
+            <Link to="/keywords" className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline">
+              查看全部 →
+            </Link>
+          </div>
+          {rankRows.length === 0 ? (
+            <div className="p-8 text-center text-sm text-zinc-400 dark:text-zinc-500">暂无排名数据</div>
+          ) : (
+            <ul>
+              {rankRows.slice(0, 5).map((row, index) => (
+                <Link
+                  key={`${row.language}:${row.keyword}`}
+                  to={`/keywords?keyword=${encodeURIComponent(row.keyword)}&lang=${encodeURIComponent(row.language)}`}
+                  className={cn(
+                    "flex items-center gap-2.5 px-4 py-2 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+                    row.stale && "opacity-55",
+                  )}
+                >
+                  <span className="w-4 shrink-0 text-xs font-mono text-zinc-400 dark:text-zinc-500">
+                    {index + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 font-mono text-[13px] text-zinc-800 dark:text-zinc-200 truncate">
+                    {row.keyword}
+                  </span>
+                  {row.language === "en" ? (
+                    <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                      全局
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500">
+                      {languageLabel(row.language)}
+                    </span>
+                  )}
+                  <span
+                    className={cn(
+                      "shrink-0 w-8 text-right font-mono text-[13px] font-semibold",
+                      row.bestRank <= 10
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-zinc-800 dark:text-zinc-200",
+                    )}
+                  >
+                    #{row.bestRank}
+                  </span>
+                  <span className="shrink-0 w-11 text-right text-[11px]">
+                    {row.trend === "up" && (
+                      <span className="text-emerald-600 dark:text-emerald-400">▲{row.delta}</span>
+                    )}
+                    {row.trend === "down" && (
+                      <span className="text-red-500 dark:text-red-400">▼{Math.abs(row.delta ?? 0)}</span>
+                    )}
+                    {row.trend === "new" && <span className="text-amber-600 dark:text-amber-400">进榜</span>}
+                    {row.trend === "same" && <span className="text-zinc-400">—</span>}
+                  </span>
+                </Link>
+              ))}
+            </ul>
           )}
         </div>
       </div>
 
-      {/* Store links */}
-      {storeLinks.length > 0 && (
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
-          <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店链接</h3>
-          </div>
-          <div className="p-4">
-            {storeGroups.map((group) => (
-              <div key={group.label} className="mb-4 last:mb-0">
-                <p className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                  {group.label}
-                </p>
-                <div className="space-y-1">
-                  {group.links.map((link) => (
-                    <button
-                      key={link.url}
-                      onClick={() => (window as any).appilot?.openExternal(link.url)}
-                      className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
-                    >
-                      <span className="text-zinc-800 dark:text-zinc-200">{link.name} App Store</span>
-                      <span className="text-xs text-amber-600 dark:text-amber-400">打开 ↗</span>
-                    </button>
-                  ))}
-                </div>
+      {/* Release status */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm px-5 py-3.5 flex items-center gap-3 mb-4">
+        <span className="shrink-0 text-lg text-amber-500">📦</span>
+        {releaseDraft ? (
+          <>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <Link
+                  to={releaseDraft?.tag ? `/release?tag=${encodeURIComponent(releaseDraft.tag)}` : "/release"}
+                  className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                >
+                  {releaseDraft.name || releaseDraft.tag}
+                </Link>
+                {releaseDraft.commitCount > 0 && (
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
+                    · {releaseDraft.commitCount} 次提交
+                  </span>
+                )}
+                {submissionDraft && (
+                  <StatusChip
+                    label={
+                      generatedLanguageCount > 0
+                        ? `${generatedLanguageCount}/${languageTotal} 语言`
+                        : "未生成文案"
+                    }
+                    tone={
+                      languageTotal > 0 && generatedLanguageCount >= languageTotal
+                        ? "emerald"
+                        : "muted"
+                    }
+                  />
+                )}
+                {confirmChip && <StatusChip label={confirmChip.label} tone={confirmChip.tone} />}
+                {storeChip && <StatusChip label={storeChip.label} tone={storeChip.tone} />}
               </div>
-            ))}
-            <p className="px-1 pt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-              链接按地区定向；页面语言会跟随你设备语言，在应用支持的语言内自动切换。
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                {formatHumanTime(releaseDraft.publishedAt)} 更新 · 提交素材
+              </p>
+            </div>
+            <Link
+              to={releaseDraft?.tag ? `/release?tag=${encodeURIComponent(releaseDraft.tag)}` : "/release"}
+              className={btnSmPrimary}
+            >
+              打开发布工作台
+            </Link>
+          </>
+        ) : (
+          <>
+            <p className="flex-1 min-w-0 text-sm text-zinc-400 dark:text-zinc-500 truncate">
+              暂无待处理发布（有新提交或新 tag 后自动发现素材）
             </p>
-          </div>
-        </div>
-      )}
-
-      <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
-        总览（副驾驶简报）将在 Phase A 后续步骤实现
+            <Link to="/release" className={btnSmSecondary}>
+              去发布页
+            </Link>
+          </>
+        )}
       </div>
-    </div>
-  );
-}
 
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mb-1">{label}</p>
-      <p className={cn("text-zinc-800 dark:text-zinc-200 truncate", mono && "font-mono")}>
-        {value}
-      </p>
     </div>
   );
 }
@@ -549,59 +1214,57 @@ function localizationList(draft: any): any[] {
   ];
 }
 
-function MarkdownView({ text }: { text: string }) {
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div>
-  );
-}
-
 function ReferenceSection({
   title,
   meta,
   checked = false,
   defaultOpen = false,
+  action,
   children,
 }: {
   title: string;
   meta?: string;
   checked?: boolean;
   defaultOpen?: boolean;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left"
-      >
-        <span className="flex items-center gap-2.5 min-w-0">
+      <div className="w-full flex items-center justify-between gap-3 px-5 py-3.5">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-2.5 min-w-0 text-left"
+          title={open ? "折叠" : "展开"}
+        >
           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{title}</span>
           {checked ? <span className="text-xs text-emerald-500 shrink-0">✓</span> : null}
           {meta ? (
             <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{meta}</span>
           ) : null}
+        </button>
+        <span className="flex items-center gap-1.5 shrink-0">
+          {action}
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            className={cn(
+              "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
+              open && "rotate-180",
+            )}
+          >
+            <path
+              d="M4 6l4 4 4-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </span>
-        <svg
-          viewBox="0 0 16 16"
-          fill="none"
-          className={cn(
-            "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
-            open && "rotate-180",
-          )}
-        >
-          <path
-            d="M4 6l4 4 4-4"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
+      </div>
       {open ? <div className="px-5 pb-5">{children}</div> : null}
     </div>
   );
@@ -715,31 +1378,7 @@ function HistoryPanel({
   );
 }
 
-function CurrentCopyEntry({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left transition-colors",
-        active ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-      )}
-    >
-      <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">当前文案</span>
-      <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{label}</span>
-    </button>
-  );
-}
-
-function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
+function HistoryViewer({ draft }: { draft: any }) {
   const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
   const activeLanguage = localizations.some((item: any) => item.language === language)
@@ -756,13 +1395,6 @@ function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
             {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onBack}
-          className="text-sm text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-        >
-          返回当前文案
-        </button>
       </div>
       <div className="p-6 space-y-6">
         {localizations.length > 1 && (
@@ -851,6 +1483,8 @@ function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
 
 function ReleasePage() {
   const { projects, currentProjectId, currentProductId } = useProject();
+  const [searchParams] = useSearchParams();
+  const urlTag = searchParams.get("tag") || "";
   const project = projects.find((item) => item.id === currentProjectId);
   const products = project?.storeProducts || [];
   const [productId, setProductId] = useState(currentProductId || products[0]?.id || "");
@@ -860,6 +1494,10 @@ function ReleasePage() {
   const [checking, setChecking] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<{
+    chars: number;
+    phase: "reasoning" | "content";
+  } | null>(null);
   const [error, setError] = useState("");
   const [activeLanguage, setActiveLanguage] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("");
@@ -868,6 +1506,20 @@ function ReleasePage() {
   const [historyDraft, setHistoryDraft] = useState<any>(null);
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
+  const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
+  const [pendingVersion, setPendingVersion] = useState("");
+
+  useEffect(() => {
+    const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
+      if (progress?.kind === "chars" && typeof progress.chars === "number") {
+        setGenerationProgress({
+          chars: progress.chars,
+          phase: progress.phase === "content" ? "content" : "reasoning",
+        });
+      }
+    });
+    return () => off?.();
+  }, []);
 
   const loadReleases = async () => {
     if (!project?.id) return;
@@ -884,6 +1536,9 @@ function ReleasePage() {
       });
       const draft = next.releases?.find((item: any) => item.draft) || next.releases?.[0];
       setSelectedTag((current) => {
+        if (urlTag && next.releases?.some((item: any) => item.tag === urlTag)) {
+          return urlTag;
+        }
         if (current && next.releases?.some((item: any) => item.tag === current)) {
           return current;
         }
@@ -898,7 +1553,7 @@ function ReleasePage() {
 
   useEffect(() => {
     void loadReleases();
-  }, [project?.id]);
+  }, [project?.id, searchParams]);
 
   useEffect(() => {
     setSourceLanguage(UI_SOURCE_LANGUAGE);
@@ -933,10 +1588,6 @@ function ReleasePage() {
   const batchConfirmed = Boolean(draft?.batchConfirmedAt);
   const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
   const selectedProduct = products.find((item) => item.id === productId) || null;
-  const currentReleaseLabel =
-    selectedRelease?.name && selectedRelease.name !== "RELEASE_DRAFT.md"
-      ? selectedRelease.name
-      : formatVersionDate(selectedRelease?.publishedAt) || selectedTag;
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
@@ -963,6 +1614,112 @@ function ReleasePage() {
     batchConfirmed ||
     (masterConfirmed && activeLocalization?.language === primaryLanguage);
   const busy = generating || loadingDraft;
+  const summaryMaterial = selectedRelease?.material || null;
+  const summaryItems: ChangeSummaryItem[] = summaryMaterial
+    ? summarizeChanges(summaryMaterial)
+    : [];
+  const summaryPrCount = summaryMaterial?.pullRequests?.length ?? 0;
+  const summaryCommitCount = summaryMaterial?.commits?.length ?? 0;
+  const sinceMs = summaryMaterial?.sinceDate
+    ? Date.now() - new Date(summaryMaterial.sinceDate).getTime()
+    : null;
+  const durationLabel =
+    sinceMs != null && sinceMs >= 0
+      ? sinceMs >= 86400000
+        ? `${Math.round(sinceMs / 86400000)} 天`
+        : `${Math.max(1, Math.round(sinceMs / 3600000))} 小时`
+      : "";
+  const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
+  const previousDraft =
+    (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
+  const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
+  const fixedMaterialRows = (() => {
+    const rows: { label: string; meta: string }[] = [];
+    rows.push({
+      label: "README 全文",
+      meta: releaseContext?.readme ? `${releaseContext.readme.length.toLocaleString()} 字符` : "无",
+    });
+    rows.push({
+      label: "产品档案",
+      meta: `${selectedProduct?.trackName || project?.name || ""} · ${platformLabel(selectedProduct?.platform || "unknown")} · ${selectedProduct?.supportedLanguages?.length ?? 0} 语言`,
+    });
+    const historyDrafts = releaseContext?.drafts || [];
+    rows.push({
+      label: "历史文案（含历次发布公告）",
+      meta:
+        historyDrafts.length > 0
+          ? `最近 ${historyDrafts.length} 份${historyDrafts[0]?.appVersion ? `（最新 v${String(historyDrafts[0].appVersion).replace(/^v/i, "")}）` : ""}`
+          : "无",
+    });
+    const activeKeywordCount = (selectedProduct?.trackedKeywords || []).filter(
+      (keyword: any) => keyword.status !== "paused",
+    ).length;
+    rows.push({
+      label: "跟踪关键词与排名",
+      meta: activeKeywordCount > 0 ? `${activeKeywordCount} 个关键词` : "无",
+    });
+    const githubRelease = summaryMaterial?.githubRelease;
+    if (githubRelease) {
+      rows.push({
+        label: "GitHub 发布公告",
+        meta: `${githubRelease.name || "发布正文"}${githubRelease.publishedAt ? ` · ${formatHumanTime(githubRelease.publishedAt)}` : ""}`,
+      });
+    }
+    if (draft?.reviewFeedback) {
+      rows.push({
+        label: "驳回意见",
+        meta: String(draft.reviewFeedback).split("\n")[0].slice(0, 40),
+      });
+    }
+    return rows;
+  })();
+
+  useEffect(() => {
+    const items = selectedRelease?.material ? summarizeChanges(selectedRelease.material) : [];
+    const stored = draft?.summaryChecklist;
+    setSummaryChecked(
+      new Set(stored && stored.length > 0 ? stored : items.map((item) => item.id)),
+    );
+  }, [draft?.id, selectedRelease?.tag]);
+
+  const persistSummaryChecklist = async (ids: string[]) => {
+    const current = active?.draft;
+    if (!current || !project?.id) return;
+    const nextDraft = { ...current, summaryChecklist: ids };
+    setActive((prev: any) => ({ ...prev, draft: nextDraft }));
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, nextDraft);
+      setActive((prev: any) => ({ ...prev, draft: saved }));
+    } catch {
+      // Keep the local state; persistence retries on the next toggle.
+    }
+  };
+
+  const persistCurrentDraft = async () => {
+    const current = active?.draft;
+    if (!current || !project?.id) return;
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, current);
+      setActive((prev: any) => ({ ...prev, draft: saved }));
+    } catch {
+      // Keep the local edit; persistence retries on the next blur.
+    }
+  };
+
+  const toggleSummaryItem = async (id: string) => {
+    const next = new Set(summaryChecked);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSummaryChecked(next);
+    await persistSummaryChecklist([...next]);
+  };
+
+  const setAllSummaryChecked = async (checked: boolean) => {
+    const next = new Set<string>();
+    if (checked) summaryItems.forEach((item) => next.add(item.id));
+    setSummaryChecked(next);
+    await persistSummaryChecklist([...next]);
+  };
 
   useEffect(() => {
     if (!activeLanguage && localizations[0]?.language) {
@@ -999,6 +1756,7 @@ function ReleasePage() {
     if (!project || !productId || !selectedTag) return;
     if (force) {
       setGenerating(true);
+      setGenerationProgress(null);
     } else {
       setLoadingDraft(true);
     }
@@ -1014,6 +1772,12 @@ function ReleasePage() {
         selectedTag,
         force,
         force ? sourceLanguage : undefined,
+        force
+          ? summaryItems.flatMap((item) =>
+              summaryChecked.has(item.id) ? item.commits.map((commit) => commit.sha) : [],
+            )
+          : undefined,
+        (draft?.appVersion || pendingVersion) || undefined,
       );
       setActive(next);
       setStep(2);
@@ -1059,12 +1823,20 @@ function ReleasePage() {
   };
 
   const handleConfirmMaster = () => {
+    if (!draft?.appVersion?.trim()) {
+      setError("请先填写目标版本后再确定文案。");
+      return;
+    }
     if (!draft?.masterConfirmedAt) {
       void persistConfirm({ masterConfirmedAt: new Date().toISOString() });
     }
   };
 
   const handleConfirmBatch = () => {
+    if (!draft?.appVersion?.trim()) {
+      setError("请先填写目标版本后再确定文案。");
+      return;
+    }
     const now = new Date().toISOString();
     void persistConfirm({
       masterConfirmedAt: draft?.masterConfirmedAt || now,
@@ -1129,7 +1901,7 @@ function ReleasePage() {
         <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">发布工作台</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            读取仓库根目录的 RELEASE_DRAFT.md，由你确认后再生成 App Store 提交文案。
+            自上次生成以来的提交与 PR 素材，由你确认后生成 App Store 提交文案。
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1165,7 +1937,7 @@ function ReleasePage() {
       )}
 
       {releases.length === 0 ? (
-        <EmptyState title="尚未检测到预发布公告" desc="请在仓库根目录创建 RELEASE_DRAFT.md，然后点击检查发布。" />
+        <EmptyState title="尚未检测到新的发布" desc="有新提交或创建新 tag（GitHub 发布会自动打 tag）后，这里会自动生成发布文案素材。" />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0">
@@ -1176,31 +1948,149 @@ function ReleasePage() {
               {selectedRelease && (
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   <ReferenceSection
-                    title="预发布公告"
-                    meta={`更新于 ${formatHumanTime(selectedRelease.publishedAt)}`}
+                    title="变更摘要"
+                    meta={
+                      summaryItems.length > 0
+                        ? `${summaryPrCount} PR · ${summaryCommitCount} 提交${durationLabel ? ` · ${durationLabel}` : ""}`
+                        : "无变更"
+                    }
                     checked={step > 1}
                     defaultOpen
+                    action={
+                      summaryItems.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => void setAllSummaryChecked(checkedCount < summaryItems.length)}
+                          className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+                          title={
+                            checkedCount === summaryItems.length
+                              ? "取消全部选择"
+                              : checkedCount === 0
+                                ? "全部选择"
+                                : "全部确认"
+                          }
+                        >
+                          {checkedCount === summaryItems.length
+                            ? "已全选"
+                            : checkedCount === 0
+                              ? "未选择"
+                              : "全部确认"}
+                        </button>
+                      ) : undefined
+                    }
                   >
-                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-                      {selectedRelease.name || "RELEASE_DRAFT.md"}
-                    </p>
-                    <MarkdownView text={selectedRelease?.body || "没有预发布公告内容"} />
+                    {(previousDraft || latestCodeDate) && (
+                      <div className="mb-2 space-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+                        {previousDraft && (
+                          <p>
+                            上一次文案：{draftVersionLabel(previousDraft)} ·{" "}
+                            {formatHumanTime(previousDraft.updatedAt)} 生成
+                          </p>
+                        )}
+                        {latestCodeDate && <p>最新代码更新：{formatHumanTime(latestCodeDate)}</p>}
+                      </div>
+                    )}
+                    {summaryItems.length === 0 ? (
+                      <p className="text-sm text-zinc-400 dark:text-zinc-500">本次无变更</p>
+                    ) : (
+                      <>
+                        <div className="space-y-1">
+                          {summaryItems.map((item) => {
+                            const included = summaryChecked.has(item.id);
+                            const tone = CHANGE_TYPE_META[item.type].tone;
+                            const latestDate = item.commits[item.commits.length - 1]?.date || "";
+                            const subLine =
+                              item.commits.length > 1
+                                ? `${item.refs.join(" · ")} · ${item.commits.length} 次提交${latestDate ? ` · 最新 ${formatHumanTime(latestDate)}` : ""}`
+                                : `${item.refs.join(" · ")}${latestDate ? ` · ${formatHumanTime(latestDate)}` : ""}`;
+                            return (
+                              <div
+                                key={item.id}
+                                className={cn(
+                                  "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg",
+                                  !included && "opacity-55",
+                                )}
+                              >
+                                <span
+                                  role="checkbox"
+                                  aria-checked={included}
+                                  tabIndex={0}
+                                  onClick={() => void toggleSummaryItem(item.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      void toggleSummaryItem(item.id);
+                                    }
+                                  }}
+                                  title={included ? "从 AI 素材中排除" : "作为 AI 素材提供"}
+                                  className={cn(
+                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors cursor-pointer",
+                                    included
+                                      ? "bg-amber-500 border-amber-500 text-white"
+                                      : "border-zinc-300 dark:border-zinc-600",
+                                  )}
+                                >
+                                  {included ? "✓" : ""}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
+                                    {item.title}
+                                  </span>
+                                  <span
+                                    className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate"
+                                  >
+                                    {subLine}
+                                  </span>
+                                </span>
+                                <span
+                                  className={cn(
+                                    "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
+                                    tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                                    tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                                    tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
+                                    tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+                                  )}
+                                >
+                                  {CHANGE_TYPE_META[item.type].label}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                          以上 {checkedCount}/{summaryItems.length} 项将作为素材提供给 AI；未勾选项不会进入文案生成。
+                        </p>
+                      </>
+                    )}
                   </ReferenceSection>
 
                   {releaseContext && step <= 2 && (
                     <>
-                      <ReferenceSection
-                        title="README"
-                        meta={`更新于 ${formatHumanTime(releaseContext.readmeModifiedAt)}`}
-                        checked={step > 1}
-                      >
-                        <MarkdownView text={releaseContext.readme || "没有 README 内容"} />
+                      <ReferenceSection title="固定素材" meta="始终发送给 AI" defaultOpen>
+                        <ul className="space-y-1.5">
+                          {fixedMaterialRows.map((row) => (
+                            <li
+                              key={row.label}
+                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-zinc-50/60 dark:bg-zinc-800/30"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-xs text-zinc-700 dark:text-zinc-300 truncate">
+                                  {row.label}
+                                </span>
+                                <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                                  {row.meta}
+                                </span>
+                              </span>
+                              <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                始终发送
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                          这些素材无需逐项查看；如需调整素材范围，可在上方变更摘要中取消对应条目。
+                        </p>
                       </ReferenceSection>
-                      <CurrentCopyEntry
-                        label={currentReleaseLabel}
-                        active={!historyDraft}
-                        onClick={() => setHistoryDraft(null)}
-                      />
                       <HistoryPanel
                         drafts={(releaseContext.drafts || []).filter(
                           (item: any) => item.releaseTag !== selectedTag,
@@ -1216,12 +2106,66 @@ function ReleasePage() {
           </aside>
 
           <div className="min-w-0 space-y-6">
+            {selectedRelease && (
+              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm px-5 py-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">文档</span>
+                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                    {historyDraft
+                      ? `历史文案 · ${draftVersionLabel(historyDraft)}`
+                      : `当前文案 · ${draft?.appVersion || "版本待定"}`}
+                  </span>
+                  {!historyDraft && (
+                    <span className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      {masterConfirmed && !batchConfirmed && (
+                        <StatusChip label="母本已确定" tone="amber" />
+                      )}
+                      {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
+                      {draft?.storeStatus && STORE_STATUS_META[draft.storeStatus] && (
+                        <StatusChip
+                          label={STORE_STATUS_META[draft.storeStatus].label}
+                          tone={STORE_STATUS_META[draft.storeStatus].tone}
+                        />
+                      )}
+                      {draft && localizations.length > 0 && (
+                        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                          {localizations.length}/{availableLanguages.length} 语言
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {historyDraft && (
+                  <button type="button" onClick={() => setHistoryDraft(null)} className={btnSmSecondary}>
+                    ← 返回当前文案
+                  </button>
+                )}
+              </div>
+            )}
             {historyDraft ? (
-              <HistoryViewer draft={historyDraft} onBack={() => setHistoryDraft(null)} />
+              <HistoryViewer draft={historyDraft} />
             ) : (
               <>
             {selectedRelease && step === 1 && (
               <>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
+                    目标版本
+                  </span>
+                  <input
+                    value={draft?.appVersion ?? pendingVersion}
+                    onChange={(e) => {
+                      if (draft) updateDraftField("appVersion", e.target.value);
+                      else setPendingVersion(e.target.value);
+                    }}
+                    onBlur={() => void persistCurrentDraft()}
+                    placeholder="如 1.2.6"
+                    className={inputLineClass + " max-w-32"}
+                  />
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                    {draft ? "历史文案将按此版本标识" : "生成文案时将写入此版本"}
+                  </span>
+                </div>
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">语言</p>
                   <div className="flex flex-wrap gap-2">
@@ -1242,9 +2186,19 @@ function ReleasePage() {
                 </div>
 
                 {selectedRelease.draft && !draft && (
-                  <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
-                    {generating ? "生成中..." : "下一步：生成文案"}
-                  </button>
+                  summaryItems.length > 0 ? (
+                    <AIProgressButton
+                      onClick={() => handleLoad(true)}
+                      disabled={busy && !generating}
+                      loading={generating}
+                      progress={generationProgress}
+                      idleLabel="下一步：生成文案"
+                    />
+                  ) : (
+                    <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                      本次无变更，无需生成新文案。
+                    </p>
+                  )
                 )}
 
                 {!selectedRelease.draft && (
@@ -1275,6 +2229,21 @@ function ReleasePage() {
                 </div>
 
                 <div className="p-6 space-y-6">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
+                      目标版本
+                    </span>
+                    <input
+                      value={draft.appVersion || ""}
+                      onChange={(e) => updateDraftField("appVersion", e.target.value)}
+                      onBlur={() => void persistCurrentDraft()}
+                      placeholder="如 1.2.6"
+                      className={inputLineClass + " max-w-32"}
+                    />
+                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                      确定文案前需填写
+                    </span>
+                  </div>
                   {activeLocalization && (
                     <>
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -1446,9 +2415,13 @@ function ReleasePage() {
                     />
                     {!feedbackReadOnly && (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
-                          {generating ? "重新生成中..." : "重新生成"}
-                        </button>
+                        <AIProgressButton
+                          onClick={() => handleLoad(true)}
+                          disabled={busy && !generating}
+                          loading={generating}
+                          progress={generationProgress}
+                          idleLabel="重新生成"
+                        />
                       </div>
                     )}
                   </FieldBlock>
@@ -1971,6 +2944,10 @@ function KeywordsPage() {
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlKeyword = searchParams.get("keyword") || "";
+  const urlLang = searchParams.get("lang") || "";
+  const urlScope = searchParams.get("scope") || "";
 
   const languages = product?.supportedLanguages || [];
   const languageOptions = trackingLanguageOptions(languages);
@@ -2039,6 +3016,29 @@ function KeywordsPage() {
     }
   }, [litLangs, viewLang]);
 
+  // Apply navigation params from the overview page: locate a keyword in a
+  // language view, and/or narrow the matrix scope.
+  useEffect(() => {
+    if (!product) return;
+    if (urlLang && languageOptions.some((option) => option.code === urlLang)) {
+      setViewLang(urlLang);
+      setLitLangs((prev) => (prev.includes(urlLang) ? prev : [...prev, urlLang]));
+    }
+    if (urlKeyword) {
+      setSelectedKeyword(urlKeyword);
+      requestAnimationFrame(() => {
+        document
+          .querySelector(
+            `[data-keyword="${CSS.escape(urlKeyword)}"][data-language="${CSS.escape(urlLang || "")}"]`,
+          )
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    }
+    if (urlScope === "paused") {
+      setShowRemoved(true);
+    }
+  }, [product?.id, urlKeyword, urlLang, urlScope]);
+
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
   }
@@ -2058,6 +3058,8 @@ function KeywordsPage() {
   }));
   const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(68px, 0.9fr)) 44px`;
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
+  const scopeFilteredRanked =
+    urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
     : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
@@ -2153,6 +3155,8 @@ function KeywordsPage() {
   ) => (
     <div
       key={`${keyword.language}:${keyword.keyword}`}
+      data-keyword={keyword.keyword}
+      data-language={keyword.language}
       onClick={() => setSelectedKeyword(keyword.keyword)}
       className={cn(
         "grid items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
@@ -2687,6 +3691,33 @@ function KeywordsPage() {
                   <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                     关键词（{trackedActive.length}）
                   </span>
+                  {urlScope === "top10" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = new URLSearchParams(searchParams);
+                        next.delete("scope");
+                        setSearchParams(next);
+                      }}
+                      className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px] font-medium hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors"
+                    >
+                      前 10 ✕
+                    </button>
+                  )}
+                  {urlScope === "paused" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowRemoved(false);
+                        const next = new URLSearchParams(searchParams);
+                        next.delete("scope");
+                        setSearchParams(next);
+                      }}
+                      className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px] font-medium hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors"
+                    >
+                      已暂停 ✕
+                    </button>
+                  )}
                   {removedForCurrent.length + pausedForCurrent.length > 0 && (
                     <div className="relative">
                       <button
@@ -2810,9 +3841,13 @@ function KeywordsPage() {
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
                   </p>
+                ) : scopeFilteredRanked.length === 0 ? (
+                  <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
+                    该筛选范围内暂无关键词。
+                  </p>
                 ) : (
                   <>
-                    {ranked.map(({ row }) => renderMatrixRow(row, false))}
+                    {scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))}
                     {unranked.length > 0 && (
                       <button
                         type="button"
@@ -3112,6 +4147,8 @@ const inputClass = "w-full px-3.5 py-2.5 rounded-lg border border-zinc-200 dark:
 const inputLineClass = "w-full h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-900 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 dark:focus:border-amber-400 transition-shadow";
 const btnPrimary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed";
 const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
+const btnSmPrimary = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-all duration-150";
+const btnSmSecondary = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
 
 function SettingsPage() {
   const { theme, setTheme } = useTheme();
