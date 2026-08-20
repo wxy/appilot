@@ -14,6 +14,7 @@ import {
   checkForRelease,
   fetchRemoteTags,
   filterMaterial,
+  materialToBody,
 } from "../src/engine/release-watcher";
 
 let errors = 0;
@@ -117,6 +118,22 @@ async function runTests() {
     const filtered = filterMaterial(material, [reviewSha]);
     assert(filtered.commits.length === 1, "filterMaterial: only included commits kept");
     assert(filtered.pullRequests.some((pr) => pr.number === 10), "filterMaterial: PR list re-derived");
+
+    // GitHub release announcement joins the AI material and survives filtering.
+    const withRelease = {
+      ...material,
+      githubRelease: { name: "v1.2.0 release", body: "What's new: dark mode", publishedAt: null, url: null },
+    };
+    const bodyWithRelease = materialToBody(withRelease);
+    assert(
+      bodyWithRelease.includes("Official release announcement") && bodyWithRelease.includes("dark mode"),
+      "materialToBody: GitHub release announcement included",
+    );
+    const filteredWithRelease = filterMaterial(withRelease, [reviewSha]);
+    assert(
+      filteredWithRelease.githubRelease?.name === "v1.2.0 release",
+      "filterMaterial: GitHub release preserved after filtering",
+    );
 
     // fetchRemoteTags: a tag published on the remote appears locally after sync.
     const originDir = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-origin-"));

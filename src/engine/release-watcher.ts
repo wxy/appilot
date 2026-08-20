@@ -16,6 +16,7 @@ import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import { log } from "./logger";
+import { normalizeGitHubUrl } from "./git-info";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,6 +60,15 @@ export interface ReleaseMaterial {
   commits: ReleaseMaterialCommit[];
   pullRequests: { number: number; title: string | null }[];
   diffStat: string;
+  /** Official GitHub release announcement, when publicly fetchable. */
+  githubRelease: GitHubReleaseInfo | null;
+}
+
+export interface GitHubReleaseInfo {
+  name: string | null;
+  body: string;
+  publishedAt: string | null;
+  url: string | null;
 }
 
 const RELEASE_DRAFT_FILENAME = "RELEASE_DRAFT.md";
@@ -96,6 +106,50 @@ export async function fetchRemoteTags(localPath: string): Promise<boolean> {
   } catch (err: any) {
     log.warn(`fetchRemoteTags failed for ${localPath}: ${err.message}`);
     return false;
+  }
+}
+
+/**
+ * Best-effort fetch of the public GitHub release announcement for a tag.
+ * Returns null silently for private repos, drafts, rate limits, or offline.
+ */
+export async function fetchPublicGitHubRelease(
+  localPath: string,
+  tag: string,
+): Promise<GitHubReleaseInfo | null> {
+  try {
+    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
+    const repoUrl = normalizeGitHubUrl(remote);
+    if (!repoUrl) return null;
+    const ownerRepo = repoUrl.replace("https://github.com/", "");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${ownerRepo}/releases/tags/${encodeURIComponent(tag)}`,
+        {
+          headers: {
+            Accept: "application/vnd.github+json",
+            "User-Agent": "appilot",
+          },
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (!data || typeof data.tag_name !== "string") return null;
+      return {
+        name: typeof data.name === "string" ? data.name : null,
+        body: typeof data.body === "string" ? data.body : "",
+        publishedAt: typeof data.published_at === "string" ? data.published_at : null,
+        url: typeof data.html_url === "string" ? data.html_url : null,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err: any) {
+    log.warn(`fetchPublicGitHubRelease failed for ${tag}: ${err.message}`);
+    return null;
   }
 }
 
@@ -186,11 +240,20 @@ export async function collectReleaseMaterial(
     commits,
     pullRequests: prNumbers.map((number) => ({ number, title: null })),
     diffStat: diffOut.slice(0, 800),
+    githubRelease: null,
   };
 }
 
 export function materialToBody(material: ReleaseMaterial): string {
   const lines: string[] = [];
+  if (material.githubRelease) {
+    lines.push(
+      `Official release announcement (GitHub):\n${
+        material.githubRelease.body || material.githubRelease.name || "(empty announcement)"
+      }`,
+    );
+    lines.push("");
+  }
   if (material.pullRequests.length > 0) {
     lines.push(
       `Pull requests in this release: ${material.pullRequests
@@ -320,14 +383,20 @@ export async function checkForRelease(
     }
   }
 
+  const enrichedMaterial = releaseTag
+    ? {
+        ...material,
+        githubRelease: await fetchPublicGitHubRelease(localPath, releaseTag.name),
+      }
+    : material;
   const release: ReleaseInfo = {
     id: releaseTag ? `tag-${releaseTag.sha}` : `head-${head}`,
     tag: releaseTag?.name || `head-${head}`,
     name: releaseTag?.name || "待处理变更",
     publishedAt: releaseTag?.date || material.commits[0]?.date || new Date().toISOString(),
     url: "",
-    body: materialToBody(material),
-    material,
+    body: materialToBody(enrichedMaterial),
+    material: enrichedMaterial,
     source: releaseTag ? "git-tag" : "git-commits",
     draft: true,
     commitSha: head,

@@ -1471,7 +1471,6 @@ function ReleasePage() {
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
   const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
-  const [expandedSummaryId, setExpandedSummaryId] = useState("");
 
   const loadReleases = async () => {
     if (!project?.id) return;
@@ -1604,6 +1603,13 @@ function ReleasePage() {
       label: "跟踪关键词与排名",
       meta: activeKeywordCount > 0 ? `${activeKeywordCount} 个关键词` : "无",
     });
+    const githubRelease = summaryMaterial?.githubRelease;
+    if (githubRelease) {
+      rows.push({
+        label: "GitHub 发布公告",
+        meta: `${githubRelease.name || "发布正文"}${githubRelease.publishedAt ? ` · ${formatHumanTime(githubRelease.publishedAt)}` : ""}`,
+      });
+    }
     if (draft?.reviewFeedback) {
       rows.push({
         label: "驳回意见",
@@ -1619,7 +1625,6 @@ function ReleasePage() {
     setSummaryChecked(
       new Set(stored && stored.length > 0 ? stored : items.map((item) => item.id)),
     );
-    setExpandedSummaryId("");
   }, [draft?.id, selectedRelease?.tag]);
 
   const persistSummaryChecklist = async (ids: string[]) => {
@@ -1905,7 +1910,6 @@ function ReleasePage() {
                         <div className="space-y-1">
                           {summaryItems.map((item) => {
                             const included = summaryChecked.has(item.id);
-                            const expanded = expandedSummaryId === item.id;
                             const tone = CHANGE_TYPE_META[item.type].tone;
                             const latestDate = item.commits[item.commits.length - 1]?.date || "";
                             const subLine =
@@ -1913,84 +1917,55 @@ function ReleasePage() {
                                 ? `${item.refs.join(" · ")} · ${item.commits.length} 次提交${latestDate ? ` · 最新 ${formatHumanTime(latestDate)}` : ""}`
                                 : `${item.refs.join(" · ")}${latestDate ? ` · ${formatHumanTime(latestDate)}` : ""}`;
                             return (
-                              <div key={item.id}>
-                                <div
-                                  role="button"
+                              <div
+                                key={item.id}
+                                className={cn(
+                                  "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg",
+                                  !included && "opacity-55",
+                                )}
+                              >
+                                <span
+                                  role="checkbox"
+                                  aria-checked={included}
                                   tabIndex={0}
-                                  onClick={() => setExpandedSummaryId(expanded ? "" : item.id)}
+                                  onClick={() => void toggleSummaryItem(item.id)}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
-                                      setExpandedSummaryId(expanded ? "" : item.id);
+                                      void toggleSummaryItem(item.id);
                                     }
                                   }}
+                                  title={included ? "从 AI 素材中排除" : "作为 AI 素材提供"}
                                   className={cn(
-                                    "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/40 cursor-pointer",
-                                    !included && "opacity-55",
+                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors cursor-pointer",
+                                    included
+                                      ? "bg-amber-500 border-amber-500 text-white"
+                                      : "border-zinc-300 dark:border-zinc-600",
                                   )}
-                                  title={expanded ? "折叠详情" : "查看提交详情"}
                                 >
-                                  <span
-                                    role="checkbox"
-                                    aria-checked={included}
-                                    tabIndex={-1}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void toggleSummaryItem(item.id);
-                                    }}
-                                    title={included ? "从 AI 素材中排除" : "作为 AI 素材提供"}
-                                    className={cn(
-                                      "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors",
-                                      included
-                                        ? "bg-amber-500 border-amber-500 text-white"
-                                        : "border-zinc-300 dark:border-zinc-600",
-                                    )}
-                                  >
-                                    {included ? "✓" : ""}
-                                  </span>
-                                  <span className="min-w-0 flex-1">
-                                    <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
-                                      {item.title}
-                                    </span>
-                                    <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                                      {subLine}
-                                    </span>
+                                  {included ? "✓" : ""}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
+                                    {item.title}
                                   </span>
                                   <span
-                                    className={cn(
-                                      "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
-                                      tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
-                                      tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-                                      tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
-                                      tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
-                                    )}
+                                    className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate"
                                   >
-                                    {CHANGE_TYPE_META[item.type].label}
+                                    {subLine}
                                   </span>
-                                </div>
-                                {expanded && (
-                                  <ul className="ml-8 mt-0.5 space-y-1 pb-1">
-                                    {item.commits.map((commit) => (
-                                      <li
-                                        key={commit.sha}
-                                        className="text-[10px] text-zinc-400 dark:text-zinc-500"
-                                        title={commit.body || commit.sha}
-                                      >
-                                        <span className="font-mono text-zinc-500 dark:text-zinc-400">
-                                          {commit.sha}
-                                        </span>
-                                        {commit.date && (
-                                          <span className="mx-1">· {formatHumanTime(commit.date)}</span>
-                                        )}
-                                        {commit.body && (
-                                          <span className="block pl-3 text-zinc-400 dark:text-zinc-500">
-                                            {commit.body.split("\n")[0]}
-                                          </span>
-                                        )}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
+                                    tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                                    tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                                    tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
+                                    tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+                                  )}
+                                >
+                                  {CHANGE_TYPE_META[item.type].label}
+                                </span>
                               </div>
                             );
                           })}
