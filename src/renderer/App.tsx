@@ -2950,7 +2950,7 @@ function AIProgressButton({
         <span className="flex flex-col items-center text-[11px] leading-tight">
           <span className="inline-flex items-center gap-1">
             <span className="w-2.5 h-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-            处理中
+            {progress?.phase === "content" ? "生成中" : "思考中"}
           </span>
           <span className="mt-0.5 font-mono">{formatKilo(chars)} · {formatElapsed(elapsed)}</span>
         </span>

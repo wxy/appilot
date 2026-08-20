@@ -112,7 +112,9 @@ export class AIProvider {
           let lastChunkAt = 0;
           const consumeStream = async (stream: any) => {
             let chars = 0;
+            let contentChars = 0;
             let lastPhase: "reasoning" | "content" | null = null;
+            let lastLoggedPhase: string | null = null;
             for await (const chunk of stream) {
               const delta = chunk?.choices?.[0]?.delta;
               // DeepSeek streams reasoning separately from content; count both
@@ -127,11 +129,18 @@ export class AIProvider {
                 lastChunkAt = Date.now();
                 if (typeof delta?.content === "string" && delta.content.length > 0) {
                   content = (content || "") + delta.content;
+                  contentChars += delta.content.length;
                   lastPhase = "content";
                 } else {
                   lastPhase = "reasoning";
                 }
                 chars += deltaText.length;
+                if (lastPhase !== lastLoggedPhase) {
+                  lastLoggedPhase = lastPhase;
+                  log.info(
+                    `AI stream phase=${lastPhase} chars=${chars} contentChars=${contentChars}`,
+                  );
+                }
                 if (lastPhase) opts?.onProgress?.({ chars, phase: lastPhase });
               }
               if (chunk?.choices?.[0]?.finish_reason) {
