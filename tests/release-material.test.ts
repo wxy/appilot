@@ -11,6 +11,7 @@ import {
   listGitTags,
   collectReleaseMaterial,
   checkForRelease,
+  fetchRemoteTags,
 } from "../src/engine/release-watcher";
 
 let errors = 0;
@@ -86,6 +87,38 @@ async function runTests() {
       nextBody.includes("post-tag work") && !nextBody.includes("feat: night walk support"),
       "checkForRelease: next release material since v1.1.0",
     );
+
+    // Moved tag (same name, new commit) redefines the boundary → new release.
+    const v120Key = `${next.latest?.tag}@${next.latest?.commitSha}`;
+    commit(dir, "f.txt", "fix: review feedback (#4)");
+    run(dir, ["tag", "-f", "v1.2.0", "-m", "v1.2.0 re-release"]);
+    const moved = await checkForRelease(dir, v120Key);
+    assert(moved.isNew === true, "moved tag: is new (boundary redefined)");
+    assert(
+      (moved.latest?.body || "").includes("fix: review feedback (#4)"),
+      "moved tag: material includes post-move commits",
+    );
+    const movedKey = `${moved.latest?.tag}@${moved.latest?.commitSha}`;
+    assert((await checkForRelease(dir, movedKey)).isNew === false, "moved tag: same key not new");
+
+    // fetchRemoteTags: a tag published on the remote appears locally after fetch.
+    const originDir = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-origin-"));
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-work-"));
+    run(originDir, ["init", "-q", "--bare"]);
+    run(workDir, ["init", "-q"]);
+    run(workDir, ["remote", "add", "origin", originDir]);
+    run(workDir, ["config", "user.email", "test@example.com"]);
+    run(workDir, ["config", "user.name", "Test"]);
+    commit(workDir, "g.txt", "feat: remote work (#5)");
+    run(workDir, ["push", "-q", "origin", "HEAD"]);
+    run(workDir, ["tag", "v9.9.9"]);
+    run(workDir, ["push", "-q", "origin", "v9.9.9"]);
+    run(workDir, ["tag", "-d", "v9.9.9"]);
+    assert(!(await listGitTags(workDir)).some((t) => t.name === "v9.9.9"), "fetch: tag absent before sync");
+    assert((await fetchRemoteTags(workDir)) === true, "fetch: remote sync succeeded");
+    assert((await listGitTags(workDir)).some((t) => t.name === "v9.9.9"), "fetch: tag synced from remote");
+    fs.rmSync(originDir, { recursive: true, force: true });
+    fs.rmSync(workDir, { recursive: true, force: true });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

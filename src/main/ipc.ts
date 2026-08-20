@@ -1482,9 +1482,11 @@ export function registerIpcHandlers() {
           },
           language,
         );
-        // Remember the tag we generated for: it becomes the "previous release"
-        // boundary for the next tag.
-        project.lastReleaseTag = release.tag || null;
+        // Remember the tag (+ its commit) we generated for: name@sha identity
+        // so a moved tag redefines the boundary and triggers regeneration.
+        project.lastReleaseTag = release.commitSha
+          ? `${release.tag}@${release.commitSha}`
+          : release.tag || null;
         upsertStoreSubmissionDraft(project, draft);
         s.set("projects", projects);
         return { release, draft, actionable: true };

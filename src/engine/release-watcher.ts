@@ -71,6 +71,23 @@ async function git(localPath: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/**
+ * Sync remote tags into the local repo. Read-only: only adds/updates refs,
+ * never touches the user's branches or working tree. Silent no-op when the
+ * repo has no remote or the network is unavailable.
+ */
+export async function fetchRemoteTags(localPath: string): Promise<boolean> {
+  try {
+    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
+    if (!remote) return false;
+    await git(localPath, ["fetch", "--tags"]);
+    return true;
+  } catch (err: any) {
+    log.warn(`fetchRemoteTags failed for ${localPath}: ${err.message}`);
+    return false;
+  }
+}
+
 /** Latest tags first; date is the tag's creatordate. */
 export async function listGitTags(localPath: string): Promise<GitTagInfo[]> {
   try {
@@ -222,7 +239,11 @@ export async function checkForRelease(
   localPath: string,
   lastSeenTag?: string | null,
   _legacyGithubToken?: string | null,
+  options: { fetchTags?: boolean } = {},
 ): Promise<ReleaseCheckResult> {
+  if (options.fetchTags !== false) {
+    await fetchRemoteTags(localPath);
+  }
   const tags = await listGitTags(localPath);
   const latestTag = tags[0] || null;
   const previousTag = tags[1]?.name || null;
@@ -240,9 +261,16 @@ export async function checkForRelease(
       draft: true,
       commitSha: latestTag.sha,
     };
+    // A moved tag (same name, different commit) redefines the release
+    // boundary, so identity is name@sha; a plain-name match still counts as
+    // seen for legacy stored values.
+    const tagKey = `${release.tag}@${release.commitSha}`;
+    const seen =
+      tagKey === lastSeenTag ||
+      (Boolean(lastSeenTag) && release.tag === lastSeenTag);
     return {
       latest: release,
-      isNew: release.tag !== lastSeenTag,
+      isNew: !seen,
       lastSeenTag: lastSeenTag || null,
       releases: [release],
     };
