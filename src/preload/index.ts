@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld("appilot", {
       language?: string,
       includeShas?: string[],
       appVersion?: string,
+      includedChanges?: string[],
     ): Promise<any> =>
       ipcRenderer.invoke(
         "release:get",
@@ -93,6 +94,7 @@ contextBridge.exposeInMainWorld("appilot", {
         language,
         includeShas,
         appVersion,
+        includedChanges,
       ),
     onGenerateProgress: (callback: (progress: any) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);

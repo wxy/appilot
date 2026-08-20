@@ -1422,57 +1422,64 @@ function HistoryViewer({ draft }: { draft: any }) {
 
         {loc && (
           <>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
+              <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
+                应用信息
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <FieldHeader label="软件名称" text={loc.name || ""} />
+                  <input value={loc.name || ""} readOnly className={inputLineClass} />
+                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                    {(loc.name || "").length}/30 字符
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <FieldHeader label="软件副标题" text={loc.subtitle || ""} />
+                  <input value={loc.subtitle || ""} readOnly className={inputLineClass} />
+                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                    {(loc.subtitle || "").length}/30 字符
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
+              <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
+                软件版本信息
+              </p>
               <div className="space-y-1.5">
-                <FieldHeader label="软件名称" text={loc.name || ""} />
-                <input value={loc.name || ""} readOnly className={inputLineClass} />
+                <FieldHeader label="推广文本" text={loc.promotionalText || ""} />
+                <input value={loc.promotionalText || ""} readOnly className={inputLineClass} />
                 <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                  {(loc.name || "").length}/30 字符
+                  {(loc.promotionalText || "").length}/170 字符
                 </p>
               </div>
               <div className="space-y-1.5">
-                <FieldHeader label="副标题" text={loc.subtitle || ""} />
-                <input value={loc.subtitle || ""} readOnly className={inputLineClass} />
+                <FieldHeader label="软件描述" text={loc.description || ""} />
+                <textarea
+                  value={(loc.description || "").replace(/^──── 介绍 ────\n?/, "")}
+                  readOnly
+                  className={inputClass + " min-h-40 resize-y"}
+                />
                 <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                  {(loc.subtitle || "").length}/30 字符
+                  {(loc.description || "").replace(/^──── 介绍 ────\n?/, "").length}/4000 字符
                 </p>
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <FieldHeader label="推广文本" text={loc.promotionalText || ""} />
-              <input value={loc.promotionalText || ""} readOnly className={inputLineClass} />
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                {(loc.promotionalText || "").length}/170 字符
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <FieldHeader label="关键词" text={loc.keywords || ""} />
-              <input value={loc.keywords || ""} readOnly className={inputLineClass} />
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                {(loc.keywords || "").length}/100 字符
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <FieldHeader label="软件描述" text={loc.description || ""} />
-              <textarea
-                value={(loc.description || "").replace(/^──── 介绍 ────\n?/, "")}
-                readOnly
-                className={inputClass + " min-h-40 resize-y"}
-              />
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                {(loc.description || "").replace(/^──── 介绍 ────\n?/, "").length}/4000 字符
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <FieldHeader label="新增内容" text={loc.whatsNew || ""} />
-              <textarea value={loc.whatsNew || ""} readOnly className={inputClass + " min-h-28 resize-y"} />
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                {(loc.whatsNew || "").length}/4000 字符
-              </p>
+              <div className="space-y-1.5">
+                <FieldHeader label="新增内容" text={loc.whatsNew || ""} />
+                <textarea value={loc.whatsNew || ""} readOnly className={inputClass + " min-h-28 resize-y"} />
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                  {(loc.whatsNew || "").length}/4000 字符
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <FieldHeader label="关键词（提交字段）" text={loc.keywords || ""} />
+                <input value={loc.keywords || ""} readOnly className={inputLineClass} />
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                  {(loc.keywords || "").length}/100 字符
+                </p>
+              </div>
             </div>
           </>
         )}
@@ -1778,6 +1785,9 @@ function ReleasePage() {
             )
           : undefined,
         (draft?.appVersion || pendingVersion) || undefined,
+        summaryItems
+          .filter((item) => summaryChecked.has(item.id))
+          .map((item) => item.title),
       );
       setActive(next);
       setStep(2);
@@ -2246,86 +2256,96 @@ function ReleasePage() {
                   </div>
                   {activeLocalization && (
                     <>
-                      <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
+                        <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
+                          应用信息
+                        </p>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <FieldHeader label="软件名称" text={activeLocalization.name || ""} />
+                            <input
+                              value={activeLocalization.name || ""}
+                              onChange={(e) => updateLocalizationField("name", e.target.value)}
+                              disabled={isReadOnly}
+                              className={inputLineClass}
+                            />
+                            <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
+                              建议：名称后加冒号和描述性短句（如 GloWalk: Path of Light）
+                            </p>
+                            <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                              {(activeLocalization.name || "").length}/30 字符
+                            </p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <FieldHeader label="软件副标题" text={activeLocalization.subtitle || ""} />
+                            <input
+                              value={activeLocalization.subtitle || ""}
+                              onChange={(e) => updateLocalizationField("subtitle", e.target.value)}
+                              disabled={isReadOnly}
+                              className={inputLineClass}
+                            />
+                            <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                              {(activeLocalization.subtitle || "").length}/30 字符
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
+                        <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
+                          软件版本信息
+                        </p>
                         <div className="space-y-1.5">
-                          <FieldHeader label="软件名称" text={activeLocalization.name || ""} />
+                          <FieldHeader label="推广文本" text={activeLocalization.promotionalText} />
                           <input
-                            value={activeLocalization.name || ""}
-                            onChange={(e) => updateLocalizationField("name", e.target.value)}
+                            value={activeLocalization.promotionalText}
+                            onChange={(e) => updateLocalizationField("promotionalText", e.target.value)}
                             disabled={isReadOnly}
                             className={inputLineClass}
                           />
-                          <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
-                            建议：名称后加冒号和描述性短句（如 GloWalk: Path of Light）
-                          </p>
                           <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                            {(activeLocalization.name || "").length}/30 字符
+                            {activeLocalization.promotionalText.length}/170 字符
                           </p>
                         </div>
+
                         <div className="space-y-1.5">
-                          <FieldHeader label="副标题" text={activeLocalization.subtitle || ""} />
+                          <FieldHeader label="软件描述" text={activeLocalization.description} />
+                          <textarea
+                            value={activeLocalization.description}
+                            onChange={(e) => updateLocalizationField("description", e.target.value)}
+                            disabled={isReadOnly}
+                            className={inputClass + " min-h-40 resize-y"}
+                          />
+                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                            {activeLocalization.description.length}/4000 字符
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <FieldHeader label="新增内容" text={activeLocalization.whatsNew} />
+                          <textarea
+                            value={activeLocalization.whatsNew}
+                            onChange={(e) => updateLocalizationField("whatsNew", e.target.value)}
+                            disabled={isReadOnly}
+                            className={inputClass + " min-h-28 resize-y"}
+                          />
+                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                            {activeLocalization.whatsNew.length}/4000 字符
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <FieldHeader label="关键词（提交字段）" text={activeLocalization.keywords} />
                           <input
-                            value={activeLocalization.subtitle || ""}
-                            onChange={(e) => updateLocalizationField("subtitle", e.target.value)}
+                            value={activeLocalization.keywords}
+                            onChange={(e) => updateLocalizationField("keywords", e.target.value)}
                             disabled={isReadOnly}
                             className={inputLineClass}
                           />
                           <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                            {(activeLocalization.subtitle || "").length}/30 字符
+                            {activeLocalization.keywords.length}/100 字符
                           </p>
                         </div>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <FieldHeader label="推广文本" text={activeLocalization.promotionalText} />
-                        <input
-                          value={activeLocalization.promotionalText}
-                          onChange={(e) => updateLocalizationField("promotionalText", e.target.value)}
-                          disabled={isReadOnly}
-                          className={inputLineClass}
-                        />
-                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                          {activeLocalization.promotionalText.length}/170 字符
-                        </p>
-                      </div>
-
-                      <div className="space-y-1.5">
-                <FieldHeader label="商店关键词（提交字段）" text={activeLocalization.keywords} />
-                        <input
-                          value={activeLocalization.keywords}
-                          onChange={(e) => updateLocalizationField("keywords", e.target.value)}
-                          disabled={isReadOnly}
-                          className={inputLineClass}
-                        />
-                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                          {activeLocalization.keywords.length}/100 字符
-                        </p>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <FieldHeader label="软件描述" text={activeLocalization.description} />
-                        <textarea
-                          value={activeLocalization.description}
-                          onChange={(e) => updateLocalizationField("description", e.target.value)}
-                          disabled={isReadOnly}
-                          className={inputClass + " min-h-40 resize-y"}
-                        />
-                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                          {activeLocalization.description.length}/4000 字符
-                        </p>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <FieldHeader label="新增内容" text={activeLocalization.whatsNew} />
-                        <textarea
-                          value={activeLocalization.whatsNew}
-                          onChange={(e) => updateLocalizationField("whatsNew", e.target.value)}
-                          disabled={isReadOnly}
-                          className={inputClass + " min-h-28 resize-y"}
-                        />
-                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                          {activeLocalization.whatsNew.length}/4000 字符
-                        </p>
                       </div>
                     </>
                   )}

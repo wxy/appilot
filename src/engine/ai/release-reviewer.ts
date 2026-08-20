@@ -118,6 +118,7 @@ export async function generateStoreSubmissionContent(
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
+    includedChanges?: string[];
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
@@ -262,6 +263,7 @@ async function generateLocalizedStoreCopy(
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
+    includedChanges?: string[];
   },
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
@@ -289,8 +291,9 @@ async function generateLocalizedStoreCopy(
         "- `subtitle`: a compact tagline (≤30 characters) that complements the name and adds searchable terms.",
         "- `keywords`: cover terms NOT already in the name or subtitle (Apple indexes those automatically); prioritize tracked keywords, current rankings, and release features. Total ≤100 characters.",
         "Base the description on the current app description/README context, not only the release announcement.",
-        "Use the release body primarily for whatsNew.",
-        "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
+        context.includedChanges?.length
+          ? "whatsNew 必须严格只包含本次确认的变更项，不得添加未列出的内容，也不得加版本标题。"
+          : "Use the release body primarily for whatsNew. For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
         "Keep promotionalText ≤170 characters, keywords ≤100 characters, and description/whatsNew ≤4000 characters.",
       ].join("\n"),
     },
@@ -319,6 +322,9 @@ async function generateLocalizedStoreCopy(
           .join(", ") || "N/A"}`,
         `Release tag: ${context.release.tag}`,
         `Release name: ${context.release.name || context.release.tag}`,
+        ...(context.includedChanges?.length
+          ? ["Confirmed changes for this release (whatsNew must ONLY cover these):", ...context.includedChanges.map((change) => `- ${change}`)]
+          : []),
         `Release body:\n${context.release.body || "N/A"}`,
         context.reviewFeedback
           ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`

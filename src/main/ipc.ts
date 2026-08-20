@@ -304,6 +304,7 @@ async function generateStoreSubmissionDraft(
   sourceLanguage?: string,
   appVersionOverride?: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  includedChanges?: string[],
 ): Promise<StoreSubmissionDraft> {
   const { AIProvider } = await import("../engine/ai/ai-provider");
   const { generateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
@@ -380,6 +381,7 @@ async function generateStoreSubmissionDraft(
       previousDescription,
       previousLocalization,
       profile,
+      includedChanges,
     },
     onProgress,
     onChars,
@@ -1471,6 +1473,7 @@ export function registerIpcHandlers() {
       language?: string,
       includeShas?: string[],
       appVersion?: string,
+      includedChanges?: string[],
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -1536,6 +1539,7 @@ export function registerIpcHandlers() {
               _event.sender.send("release:generateProgress", { kind: "chars", ...received });
             }
           },
+          includedChanges,
         );
         // Remember the tag (+ its commit) we generated for: name@sha identity
         // so a moved tag redefines the boundary and triggers regeneration.
