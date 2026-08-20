@@ -7,6 +7,7 @@
 
 import type { RepoAnalyzer, RepoSummary, FeatureHighlight } from "../repo-analyzer";
 import type { AIProvider, ChatMessage } from "./ai-provider";
+import { requestText } from "./ai-request";
 import { buildContext, type UserPreferences } from "./context-builder";
 import { log } from "../logger";
 
@@ -135,7 +136,11 @@ export class AIEngine {
       { role: "user", content: stagePrompt },
     ];
 
-    const raw = await this.provider.chat(messages, { temperature: 0.8, maxTokens: 300 });
+    const raw = await requestText(this.provider, messages, {
+      temperature: 0.8,
+      maxTokens: 500,
+      thinking: "disabled",
+    });
 
     // 5. Post-process
     return this.parseTweet(raw);
@@ -174,7 +179,11 @@ export class AIEngine {
       { role: "user", content: this.buildAnalysisPrompt(summary) },
     ];
 
-    const raw = await this.provider.chat(messages, { temperature: 0.3, maxTokens: 400 });
+    const raw = await requestText(this.provider, messages, {
+      temperature: 0.3,
+      maxTokens: 800,
+      thinking: "disabled",
+    });
     return parseAnalysisResponse(raw);
   }
 

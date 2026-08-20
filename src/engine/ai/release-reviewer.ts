@@ -1,6 +1,7 @@
 import type { AIProvider, ChatMessage } from "./ai-provider";
 import type { ReleaseInfo } from "../release-watcher";
 import type { StoreSubmissionContent, StoreSubmissionLocalization } from "../store-submission";
+import { requestJson } from "./ai-request";
 import { EngineError } from "../errors";
 import { log } from "../logger";
 
@@ -9,54 +10,6 @@ export interface ReleaseReview {
   descriptionSuggestions: string[];
   keywordSuggestions: string[];
   promotionAngles: string[];
-}
-
-function parseJson(raw: string): any {
-  let s = raw.trim();
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) s = fence[1].trim();
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start >= 0 && end > start) s = s.slice(start, end + 1);
-  const candidates = [
-    s,
-    s.replace(/,\s*([}\]])/g, "$1"),
-    s.replace(/}\s*{/g, "},{"),
-  ];
-  let lastError: any = null;
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError || new Error("JSON parse failed");
-}
-
-async function parseJsonWithRepair(provider: AIProvider, raw: string): Promise<any> {
-  try {
-    return parseJson(raw);
-  } catch {
-    const repaired = await provider.chat(
-      [
-        {
-          role: "user",
-          content: [
-            "The following response was supposed to be a single JSON object, but it could not be parsed.",
-            "Return ONLY the corrected JSON object. Do not wrap it in markdown. Do not add commentary.",
-            raw,
-          ].join("\n\n"),
-        },
-      ],
-      {
-        temperature: 0,
-        maxTokens: 8000,
-        thinking: "disabled",
-      },
-    );
-    return parseJson(repaired);
-  }
 }
 
 /** Normalize + clamp an AI-generated localization into the store field limits. */
@@ -120,30 +73,24 @@ export async function reviewRelease(
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.4,
-    maxTokens: 1800,
+    maxTokens: 8000,
     thinking: "low",
   });
 
-  try {
-    const data = await parseJsonWithRepair(provider, raw);
-    return {
-      summary: String(data.summary || "").trim(),
-      descriptionSuggestions: Array.isArray(data.descriptionSuggestions)
-        ? data.descriptionSuggestions.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
-        : [],
-      keywordSuggestions: Array.isArray(data.keywordSuggestions)
-        ? data.keywordSuggestions.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 12)
-        : [],
-      promotionAngles: Array.isArray(data.promotionAngles)
-        ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
-        : [],
-    };
-  } catch (err: any) {
-    log.warn(`Release review JSON parse failed: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
-    throw new EngineError("AI 无法解析 Release 审核结果，请重试。", "AI_EMPTY_RESPONSE");
-  }
+  return {
+    summary: String(data.summary || "").trim(),
+    descriptionSuggestions: Array.isArray(data.descriptionSuggestions)
+      ? data.descriptionSuggestions.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
+      : [],
+    keywordSuggestions: Array.isArray(data.keywordSuggestions)
+      ? data.keywordSuggestions.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 12)
+      : [],
+    promotionAngles: Array.isArray(data.promotionAngles)
+      ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
+      : [],
+  };
 }
 
 export async function generateStoreSubmissionContent(
@@ -279,25 +226,18 @@ async function generateGlobalReleasePlan(
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.4,
-    maxTokens: 2000,
+    maxTokens: 8000,
     thinking: "disabled",
   });
 
-  try {
-    const data = await parseJsonWithRepair(provider, raw);
-
-    return {
-      summary: String(data.summary || "").trim(),
-      promotionAngles: Array.isArray(data.promotionAngles)
-        ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
-        : [],
-    };
-  } catch (err: any) {
-    log.warn(`Global release plan JSON parse failed: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
-    throw new EngineError("AI 无法解析发布计划，请重试。", "AI_EMPTY_RESPONSE");
-  }
+  return {
+    summary: String(data.summary || "").trim(),
+    promotionAngles: Array.isArray(data.promotionAngles)
+      ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
+      : [],
+  };
 }
 
 async function generateLocalizedStoreCopy(
@@ -376,17 +316,16 @@ async function generateLocalizedStoreCopy(
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.4,
-    maxTokens: 8000,
+    maxTokens: 32000,
     thinking: "disabled",
   });
 
   try {
-    const data = await parseJsonWithRepair(provider, raw);
     return normalizeLocalizedStoreCopy(data, language, context.name);
   } catch (err: any) {
-    log.warn(`Localized store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
+    log.warn(`Localized store copy generation failed for ${language}: ${err.message}`);
     throw new EngineError(`AI 无法解析 ${language} 的商店文案，请重试。`, "AI_EMPTY_RESPONSE");
   }
 }
@@ -448,17 +387,16 @@ async function generateTranslatedStoreCopy(
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.3,
-    maxTokens: 8000,
+    maxTokens: 16000,
     thinking: "disabled",
   });
 
   try {
-    const data = await parseJsonWithRepair(provider, raw);
     return normalizeLocalizedStoreCopy(data, language, primary.name || context.name);
   } catch (err: any) {
-    log.warn(`Translated store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
+    log.warn(`Translated store copy generation failed for ${language}: ${err.message}`);
     throw new EngineError(`AI 无法解析 ${language} 的翻译文案，请重试。`, "AI_EMPTY_RESPONSE");
   }
 }
@@ -520,17 +458,16 @@ async function reviseLocalizedStoreCopy(
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.3,
-    maxTokens: 8000,
+    maxTokens: 16000,
     thinking: "disabled",
   });
 
   try {
-    const data = await parseJsonWithRepair(provider, raw);
     return normalizeLocalizedStoreCopy(data, language, base.name || context.name);
   } catch (err: any) {
-    log.warn(`Revised store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
+    log.warn(`Revised store copy generation failed for ${language}: ${err.message}`);
     throw new EngineError(`AI 无法解析 ${language} 的修订文案，请重试。`, "AI_EMPTY_RESPONSE");
   }
 }
