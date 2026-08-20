@@ -214,6 +214,31 @@ function findStoreSubmissionDraft(
   ) || null;
 }
 
+/** Build the stable project-profile context block shared by AI tasks. */
+async function buildProjectProfileFor(
+  project: any,
+  product: any,
+  subtitle?: string,
+  description?: string,
+) {
+  const [{ buildProjectProfile }, { readRepoDescription }] = await Promise.all([
+    import("../engine/project-profile"),
+    import("../engine/app-store-discovery"),
+  ]);
+  const drafts = getStoreSubmissionDrafts(project)
+    .filter((item: any) => item.productId === product.id)
+    .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  return buildProjectProfile({
+    name: product.trackName || project.name,
+    subtitle: subtitle ?? drafts[0]?.localizations?.[0]?.subtitle ?? null,
+    platform: product.platform || null,
+    supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
+    description: description ?? readRepoDescription(project.localPath),
+    storeLinks: product.storeLinks || [],
+    trackedKeywords: product.trackedKeywords || [],
+  });
+}
+
 function submissionReferenceFor(product: any, project: any, language: string) {
   const drafts = getStoreSubmissionDrafts(project)
     .filter((draft) => draft.productId === product.id)
@@ -312,6 +337,7 @@ async function generateStoreSubmissionDraft(
     bytes: previousDescription.length || 0,
   });
 
+  const profile = await buildProjectProfileFor(project, product, undefined, description);
   const content = await generateStoreSubmissionContent(
     provider,
     {
@@ -326,6 +352,7 @@ async function generateStoreSubmissionDraft(
       baseLocalization: existingDraft?.localizations?.[0],
       previousDescription,
       previousLocalization,
+      profile,
     },
     onProgress,
   );
@@ -869,12 +896,14 @@ export function registerIpcHandlers() {
     const { readRepoDescription } = await import("../engine/app-store-discovery");
 
     const description = readRepoDescription(context.project.localPath);
+    const profile = await buildProjectProfileFor(context.project, context.product);
     const result = await generateKeywords(provider, {
       name: context.product.trackName || context.project.name,
       description,
       productType: context.product.platform || "unknown",
       language,
       uiLanguage: "zh-Hans",
+      profile,
     }, (received) => {
       if (!_event.sender.isDestroyed()) {
         _event.sender.send("projects:keywordProgress", {
@@ -928,6 +957,7 @@ export function registerIpcHandlers() {
     const removedKeywords = (product.removedKeywords || [])
       .filter((item: any) => item.language === language)
       .map((item: any) => item.keyword);
+    const profile = await buildProjectProfileFor(project, product, loc?.subtitle || "");
 
     return curateKeywords(provider, {
       name: product.trackName || project.name,
@@ -938,6 +968,7 @@ export function registerIpcHandlers() {
       existingKeywords,
       submissionKeywords,
       removedKeywords,
+      profile,
     }, (received) => {
       if (!_event.sender.isDestroyed()) {
         _event.sender.send("projects:keywordProgress", {
@@ -1539,6 +1570,7 @@ export function registerIpcHandlers() {
         bytes: description.length || 0,
       });
 
+      const profile = await buildProjectProfileFor(project, product, undefined, description);
       const translations = await translateStoreSubmissionContent(
         provider,
         {
@@ -1549,6 +1581,7 @@ export function registerIpcHandlers() {
           recentRankings,
           release,
           reviewFeedback: draft.reviewFeedback || "",
+          profile,
         },
         source,
         targetLanguages,

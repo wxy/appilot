@@ -7,6 +7,8 @@
 
 import type { AIProvider, ChatMessage } from "./ai-provider";
 import { parseJsonObject, requestJson, MAX_OUTPUT_TOKENS } from "./ai-request";
+import type { ProjectProfile } from "../project-profile";
+import { profileToPromptBlock } from "../project-profile";
 import { log } from "../logger";
 
 export interface KeywordSuggestion {
@@ -53,6 +55,7 @@ export async function generateKeywords(
     submissionKeywords?: string[];
     existingKeywords?: { keyword: string }[];
     removedKeywords?: string[];
+    profile?: ProjectProfile;
   },
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<KeywordGeneration> {
@@ -72,10 +75,14 @@ export async function generateKeywords(
     {
       role: "user",
       content: [
-        `App name: ${context.name}`,
-        `App subtitle: ${context.subtitle || "N/A"}`,
-        `Platform: ${context.productType}`,
-        `Description: ${context.description || "N/A"}`,
+        ...(context.profile
+          ? [profileToPromptBlock(context.profile), ""]
+          : [
+              `App name: ${context.name}`,
+              `App subtitle: ${context.subtitle || "N/A"}`,
+              `Platform: ${context.productType}`,
+              `Description: ${context.description || "N/A"}`,
+            ]),
         `Submission keywords: ${(context.submissionKeywords || []).join(", ") || "N/A"}`,
         `Existing tracked keywords (do not repeat): ${(context.existingKeywords || [])
           .map((item) => item.keyword)
@@ -154,6 +161,7 @@ export async function curateKeywords(
     existingKeywords: { keyword: string; language: string; bestRank: number | null; lastSeenAt: string | null; status: string }[];
     submissionKeywords: string[];
     removedKeywords: string[];
+    profile?: ProjectProfile;
   },
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<KeywordCuration> {
@@ -171,11 +179,15 @@ export async function curateKeywords(
     {
       role: "user",
       content: [
-        `App name: ${context.name}`,
-        `App subtitle: ${context.subtitle || "N/A"}`,
+        ...(context.profile
+          ? [profileToPromptBlock(context.profile), ""]
+          : [
+              `App name: ${context.name}`,
+              `App subtitle: ${context.subtitle || "N/A"}`,
+              `Description: ${context.description || "N/A"}`,
+            ]),
         `Target localization: ${context.language}`,
         `UI language (write rationale in this language): ${context.uiLanguage}`,
-        `Description: ${context.description || "N/A"}`,
         `Submission keywords: ${context.submissionKeywords.join(", ") || "N/A"}`,
         `Existing tracked keywords (keyword|bestRank|lastSeenAt|status):\n${context.existingKeywords
           .map((k) => `${k.keyword}|${k.bestRank ?? "—"}|${k.lastSeenAt ?? "—"}|${k.status}`)

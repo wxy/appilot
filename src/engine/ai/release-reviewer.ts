@@ -2,6 +2,8 @@ import type { AIProvider, ChatMessage } from "./ai-provider";
 import type { ReleaseInfo } from "../release-watcher";
 import type { StoreSubmissionContent, StoreSubmissionLocalization } from "../store-submission";
 import { requestJson } from "./ai-request";
+import type { ProjectProfile } from "../project-profile";
+import { profileToPromptBlock } from "../project-profile";
 import { EngineError } from "../errors";
 import { log } from "../logger";
 
@@ -10,6 +12,13 @@ export interface ReleaseReview {
   descriptionSuggestions: string[];
   keywordSuggestions: string[];
   promotionAngles: string[];
+}
+
+/** Prefix a user-message line list with the stable project profile when present. */
+function withProfile(lines: string[], profile?: ProjectProfile): string {
+  return profile
+    ? [profileToPromptBlock(profile), "", ...lines].join("\n")
+    : lines.join("\n");
 }
 
 /** Normalize + clamp an AI-generated localization into the store field limits. */
@@ -44,6 +53,7 @@ export async function reviewRelease(
     keywords: string[];
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
+    profile?: ProjectProfile;
   },
 ): Promise<ReleaseReview> {
   const messages: ChatMessage[] = [
@@ -58,7 +68,7 @@ export async function reviewRelease(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `App name: ${context.name}`,
         `Current description: ${context.description || "N/A"}`,
         `Tracked keywords: ${context.keywords.join(", ") || "N/A"}`,
@@ -69,7 +79,7 @@ export async function reviewRelease(
         `Release name: ${context.release.name || context.release.tag}`,
         `Published at: ${context.release.publishedAt}`,
         `Release body:\n${context.release.body || "N/A"}`,
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
@@ -107,6 +117,7 @@ export async function generateStoreSubmissionContent(
     baseLocalization?: StoreSubmissionLocalization;
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
+    profile?: ProjectProfile;
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
 ): Promise<StoreSubmissionContent> {
@@ -151,6 +162,7 @@ export async function translateStoreSubmissionContent(
     reviewFeedback?: string;
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
+    profile?: ProjectProfile;
   },
   source: StoreSubmissionLocalization,
   targetLanguages: string[],
@@ -181,6 +193,7 @@ async function generateGlobalReleasePlan(
     reviewFeedback?: string;
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
+    profile?: ProjectProfile;
   },
 ): Promise<{
   summary: string;
@@ -205,7 +218,7 @@ async function generateGlobalReleasePlan(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `App name: ${context.name}`,
         `Current description: ${context.description || "N/A"}`,
         `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
@@ -222,7 +235,7 @@ async function generateGlobalReleasePlan(
         context.reviewFeedback
           ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
           : "",
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
@@ -252,6 +265,7 @@ async function generateLocalizedStoreCopy(
     reviewFeedback?: string;
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
+    profile?: ProjectProfile;
   },
   language: string,
 ): Promise<StoreSubmissionLocalization> {
@@ -285,7 +299,7 @@ async function generateLocalizedStoreCopy(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `Language: ${language}`,
         `App name: ${context.name}`,
         `Current description/README: ${context.description || "N/A"}`,
@@ -312,7 +326,7 @@ async function generateLocalizedStoreCopy(
         context.reviewFeedback
           ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
           : "",
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
@@ -340,6 +354,7 @@ async function generateTranslatedStoreCopy(
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
     reviewFeedback?: string;
+    profile?: ProjectProfile;
   },
   primary: StoreSubmissionLocalization,
   language: string,
@@ -370,7 +385,7 @@ async function generateTranslatedStoreCopy(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `Source language: ${primary.language}`,
         `Target language: ${language}`,
         `App name: ${context.name}`,
@@ -383,7 +398,7 @@ async function generateTranslatedStoreCopy(
         context.reviewFeedback
           ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
           : "",
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
@@ -411,6 +426,7 @@ async function reviseLocalizedStoreCopy(
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
     reviewFeedback?: string;
+    profile?: ProjectProfile;
   },
   language: string,
   base: StoreSubmissionLocalization,
@@ -441,7 +457,7 @@ async function reviseLocalizedStoreCopy(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `Language: ${language}`,
         `App name: ${context.name}`,
         `Existing name:\n${base.name}`,
@@ -454,7 +470,7 @@ async function reviseLocalizedStoreCopy(
           ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
           : "",
         `Release body:\n${context.release.body || "N/A"}`,
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
