@@ -114,7 +114,6 @@ export class AIProvider {
             let chars = 0;
             let lastPhase: "reasoning" | "content" | null = null;
             for await (const chunk of stream) {
-              lastChunkAt = Date.now();
               const delta = chunk?.choices?.[0]?.delta;
               // DeepSeek streams reasoning separately from content; count both
               // so the UI shows live progress while the model is thinking.
@@ -123,6 +122,9 @@ export class AIProvider {
                 : typeof delta?.reasoning_content === "string" ? delta.reasoning_content
                 : null;
               if (deltaText && deltaText.length > 0) {
+                // Only actual text data resets the idle timer; empty keep-alive
+                // chunks must not defeat the stall detection.
+                lastChunkAt = Date.now();
                 if (typeof delta?.content === "string" && delta.content.length > 0) {
                   content = (content || "") + delta.content;
                   lastPhase = "content";
