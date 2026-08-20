@@ -1147,7 +1147,7 @@ function OverviewPage() {
         ) : (
           <>
             <p className="flex-1 min-w-0 text-sm text-zinc-400 dark:text-zinc-500 truncate">
-              暂无待处理发布（分支合入主分支后自动发现素材）
+              暂无待处理发布（创建新 tag / 发布后自动发现素材）
             </p>
             <Link to="/release" className={btnSmSecondary}>
               去发布页
@@ -1754,7 +1754,7 @@ function ReleasePage() {
         <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">发布工作台</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            分支合入主分支后的提交与 PR 素材，由你确认后再生成 App Store 提交文案。
+            新 tag 以来的提交与 PR 素材，由你确认后再生成 App Store 提交文案。
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1790,7 +1790,7 @@ function ReleasePage() {
       )}
 
       {releases.length === 0 ? (
-        <EmptyState title="尚未检测到新的发布" desc="分支合入主分支后，这里会自动生成发布文案素材。" />
+        <EmptyState title="尚未检测到新的发布" desc="创建新 tag（GitHub 发布会自动打 tag）并同步后，这里会自动生成发布文案素材。" />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0">

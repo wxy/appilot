@@ -1,5 +1,5 @@
 /**
- * Release material (boundary + branch-merge signal) integration tests
+ * Release material (new-tag signal) integration tests
  * Run: npm test (tsx tests/release-material.test.ts)
  */
 
@@ -8,6 +8,7 @@ import os from "os";
 import path from "path";
 import { execFileSync } from "child_process";
 import {
+  listGitTags,
   collectReleaseMaterial,
   checkForRelease,
 } from "../src/engine/release-watcher";
@@ -33,53 +34,57 @@ function setupRepo(): string {
   run(dir, ["init", "-q"]);
   run(dir, ["config", "user.email", "test@example.com"]);
   run(dir, ["config", "user.name", "Test"]);
-  commit(dir, "a.txt", "chore: initial commit");
+  commit(dir, "a.txt", "chore: initial");
+  commit(dir, "b.txt", "feat: walk (#1)");
+  run(dir, ["tag", "v1.0.0"]);
+  commit(dir, "c.txt", "feat: night walk support (#2)");
+  commit(dir, "d.txt", "fix: map loading (#3)");
+  run(dir, ["tag", "-a", "v1.1.0", "-m", "v1.1.0 release"]);
+  commit(dir, "e.txt", "chore: post-tag work");
   return dir;
 }
 
 async function runTests() {
   const dir = setupRepo();
   try {
-    const first = await checkForRelease(dir, null);
-    assert(first.latest?.source === "git-commits", "first run: source is git-commits");
+    const tags = await listGitTags(dir);
+    assert(tags.length === 2 && tags[0].name === "v1.1.0" && tags[1].name === "v1.0.0", "listGitTags: newest first");
+
+    const between = await collectReleaseMaterial(dir, "v1.0.0", "v1.1.0");
+    assert(between.commits.length === 2, "collectReleaseMaterial: commits between tags");
     assert(
-      (first.latest?.body || "").includes("no merge detected"),
-      "first run: no merge signal yet",
+      between.commits.every((c) => !c.subject.includes("chore: initial")),
+      "collectReleaseMaterial: excludes pre-previous-tag commits",
     );
-    const boundary = first.latest?.commitSha || null;
-    assert(typeof boundary === "string" && boundary.length > 0, "first run: boundary captured");
+    assert(between.pullRequests.some((pr) => pr.number === 2), "collectReleaseMaterial: PR ref extracted");
 
-    // Direct commit on main only → NOT a release candidate.
-    commit(dir, "b.txt", "fix: typo");
-    const directOnly = await checkForRelease(dir, boundary);
-    assert(directOnly.latest === null && directOnly.releases.length === 0, "direct commit alone: no release");
+    const first = await collectReleaseMaterial(dir, null, "v1.0.0");
+    assert(first.commits.length === 2, "collectReleaseMaterial: first tag covers history up to it");
 
-    // Merge a feature branch (--no-ff) → release candidate with merge material.
-    run(dir, ["checkout", "-q", "-b", "feature"]);
-    commit(dir, "c.txt", "feat: night walk support (#2)");
-    run(dir, ["checkout", "-q", "-"]);
-    run(dir, ["merge", "--no-ff", "feature", "-m", "Merge branch 'feature'"]);
-
-    const merged = await checkForRelease(dir, boundary);
-    const mergedBody = merged.latest?.body || "";
-    assert(merged.latest !== null, "merge: candidate created");
-    assert(merged.isNew === true, "merge: new release");
-    assert(mergedBody.includes("Merged into main"), "merge: body labels merged commits");
-    assert(mergedBody.includes("feat: night walk support (#2)"), "merge: feature commit in material");
-    assert(mergedBody.includes("Direct commits on the main line (excluded): 1"), "merge: direct commit excluded");
-    assert(mergedBody.includes("#2"), "merge: PR ref listed in body");
-
-    // Squash-style commit (single parent + PR ref) also counts as merge-like.
-    commit(dir, "d.txt", "feat: dark mode (#3)");
-    const squash = await checkForRelease(dir, boundary);
-    const squashBody = squash.latest?.body || "";
-    assert(squashBody.includes("feat: dark mode (#3)"), "squash-style: PR-referenced commit counted");
-
-    const material = await collectReleaseMaterial(dir, boundary);
-    assert(material.commits.some((c) => c.parents >= 2), "collectReleaseMaterial: merge parents detected");
+    const result = await checkForRelease(dir, null);
+    assert(result.latest?.tag === "v1.1.0", "checkForRelease: newest tag wins");
+    assert(result.latest?.source === "git-tag", "checkForRelease: source is git-tag");
+    const body = result.latest?.body || "";
+    assert(body.includes("since the previous release (v1.0.0)"), "checkForRelease: boundary wording");
     assert(
-      material.mergeCommits.length >= 2,
-      "collectReleaseMaterial: merge-like filtering (merge commit + PR commit)",
+      body.includes("feat: night walk support (#2)") &&
+        body.includes("fix: map loading (#3)") &&
+        !body.includes("chore: initial") &&
+        !body.includes("post-tag work"),
+      "checkForRelease: material exactly between tags",
+    );
+    assert(result.isNew === true, "checkForRelease: unseen tag is new");
+    assert((await checkForRelease(dir, "v1.1.0")).isNew === false, "checkForRelease: same tag not new");
+    assert((await checkForRelease(dir, "v1.0.0")).isNew === true, "checkForRelease: older seen tag still new");
+
+    // A new tag after more commits becomes the next release candidate.
+    run(dir, ["tag", "v1.2.0"]);
+    const next = await checkForRelease(dir, "v1.1.0");
+    const nextBody = next.latest?.body || "";
+    assert(next.latest?.tag === "v1.2.0", "checkForRelease: latest tag after new tag");
+    assert(
+      nextBody.includes("post-tag work") && !nextBody.includes("feat: night walk support"),
+      "checkForRelease: next release material since v1.1.0",
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
