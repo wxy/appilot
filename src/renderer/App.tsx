@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { Routes, Route, Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useTheme } from "./stores/theme";
 import { useProject, type RankSnapshot } from "./stores/project";
 import { cn } from "./lib/utils";
@@ -18,6 +16,8 @@ import {
 import { storefrontDisplayName, storefrontsForLanguage } from "../engine/storefronts";
 import { briefRuleSignals } from "./lib/overview-brief";
 import type { BriefSuggestion } from "../engine/ai/overview-brief";
+import { summarizeChanges, CHANGE_TYPE_META } from "./lib/release-summary";
+import type { ChangeSummaryItem } from "./lib/release-summary";
 
 /* ── Layout ── */
 
@@ -607,7 +607,7 @@ function OverviewPage() {
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [releaseOverview, setReleaseOverview] = useState<{
-    draft: { name: string | null; tag: string; publishedAt: string } | null;
+    draft: { name: string | null; tag: string; publishedAt: string; commitCount: number } | null;
     submission: any | null;
   } | null>(null);
   const [chartDays, setChartDays] = useState(OVERVIEW_CHART_DAYS);
@@ -638,6 +638,9 @@ function OverviewPage() {
                   name: latest.name,
                   tag: latest.tag,
                   publishedAt: latest.publishedAt,
+                  commitCount: Array.isArray(latest.material?.commits)
+                    ? latest.material.commits.length
+                    : 0,
                 },
                 submission,
               }
@@ -1146,6 +1149,11 @@ function OverviewPage() {
                 >
                   {releaseDraft.name || releaseDraft.tag}
                 </Link>
+                {releaseDraft.commitCount > 0 && (
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
+                    · {releaseDraft.commitCount} 次提交
+                  </span>
+                )}
                 {submissionDraft && (
                   <StatusChip
                     label={
@@ -1164,7 +1172,7 @@ function OverviewPage() {
                 {storeChip && <StatusChip label={storeChip.label} tone={storeChip.tone} />}
               </div>
               <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                {formatHumanTime(releaseDraft.publishedAt)} 更新 · RELEASE_DRAFT.md
+                {formatHumanTime(releaseDraft.publishedAt)} 更新 · 提交素材
               </p>
             </div>
             <Link
@@ -1177,7 +1185,7 @@ function OverviewPage() {
         ) : (
           <>
             <p className="flex-1 min-w-0 text-sm text-zinc-400 dark:text-zinc-500 truncate">
-              暂无发布草稿（RELEASE_DRAFT.md）
+              暂无待处理发布（有新提交或新 tag 后自动发现素材）
             </p>
             <Link to="/release" className={btnSmSecondary}>
               去发布页
@@ -1206,59 +1214,57 @@ function localizationList(draft: any): any[] {
   ];
 }
 
-function MarkdownView({ text }: { text: string }) {
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div>
-  );
-}
-
 function ReferenceSection({
   title,
   meta,
   checked = false,
   defaultOpen = false,
+  action,
   children,
 }: {
   title: string;
   meta?: string;
   checked?: boolean;
   defaultOpen?: boolean;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left"
-      >
-        <span className="flex items-center gap-2.5 min-w-0">
+      <div className="w-full flex items-center justify-between gap-3 px-5 py-3.5">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-2.5 min-w-0 text-left"
+          title={open ? "折叠" : "展开"}
+        >
           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{title}</span>
           {checked ? <span className="text-xs text-emerald-500 shrink-0">✓</span> : null}
           {meta ? (
             <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{meta}</span>
           ) : null}
+        </button>
+        <span className="flex items-center gap-1.5 shrink-0">
+          {action}
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            className={cn(
+              "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
+              open && "rotate-180",
+            )}
+          >
+            <path
+              d="M4 6l4 4 4-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </span>
-        <svg
-          viewBox="0 0 16 16"
-          fill="none"
-          className={cn(
-            "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
-            open && "rotate-180",
-          )}
-        >
-          <path
-            d="M4 6l4 4 4-4"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
+      </div>
       {open ? <div className="px-5 pb-5">{children}</div> : null}
     </div>
   );
@@ -1372,31 +1378,7 @@ function HistoryPanel({
   );
 }
 
-function CurrentCopyEntry({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left transition-colors",
-        active ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-      )}
-    >
-      <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">当前文案</span>
-      <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{label}</span>
-    </button>
-  );
-}
-
-function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
+function HistoryViewer({ draft }: { draft: any }) {
   const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
   const activeLanguage = localizations.some((item: any) => item.language === language)
@@ -1413,13 +1395,6 @@ function HistoryViewer({ draft, onBack }: { draft: any; onBack: () => void }) {
             {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onBack}
-          className="text-sm text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-        >
-          返回当前文案
-        </button>
       </div>
       <div className="p-6 space-y-6">
         {localizations.length > 1 && (
@@ -1519,6 +1494,10 @@ function ReleasePage() {
   const [checking, setChecking] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<{
+    chars: number;
+    phase: "reasoning" | "content";
+  } | null>(null);
   const [error, setError] = useState("");
   const [activeLanguage, setActiveLanguage] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("");
@@ -1527,6 +1506,20 @@ function ReleasePage() {
   const [historyDraft, setHistoryDraft] = useState<any>(null);
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
+  const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
+  const [pendingVersion, setPendingVersion] = useState("");
+
+  useEffect(() => {
+    const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
+      if (progress?.kind === "chars" && typeof progress.chars === "number") {
+        setGenerationProgress({
+          chars: progress.chars,
+          phase: progress.phase === "content" ? "content" : "reasoning",
+        });
+      }
+    });
+    return () => off?.();
+  }, []);
 
   const loadReleases = async () => {
     if (!project?.id) return;
@@ -1595,10 +1588,6 @@ function ReleasePage() {
   const batchConfirmed = Boolean(draft?.batchConfirmedAt);
   const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
   const selectedProduct = products.find((item) => item.id === productId) || null;
-  const currentReleaseLabel =
-    selectedRelease?.name && selectedRelease.name !== "RELEASE_DRAFT.md"
-      ? selectedRelease.name
-      : formatVersionDate(selectedRelease?.publishedAt) || selectedTag;
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
@@ -1625,6 +1614,112 @@ function ReleasePage() {
     batchConfirmed ||
     (masterConfirmed && activeLocalization?.language === primaryLanguage);
   const busy = generating || loadingDraft;
+  const summaryMaterial = selectedRelease?.material || null;
+  const summaryItems: ChangeSummaryItem[] = summaryMaterial
+    ? summarizeChanges(summaryMaterial)
+    : [];
+  const summaryPrCount = summaryMaterial?.pullRequests?.length ?? 0;
+  const summaryCommitCount = summaryMaterial?.commits?.length ?? 0;
+  const sinceMs = summaryMaterial?.sinceDate
+    ? Date.now() - new Date(summaryMaterial.sinceDate).getTime()
+    : null;
+  const durationLabel =
+    sinceMs != null && sinceMs >= 0
+      ? sinceMs >= 86400000
+        ? `${Math.round(sinceMs / 86400000)} 天`
+        : `${Math.max(1, Math.round(sinceMs / 3600000))} 小时`
+      : "";
+  const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
+  const previousDraft =
+    (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
+  const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
+  const fixedMaterialRows = (() => {
+    const rows: { label: string; meta: string }[] = [];
+    rows.push({
+      label: "README 全文",
+      meta: releaseContext?.readme ? `${releaseContext.readme.length.toLocaleString()} 字符` : "无",
+    });
+    rows.push({
+      label: "产品档案",
+      meta: `${selectedProduct?.trackName || project?.name || ""} · ${platformLabel(selectedProduct?.platform || "unknown")} · ${selectedProduct?.supportedLanguages?.length ?? 0} 语言`,
+    });
+    const historyDrafts = releaseContext?.drafts || [];
+    rows.push({
+      label: "历史文案（含历次发布公告）",
+      meta:
+        historyDrafts.length > 0
+          ? `最近 ${historyDrafts.length} 份${historyDrafts[0]?.appVersion ? `（最新 v${String(historyDrafts[0].appVersion).replace(/^v/i, "")}）` : ""}`
+          : "无",
+    });
+    const activeKeywordCount = (selectedProduct?.trackedKeywords || []).filter(
+      (keyword: any) => keyword.status !== "paused",
+    ).length;
+    rows.push({
+      label: "跟踪关键词与排名",
+      meta: activeKeywordCount > 0 ? `${activeKeywordCount} 个关键词` : "无",
+    });
+    const githubRelease = summaryMaterial?.githubRelease;
+    if (githubRelease) {
+      rows.push({
+        label: "GitHub 发布公告",
+        meta: `${githubRelease.name || "发布正文"}${githubRelease.publishedAt ? ` · ${formatHumanTime(githubRelease.publishedAt)}` : ""}`,
+      });
+    }
+    if (draft?.reviewFeedback) {
+      rows.push({
+        label: "驳回意见",
+        meta: String(draft.reviewFeedback).split("\n")[0].slice(0, 40),
+      });
+    }
+    return rows;
+  })();
+
+  useEffect(() => {
+    const items = selectedRelease?.material ? summarizeChanges(selectedRelease.material) : [];
+    const stored = draft?.summaryChecklist;
+    setSummaryChecked(
+      new Set(stored && stored.length > 0 ? stored : items.map((item) => item.id)),
+    );
+  }, [draft?.id, selectedRelease?.tag]);
+
+  const persistSummaryChecklist = async (ids: string[]) => {
+    const current = active?.draft;
+    if (!current || !project?.id) return;
+    const nextDraft = { ...current, summaryChecklist: ids };
+    setActive((prev: any) => ({ ...prev, draft: nextDraft }));
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, nextDraft);
+      setActive((prev: any) => ({ ...prev, draft: saved }));
+    } catch {
+      // Keep the local state; persistence retries on the next toggle.
+    }
+  };
+
+  const persistCurrentDraft = async () => {
+    const current = active?.draft;
+    if (!current || !project?.id) return;
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, current);
+      setActive((prev: any) => ({ ...prev, draft: saved }));
+    } catch {
+      // Keep the local edit; persistence retries on the next blur.
+    }
+  };
+
+  const toggleSummaryItem = async (id: string) => {
+    const next = new Set(summaryChecked);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSummaryChecked(next);
+    await persistSummaryChecklist([...next]);
+  };
+
+  const setAllSummaryChecked = async (checked: boolean) => {
+    const next = new Set<string>();
+    if (checked) summaryItems.forEach((item) => next.add(item.id));
+    setSummaryChecked(next);
+    await persistSummaryChecklist([...next]);
+  };
 
   useEffect(() => {
     if (!activeLanguage && localizations[0]?.language) {
@@ -1661,6 +1756,7 @@ function ReleasePage() {
     if (!project || !productId || !selectedTag) return;
     if (force) {
       setGenerating(true);
+      setGenerationProgress(null);
     } else {
       setLoadingDraft(true);
     }
@@ -1676,6 +1772,12 @@ function ReleasePage() {
         selectedTag,
         force,
         force ? sourceLanguage : undefined,
+        force
+          ? summaryItems.flatMap((item) =>
+              summaryChecked.has(item.id) ? item.commits.map((commit) => commit.sha) : [],
+            )
+          : undefined,
+        (draft?.appVersion || pendingVersion) || undefined,
       );
       setActive(next);
       setStep(2);
@@ -1721,12 +1823,20 @@ function ReleasePage() {
   };
 
   const handleConfirmMaster = () => {
+    if (!draft?.appVersion?.trim()) {
+      setError("请先填写目标版本后再确定文案。");
+      return;
+    }
     if (!draft?.masterConfirmedAt) {
       void persistConfirm({ masterConfirmedAt: new Date().toISOString() });
     }
   };
 
   const handleConfirmBatch = () => {
+    if (!draft?.appVersion?.trim()) {
+      setError("请先填写目标版本后再确定文案。");
+      return;
+    }
     const now = new Date().toISOString();
     void persistConfirm({
       masterConfirmedAt: draft?.masterConfirmedAt || now,
@@ -1791,7 +1901,7 @@ function ReleasePage() {
         <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">发布工作台</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            读取仓库根目录的 RELEASE_DRAFT.md，由你确认后再生成 App Store 提交文案。
+            自上次生成以来的提交与 PR 素材，由你确认后生成 App Store 提交文案。
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1827,7 +1937,7 @@ function ReleasePage() {
       )}
 
       {releases.length === 0 ? (
-        <EmptyState title="尚未检测到预发布公告" desc="请在仓库根目录创建 RELEASE_DRAFT.md，然后点击检查发布。" />
+        <EmptyState title="尚未检测到新的发布" desc="有新提交或创建新 tag（GitHub 发布会自动打 tag）后，这里会自动生成发布文案素材。" />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0">
@@ -1838,31 +1948,149 @@ function ReleasePage() {
               {selectedRelease && (
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   <ReferenceSection
-                    title="预发布公告"
-                    meta={`更新于 ${formatHumanTime(selectedRelease.publishedAt)}`}
+                    title="变更摘要"
+                    meta={
+                      summaryItems.length > 0
+                        ? `${summaryPrCount} PR · ${summaryCommitCount} 提交${durationLabel ? ` · ${durationLabel}` : ""}`
+                        : "无变更"
+                    }
                     checked={step > 1}
                     defaultOpen
+                    action={
+                      summaryItems.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => void setAllSummaryChecked(checkedCount < summaryItems.length)}
+                          className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+                          title={
+                            checkedCount === summaryItems.length
+                              ? "取消全部选择"
+                              : checkedCount === 0
+                                ? "全部选择"
+                                : "全部确认"
+                          }
+                        >
+                          {checkedCount === summaryItems.length
+                            ? "已全选"
+                            : checkedCount === 0
+                              ? "未选择"
+                              : "全部确认"}
+                        </button>
+                      ) : undefined
+                    }
                   >
-                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-                      {selectedRelease.name || "RELEASE_DRAFT.md"}
-                    </p>
-                    <MarkdownView text={selectedRelease?.body || "没有预发布公告内容"} />
+                    {(previousDraft || latestCodeDate) && (
+                      <div className="mb-2 space-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+                        {previousDraft && (
+                          <p>
+                            上一次文案：{draftVersionLabel(previousDraft)} ·{" "}
+                            {formatHumanTime(previousDraft.updatedAt)} 生成
+                          </p>
+                        )}
+                        {latestCodeDate && <p>最新代码更新：{formatHumanTime(latestCodeDate)}</p>}
+                      </div>
+                    )}
+                    {summaryItems.length === 0 ? (
+                      <p className="text-sm text-zinc-400 dark:text-zinc-500">本次无变更</p>
+                    ) : (
+                      <>
+                        <div className="space-y-1">
+                          {summaryItems.map((item) => {
+                            const included = summaryChecked.has(item.id);
+                            const tone = CHANGE_TYPE_META[item.type].tone;
+                            const latestDate = item.commits[item.commits.length - 1]?.date || "";
+                            const subLine =
+                              item.commits.length > 1
+                                ? `${item.refs.join(" · ")} · ${item.commits.length} 次提交${latestDate ? ` · 最新 ${formatHumanTime(latestDate)}` : ""}`
+                                : `${item.refs.join(" · ")}${latestDate ? ` · ${formatHumanTime(latestDate)}` : ""}`;
+                            return (
+                              <div
+                                key={item.id}
+                                className={cn(
+                                  "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg",
+                                  !included && "opacity-55",
+                                )}
+                              >
+                                <span
+                                  role="checkbox"
+                                  aria-checked={included}
+                                  tabIndex={0}
+                                  onClick={() => void toggleSummaryItem(item.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      void toggleSummaryItem(item.id);
+                                    }
+                                  }}
+                                  title={included ? "从 AI 素材中排除" : "作为 AI 素材提供"}
+                                  className={cn(
+                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors cursor-pointer",
+                                    included
+                                      ? "bg-amber-500 border-amber-500 text-white"
+                                      : "border-zinc-300 dark:border-zinc-600",
+                                  )}
+                                >
+                                  {included ? "✓" : ""}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
+                                    {item.title}
+                                  </span>
+                                  <span
+                                    className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate"
+                                  >
+                                    {subLine}
+                                  </span>
+                                </span>
+                                <span
+                                  className={cn(
+                                    "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
+                                    tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                                    tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                                    tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
+                                    tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+                                  )}
+                                >
+                                  {CHANGE_TYPE_META[item.type].label}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                          以上 {checkedCount}/{summaryItems.length} 项将作为素材提供给 AI；未勾选项不会进入文案生成。
+                        </p>
+                      </>
+                    )}
                   </ReferenceSection>
 
                   {releaseContext && step <= 2 && (
                     <>
-                      <ReferenceSection
-                        title="README"
-                        meta={`更新于 ${formatHumanTime(releaseContext.readmeModifiedAt)}`}
-                        checked={step > 1}
-                      >
-                        <MarkdownView text={releaseContext.readme || "没有 README 内容"} />
+                      <ReferenceSection title="固定素材" meta="始终发送给 AI" defaultOpen>
+                        <ul className="space-y-1.5">
+                          {fixedMaterialRows.map((row) => (
+                            <li
+                              key={row.label}
+                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-zinc-50/60 dark:bg-zinc-800/30"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-xs text-zinc-700 dark:text-zinc-300 truncate">
+                                  {row.label}
+                                </span>
+                                <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                                  {row.meta}
+                                </span>
+                              </span>
+                              <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                始终发送
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                          这些素材无需逐项查看；如需调整素材范围，可在上方变更摘要中取消对应条目。
+                        </p>
                       </ReferenceSection>
-                      <CurrentCopyEntry
-                        label={currentReleaseLabel}
-                        active={!historyDraft}
-                        onClick={() => setHistoryDraft(null)}
-                      />
                       <HistoryPanel
                         drafts={(releaseContext.drafts || []).filter(
                           (item: any) => item.releaseTag !== selectedTag,
@@ -1878,12 +2106,66 @@ function ReleasePage() {
           </aside>
 
           <div className="min-w-0 space-y-6">
+            {selectedRelease && (
+              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm px-5 py-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">文档</span>
+                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                    {historyDraft
+                      ? `历史文案 · ${draftVersionLabel(historyDraft)}`
+                      : `当前文案 · ${draft?.appVersion || "版本待定"}`}
+                  </span>
+                  {!historyDraft && (
+                    <span className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      {masterConfirmed && !batchConfirmed && (
+                        <StatusChip label="母本已确定" tone="amber" />
+                      )}
+                      {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
+                      {draft?.storeStatus && STORE_STATUS_META[draft.storeStatus] && (
+                        <StatusChip
+                          label={STORE_STATUS_META[draft.storeStatus].label}
+                          tone={STORE_STATUS_META[draft.storeStatus].tone}
+                        />
+                      )}
+                      {draft && localizations.length > 0 && (
+                        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                          {localizations.length}/{availableLanguages.length} 语言
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {historyDraft && (
+                  <button type="button" onClick={() => setHistoryDraft(null)} className={btnSmSecondary}>
+                    ← 返回当前文案
+                  </button>
+                )}
+              </div>
+            )}
             {historyDraft ? (
-              <HistoryViewer draft={historyDraft} onBack={() => setHistoryDraft(null)} />
+              <HistoryViewer draft={historyDraft} />
             ) : (
               <>
             {selectedRelease && step === 1 && (
               <>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
+                    目标版本
+                  </span>
+                  <input
+                    value={draft?.appVersion ?? pendingVersion}
+                    onChange={(e) => {
+                      if (draft) updateDraftField("appVersion", e.target.value);
+                      else setPendingVersion(e.target.value);
+                    }}
+                    onBlur={() => void persistCurrentDraft()}
+                    placeholder="如 1.2.6"
+                    className={inputLineClass + " max-w-32"}
+                  />
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                    {draft ? "历史文案将按此版本标识" : "生成文案时将写入此版本"}
+                  </span>
+                </div>
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">语言</p>
                   <div className="flex flex-wrap gap-2">
@@ -1904,9 +2186,19 @@ function ReleasePage() {
                 </div>
 
                 {selectedRelease.draft && !draft && (
-                  <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
-                    {generating ? "生成中..." : "下一步：生成文案"}
-                  </button>
+                  summaryItems.length > 0 ? (
+                    <AIProgressButton
+                      onClick={() => handleLoad(true)}
+                      disabled={busy && !generating}
+                      loading={generating}
+                      progress={generationProgress}
+                      idleLabel="下一步：生成文案"
+                    />
+                  ) : (
+                    <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                      本次无变更，无需生成新文案。
+                    </p>
+                  )
                 )}
 
                 {!selectedRelease.draft && (
@@ -1937,6 +2229,21 @@ function ReleasePage() {
                 </div>
 
                 <div className="p-6 space-y-6">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
+                      目标版本
+                    </span>
+                    <input
+                      value={draft.appVersion || ""}
+                      onChange={(e) => updateDraftField("appVersion", e.target.value)}
+                      onBlur={() => void persistCurrentDraft()}
+                      placeholder="如 1.2.6"
+                      className={inputLineClass + " max-w-32"}
+                    />
+                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                      确定文案前需填写
+                    </span>
+                  </div>
                   {activeLocalization && (
                     <>
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -2108,9 +2415,13 @@ function ReleasePage() {
                     />
                     {!feedbackReadOnly && (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <button onClick={() => handleLoad(true)} disabled={busy} className={btnPrimary}>
-                          {generating ? "重新生成中..." : "重新生成"}
-                        </button>
+                        <AIProgressButton
+                          onClick={() => handleLoad(true)}
+                          disabled={busy && !generating}
+                          loading={generating}
+                          progress={generationProgress}
+                          idleLabel="重新生成"
+                        />
                       </div>
                     )}
                   </FieldBlock>

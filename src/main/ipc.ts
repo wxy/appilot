@@ -214,6 +214,56 @@ function findStoreSubmissionDraft(
   ) || null;
 }
 
+/** Build the stable project-profile context block shared by AI tasks. */
+async function buildProjectProfileFor(
+  project: any,
+  product: any,
+  subtitle?: string,
+  description?: string,
+) {
+  const [{ buildProjectProfile }, { readRepoDescription, readFullReadme }] = await Promise.all([
+    import("../engine/project-profile"),
+    import("../engine/app-store-discovery"),
+  ]);
+  const drafts = getStoreSubmissionDrafts(project)
+    .filter((item: any) => item.productId === product.id)
+    .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const releaseHistory = drafts.map((item: any) => ({
+    tag: String(item.releaseTag || ""),
+    name: item.appVersion ? `v${String(item.appVersion).replace(/^v/i, "")}` : null,
+    summary: String(item.summary || ""),
+    publishedAt: String(item.updatedAt || ""),
+  })).filter((item: any) => item.tag);
+  return buildProjectProfile({
+    name: product.trackName || project.name,
+    subtitle: subtitle ?? drafts[0]?.localizations?.[0]?.subtitle ?? null,
+    platform: product.platform || null,
+    supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
+    description: description ?? readRepoDescription(project.localPath),
+    readme: readFullReadme(project.localPath),
+    storeLinks: product.storeLinks || [],
+    trackedKeywords: product.trackedKeywords || [],
+    releaseHistory,
+  });
+}
+
+/** Minimal release view reconstructed from a saved draft when git no longer
+ *  surfaces the candidate (e.g. material is empty after generation). */
+function synthesizeReleaseFromDraft(draft: any): any {
+  return {
+    id: `draft-release-${draft.releaseTag}`,
+    tag: draft.releaseTag,
+    name: draft.appVersion ? `v${String(draft.appVersion).replace(/^v/i, "")}` : draft.releaseTag,
+    publishedAt: draft.updatedAt || new Date().toISOString(),
+    url: "",
+    body: draft.summary || "",
+    material: null,
+    source: "git-tag",
+    draft: true,
+    commitSha: null,
+  };
+}
+
 function submissionReferenceFor(product: any, project: any, language: string) {
   const drafts = getStoreSubmissionDrafts(project)
     .filter((draft) => draft.productId === product.id)
@@ -252,6 +302,8 @@ async function generateStoreSubmissionDraft(
   existingDraft: StoreSubmissionDraft | null,
   onProgress?: (event: any) => void,
   sourceLanguage?: string,
+  appVersionOverride?: string,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionDraft> {
   const { AIProvider } = await import("../engine/ai/ai-provider");
   const { generateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
@@ -312,6 +364,7 @@ async function generateStoreSubmissionDraft(
     bytes: previousDescription.length || 0,
   });
 
+  const profile = await buildProjectProfileFor(project, product, undefined, description);
   const content = await generateStoreSubmissionContent(
     provider,
     {
@@ -326,17 +379,23 @@ async function generateStoreSubmissionDraft(
       baseLocalization: existingDraft?.localizations?.[0],
       previousDescription,
       previousLocalization,
+      profile,
     },
     onProgress,
+    onChars,
   );
 
-  return createStoreSubmissionDraft({
+  const draft = createStoreSubmissionDraft({
     projectId: project.id,
     productId: product.id,
     release,
     content,
     existing: existingDraft,
   });
+  if (appVersionOverride && appVersionOverride.trim()) {
+    draft.appVersion = appVersionOverride.trim();
+  }
+  return draft;
 }
 
 function sanitizeRankSnapshots(project: any): any {
@@ -869,12 +928,14 @@ export function registerIpcHandlers() {
     const { readRepoDescription } = await import("../engine/app-store-discovery");
 
     const description = readRepoDescription(context.project.localPath);
+    const profile = await buildProjectProfileFor(context.project, context.product);
     const result = await generateKeywords(provider, {
       name: context.product.trackName || context.project.name,
       description,
       productType: context.product.platform || "unknown",
       language,
       uiLanguage: "zh-Hans",
+      profile,
     }, (received) => {
       if (!_event.sender.isDestroyed()) {
         _event.sender.send("projects:keywordProgress", {
@@ -928,6 +989,7 @@ export function registerIpcHandlers() {
     const removedKeywords = (product.removedKeywords || [])
       .filter((item: any) => item.language === language)
       .map((item: any) => item.keyword);
+    const profile = await buildProjectProfileFor(project, product, loc?.subtitle || "");
 
     return curateKeywords(provider, {
       name: product.trackName || project.name,
@@ -938,6 +1000,7 @@ export function registerIpcHandlers() {
       existingKeywords,
       submissionKeywords,
       removedKeywords,
+      profile,
     }, (received) => {
       if (!_event.sender.isDestroyed()) {
         _event.sender.send("projects:keywordProgress", {
@@ -1149,7 +1212,7 @@ export function registerIpcHandlers() {
     const { readRepoDescription } = await import("../engine/app-store-discovery");
     const { checkForRelease } = await import("../engine/release-watcher");
 
-    const releaseResult = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    const releaseResult = await checkForRelease(project.localPath, project.lastReleaseSha || null);
     const drafts = getStoreSubmissionDrafts(project)
       .filter((item: any) => item.productId === productId)
       .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -1321,7 +1384,9 @@ export function registerIpcHandlers() {
     if (!project) throw new Error("Project not found");
 
     const { checkForRelease } = await import("../engine/release-watcher");
-    const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
+    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
+      sync: true,
+    });
     return {
       releases: result.releases.map((release) => ({
         ...release,
@@ -1347,9 +1412,15 @@ export function registerIpcHandlers() {
       if (!product) throw new Error("Store product not found");
 
       const { checkForRelease } = await import("../engine/release-watcher");
-      const { readFullReadme } = await import("../engine/app-store-discovery");
-      const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
-      const release = result.releases.find((item) => item.tag === releaseTag) || null;
+      const { readFullReadme, readRepoDescription } = await import("../engine/app-store-discovery");
+      const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
+        sync: true,
+      });
+      let release = result.releases.find((item) => item.tag === releaseTag) || null;
+      if (!release) {
+        const saved = findStoreSubmissionDraft(project, productId, releaseTag);
+        if (saved) release = synthesizeReleaseFromDraft(saved);
+      }
       if (!release) throw new Error("Release not found");
 
       const draftSummaries = getStoreSubmissionDrafts(project)
@@ -1379,6 +1450,7 @@ export function registerIpcHandlers() {
 
       return {
         readme,
+        description: readRepoDescription(project.localPath),
         readmeModifiedAt,
         drafts: draftSummaries,
         previousDescription: previous?.description || "",
@@ -1397,6 +1469,8 @@ export function registerIpcHandlers() {
       releaseTag: string,
       force = false,
       language?: string,
+      includeShas?: string[],
+      appVersion?: string,
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -1417,8 +1491,14 @@ export function registerIpcHandlers() {
       phase: "read_draft",
       status: "started",
     });
-    const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
-    const release = result.releases.find((item) => item.tag === releaseTag) || null;
+    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
+      sync: true,
+    });
+    let release = result.releases.find((item) => item.tag === releaseTag) || null;
+    if (!release) {
+      const saved = findStoreSubmissionDraft(project, productId, releaseTag);
+      if (saved) release = synthesizeReleaseFromDraft(saved);
+    }
     _event.sender.send("release:generateProgress", {
       kind: "phase",
       phase: "read_draft",
@@ -1430,11 +1510,19 @@ export function registerIpcHandlers() {
     const existing = findStoreSubmissionDraft(project, productId, releaseTag);
     if (release.draft) {
       if (force) {
+        // Respect the user's include/exclude checklist: only the checked
+        // commits are fed to the AI as release material.
+        let generationRelease = release;
+        if (Array.isArray(includeShas) && release.material) {
+          const { filterMaterial, materialToBody } = await import("../engine/release-watcher");
+          const filtered = filterMaterial(release.material, includeShas);
+          generationRelease = { ...release, material: filtered, body: materialToBody(filtered) };
+        }
         const draft = await generateStoreSubmissionDraft(
           s,
           project,
           product,
-          release,
+          generationRelease,
           existing,
           (progress) => {
             if (!_event.sender.isDestroyed()) {
@@ -1442,7 +1530,18 @@ export function registerIpcHandlers() {
             }
           },
           language,
+          appVersion,
+          (received) => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", { kind: "chars", ...received });
+            }
+          },
         );
+        // Remember the tag (+ its commit) we generated for: name@sha identity
+        // so a moved tag redefines the boundary and triggers regeneration.
+        // Remember the HEAD we generated from: what's-new always covers
+        // everything committed after this point.
+        project.lastReleaseSha = release.commitSha || null;
         upsertStoreSubmissionDraft(project, draft);
         s.set("projects", projects);
         return { release, draft, actionable: true };
@@ -1486,24 +1585,9 @@ export function registerIpcHandlers() {
       const draft = findStoreSubmissionDraft(project, productId, releaseTag);
       if (!draft) throw new Error("Submission draft not found");
 
-      const { checkForRelease } = await import("../engine/release-watcher");
       const { AIProvider } = await import("../engine/ai/ai-provider");
       const { translateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
       const { readRepoDescription } = await import("../engine/app-store-discovery");
-      _event.sender.send("release:generateProgress", {
-        kind: "phase",
-        phase: "read_draft",
-        status: "started",
-      });
-      const result = await checkForRelease(project.localPath, project.lastReleaseTag || null);
-      const release = result.releases.find((item) => item.tag === releaseTag) || null;
-      if (!release) throw new Error("Release not found");
-      _event.sender.send("release:generateProgress", {
-        kind: "phase",
-        phase: "read_draft",
-        status: "completed",
-        bytes: release.body.length || 0,
-      });
 
       const provider = new AIProvider({
         baseURL: s.get("aiProviderUrl"),
@@ -1513,18 +1597,6 @@ export function registerIpcHandlers() {
       const source = draft.localizations.find((item: any) => item.language === sourceLanguage)
         || draft.localizations[0];
       if (!source) throw new Error("Source localization not found");
-
-      const trackedKeywords: string[] = Array.from(
-        new Set<string>(
-          (product.trackedKeywords || []).map((keyword: any) => String(keyword?.keyword || "").trim()),
-        ),
-      ).filter(Boolean);
-      const recentRankings = (product.rankSnapshots || []).slice(-20).map((snapshot: any) => ({
-        keyword: snapshot.keyword,
-        storefront: snapshot.storefront,
-        rank: snapshot.rank,
-        checkedAt: snapshot.checkedAt,
-      }));
 
       _event.sender.send("release:generateProgress", {
         kind: "phase",
@@ -1539,22 +1611,23 @@ export function registerIpcHandlers() {
         bytes: description.length || 0,
       });
 
+      const profile = await buildProjectProfileFor(project, product, undefined, description);
       const translations = await translateStoreSubmissionContent(
         provider,
         {
           name: product.trackName || project.name,
-          description,
-          trackedKeywords,
-          currentSubmissionKeywords: product.submissionKeywords || [],
-          recentRankings,
-          release,
-          reviewFeedback: draft.reviewFeedback || "",
+          profile,
         },
         source,
         targetLanguages,
         (progress) => {
           if (!_event.sender.isDestroyed()) {
             _event.sender.send("release:generateProgress", progress);
+          }
+        },
+        (received) => {
+          if (!_event.sender.isDestroyed()) {
+            _event.sender.send("release:generateProgress", { kind: "chars", ...received });
           }
         },
       );

@@ -1,6 +1,9 @@
 import type { AIProvider, ChatMessage } from "./ai-provider";
 import type { ReleaseInfo } from "../release-watcher";
 import type { StoreSubmissionContent, StoreSubmissionLocalization } from "../store-submission";
+import { requestJson } from "./ai-request";
+import type { ProjectProfile } from "../project-profile";
+import { profileToPromptBlock } from "../project-profile";
 import { EngineError } from "../errors";
 import { log } from "../logger";
 
@@ -11,52 +14,11 @@ export interface ReleaseReview {
   promotionAngles: string[];
 }
 
-function parseJson(raw: string): any {
-  let s = raw.trim();
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) s = fence[1].trim();
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start >= 0 && end > start) s = s.slice(start, end + 1);
-  const candidates = [
-    s,
-    s.replace(/,\s*([}\]])/g, "$1"),
-    s.replace(/}\s*{/g, "},{"),
-  ];
-  let lastError: any = null;
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError || new Error("JSON parse failed");
-}
-
-async function parseJsonWithRepair(provider: AIProvider, raw: string): Promise<any> {
-  try {
-    return parseJson(raw);
-  } catch {
-    const repaired = await provider.chat(
-      [
-        {
-          role: "user",
-          content: [
-            "The following response was supposed to be a single JSON object, but it could not be parsed.",
-            "Return ONLY the corrected JSON object. Do not wrap it in markdown. Do not add commentary.",
-            raw,
-          ].join("\n\n"),
-        },
-      ],
-      {
-        temperature: 0,
-        maxTokens: 8000,
-        thinking: "disabled",
-      },
-    );
-    return parseJson(repaired);
-  }
+/** Prefix a user-message line list with the stable project profile when present. */
+function withProfile(lines: string[], profile?: ProjectProfile): string {
+  return profile
+    ? [profileToPromptBlock(profile), "", ...lines].join("\n")
+    : lines.join("\n");
 }
 
 /** Normalize + clamp an AI-generated localization into the store field limits. */
@@ -91,6 +53,7 @@ export async function reviewRelease(
     keywords: string[];
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
+    profile?: ProjectProfile;
   },
 ): Promise<ReleaseReview> {
   const messages: ChatMessage[] = [
@@ -105,7 +68,7 @@ export async function reviewRelease(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `App name: ${context.name}`,
         `Current description: ${context.description || "N/A"}`,
         `Tracked keywords: ${context.keywords.join(", ") || "N/A"}`,
@@ -116,34 +79,28 @@ export async function reviewRelease(
         `Release name: ${context.release.name || context.release.tag}`,
         `Published at: ${context.release.publishedAt}`,
         `Release body:\n${context.release.body || "N/A"}`,
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.4,
-    maxTokens: 1800,
+    maxTokens: 8000,
     thinking: "low",
   });
 
-  try {
-    const data = await parseJsonWithRepair(provider, raw);
-    return {
-      summary: String(data.summary || "").trim(),
-      descriptionSuggestions: Array.isArray(data.descriptionSuggestions)
-        ? data.descriptionSuggestions.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
-        : [],
-      keywordSuggestions: Array.isArray(data.keywordSuggestions)
-        ? data.keywordSuggestions.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 12)
-        : [],
-      promotionAngles: Array.isArray(data.promotionAngles)
-        ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
-        : [],
-    };
-  } catch (err: any) {
-    log.warn(`Release review JSON parse failed: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
-    throw new EngineError("AI 无法解析 Release 审核结果，请重试。", "AI_EMPTY_RESPONSE");
-  }
+  return {
+    summary: String(data.summary || "").trim(),
+    descriptionSuggestions: Array.isArray(data.descriptionSuggestions)
+      ? data.descriptionSuggestions.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
+      : [],
+    keywordSuggestions: Array.isArray(data.keywordSuggestions)
+      ? data.keywordSuggestions.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 12)
+      : [],
+    promotionAngles: Array.isArray(data.promotionAngles)
+      ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
+      : [],
+  };
 }
 
 export async function generateStoreSubmissionContent(
@@ -160,20 +117,22 @@ export async function generateStoreSubmissionContent(
     baseLocalization?: StoreSubmissionLocalization;
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
+    profile?: ProjectProfile;
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionContent> {
   const primaryLanguage = context.language || "en";
 
   onProgress?.({ language: "global", status: "started" });
-  const globalPlan = await generateGlobalReleasePlan(provider, context);
+  const globalPlan = await generateGlobalReleasePlan(provider, context, onChars);
   onProgress?.({ language: "global", status: "completed" });
   const localizations: StoreSubmissionLocalization[] = [];
 
   onProgress?.({ language: primaryLanguage, status: "started" });
   const primaryLocalization = context.baseLocalization && context.reviewFeedback
-    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization)
-    : await generateLocalizedStoreCopy(provider, context, primaryLanguage);
+    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization, onChars)
+    : await generateLocalizedStoreCopy(provider, context, primaryLanguage, onChars);
   onProgress?.({ language: primaryLanguage, status: "completed" });
   localizations.push(primaryLocalization);
 
@@ -196,25 +155,19 @@ export async function translateStoreSubmissionContent(
   provider: AIProvider,
   context: {
     name: string;
-    description: string;
-    trackedKeywords: string[];
-    currentSubmissionKeywords: { language: string; text: string }[];
-    recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
-    release: ReleaseInfo;
-    reviewFeedback?: string;
-    previousDescription?: string;
-    previousLocalization?: StoreSubmissionLocalization;
+    profile?: ProjectProfile;
   },
   source: StoreSubmissionLocalization,
   targetLanguages: string[],
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization[]> {
   const translations: StoreSubmissionLocalization[] = [];
 
   for (const language of targetLanguages) {
     if (language === source.language) continue;
     onProgress?.({ language, status: "started" });
-    const translation = await generateTranslatedStoreCopy(provider, context, source, language);
+    const translation = await generateTranslatedStoreCopy(provider, context, source, language, onChars);
     onProgress?.({ language, status: "completed" });
     translations.push(translation);
   }
@@ -234,7 +187,9 @@ async function generateGlobalReleasePlan(
     reviewFeedback?: string;
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
+    profile?: ProjectProfile;
   },
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<{
   summary: string;
   promotionAngles: string[];
@@ -258,7 +213,7 @@ async function generateGlobalReleasePlan(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `App name: ${context.name}`,
         `Current description: ${context.description || "N/A"}`,
         `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
@@ -275,29 +230,23 @@ async function generateGlobalReleasePlan(
         context.reviewFeedback
           ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
           : "",
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.4,
-    maxTokens: 2000,
+    maxTokens: 8000,
     thinking: "disabled",
+    onProgress: onChars,
   });
 
-  try {
-    const data = await parseJsonWithRepair(provider, raw);
-
-    return {
-      summary: String(data.summary || "").trim(),
-      promotionAngles: Array.isArray(data.promotionAngles)
-        ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
-        : [],
-    };
-  } catch (err: any) {
-    log.warn(`Global release plan JSON parse failed: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
-    throw new EngineError("AI 无法解析发布计划，请重试。", "AI_EMPTY_RESPONSE");
-  }
+  return {
+    summary: String(data.summary || "").trim(),
+    promotionAngles: Array.isArray(data.promotionAngles)
+      ? data.promotionAngles.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 8)
+      : [],
+  };
 }
 
 async function generateLocalizedStoreCopy(
@@ -312,8 +261,10 @@ async function generateLocalizedStoreCopy(
     reviewFeedback?: string;
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
+    profile?: ProjectProfile;
   },
   language: string,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
   const messages: ChatMessage[] = [
     {
@@ -345,7 +296,7 @@ async function generateLocalizedStoreCopy(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `Language: ${language}`,
         `App name: ${context.name}`,
         `Current description/README: ${context.description || "N/A"}`,
@@ -372,21 +323,21 @@ async function generateLocalizedStoreCopy(
         context.reviewFeedback
           ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
           : "",
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.4,
-    maxTokens: 8000,
+    maxTokens: 32000,
     thinking: "disabled",
+    onProgress: onChars,
   });
 
   try {
-    const data = await parseJsonWithRepair(provider, raw);
     return normalizeLocalizedStoreCopy(data, language, context.name);
   } catch (err: any) {
-    log.warn(`Localized store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
+    log.warn(`Localized store copy generation failed for ${language}: ${err.message}`);
     throw new EngineError(`AI 无法解析 ${language} 的商店文案，请重试。`, "AI_EMPTY_RESPONSE");
   }
 }
@@ -395,15 +346,11 @@ async function generateTranslatedStoreCopy(
   provider: AIProvider,
   context: {
     name: string;
-    description: string;
-    trackedKeywords: string[];
-    currentSubmissionKeywords: { language: string; text: string }[];
-    recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
-    release: ReleaseInfo;
-    reviewFeedback?: string;
+    profile?: ProjectProfile;
   },
   primary: StoreSubmissionLocalization,
   language: string,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
   const messages: ChatMessage[] = [
     {
@@ -431,7 +378,7 @@ async function generateTranslatedStoreCopy(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `Source language: ${primary.language}`,
         `Target language: ${language}`,
         `App name: ${context.name}`,
@@ -441,24 +388,21 @@ async function generateTranslatedStoreCopy(
         `Source description:\n${primary.description}`,
         `Source whatsNew:\n${primary.whatsNew}`,
         `Source keywords:\n${primary.keywords}`,
-        context.reviewFeedback
-          ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
-          : "",
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.3,
-    maxTokens: 8000,
+    maxTokens: 16000,
     thinking: "disabled",
+    onProgress: onChars,
   });
 
   try {
-    const data = await parseJsonWithRepair(provider, raw);
     return normalizeLocalizedStoreCopy(data, language, primary.name || context.name);
   } catch (err: any) {
-    log.warn(`Translated store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
+    log.warn(`Translated store copy generation failed for ${language}: ${err.message}`);
     throw new EngineError(`AI 无法解析 ${language} 的翻译文案，请重试。`, "AI_EMPTY_RESPONSE");
   }
 }
@@ -473,9 +417,11 @@ async function reviseLocalizedStoreCopy(
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
     reviewFeedback?: string;
+    profile?: ProjectProfile;
   },
   language: string,
   base: StoreSubmissionLocalization,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
   const messages: ChatMessage[] = [
     {
@@ -503,7 +449,7 @@ async function reviseLocalizedStoreCopy(
     },
     {
       role: "user",
-      content: [
+      content: withProfile([
         `Language: ${language}`,
         `App name: ${context.name}`,
         `Existing name:\n${base.name}`,
@@ -516,21 +462,21 @@ async function reviseLocalizedStoreCopy(
           ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
           : "",
         `Release body:\n${context.release.body || "N/A"}`,
-      ].join("\n"),
+      ], context.profile),
     },
   ];
 
-  const raw = await provider.chat(messages, {
+  const data = await requestJson(provider, messages, {
     temperature: 0.3,
-    maxTokens: 8000,
+    maxTokens: 16000,
     thinking: "disabled",
+    onProgress: onChars,
   });
 
   try {
-    const data = await parseJsonWithRepair(provider, raw);
     return normalizeLocalizedStoreCopy(data, language, base.name || context.name);
   } catch (err: any) {
-    log.warn(`Revised store copy JSON parse failed for ${language}: ${err.message}\nRaw: ${raw.slice(0, 1000)}`);
+    log.warn(`Revised store copy generation failed for ${language}: ${err.message}`);
     throw new EngineError(`AI 无法解析 ${language} 的修订文案，请重试。`, "AI_EMPTY_RESPONSE");
   }
 }

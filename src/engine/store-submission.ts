@@ -48,6 +48,8 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   masterConfirmedAt?: string;
   /** 整批多语言文案已确定（全部只读）的时间。 */
   batchConfirmedAt?: string;
+  /** 变更摘要中已由用户确认为覆盖的条目 id（用于 what's-new 覆盖核对）。 */
+  summaryChecklist?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -61,7 +63,8 @@ export function submissionDraftId(projectId: string, productId: string, releaseT
 }
 
 export function inferAppVersion(release: ReleaseInfo): string {
-  return release.tag.replace(/^v/i, "");
+  const tag = String(release.tag || "").trim();
+  return /^v?\d+(\.\d+)*$/.test(tag) ? tag.replace(/^v/i, "") : "";
 }
 
 export function releaseFingerprint(release: ReleaseInfo): string {

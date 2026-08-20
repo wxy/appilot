@@ -3,7 +3,7 @@
  */
 
 import type { AIProvider, ChatMessage } from "./ai-provider";
-import { parseJsonObject } from "./keyword-suggester";
+import { parseJsonObject, requestJson } from "./ai-request";
 import type { OverviewBriefInput } from "../overview-summary";
 import { EngineError } from "../errors";
 import { log } from "../logger";
@@ -30,7 +30,10 @@ export function briefSuggestionId(title: string, action: BriefAction, target: un
 const BRIEF_ACTIONS: BriefAction[] = ["keywords", "release", "trend"];
 
 export function parseBriefSuggestions(raw: string): BriefSuggestion[] {
-  const data = parseJsonObject(raw);
+  return normalizeBriefSuggestions(parseJsonObject(raw));
+}
+
+export function normalizeBriefSuggestions(data: any): BriefSuggestion[] {
   const list = Array.isArray(data.suggestions) ? data.suggestions : [];
   const suggestions: BriefSuggestion[] = [];
   for (const item of list.slice(0, 3)) {
@@ -68,14 +71,13 @@ export async function generateOverviewBrief(
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<BriefSuggestion[]> {
   log.info(`Generating overview brief for ${input.name}`);
-  const raw = await provider.chat(buildBriefMessages(input), {
+  const data = await requestJson(provider, buildBriefMessages(input), {
     temperature: 0.3,
-    maxTokens: 4000,
+    maxTokens: 8000,
     thinking: "disabled",
-    responseFormat: "json_object",
     onProgress,
   });
-  const suggestions = parseBriefSuggestions(raw);
+  const suggestions = normalizeBriefSuggestions(data);
   if (suggestions.length === 0) {
     throw new EngineError("AI brief returned no suggestions", "BRIEF_EMPTY");
   }

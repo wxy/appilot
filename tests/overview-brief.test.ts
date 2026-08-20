@@ -90,7 +90,7 @@ void (async () => {
   const generated = await generateOverviewBrief(stubProvider, input);
   assert(generated.length === 3, "generate: returns parsed suggestions");
   assert(captured.opts.responseFormat === "json_object", "generate: requests json_object");
-  assert(captured.opts.maxTokens === 4000, "generate: token cap 4000");
+  assert(captured.opts.maxTokens === 8000, "generate: token cap 8000");
 
   if (errors === 0) console.log("\nAll overview-brief tests passed ✅");
   else { console.error(`\n${errors} test(s) failed ❌`); process.exit(1); }
