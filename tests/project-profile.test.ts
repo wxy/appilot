@@ -17,6 +17,7 @@ const input = {
   platform: "ios",
   supportedLanguages: ["en", "zh-Hans", "de"],
   description: "Night walking companion app.",
+  readme: "# GloWalk\n\nNight walking companion app.\n\nFull README body.",
   storeLinks: [
     { name: "GloWalk App Store", country: "美国" },
     { name: "GloWalk App Store", country: "中国大陆" },
@@ -25,6 +26,10 @@ const input = {
     { keyword: "old", status: "paused", bestRank: 1 },
     { keyword: "night walk", status: "active", bestRank: 3 },
     { keyword: "记账", status: "active", bestRank: null },
+  ],
+  releaseHistory: [
+    { tag: "v1.1.0", name: "v1.1.0", summary: "Added offline maps.", publishedAt: "2026-07-01T00:00:00.000Z" },
+    { tag: "v1.0.2", name: "v1.0.2", summary: "Bug fixes.", publishedAt: "2026-06-01T00:00:00.000Z" },
   ],
 };
 
@@ -42,13 +47,16 @@ assert(block.includes("App name: GloWalk"), "prompt block: name");
 assert(block.includes("Description: Night walking companion app."), "prompt block: description");
 assert(block.includes("Storefront regions: 美国, 中国大陆"), "prompt block: storefronts");
 assert(block.includes("Tracked keywords (active, by best rank): night walk, 记账"), "prompt block: keywords");
+assert(block.includes("README (full):\n# GloWalk"), "prompt block: full readme");
+assert(block.includes("- v1.1.0 [2026-07-01T00:00:00.000Z]: Added offline maps."), "prompt block: release history");
 assert(
   profileToPromptBlock(buildProjectProfile(input)) === block,
   "prompt block: deterministic across builds",
 );
 
-const empty = buildProjectProfile({ name: "X", supportedLanguages: [], description: "" });
+const empty = buildProjectProfile({ name: "X", supportedLanguages: [], description: "", readme: "" });
 assert(empty.trackedKeywords.length === 0 && empty.description === "", "profile: empty-safe");
+assert(empty.readme === "" && empty.releaseHistory.length === 0, "profile: readme/history empty-safe");
 
 if (errors === 0) console.log("\nAll project-profile tests passed ✅");
 else { console.error(`\n${errors} test(s) failed ❌`); process.exit(1); }

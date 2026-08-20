@@ -221,21 +221,29 @@ async function buildProjectProfileFor(
   subtitle?: string,
   description?: string,
 ) {
-  const [{ buildProjectProfile }, { readRepoDescription }] = await Promise.all([
+  const [{ buildProjectProfile }, { readRepoDescription, readFullReadme }] = await Promise.all([
     import("../engine/project-profile"),
     import("../engine/app-store-discovery"),
   ]);
   const drafts = getStoreSubmissionDrafts(project)
     .filter((item: any) => item.productId === product.id)
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const releaseHistory = drafts.map((item: any) => ({
+    tag: String(item.releaseTag || ""),
+    name: item.appVersion ? `v${String(item.appVersion).replace(/^v/i, "")}` : null,
+    summary: String(item.summary || ""),
+    publishedAt: String(item.updatedAt || ""),
+  })).filter((item: any) => item.tag);
   return buildProjectProfile({
     name: product.trackName || project.name,
     subtitle: subtitle ?? drafts[0]?.localizations?.[0]?.subtitle ?? null,
     platform: product.platform || null,
     supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
     description: description ?? readRepoDescription(project.localPath),
+    readme: readFullReadme(project.localPath),
     storeLinks: product.storeLinks || [],
     trackedKeywords: product.trackedKeywords || [],
+    releaseHistory,
   });
 }
 
