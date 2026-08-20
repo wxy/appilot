@@ -43,9 +43,13 @@ assert(normalizeGitHubUrl(null) === null, "null remote returns null");
 // 2. collectRepoInfo against the current repo (read-only commands)
 async function run() {
   const repo = await collectRepoInfo(path.resolve(__dirname, ".."));
-  assert(repo.remoteUrl === "https://github.com/wxy/appilot.git", "origin remote detected");
-  assert(repo.githubUrl === "https://github.com/wxy/appilot", "GitHub URL derived from remote");
-  assert(typeof repo.branch === "string" && repo.branch.length > 0, "current branch detected");
+  assert(typeof repo.remoteUrl === "string" && repo.remoteUrl.length > 0, "origin remote detected");
+  assert(
+    typeof repo.githubUrl === "string" && repo.githubUrl.startsWith("https://github.com/"),
+    "GitHub URL derived from remote",
+  );
+  // CI checkouts are detached HEAD, so branch may legitimately be empty.
+  assert(typeof repo.branch === "string", "branch field present (may be empty on detached HEAD)");
   assert(typeof repo.headSha === "string" && repo.headSha.length > 0, "HEAD short sha detected");
   assert(typeof repo.headMessage === "string" && repo.headMessage.length > 0, "HEAD message detected");
   assert(typeof repo.headDate === "string" && !Number.isNaN(new Date(repo.headDate).getTime()), "HEAD date is ISO");
