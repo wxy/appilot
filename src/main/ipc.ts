@@ -247,6 +247,23 @@ async function buildProjectProfileFor(
   });
 }
 
+/** Minimal release view reconstructed from a saved draft when git no longer
+ *  surfaces the candidate (e.g. material is empty after generation). */
+function synthesizeReleaseFromDraft(draft: any): any {
+  return {
+    id: `draft-release-${draft.releaseTag}`,
+    tag: draft.releaseTag,
+    name: draft.appVersion ? `v${String(draft.appVersion).replace(/^v/i, "")}` : draft.releaseTag,
+    publishedAt: draft.updatedAt || new Date().toISOString(),
+    url: "",
+    body: draft.summary || "",
+    material: null,
+    source: "git-tag",
+    draft: true,
+    commitSha: null,
+  };
+}
+
 function submissionReferenceFor(product: any, project: any, language: string) {
   const drafts = getStoreSubmissionDrafts(project)
     .filter((draft) => draft.productId === product.id)
@@ -286,6 +303,7 @@ async function generateStoreSubmissionDraft(
   onProgress?: (event: any) => void,
   sourceLanguage?: string,
   appVersionOverride?: string,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionDraft> {
   const { AIProvider } = await import("../engine/ai/ai-provider");
   const { generateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
@@ -364,6 +382,7 @@ async function generateStoreSubmissionDraft(
       profile,
     },
     onProgress,
+    onChars,
   );
 
   const draft = createStoreSubmissionDraft({
@@ -1397,7 +1416,11 @@ export function registerIpcHandlers() {
       const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
         sync: true,
       });
-      const release = result.releases.find((item) => item.tag === releaseTag) || null;
+      let release = result.releases.find((item) => item.tag === releaseTag) || null;
+      if (!release) {
+        const saved = findStoreSubmissionDraft(project, productId, releaseTag);
+        if (saved) release = synthesizeReleaseFromDraft(saved);
+      }
       if (!release) throw new Error("Release not found");
 
       const draftSummaries = getStoreSubmissionDrafts(project)
@@ -1471,7 +1494,11 @@ export function registerIpcHandlers() {
     const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
       sync: true,
     });
-    const release = result.releases.find((item) => item.tag === releaseTag) || null;
+    let release = result.releases.find((item) => item.tag === releaseTag) || null;
+    if (!release) {
+      const saved = findStoreSubmissionDraft(project, productId, releaseTag);
+      if (saved) release = synthesizeReleaseFromDraft(saved);
+    }
     _event.sender.send("release:generateProgress", {
       kind: "phase",
       phase: "read_draft",
@@ -1504,6 +1531,11 @@ export function registerIpcHandlers() {
           },
           language,
           appVersion,
+          (received) => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", { kind: "chars", ...received });
+            }
+          },
         );
         // Remember the tag (+ its commit) we generated for: name@sha identity
         // so a moved tag redefines the boundary and triggers regeneration.
@@ -1553,24 +1585,9 @@ export function registerIpcHandlers() {
       const draft = findStoreSubmissionDraft(project, productId, releaseTag);
       if (!draft) throw new Error("Submission draft not found");
 
-      const { checkForRelease } = await import("../engine/release-watcher");
       const { AIProvider } = await import("../engine/ai/ai-provider");
       const { translateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
       const { readRepoDescription } = await import("../engine/app-store-discovery");
-      _event.sender.send("release:generateProgress", {
-        kind: "phase",
-        phase: "read_draft",
-        status: "started",
-      });
-      const result = await checkForRelease(project.localPath, project.lastReleaseSha || null);
-      const release = result.releases.find((item) => item.tag === releaseTag) || null;
-      if (!release) throw new Error("Release not found");
-      _event.sender.send("release:generateProgress", {
-        kind: "phase",
-        phase: "read_draft",
-        status: "completed",
-        bytes: release.body.length || 0,
-      });
 
       const provider = new AIProvider({
         baseURL: s.get("aiProviderUrl"),
@@ -1580,18 +1597,6 @@ export function registerIpcHandlers() {
       const source = draft.localizations.find((item: any) => item.language === sourceLanguage)
         || draft.localizations[0];
       if (!source) throw new Error("Source localization not found");
-
-      const trackedKeywords: string[] = Array.from(
-        new Set<string>(
-          (product.trackedKeywords || []).map((keyword: any) => String(keyword?.keyword || "").trim()),
-        ),
-      ).filter(Boolean);
-      const recentRankings = (product.rankSnapshots || []).slice(-20).map((snapshot: any) => ({
-        keyword: snapshot.keyword,
-        storefront: snapshot.storefront,
-        rank: snapshot.rank,
-        checkedAt: snapshot.checkedAt,
-      }));
 
       _event.sender.send("release:generateProgress", {
         kind: "phase",
@@ -1611,12 +1616,6 @@ export function registerIpcHandlers() {
         provider,
         {
           name: product.trackName || project.name,
-          description,
-          trackedKeywords,
-          currentSubmissionKeywords: product.submissionKeywords || [],
-          recentRankings,
-          release,
-          reviewFeedback: draft.reviewFeedback || "",
           profile,
         },
         source,
@@ -1624,6 +1623,11 @@ export function registerIpcHandlers() {
         (progress) => {
           if (!_event.sender.isDestroyed()) {
             _event.sender.send("release:generateProgress", progress);
+          }
+        },
+        (received) => {
+          if (!_event.sender.isDestroyed()) {
+            _event.sender.send("release:generateProgress", { kind: "chars", ...received });
           }
         },
       );

@@ -120,18 +120,19 @@ export async function generateStoreSubmissionContent(
     profile?: ProjectProfile;
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionContent> {
   const primaryLanguage = context.language || "en";
 
   onProgress?.({ language: "global", status: "started" });
-  const globalPlan = await generateGlobalReleasePlan(provider, context);
+  const globalPlan = await generateGlobalReleasePlan(provider, context, onChars);
   onProgress?.({ language: "global", status: "completed" });
   const localizations: StoreSubmissionLocalization[] = [];
 
   onProgress?.({ language: primaryLanguage, status: "started" });
   const primaryLocalization = context.baseLocalization && context.reviewFeedback
-    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization)
-    : await generateLocalizedStoreCopy(provider, context, primaryLanguage);
+    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization, onChars)
+    : await generateLocalizedStoreCopy(provider, context, primaryLanguage, onChars);
   onProgress?.({ language: primaryLanguage, status: "completed" });
   localizations.push(primaryLocalization);
 
@@ -154,26 +155,19 @@ export async function translateStoreSubmissionContent(
   provider: AIProvider,
   context: {
     name: string;
-    description: string;
-    trackedKeywords: string[];
-    currentSubmissionKeywords: { language: string; text: string }[];
-    recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
-    release: ReleaseInfo;
-    reviewFeedback?: string;
-    previousDescription?: string;
-    previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
   },
   source: StoreSubmissionLocalization,
   targetLanguages: string[],
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization[]> {
   const translations: StoreSubmissionLocalization[] = [];
 
   for (const language of targetLanguages) {
     if (language === source.language) continue;
     onProgress?.({ language, status: "started" });
-    const translation = await generateTranslatedStoreCopy(provider, context, source, language);
+    const translation = await generateTranslatedStoreCopy(provider, context, source, language, onChars);
     onProgress?.({ language, status: "completed" });
     translations.push(translation);
   }
@@ -195,6 +189,7 @@ async function generateGlobalReleasePlan(
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
   },
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<{
   summary: string;
   promotionAngles: string[];
@@ -243,6 +238,7 @@ async function generateGlobalReleasePlan(
     temperature: 0.4,
     maxTokens: 8000,
     thinking: "disabled",
+    onProgress: onChars,
   });
 
   return {
@@ -268,6 +264,7 @@ async function generateLocalizedStoreCopy(
     profile?: ProjectProfile;
   },
   language: string,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
   const messages: ChatMessage[] = [
     {
@@ -334,6 +331,7 @@ async function generateLocalizedStoreCopy(
     temperature: 0.4,
     maxTokens: 32000,
     thinking: "disabled",
+    onProgress: onChars,
   });
 
   try {
@@ -348,16 +346,11 @@ async function generateTranslatedStoreCopy(
   provider: AIProvider,
   context: {
     name: string;
-    description: string;
-    trackedKeywords: string[];
-    currentSubmissionKeywords: { language: string; text: string }[];
-    recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
-    release: ReleaseInfo;
-    reviewFeedback?: string;
     profile?: ProjectProfile;
   },
   primary: StoreSubmissionLocalization,
   language: string,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
   const messages: ChatMessage[] = [
     {
@@ -395,9 +388,6 @@ async function generateTranslatedStoreCopy(
         `Source description:\n${primary.description}`,
         `Source whatsNew:\n${primary.whatsNew}`,
         `Source keywords:\n${primary.keywords}`,
-        context.reviewFeedback
-          ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
-          : "",
       ], context.profile),
     },
   ];
@@ -406,6 +396,7 @@ async function generateTranslatedStoreCopy(
     temperature: 0.3,
     maxTokens: 16000,
     thinking: "disabled",
+    onProgress: onChars,
   });
 
   try {
@@ -430,6 +421,7 @@ async function reviseLocalizedStoreCopy(
   },
   language: string,
   base: StoreSubmissionLocalization,
+  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
   const messages: ChatMessage[] = [
     {
@@ -478,6 +470,7 @@ async function reviseLocalizedStoreCopy(
     temperature: 0.3,
     maxTokens: 16000,
     thinking: "disabled",
+    onProgress: onChars,
   });
 
   try {
