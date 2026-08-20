@@ -282,6 +282,8 @@ function submissionReferenceFor(product: any, project: any, language: string) {
 }
 
 function isProductPostRelease(project: any, product: any): boolean {
+  // A recognized App Store product (trackId resolved) is live; track its keywords.
+  if (product?.trackId) return true;
   const hasPublishedDraft = getStoreSubmissionDrafts(project).some(
     (draft) =>
       draft.productId === product.id &&
@@ -906,8 +908,20 @@ export function registerIpcHandlers() {
 
   ipcMain.handle("projects:remove", async (_event, id: string) => {
     const s = await getStore();
+    const all = s.get("projects") || [];
+    const removed = all.find((p: any) => p.id === id);
     const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
     s.set("projects", projects);
+    // Remove scheduled tasks that belonged to the deleted project's products.
+    if (removed) {
+      const removedProductIds = new Set(
+        (removed.storeProducts || []).map((product: any) => product.id),
+      );
+      const tasks = (s.get("scheduledTasks") || []).filter(
+        (task: any) => !removedProductIds.has(task.productId),
+      );
+      s.set("scheduledTasks", tasks);
+    }
     void schedulerTick();
     emitProjectsChanged();
     return true;

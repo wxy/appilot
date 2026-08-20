@@ -2501,6 +2501,8 @@ function FieldHeader({ label, text, copy = true }: { label: string; text: string
 function TaskCenterPage() {
   const [data, setData] = useState<{ running: boolean; tasks: any[] } | null>(null);
   const [typeFilter, setTypeFilter] = useState<"all" | "rank">("all");
+  const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [languageFilter, setLanguageFilter] = useState<string>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -2521,9 +2523,24 @@ function TaskCenterPage() {
     };
   }, []);
 
-  const tasks = (data?.tasks || []).filter(
-    (task) => typeFilter === "all" || task.kind === typeFilter,
-  );
+  const projectOptions = Array.from(
+    new Set(
+      (data?.tasks || [])
+        .map((task: any) => task.projectName)
+        .filter((name: string) => name && name !== "已删除项目"),
+    ),
+  ).sort();
+  const languageOptions = Array.from(
+    new Set(
+      (data?.tasks || [])
+        .map((task: any) => task.queryLanguage)
+        .filter((lang: string) => Boolean(lang)),
+    ),
+  ).sort();
+  const tasks = (data?.tasks || [])
+    .filter((task) => typeFilter === "all" || task.kind === typeFilter)
+    .filter((task) => projectFilter === "all" || task.projectName === projectFilter)
+    .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter);
   const pending = tasks.filter((task) => task.enabled);
   const failed = tasks.filter((task) => task.lastStatus === "failed");
 
@@ -2561,6 +2578,30 @@ function TaskCenterPage() {
             {filter === "all" ? "全部任务" : "排名采集"}
           </button>
         ))}
+        <select
+          value={projectFilter}
+          onChange={(e) => setProjectFilter(e.target.value)}
+          className={inputLineClass + " max-w-44"}
+        >
+          <option value="all">全部项目</option>
+          {projectOptions.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={languageFilter}
+          onChange={(e) => setLanguageFilter(e.target.value)}
+          className={inputLineClass + " max-w-36"}
+        >
+          <option value="all">全部语言</option>
+          {languageOptions.map((lang) => (
+            <option key={lang} value={lang}>
+              {languageLabel(lang) || lang}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="space-y-6">
@@ -3913,6 +3954,8 @@ function KeywordsPage() {
                 ) : (
                   <>
                     {scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))}
+                    {scopeFilteredRanked.length === 0 &&
+                      unranked.map((row) => renderMatrixRow(row, true))}
                   </>
                 )}
             </div>
