@@ -285,6 +285,7 @@ async function generateStoreSubmissionDraft(
   existingDraft: StoreSubmissionDraft | null,
   onProgress?: (event: any) => void,
   sourceLanguage?: string,
+  appVersionOverride?: string,
 ): Promise<StoreSubmissionDraft> {
   const { AIProvider } = await import("../engine/ai/ai-provider");
   const { generateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
@@ -365,13 +366,17 @@ async function generateStoreSubmissionDraft(
     onProgress,
   );
 
-  return createStoreSubmissionDraft({
+  const draft = createStoreSubmissionDraft({
     projectId: project.id,
     productId: product.id,
     release,
     content,
     existing: existingDraft,
   });
+  if (appVersionOverride && appVersionOverride.trim()) {
+    draft.appVersion = appVersionOverride.trim();
+  }
+  return draft;
 }
 
 function sanitizeRankSnapshots(project: any): any {
@@ -1442,6 +1447,7 @@ export function registerIpcHandlers() {
       force = false,
       language?: string,
       includeShas?: string[],
+      appVersion?: string,
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -1497,6 +1503,7 @@ export function registerIpcHandlers() {
             }
           },
           language,
+          appVersion,
         );
         // Remember the tag (+ its commit) we generated for: name@sha identity
         // so a moved tag redefines the boundary and triggers regeneration.

@@ -185,6 +185,12 @@ async function runTests() {
     await syncLocalRepo(cloneRepo);
     const afterDirty = execFileSync("git", ["-C", cloneRepo, "rev-parse", "HEAD"]).toString().trim();
     assert(beforeDirty === afterDirty, "sync: dirty working tree not fast-forwarded");
+    // Stale local branch + dirty tree: material still covers remote commits.
+    const staleResult = await checkForRelease(cloneRepo, null, undefined, { sync: true });
+    assert(
+      (staleResult.latest?.body || "").includes("sync: more work"),
+      "sync: material includes remote commits with a dirty local branch",
+    );
     fs.rmSync(syncOrigin, { recursive: true, force: true });
     fs.rmSync(syncWork, { recursive: true, force: true });
     fs.rmSync(syncCloneRoot, { recursive: true, force: true });

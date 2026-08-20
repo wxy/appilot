@@ -207,11 +207,17 @@ export async function listGitTags(localPath: string): Promise<GitTagInfo[]> {
   }
 }
 
-/** Tags reachable from HEAD — backport/side-branch tags are filtered out. */
-async function mainLineTags(localPath: string, tags: GitTagInfo[], head: string): Promise<GitTagInfo[]> {
+/** Tags reachable from any of the given refs (HEAD / remote tip). */
+async function mainLineTags(localPath: string, tags: GitTagInfo[], refs: string): Promise<GitTagInfo[]> {
   const result: GitTagInfo[] = [];
+  const refList = refs.split(/\s+/).filter(Boolean);
   for (const tag of tags) {
-    if (await isAncestor(localPath, tag.sha, head)) result.push(tag);
+    for (const ref of refList) {
+      if (await isAncestor(localPath, tag.sha, ref)) {
+        result.push(tag);
+        break;
+      }
+    }
   }
   return result;
 }
@@ -390,14 +396,29 @@ export async function checkForRelease(
     return { latest: draft || null, lastSeenTag: lastSeenSha || null, releases };
   }
 
-  const material = await collectReleaseMaterial(localPath, lastSeenSha || null, "HEAD");
+  // Include the remote tip too: with a dirty/stale local branch, material
+  // still covers the freshest remote commits without touching the worktree.
+  let remoteTip: string | null = null;
+  if (options.sync) {
+    const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(() => "");
+    if (branch) {
+      remoteTip = await git(localPath, ["rev-parse", "--short", `origin/${branch}`]).catch(() => "");
+    }
+  }
+  let tip = head;
+  if (remoteTip && remoteTip !== head && !(await isAncestor(localPath, remoteTip, head))) {
+    tip = remoteTip;
+  }
+  const endRefs = remoteTip && remoteTip !== tip ? `${tip} ${remoteTip}` : tip;
+
+  const material = await collectReleaseMaterial(localPath, lastSeenSha || null, endRefs);
   if (material.commits.length === 0) {
     return { latest: null, lastSeenTag: lastSeenSha || null, releases: [] };
   }
 
   // Newest main-line tag that is NOT already inside the generated history.
   const allTags = await listGitTags(localPath);
-  const onMain = await mainLineTags(localPath, allTags, head);
+  const onMain = await mainLineTags(localPath, allTags, endRefs);
   let releaseTag: GitTagInfo | null = null;
   for (const tag of onMain) {
     const alreadyGenerated = lastSeenSha
@@ -425,7 +446,7 @@ export async function checkForRelease(
     material: enrichedMaterial,
     source: releaseTag ? "git-tag" : "git-commits",
     draft: true,
-    commitSha: head,
+    commitSha: tip,
   };
   return {
     latest: release,

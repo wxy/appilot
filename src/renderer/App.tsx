@@ -1471,6 +1471,7 @@ function ReleasePage() {
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
   const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
+  const [pendingVersion, setPendingVersion] = useState("");
 
   const loadReleases = async () => {
     if (!project?.id) return;
@@ -1724,6 +1725,7 @@ function ReleasePage() {
               summaryChecked.has(item.id) ? item.commits.map((commit) => commit.sha) : [],
             )
           : undefined,
+        (draft?.appVersion || pendingVersion) || undefined,
       );
       setActive(next);
       setStep(2);
@@ -1769,12 +1771,20 @@ function ReleasePage() {
   };
 
   const handleConfirmMaster = () => {
+    if (!draft?.appVersion?.trim()) {
+      setError("请先填写目标版本后再确定文案。");
+      return;
+    }
     if (!draft?.masterConfirmedAt) {
       void persistConfirm({ masterConfirmedAt: new Date().toISOString() });
     }
   };
 
   const handleConfirmBatch = () => {
+    if (!draft?.appVersion?.trim()) {
+      setError("请先填写目标版本后再确定文案。");
+      return;
+    }
     const now = new Date().toISOString();
     void persistConfirm({
       masterConfirmedAt: draft?.masterConfirmedAt || now,
@@ -2086,23 +2096,24 @@ function ReleasePage() {
               <>
             {selectedRelease && step === 1 && (
               <>
-                {draft && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
-                      目标版本
-                    </span>
-                    <input
-                      value={draft.appVersion || ""}
-                      onChange={(e) => updateDraftField("appVersion", e.target.value)}
-                      onBlur={() => void persistCurrentDraft()}
-                      placeholder="如 1.2.6"
-                      className={inputLineClass + " max-w-32"}
-                    />
-                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                      历史文案将按此版本标识
-                    </span>
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
+                    目标版本
+                  </span>
+                  <input
+                    value={draft?.appVersion ?? pendingVersion}
+                    onChange={(e) => {
+                      if (draft) updateDraftField("appVersion", e.target.value);
+                      else setPendingVersion(e.target.value);
+                    }}
+                    onBlur={() => void persistCurrentDraft()}
+                    placeholder="如 1.2.6"
+                    className={inputLineClass + " max-w-32"}
+                  />
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                    {draft ? "历史文案将按此版本标识" : "生成文案时将写入此版本"}
+                  </span>
+                </div>
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">语言</p>
                   <div className="flex flex-wrap gap-2">
@@ -2156,6 +2167,21 @@ function ReleasePage() {
                 </div>
 
                 <div className="p-6 space-y-6">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
+                      目标版本
+                    </span>
+                    <input
+                      value={draft.appVersion || ""}
+                      onChange={(e) => updateDraftField("appVersion", e.target.value)}
+                      onBlur={() => void persistCurrentDraft()}
+                      placeholder="如 1.2.6"
+                      className={inputLineClass + " max-w-32"}
+                    />
+                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                      确定文案前需填写
+                    </span>
+                  </div>
                   {activeLocalization && (
                     <>
                       <div className="grid gap-4 sm:grid-cols-2">
