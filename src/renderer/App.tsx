@@ -1184,6 +1184,64 @@ function MarkdownView({ text }: { text: string }) {
   );
 }
 
+/** Structured view of the release material (commits + PRs + diff summary). */
+function ReleaseMaterialView({ material }: { material: any }) {
+  const [showAll, setShowAll] = useState(false);
+  const commits: { sha: string; subject: string; body: string }[] = material?.commits || [];
+  const prs: { number: number }[] = material?.pullRequests || [];
+  const visible = showAll ? commits : commits.slice(0, 8);
+  const diffLine = String(material?.diffStat || "").trim().split("\n").pop() || "";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
+          {commits.length} 次提交
+        </span>
+        {prs.length > 0 && <span>· {prs.length} 个 PR</span>}
+        {diffLine && <span className="min-w-0 truncate">· {diffLine}</span>}
+      </div>
+      {prs.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {prs.map((pr) => {
+            const owner = commits.find((commit) => commit.subject.includes(`#${pr.number}`));
+            return (
+              <span
+                key={pr.number}
+                title={owner?.subject || `PR #${pr.number}`}
+                className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[11px] font-medium"
+              >
+                #{pr.number}
+              </span>
+            );
+          })}
+        </div>
+      )}
+      <ul className="space-y-1">
+        {visible.map((commit) => (
+          <li
+            key={commit.sha}
+            className="flex items-baseline gap-2 text-xs"
+            title={commit.body ? `${commit.subject}\n${commit.body}` : commit.subject}
+          >
+            <span className="font-mono text-zinc-400 dark:text-zinc-500 shrink-0">{commit.sha}</span>
+            <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-300">{commit.subject}</span>
+          </li>
+        ))}
+      </ul>
+      {commits.length > 8 && (
+        <button
+          type="button"
+          onClick={() => setShowAll((value) => !value)}
+          className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+        >
+          {showAll ? "收起" : `展开全部 ${commits.length} 条`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ReferenceSection({
   title,
   meta,
@@ -1802,14 +1860,18 @@ function ReleasePage() {
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   <ReferenceSection
                     title="发布素材"
-                    meta={`更新于 ${formatHumanTime(selectedRelease.publishedAt)}`}
+                    meta={`${selectedRelease.material?.commits?.length ?? 0} 次提交 · 更新于 ${formatHumanTime(selectedRelease.publishedAt)}`}
                     checked={step > 1}
                     defaultOpen
                   >
                     <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
                       {selectedRelease.name || "发布素材"}
                     </p>
-                    <MarkdownView text={selectedRelease?.body || "没有发布素材"} />
+                    {selectedRelease.material ? (
+                      <ReleaseMaterialView material={selectedRelease.material} />
+                    ) : (
+                      <MarkdownView text={selectedRelease?.body || "没有发布素材"} />
+                    )}
                   </ReferenceSection>
 
                   {releaseContext && step <= 2 && (

@@ -25,6 +25,7 @@ export interface ReleaseInfo {
   publishedAt: string;
   url: string;
   body: string;
+  material: ReleaseMaterial | null;
   source: "git-tag" | "release-draft-file";
   draft: boolean;
   commitSha: string | null;
@@ -218,6 +219,7 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
       publishedAt: modifiedAt,
       url: "",
       body: content,
+      material: null,
       source: "release-draft-file",
       draft: true,
       commitSha: null,
@@ -257,6 +259,7 @@ export async function checkForRelease(
       publishedAt: latestTag.date || new Date().toISOString(),
       url: "",
       body: materialToBody(material),
+      material,
       source: "git-tag",
       draft: true,
       commitSha: latestTag.sha,
