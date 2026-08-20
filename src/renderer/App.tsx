@@ -2904,7 +2904,7 @@ function AIProgressButton({
   disabled = false,
   idleLabel,
   loading,
-  progress,
+  progress: _progress,
 }: {
   onClick: () => void;
   disabled?: boolean;
@@ -2913,25 +2913,19 @@ function AIProgressButton({
   progress: { chars: number; phase: "reasoning" | "content" } | null;
 }) {
   return (
-    <button onClick={onClick} disabled={disabled || loading} className={btnPrimary}>
-      {loading
-        ? progress && progress.chars > 0
-          ? (
-              <span className="inline-flex items-center gap-1">
-                {progress.phase === "reasoning" ? "思考中… 已接收" : "生成中… 已接收"}
-                <span
-                  className={cn(
-                    "font-mono",
-                    progress.phase === "reasoning" ? "text-amber-300" : "text-emerald-300",
-                  )}
-                >
-                  {progress.chars}
-                </span>
-                字
-              </span>
-            )
-          : "思考中…"
-        : idleLabel}
+    <button
+      onClick={onClick}
+      disabled={disabled || loading}
+      className={cn(btnPrimary, "min-w-36 whitespace-nowrap")}
+    >
+      {loading ? (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+          处理中…
+        </span>
+      ) : (
+        idleLabel
+      )}
     </button>
   );
 }
@@ -3004,6 +2998,7 @@ function KeywordsPage() {
     phase: "reasoning" | "content";
   } | null>(null);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesAdding, setCandidatesAdding] = useState(false);
   const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
   const [keywordProgress, setKeywordProgress] = useState<
@@ -3201,10 +3196,14 @@ function KeywordsPage() {
       .filter((k) => k.language === currentLang)
       .map((k) => k.keyword),
   );
-  const pendingCandidateCount = candidates.filter((candidate) => {
-    const key = `${candidate.source}\u0000${candidate.keyword}`;
-    return !removedCandidateKeys.has(key) && !trackedCandidateKeywords.has(candidate.keyword);
-  }).length;
+  const pendingCandidateCount = new Set(
+    candidates
+      .filter((candidate) => {
+        const key = `${candidate.source}\u0000${candidate.keyword}`;
+        return !removedCandidateKeys.has(key) && !trackedCandidateKeywords.has(candidate.keyword);
+      })
+      .map((candidate) => candidate.keyword),
+  ).size;
   const cellTitle = (cell: MatrixCell) =>
     cell.checkedAt
       ? `最近查询 ${new Date(cell.checkedAt).toLocaleString()} · 结果量 ${cell.totalResults ?? "—"}`
@@ -3497,32 +3496,52 @@ function KeywordsPage() {
   };
 
   const addAllCandidates = async () => {
+    if (candidatesAdding) return;
     const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
     const current = latest?.storeProducts?.find((p) => p.id === product.id) || product;
     const existingKeys = new Set(
       (current.trackedKeywords || []).map((k) => `${k.language}\u0000${k.keyword}`),
     );
-    const toAdd = candidates.filter((candidate) => {
-      const key = `${candidate.source}\u0000${candidate.keyword}`;
-      return !removedCandidateKeys.has(key) && !existingKeys.has(`${currentLang}\u0000${candidate.keyword}`);
-    });
+    // 1) Dedupe candidates among themselves (source priority: submission > name > subtitle)
+    // 2) Dedupe against keywords already tracked in the target language.
+    const sourceRank = (source: string) =>
+      source === "submission" ? 0 : source === "name" ? 1 : 2;
+    const seen = new Set<string>();
+    const toAdd = candidates
+      .filter(
+        (candidate) =>
+          !removedCandidateKeys.has(`${candidate.source}\u0000${candidate.keyword}`),
+      )
+      .sort((a, b) => sourceRank(a.source) - sourceRank(b.source))
+      .filter((candidate) => {
+        if (seen.has(candidate.keyword)) return false;
+        seen.add(candidate.keyword);
+        return !existingKeys.has(`${currentLang}\u0000${candidate.keyword}`);
+      });
     if (toAdd.length === 0) return;
-    const next = [
-      ...(current.trackedKeywords || []),
-      ...toAdd.map((candidate) => ({
-        language: currentLang,
-        keyword: candidate.keyword,
-        rationale: candidate.rationale,
-        translation: "",
-        status: "active" as const,
-        source: candidate.source as "submission" | "name" | "subtitle",
-      })),
-    ];
-    await (window as any).appilot.projects.saveTrackedKeywords(product.id, next);
-    updateTrackedKeywords(product.id, next);
-    const added = new Set(toAdd.map((c) => `${c.source}\u0000${c.keyword}`));
-    setCandidates((prev) => prev.filter((c) => !added.has(`${c.source}\u0000${c.keyword}`)));
-    setRemovedCandidateKeys(new Set());
+    setCandidatesAdding(true);
+    try {
+      const next = [
+        ...(current.trackedKeywords || []),
+        ...toAdd.map((candidate) => ({
+          language: currentLang,
+          keyword: candidate.keyword,
+          rationale: candidate.rationale,
+          translation: "",
+          status: "active" as const,
+          source: candidate.source as "submission" | "name" | "subtitle",
+        })),
+      ];
+      await (window as any).appilot.projects.saveTrackedKeywords(product.id, next);
+      updateTrackedKeywords(product.id, next);
+      const addedKeywords = new Set(toAdd.map((candidate) => candidate.keyword));
+      setCandidates((prev) => prev.filter((candidate) => !addedKeywords.has(candidate.keyword)));
+      setRemovedCandidateKeys(new Set());
+    } catch (e: any) {
+      setError(e.message || "一键加入失败。");
+    } finally {
+      setCandidatesAdding(false);
+    }
   };
 
   const removeTracked = async (kw: string, language: string) => {
@@ -3620,10 +3639,12 @@ function KeywordsPage() {
                               <div className="flex items-center gap-2">
                                 <button
                                   onClick={addAllCandidates}
-                                  disabled={pendingCandidateCount === 0}
+                                  disabled={pendingCandidateCount === 0 || candidatesAdding}
                                   className={btnPrimary}
                                 >
-                                  一键加入（{pendingCandidateCount}）
+                                  {candidatesAdding
+                                    ? "加入中…"
+                                    : `一键加入（${pendingCandidateCount}）`}
                                 </button>
                                 <button
                                   onClick={() => {
