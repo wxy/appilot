@@ -2927,8 +2927,11 @@ function KeywordsPage() {
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [litLangs, setLitLangs] = useState<string[]>(() => {
     const supported = (product?.supportedLanguages || []).map((l) => l.code);
-    const initial = supported.includes(UI_SOURCE_LANGUAGE) ? UI_SOURCE_LANGUAGE : supported[0];
-    return initial ? [initial] : [];
+    const initial: string[] = [];
+    if (supported.includes(UI_SOURCE_LANGUAGE)) initial.push(UI_SOURCE_LANGUAGE);
+    else if (supported[0]) initial.push(supported[0]);
+    initial.push("en");
+    return initial;
   });
   const [curation, setCuration] = useState<Record<string, {
     removals: { keyword: string; reason: string; choice: "accept" | "ignore" }[];
@@ -2936,9 +2939,6 @@ function KeywordsPage() {
   }>>({});
   const [curationOpen, setCurationOpen] = useState(false);
   const [curationConfirm, setCurationConfirm] = useState<null | "apply" | "discard">(null);
-  const [curationApplied, setCurationApplied] = useState<
-    { language: string; keyword: string; kind: "add" | "remove" }[]
-  >([]);
   const [submissionRef, setSubmissionRef] = useState<{
     name: string;
     subtitle: string;
@@ -2959,8 +2959,9 @@ function KeywordsPage() {
   const [keywordProgress, setKeywordProgress] = useState<
     Record<string, { chars: number; phase: "reasoning" | "content" }>
   >({});
+  const [showPaused, setShowPaused] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [showUnranked, setShowUnranked] = useState(false);
-  const [showRemoved, setShowRemoved] = useState(false);
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
@@ -3024,14 +3025,13 @@ function KeywordsPage() {
   }, []);
 
   const toggleLitLang = (code: string) => {
-    setLitLangs((prev) => {
-      const next = prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code];
-      return next.length > 0 ? next : prev;
-    });
+    setLitLangs((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
+    );
   };
 
   useEffect(() => {
-    if (!litLangs.includes(viewLang)) {
+    if (litLangs.length > 0 && !litLangs.includes(viewLang)) {
       setViewLang(litLangs[0] || "");
     }
   }, [litLangs, viewLang]);
@@ -3055,7 +3055,7 @@ function KeywordsPage() {
       });
     }
     if (urlScope === "paused") {
-      setShowRemoved(true);
+      setShowPaused(true);
     }
   }, [product?.id, urlKeyword, urlLang, urlScope]);
 
@@ -3155,14 +3155,6 @@ function KeywordsPage() {
     const key = `${candidate.source}\u0000${candidate.keyword}`;
     return !removedCandidateKeys.has(key) && !trackedCandidateKeywords.has(candidate.keyword);
   }).length;
-  const appliedAddKeys = new Set(
-    curationApplied
-      .filter((item) => item.kind === "add")
-      .map((item) => `${item.language}\u0000${item.keyword}`),
-  );
-  const appliedKindFor = (row: (typeof matrixRows)[number]): "add" | null =>
-    appliedAddKeys.has(`${row.language}\u0000${row.keyword}`) ? "add" : null;
-
   const cellTitle = (cell: MatrixCell) =>
     cell.checkedAt
       ? `最近查询 ${new Date(cell.checkedAt).toLocaleString()} · 结果量 ${cell.totalResults ?? "—"}`
@@ -3310,11 +3302,15 @@ function KeywordsPage() {
   const handleGenerateAll = async () => {
     setError("");
     setKeywordProgress({});
-    const lang = currentLang;
+    if (litLangs.length === 0) {
+      setError("请先点亮至少一个语言（点 ★ 参与生成）。");
+      return;
+    }
+    const nextCuration: Record<string, any> = {};
+    setLoadingLangs(new Set(litLangs));
+    for (const lang of litLangs) {
     const tracked = product.trackedKeywords || [];
     const hasKeywords = tracked.some((k) => k.language === lang);
-    setLoadingLangs(new Set([lang]));
-    const nextCuration: Record<string, any> = {};
     if (!hasKeywords) {
       const result = await generateOne(lang);
       await applyGenerations([result]);
@@ -3328,6 +3324,7 @@ function KeywordsPage() {
       } catch (e: any) {
         setError(e.message || "关键词整理失败。");
       }
+    }
     }
     setCuration((prev) => ({ ...prev, ...nextCuration }));
     setCurationOpen(Object.keys(nextCuration).length > 0);
@@ -3372,11 +3369,9 @@ function KeywordsPage() {
 
   const applyCuration = async () => {
     setCurationConfirm(null);
-    const applied: { language: string; keyword: string; kind: "add" | "remove" }[] = [];
     for (const [lang, data] of Object.entries(curation)) {
       for (const item of data.adds) {
         if (item.choice !== "accept") continue;
-        applied.push({ language: lang, keyword: item.keyword, kind: "add" });
         const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
         const current = latest?.storeProducts?.find((p) => p.id === product.id) || product;
         const existingKeys = new Set(
@@ -3399,12 +3394,10 @@ function KeywordsPage() {
       }
       for (const item of data.removals) {
         if (item.choice === "accept") {
-          applied.push({ language: lang, keyword: item.keyword, kind: "remove" });
           await removeTracked(item.keyword, lang);
         }
       }
     }
-    setCurationApplied((prev) => [...prev, ...applied]);
     setShowUnranked(true);
     setCuration({});
     setCurationOpen(false);
@@ -3728,7 +3721,7 @@ function KeywordsPage() {
                     <button
                       type="button"
                       onClick={() => {
-                        setShowRemoved(false);
+                        setShowPaused(false);
                         const next = new URLSearchParams(searchParams);
                         next.delete("scope");
                         setSearchParams(next);
@@ -3738,24 +3731,24 @@ function KeywordsPage() {
                       已暂停 ✕
                     </button>
                   )}
-                  {removedForCurrent.length + pausedForCurrent.length > 0 && (
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setShowRemoved((v) => !v)}
-                        className={cn(
-                          "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
-                          showRemoved
-                            ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
-                            : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700",
-                        )}
-                      >
-                        已暂停 {pausedForCurrent.length} · 已删除 {removedForCurrent.length}
-                      </button>
-                      {showRemoved && (
-                        <div className="absolute left-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3 space-y-3">
-                          {pausedForCurrent.length > 0 && (
-                            <div>
+                  {(pausedForCurrent.length > 0 || removedForCurrent.length > 0 || unranked.length > 0) && (
+                    <span className="flex items-center gap-1.5">
+                      {pausedForCurrent.length > 0 && (
+                        <span className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowPaused((v) => !v)}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
+                              showPaused
+                                ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700",
+                            )}
+                          >
+                            已暂停 {pausedForCurrent.length}
+                          </button>
+                          {showPaused && (
+                            <div className="absolute right-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3">
                               <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mb-1.5">
                                 已暂停（自动屏蔽）
                               </p>
@@ -3786,16 +3779,29 @@ function KeywordsPage() {
                               </div>
                             </div>
                           )}
-                          {removedForCurrent.length > 0 && (
-                            <div>
+                        </span>
+                      )}
+                      {removedForCurrent.length > 0 && (
+                        <span className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowDeleted((v) => !v)}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
+                              showDeleted
+                                ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700",
+                            )}
+                          >
+                            已删除 {removedForCurrent.length}
+                          </button>
+                          {showDeleted && (
+                            <div className="absolute right-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3">
                               <div className="flex items-center justify-between mb-1.5">
                                 <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
                                   已删除（手动）
                                 </p>
-                                <button
-                                  onClick={clearRemoved}
-                                  className="text-[10px] text-zinc-400 hover:text-red-500"
-                                >
+                                <button onClick={clearRemoved} className="text-[10px] text-zinc-400 hover:text-red-500">
                                   清空
                                 </button>
                               </div>
@@ -3818,9 +3824,48 @@ function KeywordsPage() {
                               </div>
                             </div>
                           )}
-                        </div>
+                        </span>
                       )}
-                    </div>
+                      {unranked.length > 0 && (
+                        <span className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowUnranked((v) => !v)}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
+                              showUnranked
+                                ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700",
+                            )}
+                          >
+                            未在榜 {unranked.length}
+                          </button>
+                          {showUnranked && (
+                            <div className="absolute right-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3">
+                              <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5">
+                                未在榜（尚未采集到排名）
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {unranked.map((row) => (
+                                  <span
+                                    key={`${row.language}:${row.keyword}`}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
+                                  >
+                                    {row.keyword}
+                                    <span className="text-[10px] text-zinc-400">
+                                      {row.language === "en" ? "全局" : languageLabel(row.language)}
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                              <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                                这些关键词已排入自动采集任务，获得排名数据后会自动进入入榜列表。
+                              </p>
+                            </div>
+                          )}
+                        </span>
+                      )}
+                    </span>
                   )}
                 </div>
                 {schedulerStatus && (
@@ -3868,34 +3913,6 @@ function KeywordsPage() {
                 ) : (
                   <>
                     {scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))}
-                    {unranked.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowUnranked((v) => !v)}
-                        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-sm text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
-                      >
-                        <span>未在榜关键词（{unranked.length}）</span>
-                        <span
-                          className={cn(
-                            "text-zinc-400 transition-transform",
-                            showUnranked && "rotate-90",
-                          )}
-                        >
-                          ▸
-                        </span>
-                      </button>
-                    )}
-                    {showUnranked && unranked.map((row) => renderMatrixRow(row, true, appliedKindFor(row)))}
-                    {showUnranked &&
-                      curationApplied
-                        .filter((item) => item.kind === "remove" && queryLanguages.includes(item.language))
-                        .map((item) =>
-                          renderMatrixRow(
-                            { language: item.language, keyword: item.keyword, rationale: "", translation: "" } as any,
-                            true,
-                            "remove",
-                          ),
-                        )}
                   </>
                 )}
             </div>
