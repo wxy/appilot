@@ -110,6 +110,32 @@ export async function fetchRemoteTags(localPath: string): Promise<boolean> {
 }
 
 /**
+ * Update the local repo before determining release data: fetch remote branches
+ * and tags, then fast-forward the current local branch when the working tree
+ * is clean (never force, never touch dirty work). Silent no-op on failure.
+ */
+export async function syncLocalRepo(localPath: string): Promise<boolean> {
+  try {
+    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
+    if (!remote) return false;
+    await git(localPath, ["fetch", "--tags"]);
+    const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(() => "");
+    if (branch) {
+      const dirty = await git(localPath, ["status", "--porcelain"]).catch(() => "");
+      if (!dirty) {
+        await git(localPath, ["merge", "--ff-only", `origin/${branch}`]).catch(() => {
+          log.warn(`Fast-forward ${branch} failed; using local state as-is`);
+        });
+      }
+    }
+    return true;
+  } catch (err: any) {
+    log.warn(`syncLocalRepo failed for ${localPath}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * Best-effort fetch of the public GitHub release announcement for a tag.
  * Returns null silently for private repos, drafts, rate limits, or offline.
  */
@@ -351,10 +377,10 @@ export async function checkForRelease(
   localPath: string,
   lastSeenSha?: string | null,
   _legacyGithubToken?: string | null,
-  options: { fetchTags?: boolean } = {},
+  options: { sync?: boolean } = {},
 ): Promise<ReleaseCheckResult> {
-  if (options.fetchTags) {
-    await fetchRemoteTags(localPath);
+  if (options.sync) {
+    await syncLocalRepo(localPath);
   }
 
   const head = await git(localPath, ["rev-parse", "--short", "HEAD"]).catch(() => "");

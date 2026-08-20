@@ -1361,7 +1361,7 @@ export function registerIpcHandlers() {
 
     const { checkForRelease } = await import("../engine/release-watcher");
     const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
-      fetchTags: true,
+      sync: true,
     });
     return {
       releases: result.releases.map((release) => ({
@@ -1389,7 +1389,9 @@ export function registerIpcHandlers() {
 
       const { checkForRelease } = await import("../engine/release-watcher");
       const { readFullReadme, readRepoDescription } = await import("../engine/app-store-discovery");
-      const result = await checkForRelease(project.localPath, project.lastReleaseSha || null);
+      const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
+        sync: true,
+      });
       const release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) throw new Error("Release not found");
 
@@ -1460,7 +1462,9 @@ export function registerIpcHandlers() {
       phase: "read_draft",
       status: "started",
     });
-    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null);
+    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
+      sync: true,
+    });
     const release = result.releases.find((item) => item.tag === releaseTag) || null;
     _event.sender.send("release:generateProgress", {
       kind: "phase",

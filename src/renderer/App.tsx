@@ -1578,6 +1578,9 @@ function ReleasePage() {
         : `${Math.max(1, Math.round(sinceMs / 3600000))} 小时`
       : "";
   const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
+  const previousDraft =
+    (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
+  const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
     const rows: { label: string; meta: string }[] = [];
     rows.push({
@@ -1897,12 +1900,34 @@ function ReleasePage() {
                           type="button"
                           onClick={() => void setAllSummaryChecked(checkedCount < summaryItems.length)}
                           className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+                          title={
+                            checkedCount === summaryItems.length
+                              ? "取消全部选择"
+                              : checkedCount === 0
+                                ? "全部选择"
+                                : "全部确认"
+                          }
                         >
-                          {checkedCount < summaryItems.length ? "全部确认" : "全部取消"}
+                          {checkedCount === summaryItems.length
+                            ? "已全选"
+                            : checkedCount === 0
+                              ? "未选择"
+                              : "全部确认"}
                         </button>
                       ) : undefined
                     }
                   >
+                    {(previousDraft || latestCodeDate) && (
+                      <div className="mb-2 space-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+                        {previousDraft && (
+                          <p>
+                            上一次文案：{draftVersionLabel(previousDraft)} ·{" "}
+                            {formatHumanTime(previousDraft.updatedAt)} 生成
+                          </p>
+                        )}
+                        {latestCodeDate && <p>最新代码更新：{formatHumanTime(latestCodeDate)}</p>}
+                      </div>
+                    )}
                     {summaryItems.length === 0 ? (
                       <p className="text-sm text-zinc-400 dark:text-zinc-500">本次无变更</p>
                     ) : (

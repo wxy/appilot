@@ -15,6 +15,7 @@ import {
   fetchRemoteTags,
   filterMaterial,
   materialToBody,
+  syncLocalRepo,
 } from "../src/engine/release-watcher";
 
 let errors = 0;
@@ -154,6 +155,39 @@ async function runTests() {
     assert((await listGitTags(workDir)).some((t) => t.name === "v9.9.9"), "fetch: tag synced from remote");
     fs.rmSync(originDir, { recursive: true, force: true });
     fs.rmSync(workDir, { recursive: true, force: true });
+
+    // syncLocalRepo: fetch + fast-forward the local main branch when clean.
+    const syncOrigin = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-sync-origin-"));
+    const syncWork = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-sync-work-"));
+    run(syncOrigin, ["init", "-q", "--bare"]);
+    run(syncWork, ["init", "-q"]);
+    run(syncWork, ["remote", "add", "origin", syncOrigin]);
+    run(syncWork, ["config", "user.email", "test@example.com"]);
+    run(syncWork, ["config", "user.name", "Test"]);
+    run(syncWork, ["config", "commit.gpgsign", "false"]);
+    commit(syncWork, "s1.txt", "sync: base");
+    run(syncWork, ["push", "-q", "origin", "HEAD"]);
+    const branchName = execFileSync("git", ["-C", syncWork, "symbolic-ref", "--short", "HEAD"]).toString().trim();
+    run(syncOrigin, ["symbolic-ref", "HEAD", `refs/heads/${branchName}`]);
+    const syncCloneRoot = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-sync-clone-"));
+    run(syncCloneRoot, ["clone", "-q", syncOrigin, "repo"]);
+    const cloneRepo = path.join(syncCloneRoot, "repo");
+    commit(syncWork, "s2.txt", "sync: new work");
+    run(syncWork, ["push", "-q", "origin", "HEAD"]);
+    const remoteTip = execFileSync("git", ["-C", syncWork, "rev-parse", "HEAD"]).toString().trim();
+    assert((await syncLocalRepo(cloneRepo)) === true, "sync: local repo updated");
+    const localTip = execFileSync("git", ["-C", cloneRepo, "rev-parse", "HEAD"]).toString().trim();
+    assert(localTip === remoteTip, "sync: local main fast-forwarded to origin tip");
+    fs.writeFileSync(path.join(cloneRepo, "dirty.txt"), "x");
+    commit(syncWork, "s3.txt", "sync: more work");
+    run(syncWork, ["push", "-q", "origin", "HEAD"]);
+    const beforeDirty = execFileSync("git", ["-C", cloneRepo, "rev-parse", "HEAD"]).toString().trim();
+    await syncLocalRepo(cloneRepo);
+    const afterDirty = execFileSync("git", ["-C", cloneRepo, "rev-parse", "HEAD"]).toString().trim();
+    assert(beforeDirty === afterDirty, "sync: dirty working tree not fast-forwarded");
+    fs.rmSync(syncOrigin, { recursive: true, force: true });
+    fs.rmSync(syncWork, { recursive: true, force: true });
+    fs.rmSync(syncCloneRoot, { recursive: true, force: true });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
