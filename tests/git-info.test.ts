@@ -48,8 +48,11 @@ async function run() {
     typeof repo.githubUrl === "string" && repo.githubUrl.startsWith("https://github.com/"),
     "GitHub URL derived from remote",
   );
-  // CI checkouts are detached HEAD, so branch may legitimately be empty.
-  assert(typeof repo.branch === "string", "branch field present (may be empty on detached HEAD)");
+  // CI checkouts are detached HEAD, so branch may legitimately be null.
+  assert(
+    repo.branch === null || typeof repo.branch === "string",
+    "branch field present (may be null on detached HEAD)",
+  );
   assert(typeof repo.headSha === "string" && repo.headSha.length > 0, "HEAD short sha detected");
   assert(typeof repo.headMessage === "string" && repo.headMessage.length > 0, "HEAD message detected");
   assert(typeof repo.headDate === "string" && !Number.isNaN(new Date(repo.headDate).getTime()), "HEAD date is ISO");
