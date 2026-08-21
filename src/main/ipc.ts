@@ -282,6 +282,8 @@ function submissionReferenceFor(product: any, project: any, language: string) {
 }
 
 function isProductPostRelease(project: any, product: any): boolean {
+  // A recognized App Store product (trackId resolved) is live; track its keywords.
+  if (product?.trackId) return true;
   const hasPublishedDraft = getStoreSubmissionDrafts(project).some(
     (draft) =>
       draft.productId === product.id &&
@@ -304,6 +306,7 @@ async function generateStoreSubmissionDraft(
   sourceLanguage?: string,
   appVersionOverride?: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  includedChanges?: string[],
 ): Promise<StoreSubmissionDraft> {
   const { AIProvider } = await import("../engine/ai/ai-provider");
   const { generateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
@@ -380,6 +383,7 @@ async function generateStoreSubmissionDraft(
       previousDescription,
       previousLocalization,
       profile,
+      includedChanges,
     },
     onProgress,
     onChars,
@@ -904,8 +908,20 @@ export function registerIpcHandlers() {
 
   ipcMain.handle("projects:remove", async (_event, id: string) => {
     const s = await getStore();
+    const all = s.get("projects") || [];
+    const removed = all.find((p: any) => p.id === id);
     const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
     s.set("projects", projects);
+    // Remove scheduled tasks that belonged to the deleted project's products.
+    if (removed) {
+      const removedProductIds = new Set(
+        (removed.storeProducts || []).map((product: any) => product.id),
+      );
+      const tasks = (s.get("scheduledTasks") || []).filter(
+        (task: any) => !removedProductIds.has(task.productId),
+      );
+      s.set("scheduledTasks", tasks);
+    }
     void schedulerTick();
     emitProjectsChanged();
     return true;
@@ -1471,6 +1487,7 @@ export function registerIpcHandlers() {
       language?: string,
       includeShas?: string[],
       appVersion?: string,
+      includedChanges?: string[],
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -1536,6 +1553,7 @@ export function registerIpcHandlers() {
               _event.sender.send("release:generateProgress", { kind: "chars", ...received });
             }
           },
+          includedChanges,
         );
         // Remember the tag (+ its commit) we generated for: name@sha identity
         // so a moved tag redefines the boundary and triggers regeneration.

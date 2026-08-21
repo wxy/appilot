@@ -47,6 +47,9 @@ export interface AIProviderConfig {
 
 export type ThinkingEffort = "disabled" | "low" | "medium" | "high" | "max";
 
+/** Abort a stream if no chunk arrives for this long (server stalled mid-stream). */
+const STREAM_IDLE_TIMEOUT_MS = 60_000;
+
 function deepSeekThinkingParams(
   baseURL: string,
   effort: ThinkingEffort,
@@ -72,6 +75,7 @@ export class AIProvider {
     this.client = new OpenAI({
       baseURL: config.baseURL,
       apiKey: config.apiKey,
+      timeout: 90_000,
     });
   }
 
@@ -105,9 +109,12 @@ export class AIProvider {
           ...deepSeekThinkingParams(this.config.baseURL, thinkingEffort),
         };
         if (opts?.onProgress) {
+          let lastChunkAt = 0;
           const consumeStream = async (stream: any) => {
             let chars = 0;
+            let contentChars = 0;
             let lastPhase: "reasoning" | "content" | null = null;
+            let lastLoggedPhase: string | null = null;
             for await (const chunk of stream) {
               const delta = chunk?.choices?.[0]?.delta;
               // DeepSeek streams reasoning separately from content; count both
@@ -117,13 +124,23 @@ export class AIProvider {
                 : typeof delta?.reasoning_content === "string" ? delta.reasoning_content
                 : null;
               if (deltaText && deltaText.length > 0) {
+                // Only actual text data resets the idle timer; empty keep-alive
+                // chunks must not defeat the stall detection.
+                lastChunkAt = Date.now();
                 if (typeof delta?.content === "string" && delta.content.length > 0) {
                   content = (content || "") + delta.content;
+                  contentChars += delta.content.length;
                   lastPhase = "content";
                 } else {
                   lastPhase = "reasoning";
                 }
                 chars += deltaText.length;
+                if (lastPhase !== lastLoggedPhase) {
+                  lastLoggedPhase = lastPhase;
+                  log.info(
+                    `AI stream phase=${lastPhase} chars=${chars} contentChars=${contentChars}`,
+                  );
+                }
                 if (lastPhase) opts?.onProgress?.({ chars, phase: lastPhase });
               }
               if (chunk?.choices?.[0]?.finish_reason) {
@@ -148,14 +165,27 @@ export class AIProvider {
           }
           let streamed = false;
           for (const attempt of streamAttempts) {
+            const streamController = new AbortController();
+            lastChunkAt = Date.now();
+            const idleTimer = setInterval(() => {
+              if (Date.now() - lastChunkAt > STREAM_IDLE_TIMEOUT_MS) {
+                log.warn("AI stream idle timeout; aborting attempt");
+                streamController.abort();
+              }
+            }, 5000);
             try {
               await consumeStream(
-                await this.client.chat.completions.create(attempt as any),
+                await this.client.chat.completions.create({
+                  ...attempt,
+                  signal: streamController.signal,
+                } as any),
               );
               streamed = true;
               break;
             } catch (err: any) {
               log.warn(`AI streaming attempt failed (${err?.message})`);
+            } finally {
+              clearInterval(idleTimer);
             }
           }
           if (!streamed) {
