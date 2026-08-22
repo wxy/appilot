@@ -469,6 +469,8 @@ type ScheduledTask = RankScheduledTask;
 let schedulerTimer: NodeJS.Timeout | null = null;
 let schedulerRunning = false;
 let overdueScattered = false;
+/** How many rank tasks one scheduler tick may execute (throughput vs load). */
+const MAX_RANK_TASKS_PER_TICK = 8;
 const rankEntityCache = new Map<string, "software" | "macSoftware">();
 
 function hashString(value: string): number {
@@ -560,8 +562,10 @@ async function reconcileRankTasks(store: any): Promise<void> {
   }
 
   const next = existing
-    .filter((task) => task.kind !== "rank" || activeKeys.has(task.id))
-    .map((task) => (task.kind === "rank" ? desiredTasks.get(task.id) || task : task));
+    // Only rank tasks are runnable; drop stale task kinds (e.g. legacy release
+    // tasks with no executor) instead of letting them linger forever overdue.
+    .filter((task) => task.kind === "rank" && activeKeys.has(task.id))
+    .map((task) => desiredTasks.get(task.id) || task);
   for (const task of desiredTasks.values()) {
     if (!next.some((existingTask) => existingTask.id === task.id)) {
       next.push(task);
@@ -651,9 +655,18 @@ async function schedulerTick(): Promise<void> {
 
     const now = Date.now();
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    // Oldest-overdue first: array order is per-project, so an early project can
+    // otherwise starve every later project (GloWalk sat enabled but untouched
+    // behind ai-pulse's larger task list).
     const due = tasks
-      .filter((task) => task.enabled && new Date(task.nextRunAt).getTime() <= now)
-      .slice(0, 4);
+      .filter(
+        (task) =>
+          task.kind === "rank" &&
+          task.enabled &&
+          new Date(task.nextRunAt).getTime() <= now,
+      )
+      .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime())
+      .slice(0, MAX_RANK_TASKS_PER_TICK);
 
     for (const task of due) {
       await runRankTask(store, task);
