@@ -2544,6 +2544,7 @@ function TaskCenterPage() {
     tasks: any[];
   } | null>(null);
   const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
 
   useEffect(() => {
@@ -2572,6 +2573,9 @@ function TaskCenterPage() {
         .filter((name: string) => name && name !== "已删除项目"),
     ),
   ).sort();
+  const platformOptions = Array.from(
+    new Set((data?.tasks || []).map((task: any) => task.platform).filter(Boolean)),
+  ).sort();
   const languageOptions = Array.from(
     new Set(
       (data?.tasks || [])
@@ -2581,6 +2585,7 @@ function TaskCenterPage() {
   ).sort();
   const tasks = (data?.tasks || [])
     .filter((task) => projectFilter === "all" || task.projectName === projectFilter)
+    .filter((task) => platformFilter === "all" || task.platform === platformFilter)
     .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter);
   const pending = tasks.filter((task) => task.enabled);
   const failed = tasks.filter((task) => task.lastStatus === "failed");
@@ -2671,11 +2676,7 @@ function TaskCenterPage() {
         </div>
       )}
 
-      <TaskTimelineChart
-        timeline={timeline}
-        nowRunning={nowRunning}
-        overdue={overview?.overdue ?? 0}
-      />
+      <TaskTimelineChart timeline={timeline} />
 
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
         <select
@@ -2687,6 +2688,18 @@ function TaskCenterPage() {
           {projectOptions.map((name) => (
             <option key={name} value={name}>
               {name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={platformFilter}
+          onChange={(e) => setPlatformFilter(e.target.value)}
+          className={inputLineClass + " max-w-32"}
+        >
+          <option value="all">全部平台</option>
+          {platformOptions.map((platform) => (
+            <option key={platform} value={platform}>
+              {platformLabel(platform)}
             </option>
           ))}
         </select>
@@ -2724,26 +2737,38 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
   );
 }
 
+function niceStep(target: number): number {
+  const steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+  for (const step of steps) {
+    if (target <= step) return step;
+  }
+  const pow = Math.pow(10, Math.floor(Math.log10(target)));
+  const base = target / pow;
+  const multiplier = base <= 1 ? 1 : base <= 2 ? 2 : base <= 5 ? 5 : 10;
+  return multiplier * pow;
+}
+
 function TaskTimelineChart({
   timeline,
-  nowRunning,
-  overdue,
 }: {
   timeline?: {
     recent: { hour: number; success: number; failed: number }[];
     upcoming: { hour: number; count: number }[];
   };
-  nowRunning: any;
-  overdue: number;
 }) {
+  const [hovered, setHovered] = useState<{
+    index: number;
+    title: string;
+    lines: [string, string][];
+  } | null>(null);
   const recent = timeline?.recent ?? [];
   const upcoming = timeline?.upcoming ?? [];
-  const W = 760;
-  const H = 176;
-  const padL = 8;
-  const padR = 8;
-  const padT = 34;
-  const padB = 26;
+  const W = 780;
+  const H = 200;
+  const padL = 36;
+  const padR = 10;
+  const padT = 26;
+  const padB = 30;
   const chartW = W - padL - padR;
   const barW = chartW / 48;
   const plotH = H - padT - padB;
@@ -2752,44 +2777,84 @@ function TaskTimelineChart({
     ...recent.map((r) => r.success + r.failed),
     ...upcoming.map((u) => u.count),
   );
+  const step = niceStep(Math.max(1, Math.ceil(maxV / 4)));
+  const yTicks: number[] = [];
+  for (let value = 0; value < maxV; value += step) yTicks.push(value);
+  yTicks.push(maxV);
   const nowX = padL + 24 * barW;
   const y = (v: number) => padT + plotH - (v / maxV) * plotH;
   const hourLabel = (ts: number) =>
     `${String(new Date(ts).getHours()).padStart(2, "0")}:00`;
+  const xTickIndexes = [0, 6, 12, 18, 24, 30, 36, 42];
+  const relLabel = (i: number) =>
+    i === 24 ? "现在" : `${i < 24 ? "-" : "+"}${Math.abs(i - 24)}h`;
+
+  const hoverInfo = (index: number): { title: string; lines: [string, string][] } => {
+    if (index < 24) {
+      const r = recent[index] || { hour: 0, success: 0, failed: 0 };
+      const lines: [string, string][] = [];
+      if (r.success > 0) lines.push(["成功", `${r.success} 次`]);
+      if (r.failed > 0) lines.push(["失败", `${r.failed} 次`]);
+      if (lines.length === 0) lines.push(["本时段", "无执行"]);
+      return { title: hourLabel(r.hour), lines };
+    }
+    const u = upcoming[index - 24] || { hour: 0, count: 0 };
+    return {
+      title: hourLabel(u.hour),
+      lines: [["计划任务", `${u.count} 个`]],
+    };
+  };
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-      <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-start justify-between gap-4">
-        <div>
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">执行时间线</h3>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            过去 24 小时实际执行与未来 24 小时计划任务
-          </p>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {overdue > 0 && (
-            <span className="flex items-center gap-1.5 text-xs text-red-500 dark:text-red-400">
-              <span className="w-2 h-2 rounded-full bg-red-500" />
-              积压 {overdue} 个任务待执行
-            </span>
-          )}
-          {nowRunning && (
-            <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              正在执行 {nowRunning.keyword}（{storefrontDisplayName(nowRunning.storefront)}）
-            </span>
-          )}
-        </div>
+      <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">执行时间线</h3>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+          过去 24 小时实际执行与未来 24 小时计划任务（悬停查看详情）
+        </p>
       </div>
-      <div className="px-6 py-4">
+      <div className="px-6 py-4 relative">
+        {hovered && (
+          <div
+            className="absolute z-10 -translate-x-1/2 pointer-events-none rounded-lg bg-zinc-900/95 dark:bg-zinc-800/95 text-white px-2.5 py-1.5 shadow-lg"
+            style={{
+              left: `${((padL + (hovered.index + 0.5) * barW) / W) * 100}%`,
+              top: 8,
+            }}
+          >
+            <div className="text-[11px] font-semibold">{hovered.title}</div>
+            {hovered.lines.map(([label, value]) => (
+              <div key={label} className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-300">
+                <span>{label}</span>
+                <span className="font-mono text-white">{value}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+          {yTicks.map((tick) => (
+            <g key={tick}>
+              <line
+                x1={padL}
+                y1={y(tick)}
+                x2={W - padR}
+                y2={y(tick)}
+                stroke="currentColor"
+                className="text-zinc-100 dark:text-zinc-800"
+                strokeWidth="1"
+              />
+              <text x={padL - 6} y={y(tick) + 3} textAnchor="end" fontSize="10" className="fill-zinc-400">
+                {tick}
+              </text>
+            </g>
+          ))}
           <line
             x1={padL}
             y1={padT + plotH}
             x2={W - padR}
             y2={padT + plotH}
             stroke="currentColor"
-            className="text-zinc-200 dark:text-zinc-800"
+            className="text-zinc-300 dark:text-zinc-700"
             strokeWidth="1"
           />
           {recent.map((r, i) => {
@@ -2806,9 +2871,7 @@ function TaskTimelineChart({
                     height={successH}
                     fill="#10b981"
                     rx="1"
-                  >
-                    <title>{`${hourLabel(r.hour)} 成功 ${r.success} 次`}</title>
-                  </rect>
+                  />
                 )}
                 {r.failed > 0 && (
                   <rect
@@ -2818,9 +2881,7 @@ function TaskTimelineChart({
                     height={failedH}
                     fill="#ef4444"
                     rx="1"
-                  >
-                    <title>{`${hourLabel(r.hour)} 失败 ${r.failed} 次`}</title>
-                  </rect>
+                  />
                 )}
               </g>
             );
@@ -2838,29 +2899,56 @@ function TaskTimelineChart({
                 fill="#f59e0b"
                 opacity="0.55"
                 rx="1"
-              >
-                <title>{`${hourLabel(u.hour)} 计划 ${u.count} 个任务`}</title>
-              </rect>
+              />
             );
           })}
+          {hovered && (
+            <line
+              x1={padL + (hovered.index + 0.5) * barW}
+              y1={padT}
+              x2={padL + (hovered.index + 0.5) * barW}
+              y2={padT + plotH}
+              stroke="#a1a1aa"
+              strokeWidth="1"
+              strokeDasharray="2 2"
+            />
+          )}
           <line
             x1={nowX}
-            y1={padT - 6}
+            y1={padT - 4}
             x2={nowX}
             y2={padT + plotH}
             stroke="#f59e0b"
             strokeWidth="1.5"
             strokeDasharray="4 3"
           />
-          <text x={nowX} y={padT - 12} textAnchor="middle" fontSize="11" className="fill-amber-500 font-medium">
-            现在
+          {xTickIndexes.map((i) => (
+            <text
+              key={i}
+              x={padL + (i + 0.5) * barW}
+              y={H - 10}
+              textAnchor="middle"
+              fontSize="10"
+              className={i === 24 ? "fill-amber-500 font-medium" : "fill-zinc-400"}
+            >
+              {relLabel(i)}
+            </text>
+          ))}
+          <text x={W - padR} y={H - 10} textAnchor="end" fontSize="10" className="fill-zinc-400">
+            +24h
           </text>
-          <text x={padL} y={H - 8} fontSize="11" className="fill-zinc-400">
-            24小时前
-          </text>
-          <text x={W - padR} y={H - 8} textAnchor="end" fontSize="11" className="fill-zinc-400">
-            24小时后
-          </text>
+          {Array.from({ length: 48 }, (_, i) => (
+            <rect
+              key={`o-${i}`}
+              x={padL + i * barW}
+              y={padT}
+              width={barW}
+              height={plotH}
+              fill="transparent"
+              onMouseEnter={() => setHovered({ index: i, ...hoverInfo(i) })}
+              onMouseLeave={() => setHovered(null)}
+            />
+          ))}
         </svg>
         <div className="mt-3 flex items-center gap-4 text-[11px] text-zinc-500 dark:text-zinc-400">
           <span className="flex items-center gap-1.5">
