@@ -462,15 +462,25 @@ interface RankScheduledTask extends ScheduledTaskBase {
   keyword: string;
   queryLanguage: string;
   storefront: string;
+  lastDurationMs?: number;
 }
 
 type ScheduledTask = RankScheduledTask;
+
+interface RunningTaskInfo {
+  keyword: string;
+  language: string;
+  storefront: string;
+  startedAt: string;
+}
 
 let schedulerTimer: NodeJS.Timeout | null = null;
 let schedulerRunning = false;
 let overdueScattered = false;
 /** How many rank tasks one scheduler tick may execute (throughput vs load). */
 const MAX_RANK_TASKS_PER_TICK = 8;
+/** What the scheduler is executing right now (for the timeline UI). */
+let nowRunningTask: RunningTaskInfo | null = null;
 const rankEntityCache = new Map<string, "software" | "macSoftware">();
 
 function hashString(value: string): number {
@@ -605,6 +615,18 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
 
   const { searchAppStoreRank } = await import("../engine/rank-collector");
   const entity = await resolveRankEntity(product);
+  const startedAt = Date.now();
+  nowRunningTask = {
+    keyword: task.keyword,
+    language: task.queryLanguage,
+    storefront: task.storefront,
+    startedAt: new Date().toISOString(),
+  };
+  let durationMs = 0;
+  let requestBytes = 0;
+  let responseBytes = 0;
+  let rank: number | null = null;
+  let status: "success" | "failed" = "success";
   try {
     const result = await searchAppStoreRank({
       term: task.keyword,
@@ -612,6 +634,10 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
       trackId: product.trackId,
       entity,
     });
+    durationMs = result.durationMs;
+    requestBytes = result.requestBytes;
+    responseBytes = result.responseBytes;
+    rank = result.rank;
     const snapshot = {
       keyword: task.keyword,
       language: task.queryLanguage,
@@ -628,16 +654,37 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
+    status = "failed";
+    durationMs = Date.now() - startedAt;
     log.warn(`Scheduled rank task failed for "${task.keyword}" in ${task.storefront}: ${err.message}`);
     task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
     task.lastStatus = "failed";
     if (task.consecutiveFailures >= 5) {
       task.enabled = false;
     }
+  } finally {
+    nowRunningTask = null;
   }
 
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
+  task.lastDurationMs = durationMs;
+  const executions: any[] = Array.isArray(store.get("rankExecutions"))
+    ? store.get("rankExecutions")
+    : [];
+  executions.push({
+    ts: new Date().toISOString(),
+    productId: task.productId,
+    keyword: task.keyword,
+    language: task.queryLanguage,
+    storefront: task.storefront,
+    status,
+    rank,
+    durationMs,
+    requestBytes,
+    responseBytes,
+  });
+  store.set("rankExecutions", executions.slice(-5000));
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt = nextRunAt(
     taskSeed(task),
@@ -1390,8 +1437,96 @@ export function registerIpcHandlers() {
     const s = await getStore();
     const projects: any[] = (s.get("projects") || []).map(migrateLegacyStoreProducts);
     const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
+    const now = Date.now();
+    const executions: any[] = s.get("rankExecutions") || [];
+    const dayMs = 24 * 60 * 60 * 1000;
+    const recent = executions.filter(
+      (entry) => new Date(entry.ts).getTime() >= now - dayMs,
+    );
+    const success = recent.filter((entry) => entry.status === "success");
+    const enabled = tasks.filter((task) => task.enabled);
+    const overdue = enabled.filter(
+      (task) => new Date(task.nextRunAt).getTime() <= now,
+    ).length;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const executedToday = executions.filter(
+      (entry) => new Date(entry.ts).getTime() >= todayStart.getTime(),
+    ).length;
+    const totalExecuted = tasks.reduce(
+      (sum, task) => sum + (task.executionCount || 0),
+      0,
+    );
+    const avgDurationMs = recent.length
+      ? Math.round(
+          recent.reduce((sum, entry) => sum + (entry.durationMs || 0), 0) /
+            recent.length,
+        )
+      : 0;
+    const successRate = recent.length
+      ? Math.round((success.length / recent.length) * 100)
+      : null;
+    const hitRate = success.length
+      ? Math.round(
+          (success.filter((entry) => entry.rank != null).length / success.length) *
+            100,
+        )
+      : null;
+    const nextDue = enabled
+      .map((task) => new Date(task.nextRunAt).getTime())
+      .sort((a, b) => a - b)[0];
+
+    // 24 hourly buckets of past executions + 24 hourly buckets of scheduled runs.
+    const hourStart = (ts: number) => {
+      const d = new Date(ts);
+      d.setMinutes(0, 0, 0);
+      return d.getTime();
+    };
+    const recentTimeline: { hour: number; success: number; failed: number }[] = [];
+    for (let i = 23; i >= 0; i--) {
+      const start = hourStart(now) - i * 60 * 60 * 1000;
+      const end = start + 60 * 60 * 1000;
+      const inHour = recent.filter((entry) => {
+        const ts = new Date(entry.ts).getTime();
+        return ts >= start && ts < end;
+      });
+      recentTimeline.push({
+        hour: start,
+        success: inHour.filter((entry) => entry.status === "success").length,
+        failed: inHour.filter((entry) => entry.status === "failed").length,
+      });
+    }
+    const upcomingTimeline: { hour: number; count: number }[] = [];
+    for (let i = 0; i < 24; i++) {
+      const start = hourStart(now) + i * 60 * 60 * 1000;
+      const end = start + 60 * 60 * 1000;
+      upcomingTimeline.push({
+        hour: start,
+        count: enabled.filter((task) => {
+          const ts = new Date(task.nextRunAt).getTime();
+          return ts >= start && ts < end;
+        }).length,
+      });
+    }
+
     return {
       running: schedulerRunning,
+      nowRunning: nowRunningTask,
+      overview: {
+        total: tasks.length,
+        pending: enabled.length,
+        overdue,
+        executedToday,
+        totalExecuted,
+        avgDurationMs,
+        densityPerHour: Math.round((recent.length / 24) * 10) / 10,
+        successRate,
+        hitRate,
+        requestBytes: recent.reduce((sum, entry) => sum + (entry.requestBytes || 0), 0),
+        responseBytes: recent.reduce((sum, entry) => sum + (entry.responseBytes || 0), 0),
+        nextDueAt: nextDue ? new Date(nextDue).toISOString() : null,
+      },
+      timeline: { recent: recentTimeline, upcoming: upcomingTimeline },
       tasks: tasks.map((task) => {
         const context = findProductContext(projects, task.productId);
         const project = context?.project || null;
