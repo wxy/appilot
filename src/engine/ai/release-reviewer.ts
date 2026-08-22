@@ -1,9 +1,8 @@
-import type { AIProvider, ChatMessage } from "./ai-provider";
+import type { AIProvider } from "./ai-provider";
 import type { ReleaseInfo } from "../release-watcher";
 import type { StoreSubmissionContent, StoreSubmissionLocalization } from "../store-submission";
-import { requestJson } from "./ai-request";
+import { requestJson, buildArchiveMessages } from "./ai-request";
 import type { ProjectProfile } from "../project-profile";
-import { profileToPromptBlock } from "../project-profile";
 import { EngineError } from "../errors";
 import { log } from "../logger";
 
@@ -12,13 +11,6 @@ export interface ReleaseReview {
   descriptionSuggestions: string[];
   keywordSuggestions: string[];
   promotionAngles: string[];
-}
-
-/** Prefix a user-message line list with the stable project profile when present. */
-function withProfile(lines: string[], profile?: ProjectProfile): string {
-  return profile
-    ? [profileToPromptBlock(profile), "", ...lines].join("\n")
-    : lines.join("\n");
 }
 
 /** Normalize + clamp an AI-generated localization into the store field limits. */
@@ -56,32 +48,27 @@ export async function reviewRelease(
     profile?: ProjectProfile;
   },
 ): Promise<ReleaseReview> {
-  const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content: [
-        "You are Appilot's release analyst. Given an app and its new release, produce an ASO and promotion review.",
-        "Respond ONLY with JSON in this shape:",
-        '{"summary":"...","descriptionSuggestions":["..."],"keywordSuggestions":["..."],"promotionAngles":["..."]}',
-        "summary should be written in Chinese. Keep the other arrays concise and actionable.",
-      ].join("\n"),
-    },
-    {
-      role: "user",
-      content: withProfile([
-        `App name: ${context.name}`,
-        `Current description: ${context.description || "N/A"}`,
-        `Tracked keywords: ${context.keywords.join(", ") || "N/A"}`,
-        `Recent rankings: ${context.recentRankings
-          .map((item) => `${item.keyword}@${item.storefront}:${item.rank ?? "not ranked"}`)
-          .join(", ") || "N/A"}`,
-        `Release tag: ${context.release.tag}`,
-        `Release name: ${context.release.name || context.release.tag}`,
-        `Published at: ${context.release.publishedAt}`,
-        `Release body:\n${context.release.body || "N/A"}`,
-      ], context.profile),
-    },
-  ];
+  const messages = buildArchiveMessages(
+    context.profile,
+    [
+      "You are Appilot's release analyst. Given an app and its new release, produce an ASO and promotion review.",
+      "Respond ONLY with JSON in this shape:",
+      '{"summary":"...","descriptionSuggestions":["..."],"keywordSuggestions":["..."],"promotionAngles":["..."]}',
+      "summary should be written in Chinese. Keep the other arrays concise and actionable.",
+    ].join("\n"),
+    [
+      `App name: ${context.name}`,
+      `Current description: ${context.description || "N/A"}`,
+      `Tracked keywords: ${context.keywords.join(", ") || "N/A"}`,
+      `Recent rankings: ${context.recentRankings
+        .map((item) => `${item.keyword}@${item.storefront}:${item.rank ?? "not ranked"}`)
+        .join(", ") || "N/A"}`,
+      `Release tag: ${context.release.tag}`,
+      `Release name: ${context.release.name || context.release.tag}`,
+      `Published at: ${context.release.publishedAt}`,
+      `Release body:\n${context.release.body || "N/A"}`,
+    ],
+  );
 
   const data = await requestJson(provider, messages, {
     temperature: 0.4,
@@ -195,45 +182,40 @@ async function generateGlobalReleasePlan(
   summary: string;
   promotionAngles: string[];
 }> {
-  const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content: [
-        "You are Appilot's release planner.",
-        "Given the release announcement and current product context, produce a release summary and promotion angles.",
-        "Respond ONLY with JSON in this shape:",
-        JSON.stringify(
-          {
-            summary: "Chinese summary of this release",
-            promotionAngles: ["short angle"],
-          },
-          null,
-          2,
-        ),
-      ].join("\n"),
-    },
-    {
-      role: "user",
-      content: withProfile([
-        `App name: ${context.name}`,
-        `Current description: ${context.description || "N/A"}`,
-        `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
-        `Current submission keywords: ${context.currentSubmissionKeywords
-          .map((item) => `${item.language}:${item.text}`)
-          .join("; ") || "N/A"}`,
-        `Recent rankings: ${context.recentRankings
-          .map((item) => `${item.keyword}@${item.storefront}:${item.rank ?? "not ranked"}`)
-          .join(", ") || "N/A"}`,
-        `Release tag: ${context.release.tag}`,
-        `Release name: ${context.release.name || context.release.tag}`,
-        `Published at: ${context.release.publishedAt}`,
-        `Release body:\n${context.release.body || "N/A"}`,
-        context.reviewFeedback
-          ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
-          : "",
-      ], context.profile),
-    },
-  ];
+  const messages = buildArchiveMessages(
+    context.profile,
+    [
+      "You are Appilot's release planner.",
+      "Given the release announcement and current product context, produce a release summary and promotion angles.",
+      "Respond ONLY with JSON in this shape:",
+      JSON.stringify(
+        {
+          summary: "Chinese summary of this release",
+          promotionAngles: ["short angle"],
+        },
+        null,
+        2,
+      ),
+    ].join("\n"),
+    [
+      `App name: ${context.name}`,
+      `Current description: ${context.description || "N/A"}`,
+      `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
+      `Current submission keywords: ${context.currentSubmissionKeywords
+        .map((item) => `${item.language}:${item.text}`)
+        .join("; ") || "N/A"}`,
+      `Recent rankings: ${context.recentRankings
+        .map((item) => `${item.keyword}@${item.storefront}:${item.rank ?? "not ranked"}`)
+        .join(", ") || "N/A"}`,
+      `Release tag: ${context.release.tag}`,
+      `Release name: ${context.release.name || context.release.tag}`,
+      `Published at: ${context.release.publishedAt}`,
+      `Release body:\n${context.release.body || "N/A"}`,
+      context.reviewFeedback
+        ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
+        : "",
+    ],
+  );
 
   const data = await requestJson(provider, messages, {
     temperature: 0.4,
@@ -268,70 +250,65 @@ async function generateLocalizedStoreCopy(
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
-  const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content: [
-        `You are Appilot's App Store localization writer for language: ${language}.`,
-        "Respond ONLY with JSON in this shape:",
-        JSON.stringify(
-          {
-            name: "app name with ': short descriptive phrase', max 30 chars",
-            subtitle: "short tagline, max 30 chars",
-            promotionalText: "'> ' followed by a short promo line, max 170 chars",
-            description: "max 4000 characters",
-            whatsNew: "max 4000 characters",
-            keywords: "comma separated keywords, max 100 chars",
-          },
-          null,
-          2,
-        ),
-        "ASO: App Store search ranking is driven mainly by the app name, subtitle, and hidden keyword field. Treat them as ONE coherent set:",
-        "- `name`: keep the app's brand name verbatim, append a colon and a short descriptive phrase containing high-value search terms (e.g. `GloWalk: Path of Light`). Total ≤30 characters.",
-        "- `subtitle`: a compact tagline (≤30 characters) that complements the name and adds searchable terms.",
-        "- `keywords`: cover terms NOT already in the name or subtitle (Apple indexes those automatically); prioritize tracked keywords, current rankings, and release features. Total ≤100 characters.",
-        "Base the description on the current app description/README context, not only the release announcement.",
-        context.includedChanges?.length
-          ? "whatsNew 必须严格只包含本次确认的变更项，不得添加未列出的内容，也不得加版本标题。"
-          : "Use the release body primarily for whatsNew. For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
-        "Keep promotionalText ≤170 characters, keywords ≤100 characters, and description/whatsNew ≤4000 characters.",
-      ].join("\n"),
-    },
-    {
-      role: "user",
-      content: withProfile([
-        `Language: ${language}`,
-        `App name: ${context.name}`,
-        `Current description/README: ${context.description || "N/A"}`,
-        context.previousDescription
-          ? `Previous release description:\n${context.previousDescription}`
-          : "",
-        context.previousLocalization
-          ? `Previous release ${context.previousLocalization.language} description:\n${context.previousLocalization.description}`
-          : "",
-        context.previousLocalization?.name || context.previousLocalization?.subtitle
-          ? `Previous release ${context.previousLocalization?.language || ""} name:\n${context.previousLocalization?.name || "N/A"}\nPrevious release ${context.previousLocalization?.language || ""} subtitle:\n${context.previousLocalization?.subtitle || "N/A"}`
-          : "",
-        `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
-        `Current submission keywords: ${context.currentSubmissionKeywords
-          .filter((item: { language: string; text: string }) => item.language === language)
-          .map((item: { language: string; text: string }) => item.text)
-          .join(", ") || "N/A"}`,
-        `Recent rankings: ${context.recentRankings
-          .map((item) => `${item.keyword}@${item.storefront}:${item.rank ?? "not ranked"}`)
-          .join(", ") || "N/A"}`,
-        `Release tag: ${context.release.tag}`,
-        `Release name: ${context.release.name || context.release.tag}`,
-        ...(context.includedChanges?.length
-          ? ["Confirmed changes for this release (whatsNew must ONLY cover these):", ...context.includedChanges.map((change) => `- ${change}`)]
-          : []),
-        `Release body:\n${context.release.body || "N/A"}`,
-        context.reviewFeedback
-          ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
-          : "",
-      ], context.profile),
-    },
-  ];
+  const messages = buildArchiveMessages(
+    context.profile,
+    [
+      `You are Appilot's App Store localization writer for language: ${language}.`,
+      "Respond ONLY with JSON in this shape:",
+      JSON.stringify(
+        {
+          name: "app name with ': short descriptive phrase', max 30 chars",
+          subtitle: "short tagline, max 30 chars",
+          promotionalText: "'> ' followed by a short promo line, max 170 chars",
+          description: "max 4000 characters",
+          whatsNew: "max 4000 characters",
+          keywords: "comma separated keywords, max 100 chars",
+        },
+        null,
+        2,
+      ),
+      "ASO: App Store search ranking is driven mainly by the app name, subtitle, and hidden keyword field. Treat them as ONE coherent set:",
+      "- `name`: keep the app's brand name verbatim, append a colon and a short descriptive phrase containing high-value search terms (e.g. `GloWalk: Path of Light`). Total ≤30 characters.",
+      "- `subtitle`: a compact tagline (≤30 characters) that complements the name and adds searchable terms.",
+      "- `keywords`: cover terms NOT already in the name or subtitle (Apple indexes those automatically); prioritize tracked keywords, current rankings, and release features. Total ≤100 characters.",
+      "Base the description on the current app description/README context, not only the release announcement.",
+      context.includedChanges?.length
+        ? "whatsNew 必须严格只包含本次确认的变更项，不得添加未列出的内容，也不得加版本标题。"
+        : "Use the release body primarily for whatsNew. For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
+      "Keep promotionalText ≤170 characters, keywords ≤100 characters, and description/whatsNew ≤4000 characters.",
+    ].join("\n"),
+    [
+      `Language: ${language}`,
+      `App name: ${context.name}`,
+      `Current description/README: ${context.description || "N/A"}`,
+      context.previousDescription
+        ? `Previous release description:\n${context.previousDescription}`
+        : "",
+      context.previousLocalization
+        ? `Previous release ${context.previousLocalization.language} description:\n${context.previousLocalization.description}`
+        : "",
+      context.previousLocalization?.name || context.previousLocalization?.subtitle
+        ? `Previous release ${context.previousLocalization?.language || ""} name:\n${context.previousLocalization?.name || "N/A"}\nPrevious release ${context.previousLocalization?.language || ""} subtitle:\n${context.previousLocalization?.subtitle || "N/A"}`
+        : "",
+      `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
+      `Current submission keywords: ${context.currentSubmissionKeywords
+        .filter((item: { language: string; text: string }) => item.language === language)
+        .map((item: { language: string; text: string }) => item.text)
+        .join(", ") || "N/A"}`,
+      `Recent rankings: ${context.recentRankings
+        .map((item) => `${item.keyword}@${item.storefront}:${item.rank ?? "not ranked"}`)
+        .join(", ") || "N/A"}`,
+      `Release tag: ${context.release.tag}`,
+      `Release name: ${context.release.name || context.release.tag}`,
+      ...(context.includedChanges?.length
+        ? ["Confirmed changes for this release (whatsNew must ONLY cover these):", ...context.includedChanges.map((change) => `- ${change}`)]
+        : []),
+      `Release body:\n${context.release.body || "N/A"}`,
+      context.reviewFeedback
+        ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
+        : "",
+    ],
+  );
 
   const data = await requestJson(provider, messages, {
     temperature: 0.4,
@@ -358,45 +335,40 @@ async function generateTranslatedStoreCopy(
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
-  const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content: [
-        `You are Appilot's App Store translation assistant. Translate the source localization into language: ${language}.`,
-        "Keep the meaning and structure consistent with the source.",
-        "Respond ONLY with JSON in this shape:",
-        JSON.stringify(
-          {
-            name: "translated app name: short descriptive phrase, max 30 chars",
-            subtitle: "translated tagline, max 30 chars",
-            promotionalText: "keep the leading '> ' and translate, max 170 chars",
-            description: "max 4000 characters",
-            whatsNew: "max 4000 characters",
-            keywords: "comma separated keywords, max 100 chars",
-          },
-          null,
-          2,
-        ),
-        "Translate `name`, `subtitle`, and `keywords` too: keep the brand name verbatim and localize the colon phrase, tagline, and keywords so the name+subtitle+keywords set stays coherent in the target language.",
-        "Do not invent new product facts. Translate the provided copy faithfully.",
-        "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
-      ].join("\n"),
-    },
-    {
-      role: "user",
-      content: withProfile([
-        `Source language: ${primary.language}`,
-        `Target language: ${language}`,
-        `App name: ${context.name}`,
-        `Source name:\n${primary.name}`,
-        `Source subtitle:\n${primary.subtitle}`,
-        `Source promotionalText:\n${primary.promotionalText}`,
-        `Source description:\n${primary.description}`,
-        `Source whatsNew:\n${primary.whatsNew}`,
-        `Source keywords:\n${primary.keywords}`,
-      ], context.profile),
-    },
-  ];
+  const messages = buildArchiveMessages(
+    context.profile,
+    [
+      `You are Appilot's App Store translation assistant. Translate the source localization into language: ${language}.`,
+      "Keep the meaning and structure consistent with the source.",
+      "Respond ONLY with JSON in this shape:",
+      JSON.stringify(
+        {
+          name: "translated app name: short descriptive phrase, max 30 chars",
+          subtitle: "translated tagline, max 30 chars",
+          promotionalText: "keep the leading '> ' and translate, max 170 chars",
+          description: "max 4000 characters",
+          whatsNew: "max 4000 characters",
+          keywords: "comma separated keywords, max 100 chars",
+        },
+        null,
+        2,
+      ),
+      "Translate `name`, `subtitle`, and `keywords` too: keep the brand name verbatim and localize the colon phrase, tagline, and keywords so the name+subtitle+keywords set stays coherent in the target language.",
+      "Do not invent new product facts. Translate the provided copy faithfully.",
+      "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
+    ].join("\n"),
+    [
+      `Source language: ${primary.language}`,
+      `Target language: ${language}`,
+      `App name: ${context.name}`,
+      `Source name:\n${primary.name}`,
+      `Source subtitle:\n${primary.subtitle}`,
+      `Source promotionalText:\n${primary.promotionalText}`,
+      `Source description:\n${primary.description}`,
+      `Source whatsNew:\n${primary.whatsNew}`,
+      `Source keywords:\n${primary.keywords}`,
+    ],
+  );
 
   const data = await requestJson(provider, messages, {
     temperature: 0.3,
@@ -429,48 +401,43 @@ async function reviseLocalizedStoreCopy(
   base: StoreSubmissionLocalization,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
-  const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content: [
-        `You are Appilot's App Store localization rewriter for language: ${language}.`,
-        "Revise the existing copy according to the reviewer/author feedback while preserving its structure and formatting.",
-        "Respond ONLY with JSON in this shape:",
-        JSON.stringify(
-          {
-            name: "app name with ': short descriptive phrase', max 30 chars",
-            subtitle: "short tagline, max 30 chars",
-            promotionalText: "keep the leading '> ' if present, max 170 chars",
-            description: "max 4000 characters",
-            whatsNew: "max 4000 characters",
-            keywords: "comma separated keywords, max 100 chars",
-          },
-          null,
-          2,
-        ),
-        "Revise `name`, `subtitle`, and `keywords` together so they stay a coherent ASO set (name+subtitle+keywords). Keep the brand name verbatim.",
-        "Do not discard the existing structure or section markers.",
-        "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
-      ].join("\n"),
-    },
-    {
-      role: "user",
-      content: withProfile([
-        `Language: ${language}`,
-        `App name: ${context.name}`,
-        `Existing name:\n${base.name}`,
-        `Existing subtitle:\n${base.subtitle}`,
-        `Existing promotionalText:\n${base.promotionalText}`,
-        `Existing description:\n${base.description}`,
-        `Existing whatsNew:\n${base.whatsNew}`,
-        `Existing keywords:\n${base.keywords}`,
-        context.reviewFeedback
-          ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
-          : "",
-        `Release body:\n${context.release.body || "N/A"}`,
-      ], context.profile),
-    },
-  ];
+  const messages = buildArchiveMessages(
+    context.profile,
+    [
+      `You are Appilot's App Store localization rewriter for language: ${language}.`,
+      "Revise the existing copy according to the reviewer/author feedback while preserving its structure and formatting.",
+      "Respond ONLY with JSON in this shape:",
+      JSON.stringify(
+        {
+          name: "app name with ': short descriptive phrase', max 30 chars",
+          subtitle: "short tagline, max 30 chars",
+          promotionalText: "keep the leading '> ' if present, max 170 chars",
+          description: "max 4000 characters",
+          whatsNew: "max 4000 characters",
+          keywords: "comma separated keywords, max 100 chars",
+        },
+        null,
+        2,
+      ),
+      "Revise `name`, `subtitle`, and `keywords` together so they stay a coherent ASO set (name+subtitle+keywords). Keep the brand name verbatim.",
+      "Do not discard the existing structure or section markers.",
+      "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
+    ].join("\n"),
+    [
+      `Language: ${language}`,
+      `App name: ${context.name}`,
+      `Existing name:\n${base.name}`,
+      `Existing subtitle:\n${base.subtitle}`,
+      `Existing promotionalText:\n${base.promotionalText}`,
+      `Existing description:\n${base.description}`,
+      `Existing whatsNew:\n${base.whatsNew}`,
+      `Existing keywords:\n${base.keywords}`,
+      context.reviewFeedback
+        ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
+        : "",
+      `Release body:\n${context.release.body || "N/A"}`,
+    ],
+  );
 
   const data = await requestJson(provider, messages, {
     temperature: 0.3,

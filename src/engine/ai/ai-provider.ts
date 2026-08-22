@@ -17,6 +17,8 @@ export interface ChatMessage {
 export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
+  /** Input tokens served from the provider's prompt cache (0 when unknown). */
+  cachedTokens: number;
   totalTokens: number;
   estimatedCost: number; // USD
 }
@@ -39,10 +41,21 @@ function estimateCost(model: string, promptTokens: number, completionTokens: num
   return (promptTokens / 1000) * pricing.input + (completionTokens / 1000) * pricing.output;
 }
 
+/** Read cached-input tokens from either OpenAI's or DeepSeek's usage shape. */
+function cachedTokensFromUsage(usage: any): number {
+  return (
+    usage?.prompt_tokens_details?.cached_tokens ??
+    usage?.prompt_cache_hit_tokens ??
+    0
+  );
+}
+
 export interface AIProviderConfig {
   baseURL: string;
   apiKey: string;
   model: string;
+  /** Called with the usage of each completed request (analytics/persistence). */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 export type ThinkingEffort = "disabled" | "low" | "medium" | "high" | "max";
@@ -99,6 +112,7 @@ export class AIProvider {
       let finishReason: string | undefined;
       let promptTokens = 0;
       let completionTokens = 0;
+      let cachedTokens = 0;
       try {
         const request = {
           model: this.config.model,
@@ -149,6 +163,7 @@ export class AIProvider {
               if (chunk?.usage) {
                 promptTokens = chunk.usage.prompt_tokens || 0;
                 completionTokens = (chunk.usage.total_tokens || 0) - promptTokens;
+                cachedTokens = cachedTokensFromUsage(chunk.usage);
               }
             }
           };
@@ -195,6 +210,7 @@ export class AIProvider {
             finishReason = response.choices[0]?.finish_reason;
             promptTokens = response.usage?.prompt_tokens ?? 0;
             completionTokens = (response.usage?.total_tokens ?? 0) - promptTokens;
+            cachedTokens = cachedTokensFromUsage(response.usage);
             if (content) opts.onProgress({ chars: content.length, phase: "content" });
           }
         } else {
@@ -203,6 +219,7 @@ export class AIProvider {
           finishReason = response.choices[0]?.finish_reason;
           promptTokens = response.usage?.prompt_tokens ?? 0;
           completionTokens = (response.usage?.total_tokens ?? 0) - promptTokens;
+          cachedTokens = cachedTokensFromUsage(response.usage);
         }
       } catch (err: any) {
         if (err instanceof EngineError || err instanceof ApiError) throw err;
@@ -228,14 +245,25 @@ export class AIProvider {
 
       if (promptTokens || completionTokens) {
         const prev = this.totalUsage;
+        const cacheRatio = promptTokens > 0 ? Math.round((cachedTokens / promptTokens) * 100) : 0;
+        const requestCost = estimateCost(this.config.model, promptTokens, completionTokens);
+        log.info(
+          `AI request usage model=${this.config.model} prompt=${promptTokens} completion=${completionTokens} cached=${cachedTokens} (${cacheRatio}%)`,
+        );
         this.totalUsage = {
           promptTokens: (prev?.promptTokens ?? 0) + promptTokens,
           completionTokens: (prev?.completionTokens ?? 0) + completionTokens,
+          cachedTokens: (prev?.cachedTokens ?? 0) + cachedTokens,
           totalTokens: (prev?.totalTokens ?? 0) + promptTokens + completionTokens,
-          estimatedCost:
-            (prev?.estimatedCost ?? 0) +
-            estimateCost(this.config.model, promptTokens, completionTokens),
+          estimatedCost: (prev?.estimatedCost ?? 0) + requestCost,
         };
+        this.config.onUsage?.({
+          promptTokens,
+          completionTokens,
+          cachedTokens,
+          totalTokens: promptTokens + completionTokens,
+          estimatedCost: requestCost,
+        });
       }
 
       if (content) return content;

@@ -3,7 +3,11 @@
  * Run: npm test (tsx tests/project-profile.test.ts)
  */
 
-import { buildProjectProfile, profileToPromptBlock } from "../src/engine/project-profile";
+import {
+  buildProjectProfile,
+  profileToPromptBlock,
+  archiveSystemPrompt,
+} from "../src/engine/project-profile";
 
 let errors = 0;
 function assert(condition: boolean, msg: string) {
@@ -39,20 +43,25 @@ assert(profile.languages.join(",") === "en,zh-Hans,de", "profile: languages");
 assert(profile.storeNames.length === 1 && profile.storefrontLabels.length === 2, "profile: store dedupe");
 assert(
   profile.trackedKeywords.join(",") === "night walk,记账",
-  "profile: paused excluded, sorted by bestRank",
+  "profile: paused excluded, stable alphabetical order",
 );
 
 const block = profileToPromptBlock(profile);
 assert(block.includes("App name: GloWalk"), "prompt block: name");
 assert(block.includes("Description: Night walking companion app."), "prompt block: description");
 assert(block.includes("Storefront regions: 美国, 中国大陆"), "prompt block: storefronts");
-assert(block.includes("Tracked keywords (active, by best rank): night walk, 记账"), "prompt block: keywords");
+assert(block.includes("Tracked keywords (active): night walk, 记账"), "prompt block: keywords");
 assert(block.includes("README (full):\n# GloWalk"), "prompt block: full readme");
 assert(block.includes("- v1.1.0 [2026-07-01T00:00:00.000Z]: Added offline maps."), "prompt block: release history");
 assert(
   profileToPromptBlock(buildProjectProfile(input)) === block,
   "prompt block: deterministic across builds",
 );
+assert(
+  archiveSystemPrompt(profile) === archiveSystemPrompt(buildProjectProfile(input)),
+  "archive: byte-stable across builds",
+);
+assert(archiveSystemPrompt(profile).startsWith("Appilot project archive"), "archive: shared header first");
 
 const empty = buildProjectProfile({ name: "X", supportedLanguages: [], description: "", readme: "" });
 assert(empty.trackedKeywords.length === 0 && empty.description === "", "profile: empty-safe");

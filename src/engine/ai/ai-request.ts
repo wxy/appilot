@@ -11,6 +11,8 @@
  */
 
 import type { AIProvider, ChatMessage, ThinkingEffort } from "./ai-provider";
+import type { ProjectProfile } from "../project-profile";
+import { archiveSystemPrompt } from "../project-profile";
 import { EngineError } from "../errors";
 import { log } from "../logger";
 
@@ -33,6 +35,29 @@ export interface AiRequestOptions {
 export interface JsonRequestOptions extends AiRequestOptions {
   /** How much of the malformed output to echo into the repair request. */
   repairEchoChars?: number;
+}
+
+/**
+ * Build a request through the shared cache-friendly shape:
+ * system = stable project archive prefix + task instructions,
+ * user   = volatile task data only (fallback app identity when no profile).
+ * Every feature that has a profile MUST use this so the archive prefix is
+ * byte-identical across all AI requests for the same project.
+ */
+export function buildArchiveMessages(
+  profile: ProjectProfile | undefined,
+  taskSystem: string,
+  taskUserLines: string[],
+  fallbackUserLines: string[] = [],
+): ChatMessage[] {
+  const system = profile
+    ? [archiveSystemPrompt(profile), taskSystem].join("\n\n")
+    : taskSystem;
+  const user = profile ? taskUserLines : [...fallbackUserLines, ...taskUserLines];
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user.join("\n") },
+  ];
 }
 
 /** Robust JSON extraction: fences, surrounding prose, trailing commas, unquoted keys. */

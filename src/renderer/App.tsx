@@ -102,7 +102,7 @@ function formatHumanTime(iso: string | null | undefined): string {
 function Layout({ children }: { children: React.ReactNode }) {
   const { projects, currentProjectId, currentProductId, load, select, selectProduct, addByFolder } = useProject();
   const location = useLocation();
-  const [cost, setCost] = useState<number | null>(null);
+  const [aiUsage, setAiUsage] = useState<{ totalTokens: number; cachedTokens: number } | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -118,9 +118,19 @@ function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => { load(); }, []);
 
   useEffect(() => {
-    (window as any).appilot?.stats?.aiUsage()
-      .then((u: any) => setCost(u?.estimatedCost ?? 0))
-      .catch(() => setCost(0));
+    const refresh = () => {
+      (window as any).appilot?.stats?.aiUsage()
+        .then((u: any) =>
+          setAiUsage({
+            totalTokens: u?.totalTokens ?? 0,
+            cachedTokens: u?.cachedTokens ?? 0,
+          }),
+        )
+        .catch(() => setAiUsage(null));
+    };
+    refresh();
+    const timer = setInterval(refresh, 30_000);
+    return () => clearInterval(timer);
   }, []);
 
   // Close dropdowns when clicking outside.
@@ -270,15 +280,17 @@ function Layout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        {/* Right: cost + overflow menu */}
+        {/* Right: AI usage (tokens + cache) + overflow menu */}
         <div className="ml-auto flex items-center gap-2">
           <div
             className="flex items-center gap-1.5 px-2.5 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400"
-            title="本月 AI 成本"
+            title="AI 消耗 Token（其中缓冲命中多少）"
           >
-            <span>本月 AI</span>
+            <span>AI 用量</span>
             <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
-              {cost === null ? "—" : `$${cost.toFixed(2)}`}
+              {aiUsage === null
+                ? "—"
+                : `${formatTokens(aiUsage.totalTokens)} · 缓冲 ${formatTokens(aiUsage.cachedTokens)}`}
             </span>
           </div>
 
@@ -2910,6 +2922,11 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
 
 function formatKilo(chars: number): string {
   return `${(chars / 1000).toFixed(1).replace(/\.0$/, "")}K字`;
+}
+
+function formatTokens(n: number): string {
+  if (n < 1000) return `${Math.round(n)}`;
+  return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}K`;
 }
 
 function formatElapsed(seconds: number): string {
