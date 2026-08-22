@@ -279,13 +279,13 @@ function Layout({ children }: { children: React.ReactNode }) {
         <div className="ml-auto flex items-center gap-2">
           <div
             className="flex items-center gap-1.5 px-2.5 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400"
-            title="AI 消耗 Token（其中缓冲命中多少）"
+            title="AI 消耗 Token（其中缓存命中多少）"
           >
-            <span>AI 用量</span>
+            <span className="hidden sm:inline">AI 用量</span>
             <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
               {aiUsage === null
                 ? "—"
-                : `${formatTokens(aiUsage.totalTokens)} · 缓冲 ${formatTokens(aiUsage.cachedTokens)}`}
+                : `${formatTokens(aiUsage.totalTokens)} · 缓存 ${formatTokens(aiUsage.cachedTokens)}`}
             </span>
           </div>
 
@@ -299,7 +299,8 @@ function Layout({ children }: { children: React.ReactNode }) {
                 : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200",
             )}
           >
-            <span className="text-xs">▦</span> 任务中心
+            <span className="text-xs">▦</span>
+            <span className="hidden lg:inline">任务中心</span>
           </Link>
           <Link
             to="/settings"
@@ -311,7 +312,8 @@ function Layout({ children }: { children: React.ReactNode }) {
                 : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200",
             )}
           >
-            <span className="text-xs">⚙</span> 设置
+            <span className="text-xs">⚙</span>
+            <span className="hidden lg:inline">设置</span>
           </Link>
         </div>
       </header>
@@ -1512,6 +1514,7 @@ function ReleasePage() {
   const [selectedTag, setSelectedTag] = useState("");
   const [active, setActive] = useState<any>(null);
   const [checking, setChecking] = useState(false);
+  const [releasesLoaded, setReleasesLoaded] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<{
@@ -1568,6 +1571,7 @@ function ReleasePage() {
       setError(e.message || "发布列表加载失败。");
     } finally {
       setChecking(false);
+      setReleasesLoaded(true);
     }
   };
 
@@ -1960,7 +1964,16 @@ function ReleasePage() {
       )}
 
       {releases.length === 0 ? (
-        <EmptyState title="尚未检测到新的发布" desc="有新提交或创建新 tag（GitHub 发布会自动打 tag）后，这里会自动生成发布文案素材。" />
+        !releasesLoaded || checking ? (
+          <div className="py-16 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            正在检查发布状态…
+          </div>
+        ) : (
+          <EmptyState
+            title="尚未检测到新的发布"
+            desc="有新提交或创建新 tag（GitHub 发布会自动打 tag）后，这里会自动生成发布文案素材。"
+          />
+        )
       ) : (
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0">
@@ -2530,7 +2543,6 @@ function TaskCenterPage() {
     };
     tasks: any[];
   } | null>(null);
-  const [typeFilter, setTypeFilter] = useState<"all" | "rank">("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
 
@@ -2568,7 +2580,6 @@ function TaskCenterPage() {
     ),
   ).sort();
   const tasks = (data?.tasks || [])
-    .filter((task) => typeFilter === "all" || task.kind === typeFilter)
     .filter((task) => projectFilter === "all" || task.projectName === projectFilter)
     .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter);
   const pending = tasks.filter((task) => task.enabled);
@@ -2624,7 +2635,7 @@ function TaskCenterPage() {
           <StatCard
             label="执行密度"
             value={String(overview.densityPerHour)}
-            sub="次/小时（近24h）"
+            sub="次/小时（近24h，含未运行时段）"
           />
           <StatCard
             label="平均耗时"
@@ -2634,7 +2645,12 @@ function TaskCenterPage() {
           <StatCard
             label="成功率"
             value={overview.successRate == null ? "—" : `${overview.successRate}%`}
-            sub={`入榜率 ${overview.hitRate == null ? "—" : `${overview.hitRate}%`}`}
+            sub="近24h"
+          />
+          <StatCard
+            label="入榜率"
+            value={overview.hitRate == null ? "—" : `${overview.hitRate}%`}
+            sub="成功采集中找到排名"
           />
           <StatCard
             label="流量"
@@ -2655,23 +2671,13 @@ function TaskCenterPage() {
         </div>
       )}
 
-      <TaskTimelineChart timeline={timeline} nowRunning={nowRunning} />
+      <TaskTimelineChart
+        timeline={timeline}
+        nowRunning={nowRunning}
+        overdue={overview?.overdue ?? 0}
+      />
 
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
-        {(["all", "rank"] as const).map((filter) => (
-          <button
-            key={filter}
-            onClick={() => setTypeFilter(filter)}
-            className={cn(
-              "px-3 py-1.5 text-sm rounded-lg border transition-colors",
-              typeFilter === filter
-                ? "border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-            )}
-          >
-            {filter === "all" ? "全部任务" : "排名采集"}
-          </button>
-        ))}
         <select
           value={projectFilter}
           onChange={(e) => setProjectFilter(e.target.value)}
@@ -2721,12 +2727,14 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 function TaskTimelineChart({
   timeline,
   nowRunning,
+  overdue,
 }: {
   timeline?: {
     recent: { hour: number; success: number; failed: number }[];
     upcoming: { hour: number; count: number }[];
   };
   nowRunning: any;
+  overdue: number;
 }) {
   const recent = timeline?.recent ?? [];
   const upcoming = timeline?.upcoming ?? [];
@@ -2758,12 +2766,20 @@ function TaskTimelineChart({
             过去 24 小时实际执行与未来 24 小时计划任务
           </p>
         </div>
-        {nowRunning && (
-          <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            正在执行 {nowRunning.keyword}（{storefrontDisplayName(nowRunning.storefront)}）
-          </span>
-        )}
+        <div className="flex items-center gap-3 shrink-0">
+          {overdue > 0 && (
+            <span className="flex items-center gap-1.5 text-xs text-red-500 dark:text-red-400">
+              <span className="w-2 h-2 rounded-full bg-red-500" />
+              积压 {overdue} 个任务待执行
+            </span>
+          )}
+          {nowRunning && (
+            <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              正在执行 {nowRunning.keyword}（{storefrontDisplayName(nowRunning.storefront)}）
+            </span>
+          )}
+        </div>
       </div>
       <div className="px-6 py-4">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
@@ -4221,11 +4237,22 @@ function KeywordsPage() {
                   )}
                 </div>
                 {schedulerStatus && (
-                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                    {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
-                    {schedulerStatus.nextDueAt
-                      ? ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
-                      : ""}
+                  <span className="mt-0.5 flex items-center gap-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                    <span>
+                      {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
+                      {schedulerStatus.nextDueAt
+                        ? new Date(schedulerStatus.nextDueAt).getTime() <= Date.now()
+                          ? " · 已到期"
+                          : ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
+                        : ""}
+                    </span>
+                    <button
+                      onClick={() => (window as any).appilot?.scheduler?.runDue()}
+                      className="text-amber-600 dark:text-amber-400 hover:underline"
+                      title="立即执行已到期的采集任务"
+                    >
+                      立即执行
+                    </button>
                   </span>
                 )}
               </div>
