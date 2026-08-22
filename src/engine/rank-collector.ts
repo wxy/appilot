@@ -58,13 +58,21 @@ export async function searchAppStoreRank(opts: {
   trackId: string;
   productType?: string | null;
   entity?: "software" | "macSoftware";
-}): Promise<{ rank: number | null; totalResults: number }> {
+}): Promise<{
+  rank: number | null;
+  totalResults: number;
+  durationMs: number;
+  requestBytes: number;
+  responseBytes: number;
+}> {
   const url = new URL(ITUNES_SEARCH_URL);
   url.searchParams.set("term", opts.term);
   url.searchParams.set("country", opts.country.toUpperCase());
   url.searchParams.set("entity", opts.entity || entityForProductType(opts.productType));
   url.searchParams.set("limit", "200");
 
+  const startedAt = Date.now();
+  const requestBytes = Buffer.byteLength(url.toString());
   let lastStatus = 0;
   for (let attempt = 1; attempt <= 3; attempt++) {
     const res = await fetchWithTimeout(url);
@@ -77,13 +85,17 @@ export async function searchAppStoreRank(opts: {
       throw new Error(`iTunes Search API ${res.status}`);
     }
 
-    const data: any = await res.json();
+    const raw = await res.text();
+    const data: any = JSON.parse(raw);
     const results: any[] = Array.isArray(data?.results) ? data.results : [];
     const index = results.findIndex((r) => String(r.trackId) === String(opts.trackId));
 
     return {
       rank: index >= 0 ? index + 1 : null,
       totalResults: results.length,
+      durationMs: Date.now() - startedAt,
+      requestBytes,
+      responseBytes: raw.length,
     };
   }
 

@@ -104,9 +104,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const [aiUsage, setAiUsage] = useState<{ totalTokens: number; cachedTokens: number } | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const [overflowOpen, setOverflowOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const overflowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
@@ -138,9 +136,6 @@ function Layout({ children }: { children: React.ReactNode }) {
     const onDocClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setProjectMenuOpen(false);
-      }
-      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
-        setOverflowOpen(false);
       }
     };
     document.addEventListener("mousedown", onDocClick);
@@ -280,7 +275,7 @@ function Layout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        {/* Right: AI usage (tokens + cache) + overflow menu */}
+        {/* Right: AI usage + task center + settings */}
         <div className="ml-auto flex items-center gap-2">
           <div
             className="flex items-center gap-1.5 px-2.5 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400"
@@ -294,34 +289,30 @@ function Layout({ children }: { children: React.ReactNode }) {
             </span>
           </div>
 
-          <div ref={overflowRef} className="relative">
-            <button
-              onClick={() => setOverflowOpen((v) => !v)}
-              className="w-9 h-9 flex items-center justify-center rounded-lg text-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
-              title="更多"
-              aria-label="更多"
-            >
-              ⋯
-            </button>
-            {overflowOpen && (
-              <div className="absolute right-0 top-full mt-1.5 z-40 w-48 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 overflow-hidden">
-                <Link
-                  to="/tasks"
-                  onClick={() => setOverflowOpen(false)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-                >
-                  <span className="text-zinc-400 text-xs">▦</span> 任务中心
-                </Link>
-                <Link
-                  to="/settings"
-                  onClick={() => setOverflowOpen(false)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-                >
-                  <span className="text-zinc-400 text-xs">⚙</span> 设置
-                </Link>
-              </div>
+          <Link
+            to="/tasks"
+            title="任务中心"
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 h-7 rounded-full text-[11px] transition-colors",
+              location.pathname === "/tasks"
+                ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200",
             )}
-          </div>
+          >
+            <span className="text-xs">▦</span> 任务中心
+          </Link>
+          <Link
+            to="/settings"
+            title="设置"
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 h-7 rounded-full text-[11px] transition-colors",
+              location.pathname === "/settings"
+                ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200",
+            )}
+          >
+            <span className="text-xs">⚙</span> 设置
+          </Link>
         </div>
       </header>
 
@@ -2529,7 +2520,16 @@ function FieldHeader({ label, text, copy = true }: { label: string; text: string
 }
 
 function TaskCenterPage() {
-  const [data, setData] = useState<{ running: boolean; tasks: any[] } | null>(null);
+  const [data, setData] = useState<{
+    running: boolean;
+    nowRunning: any;
+    overview: any;
+    timeline: {
+      recent: { hour: number; success: number; failed: number }[];
+      upcoming: { hour: number; count: number }[];
+    };
+    tasks: any[];
+  } | null>(null);
   const [typeFilter, setTypeFilter] = useState<"all" | "rank">("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
@@ -2576,24 +2576,88 @@ function TaskCenterPage() {
 
   const pendingGroups = groupTasks(pending);
   const failedGroups = groupTasks(failed);
+  const overview = data?.overview;
+  const nowRunning = data?.nowRunning;
+  const timeline = data?.timeline;
 
   return (
-    <div className="p-10 max-w-6xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-5">
+    <div className="p-10 max-w-7xl mx-auto">
+      <div className="flex items-start justify-between gap-4 mb-6">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            查看后台任务的准备、执行和完成状态。
+            后台排名采集的调度健康度、执行负载与时间线。
           </p>
         </div>
-        {data?.running && (
-          <span className="px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
-            调度器运行中
+        <div className="flex items-center gap-2 shrink-0">
+          {nowRunning && (
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              正在执行 {nowRunning.keyword}
+            </span>
+          )}
+          <span
+            className={cn(
+              "px-2.5 py-1 rounded-full text-xs font-medium",
+              data?.running
+                ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+            )}
+          >
+            {data?.running ? "调度器运行中" : "调度器未运行"}
           </span>
-        )}
+        </div>
       </div>
 
-      <div className="mb-6 flex gap-2">
+      {overview && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <StatCard
+            label="任务总数"
+            value={String(overview.total)}
+            sub={`待执行 ${overview.pending} · 积压 ${overview.overdue}`}
+          />
+          <StatCard
+            label="已执行"
+            value={String(overview.executedToday)}
+            sub={`今日 · 累计 ${overview.totalExecuted}`}
+          />
+          <StatCard
+            label="执行密度"
+            value={String(overview.densityPerHour)}
+            sub="次/小时（近24h）"
+          />
+          <StatCard
+            label="平均耗时"
+            value={formatDuration(overview.avgDurationMs)}
+            sub="近24h"
+          />
+          <StatCard
+            label="成功率"
+            value={overview.successRate == null ? "—" : `${overview.successRate}%`}
+            sub={`入榜率 ${overview.hitRate == null ? "—" : `${overview.hitRate}%`}`}
+          />
+          <StatCard
+            label="流量"
+            value={`${formatBytes(overview.requestBytes)} / ${formatBytes(overview.responseBytes)}`}
+            sub="请求 / 响应（近24h）"
+          />
+          <StatCard
+            label="下次执行"
+            value={
+              overview.overdue > 0
+                ? `已到期 ×${overview.overdue}`
+                : overview.nextDueAt
+                  ? formatHumanTime(overview.nextDueAt)
+                  : "—"
+            }
+            sub="最近的计划任务"
+          />
+        </div>
+      )}
+
+      <TaskTimelineChart timeline={timeline} nowRunning={nowRunning} />
+
+      <div className="mt-6 mb-6 flex flex-wrap gap-2">
         {(["all", "rank"] as const).map((filter) => (
           <button
             key={filter}
@@ -2637,6 +2701,162 @@ function TaskCenterPage() {
       <div className="space-y-6">
         <TaskSection title={`准备进行（${pendingGroups.length} 组）`} groups={pendingGroups} />
         <TaskSection title={`失败（${failedGroups.length} 组）`} groups={failedGroups} />
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 shadow-sm">
+      <div className="text-xs text-zinc-500 dark:text-zinc-400">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100 leading-tight">
+        {value}
+      </div>
+      {sub && <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">{sub}</div>}
+    </div>
+  );
+}
+
+function TaskTimelineChart({
+  timeline,
+  nowRunning,
+}: {
+  timeline?: {
+    recent: { hour: number; success: number; failed: number }[];
+    upcoming: { hour: number; count: number }[];
+  };
+  nowRunning: any;
+}) {
+  const recent = timeline?.recent ?? [];
+  const upcoming = timeline?.upcoming ?? [];
+  const W = 760;
+  const H = 176;
+  const padL = 8;
+  const padR = 8;
+  const padT = 34;
+  const padB = 26;
+  const chartW = W - padL - padR;
+  const barW = chartW / 48;
+  const plotH = H - padT - padB;
+  const maxV = Math.max(
+    1,
+    ...recent.map((r) => r.success + r.failed),
+    ...upcoming.map((u) => u.count),
+  );
+  const nowX = padL + 24 * barW;
+  const y = (v: number) => padT + plotH - (v / maxV) * plotH;
+  const hourLabel = (ts: number) =>
+    `${String(new Date(ts).getHours()).padStart(2, "0")}:00`;
+
+  return (
+    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+      <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">执行时间线</h3>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+            过去 24 小时实际执行与未来 24 小时计划任务
+          </p>
+        </div>
+        {nowRunning && (
+          <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 shrink-0">
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+            正在执行 {nowRunning.keyword}（{storefrontDisplayName(nowRunning.storefront)}）
+          </span>
+        )}
+      </div>
+      <div className="px-6 py-4">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+          <line
+            x1={padL}
+            y1={padT + plotH}
+            x2={W - padR}
+            y2={padT + plotH}
+            stroke="currentColor"
+            className="text-zinc-200 dark:text-zinc-800"
+            strokeWidth="1"
+          />
+          {recent.map((r, i) => {
+            const x = padL + i * barW;
+            const successH = (r.success / maxV) * plotH;
+            const failedH = (r.failed / maxV) * plotH;
+            return (
+              <g key={`r-${i}`}>
+                {r.success > 0 && (
+                  <rect
+                    x={x}
+                    y={padT + plotH - successH}
+                    width={barW - 1}
+                    height={successH}
+                    fill="#10b981"
+                    rx="1"
+                  >
+                    <title>{`${hourLabel(r.hour)} 成功 ${r.success} 次`}</title>
+                  </rect>
+                )}
+                {r.failed > 0 && (
+                  <rect
+                    x={x}
+                    y={padT + plotH - successH - failedH}
+                    width={barW - 1}
+                    height={failedH}
+                    fill="#ef4444"
+                    rx="1"
+                  >
+                    <title>{`${hourLabel(r.hour)} 失败 ${r.failed} 次`}</title>
+                  </rect>
+                )}
+              </g>
+            );
+          })}
+          {upcoming.map((u, i) => {
+            const x = padL + (24 + i) * barW;
+            const h = (u.count / maxV) * plotH;
+            return (
+              <rect
+                key={`u-${i}`}
+                x={x}
+                y={y(u.count)}
+                width={barW - 1}
+                height={h}
+                fill="#f59e0b"
+                opacity="0.55"
+                rx="1"
+              >
+                <title>{`${hourLabel(u.hour)} 计划 ${u.count} 个任务`}</title>
+              </rect>
+            );
+          })}
+          <line
+            x1={nowX}
+            y1={padT - 6}
+            x2={nowX}
+            y2={padT + plotH}
+            stroke="#f59e0b"
+            strokeWidth="1.5"
+            strokeDasharray="4 3"
+          />
+          <text x={nowX} y={padT - 12} textAnchor="middle" fontSize="11" className="fill-amber-500 font-medium">
+            现在
+          </text>
+          <text x={padL} y={H - 8} fontSize="11" className="fill-zinc-400">
+            24小时前
+          </text>
+          <text x={W - padR} y={H - 8} textAnchor="end" fontSize="11" className="fill-zinc-400">
+            24小时后
+          </text>
+        </svg>
+        <div className="mt-3 flex items-center gap-4 text-[11px] text-zinc-500 dark:text-zinc-400">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />成功
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm bg-red-500" />失败
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm bg-amber-500 opacity-55" />计划任务
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -2927,6 +3147,19 @@ function formatKilo(chars: number): string {
 function formatTokens(n: number): string {
   if (n < 1000) return `${Math.round(n)}`;
   return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}K`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return "0B";
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function formatDuration(ms: number): string {
+  if (!ms) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function formatElapsed(seconds: number): string {
