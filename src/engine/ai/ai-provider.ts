@@ -54,6 +54,8 @@ export interface AIProviderConfig {
   baseURL: string;
   apiKey: string;
   model: string;
+  /** Called with the usage of each completed request (analytics/persistence). */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 export type ThinkingEffort = "disabled" | "low" | "medium" | "high" | "max";
@@ -244,6 +246,7 @@ export class AIProvider {
       if (promptTokens || completionTokens) {
         const prev = this.totalUsage;
         const cacheRatio = promptTokens > 0 ? Math.round((cachedTokens / promptTokens) * 100) : 0;
+        const requestCost = estimateCost(this.config.model, promptTokens, completionTokens);
         log.info(
           `AI request usage model=${this.config.model} prompt=${promptTokens} completion=${completionTokens} cached=${cachedTokens} (${cacheRatio}%)`,
         );
@@ -252,10 +255,15 @@ export class AIProvider {
           completionTokens: (prev?.completionTokens ?? 0) + completionTokens,
           cachedTokens: (prev?.cachedTokens ?? 0) + cachedTokens,
           totalTokens: (prev?.totalTokens ?? 0) + promptTokens + completionTokens,
-          estimatedCost:
-            (prev?.estimatedCost ?? 0) +
-            estimateCost(this.config.model, promptTokens, completionTokens),
+          estimatedCost: (prev?.estimatedCost ?? 0) + requestCost,
         };
+        this.config.onUsage?.({
+          promptTokens,
+          completionTokens,
+          cachedTokens,
+          totalTokens: promptTokens + completionTokens,
+          estimatedCost: requestCost,
+        });
       }
 
       if (content) return content;

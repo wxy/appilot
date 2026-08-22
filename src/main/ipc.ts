@@ -99,6 +99,31 @@ function normalizeLocalPath(localPath: unknown): string {
   }
 }
 
+/**
+ * Single factory for real AI providers (not testConnection): persists every
+ * completed request's token usage (incl. cached input) into the aiUsage store
+ * so the UI can show total tokens + cache hits instead of billing amounts.
+ */
+async function createAiProvider(s: any) {
+  const { AIProvider } = await import("../engine/ai/ai-provider");
+  return new AIProvider({
+    baseURL: s.get("aiProviderUrl"),
+    apiKey: decryptApiKey(s.get("aiApiKey")),
+    model: s.get("aiModel"),
+    onUsage: (usage) => {
+      const prev = s.get("aiUsage") || {};
+      s.set("aiUsage", {
+        calls: (prev.calls || 0) + 1,
+        promptTokens: (prev.promptTokens || 0) + usage.promptTokens,
+        completionTokens: (prev.completionTokens || 0) + usage.completionTokens,
+        cachedTokens: (prev.cachedTokens || 0) + usage.cachedTokens,
+        totalTokens: (prev.totalTokens || 0) + usage.totalTokens,
+        estimatedCost: (prev.estimatedCost || 0) + usage.estimatedCost,
+      });
+    },
+  });
+}
+
 function assertNonEmptyString(value: unknown, name: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${name} is required`);
@@ -308,15 +333,10 @@ async function generateStoreSubmissionDraft(
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   includedChanges?: string[],
 ): Promise<StoreSubmissionDraft> {
-  const { AIProvider } = await import("../engine/ai/ai-provider");
   const { generateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
   const { readRepoDescription } = await import("../engine/app-store-discovery");
 
-  const provider = new AIProvider({
-    baseURL: store.get("aiProviderUrl"),
-    apiKey: decryptApiKey(store.get("aiApiKey")),
-    model: store.get("aiModel"),
-  });
+  const provider = await createAiProvider(store);
 
   const trackedKeywords: string[] = Array.from(
     new Set<string>(
@@ -934,12 +954,7 @@ export function registerIpcHandlers() {
     if (!context) throw new Error("Store product not found");
     if (!language) throw new Error("Missing language");
 
-    const { AIProvider } = await import("../engine/ai/ai-provider");
-    const provider = new AIProvider({
-      baseURL: s.get("aiProviderUrl"),
-      apiKey: decryptApiKey(s.get("aiApiKey")),
-      model: s.get("aiModel"),
-    });
+    const provider = await createAiProvider(s);
     const { generateKeywords } = await import("../engine/ai/keyword-suggester");
     const { readRepoDescription } = await import("../engine/app-store-discovery");
 
@@ -973,12 +988,7 @@ export function registerIpcHandlers() {
     if (!language) throw new Error("Missing language");
     const { project, product } = context;
 
-    const { AIProvider } = await import("../engine/ai/ai-provider");
-    const provider = new AIProvider({
-      baseURL: s.get("aiProviderUrl"),
-      apiKey: decryptApiKey(s.get("aiApiKey")),
-      model: s.get("aiModel"),
-    });
+    const provider = await createAiProvider(s);
     const { curateKeywords } = await import("../engine/ai/keyword-suggester");
     const { readRepoDescription } = await import("../engine/app-store-discovery");
 
@@ -1046,12 +1056,7 @@ export function registerIpcHandlers() {
     if (!language) throw new Error("Missing language");
     const { project, product } = context;
     const profile = await buildProjectProfileFor(project, product);
-    const { AIProvider } = await import("../engine/ai/ai-provider");
-    const provider = new AIProvider({
-      baseURL: s.get("aiProviderUrl"),
-      apiKey: decryptApiKey(s.get("aiApiKey")),
-      model: s.get("aiModel"),
-    });
+    const provider = await createAiProvider(s);
     const { extractSubmissionCandidates } = await import("../engine/ai/keyword-suggester");
 
     const ref = submissionReferenceFor(product, project, language);
@@ -1219,12 +1224,7 @@ export function registerIpcHandlers() {
     if (!context) throw new Error("Store product not found");
     const { project, product } = context;
 
-    const { AIProvider } = await import("../engine/ai/ai-provider");
-    const provider = new AIProvider({
-      baseURL: s.get("aiProviderUrl"),
-      apiKey: decryptApiKey(s.get("aiApiKey")),
-      model: s.get("aiModel"),
-    });
+    const provider = await createAiProvider(s);
     const { generateOverviewBrief } = await import("../engine/ai/overview-brief");
     const { buildBriefInput } = await import("../engine/overview-summary");
     const { readRepoDescription } = await import("../engine/app-store-discovery");
@@ -1608,15 +1608,10 @@ export function registerIpcHandlers() {
       const draft = findStoreSubmissionDraft(project, productId, releaseTag);
       if (!draft) throw new Error("Submission draft not found");
 
-      const { AIProvider } = await import("../engine/ai/ai-provider");
       const { translateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
       const { readRepoDescription } = await import("../engine/app-store-discovery");
 
-      const provider = new AIProvider({
-        baseURL: s.get("aiProviderUrl"),
-        apiKey: decryptApiKey(s.get("aiApiKey")),
-        model: s.get("aiModel"),
-      });
+      const provider = await createAiProvider(s);
       const source = draft.localizations.find((item: any) => item.language === sourceLanguage)
         || draft.localizations[0];
       if (!source) throw new Error("Source localization not found");
@@ -1769,7 +1764,16 @@ export function registerIpcHandlers() {
   // ── Analytics / Stats (Task 0.13/0.14) ──
   ipcMain.handle("stats:aiUsage", async () => {
     const s = await getStore();
-    return s.get("aiUsage") || { calls: 0, totalTokens: 0, estimatedCost: 0 };
+    return (
+      s.get("aiUsage") || {
+        calls: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        totalTokens: 0,
+        estimatedCost: 0,
+      }
+    );
   });
 
 }
