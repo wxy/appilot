@@ -1045,6 +1045,7 @@ export function registerIpcHandlers() {
     if (!context) throw new Error("Store product not found");
     if (!language) throw new Error("Missing language");
     const { project, product } = context;
+    const profile = await buildProjectProfileFor(project, product);
     const { AIProvider } = await import("../engine/ai/ai-provider");
     const provider = new AIProvider({
       baseURL: s.get("aiProviderUrl"),
@@ -1068,6 +1069,7 @@ export function registerIpcHandlers() {
       subtitle: ref.subtitle,
       language,
       uiLanguage: "zh-Hans",
+      profile,
     }, (received) => {
       if (!_event.sender.isDestroyed()) {
         _event.sender.send("projects:submissionProgress", {
@@ -1233,11 +1235,13 @@ export function registerIpcHandlers() {
       .filter((item: any) => item.productId === productId)
       .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     const submissionDraft = drafts[0] || null;
+    const description = readRepoDescription(project.localPath);
+    const profile = await buildProjectProfileFor(project, product, undefined, description);
 
     const input = buildBriefInput({
       projectName: project.name,
       productName: product.trackName || project.name,
-      description: readRepoDescription(project.localPath),
+      description,
       platform: product.platform || "unknown",
       supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
       trackedKeywords: product.trackedKeywords || [],
@@ -1247,6 +1251,7 @@ export function registerIpcHandlers() {
         : null,
       submissionDraft,
       submissionKeywords: product.submissionKeywords || [],
+      profile,
     });
 
     const suggestions = await generateOverviewBrief(provider, input, (received) => {

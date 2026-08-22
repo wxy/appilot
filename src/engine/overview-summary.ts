@@ -2,6 +2,8 @@
  * Overview summary pure functions: rank-change detection and AI brief input.
  */
 
+import type { ProjectProfile } from "./project-profile";
+
 export interface RankSnapshotLike {
   keyword: string;
   language: string;
@@ -72,6 +74,8 @@ export interface OverviewBriefInput {
   } | null;
   submissionKeywordCount: number;
   uiLanguage: string;
+  /** Shared stable archive; the brief uses it as the cache-friendly prefix. */
+  profile?: ProjectProfile;
 }
 
 export function buildBriefInput(args: {
@@ -94,6 +98,7 @@ export function buildBriefInput(args: {
     storeStatus?: string;
   } | null;
   submissionKeywords: { language?: string; text?: string }[];
+  profile?: ProjectProfile;
 }): OverviewBriefInput {
   const days = args.days ?? 14;
   const active = args.trackedKeywords.filter((k) => k.status !== "paused");
@@ -146,5 +151,6 @@ export function buildBriefInput(args: {
       : null,
     submissionKeywordCount,
     uiLanguage: "zh-Hans",
+    profile: args.profile,
   };
 }

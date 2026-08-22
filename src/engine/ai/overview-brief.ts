@@ -3,7 +3,7 @@
  */
 
 import type { AIProvider, ChatMessage } from "./ai-provider";
-import { parseJsonObject, requestJson } from "./ai-request";
+import { parseJsonObject, requestJson, buildArchiveMessages } from "./ai-request";
 import type { OverviewBriefInput } from "../overview-summary";
 import { EngineError } from "../errors";
 import { log } from "../logger";
@@ -52,17 +52,17 @@ export function normalizeBriefSuggestions(data: any): BriefSuggestion[] {
 }
 
 export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
-  const system = [
-    "你是 Appilot 的运营副驾驶，为独立开发者的 App Store 增长给出简短、可执行的建议。",
-    "你只能基于下面给定的真实数据输出建议，reason 必须引用数据，不得编造。",
-    "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\"}]}",
-    "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",
-  ].join("\n");
-  const user = JSON.stringify(input, null, 2);
-  return [
-    { role: "system", content: system },
-    { role: "user", content: user },
-  ];
+  const { profile, ...taskData } = input;
+  return buildArchiveMessages(
+    profile,
+    [
+      "你是 Appilot 的运营副驾驶，为独立开发者的 App Store 增长给出简短、可执行的建议。",
+      "你只能基于下面给定的真实数据输出建议，reason 必须引用数据，不得编造。",
+      "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\"}]}",
+      "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",
+    ].join("\n"),
+    [JSON.stringify(taskData, null, 2)],
+  );
 }
 
 export async function generateOverviewBrief(

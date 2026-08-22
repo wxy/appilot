@@ -50,10 +50,9 @@ export const PROJECT_README_MAX_CHARS = 30000;
 export function buildProjectProfile(input: ProjectProfileInput): ProjectProfile {
   const active = (input.trackedKeywords || [])
     .filter((keyword) => keyword.status !== "paused" && keyword.keyword)
-    .sort(
-      (a, b) =>
-        (a.bestRank ?? Number.POSITIVE_INFINITY) - (b.bestRank ?? Number.POSITIVE_INFINITY),
-    )
+    // Stable byte order: rank-derived sorting would churn the cached prefix
+    // every time a snapshot updates, defeating prompt caching.
+    .sort((a, b) => String(a.keyword).localeCompare(String(b.keyword), "en"))
     .slice(0, 30)
     .map((keyword) => String(keyword.keyword));
 
@@ -99,7 +98,7 @@ export function profileToPromptBlock(profile: ProjectProfile): string {
     `Storefront regions: ${profile.storefrontLabels.join(", ") || "N/A"}`,
     `Description: ${profile.description || "N/A"}`,
     `README (full):\n${profile.readme || "N/A"}`,
-    `Tracked keywords (active, by best rank): ${profile.trackedKeywords.join(", ") || "N/A"}`,
+    `Tracked keywords (active): ${profile.trackedKeywords.join(", ") || "N/A"}`,
     profile.releaseHistory.length > 0
       ? [
           "Recent release announcements (newest first):",
@@ -110,4 +109,16 @@ export function profileToPromptBlock(profile: ProjectProfile): string {
         ].join("\n")
       : "Recent release announcements: N/A",
   ].join("\n");
+}
+
+/**
+ * Byte-stable shared context block. Every AI request for a project starts with
+ * this exact text, so OpenAI/DeepSeek automatic prefix caching can hit across
+ * features. Task-specific instructions and volatile data must come AFTER it.
+ */
+export function archiveSystemPrompt(profile: ProjectProfile): string {
+  return [
+    "Appilot project archive (shared stable context for all tasks):",
+    profileToPromptBlock(profile),
+  ].join("\n\n");
 }
