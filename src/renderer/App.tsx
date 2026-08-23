@@ -4988,6 +4988,7 @@ function CredentialsForm({
   onChanged?: () => void;
 }) {
   const [githubToken, setGithubToken] = useState("");
+  const [githubExpiresAt, setGithubExpiresAt] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [ascIssuerId, setAscIssuerId] = useState("");
   const [ascKeyId, setAscKeyId] = useState("");
@@ -5021,6 +5022,7 @@ function CredentialsForm({
   useEffect(() => {
     if (!editing.github || !creds?.githubTokenMasked) return;
     setGithubToken((current) => current || creds.githubTokenMasked || "");
+    setGithubExpiresAt((current) => current || creds.githubExpiresAt || "");
   }, [editing.github, creds?.githubTokenMasked]);
 
   useEffect(() => {
@@ -5041,6 +5043,21 @@ function CredentialsForm({
     creds?.githubSource === "project" ? "项目覆盖" : creds?.githubSource === "global" ? "全局" : null;
   const ascSource =
     creds?.ascSource === "project" ? "项目覆盖" : creds?.ascSource === "global" ? "全局" : null;
+  const githubExpiryWarning = (() => {
+    const date = githubExpiresAt || creds?.githubExpiresAt || "";
+    if (!date) return null;
+    const days = Math.ceil(
+      (new Date(`${date}T00:00:00`).getTime() - Date.now()) / 86_400_000,
+    );
+    if (days < 0) return { expired: true, text: `Token 已于 ${date} 过期，请更换` };
+    if (days <= 7) {
+      return {
+        expired: false,
+        text: `Token 将于 ${date} 到期（剩 ${days} 天），请提前更换`,
+      };
+    }
+    return null;
+  })();
 
   const testAndSave = async (kind: "github" | "asc") => {
     setTesting(kind);
@@ -5072,6 +5089,7 @@ function CredentialsForm({
       await (window as any).appilot.projects.saveCredentials(projectId, {
         scope,
         githubToken: kind === "github" ? githubValue : undefined,
+        githubExpiresAt: kind === "github" ? githubExpiresAt : undefined,
         ascIssuerId: kind === "asc" ? ascIssuerId : undefined,
         ascKeyId: kind === "asc" ? ascKeyId : undefined,
         ascPrivateKeyPath: kind === "asc" ? ascKeyPath : undefined,
@@ -5079,7 +5097,10 @@ function CredentialsForm({
       setSaved((prev) => ({ ...prev, [kind]: true }));
       setEditing((prev) => ({ ...prev, [kind]: false }));
       setConfirmClear((prev) => ({ ...prev, [kind]: false }));
-      if (kind === "github") setGithubToken("");
+      if (kind === "github") {
+        setGithubToken("");
+        setGithubExpiresAt("");
+      }
       else {
         setAscIssuerId("");
         setAscKeyId("");
@@ -5116,7 +5137,10 @@ function CredentialsForm({
       setSaved((prev) => ({ ...prev, [kind]: false }));
       setFeedback((prev) => ({ ...prev, [kind]: undefined }));
       setEditing((prev) => ({ ...prev, [kind]: false }));
-      if (kind === "github") setGithubToken("");
+      if (kind === "github") {
+        setGithubToken("");
+        setGithubExpiresAt("");
+      }
       else {
         setAscIssuerId("");
         setAscKeyId("");
@@ -5211,6 +5235,34 @@ function CredentialsForm({
             {showToken ? "隐藏" : "显示"}
           </button>
         </div>
+        <div>
+          <label className="block text-[11px] text-zinc-400 mb-1">
+            过期时间（可选）
+          </label>
+          <input
+            className={inputLineClass + " max-w-44"}
+            type="date"
+            value={githubExpiresAt}
+            onChange={(e) => {
+              setGithubExpiresAt(e.target.value);
+              setSaved((prev) => ({ ...prev, github: false }));
+              setFeedback((prev) => ({ ...prev, github: undefined }));
+              setConfirmClear((prev) => ({ ...prev, github: false }));
+            }}
+          />
+          {githubExpiryWarning && (
+            <p
+              className={cn(
+                "mt-1 text-[11px]",
+                githubExpiryWarning.expired
+                  ? "text-red-500 dark:text-red-400"
+                  : "text-amber-600 dark:text-amber-400",
+              )}
+            >
+              {githubExpiryWarning.text}
+            </p>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -5262,6 +5314,7 @@ function CredentialsForm({
                 setEditing((prev) => ({ ...prev, github: false }));
                 setConfirmClear((prev) => ({ ...prev, github: false }));
                 setGithubToken("");
+                setGithubExpiresAt("");
                 setFeedback((prev) => ({ ...prev, github: undefined }));
               }}
               className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
@@ -5276,7 +5329,13 @@ function CredentialsForm({
         <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1">
           <p>
             获取：GitHub → Settings → Developer settings → Personal access tokens 创建；
-            建议 fine-grained，仓库权限 Contents: Read、Releases: Read/Write。
+            建议 fine-grained（细粒度），权限选择 Contents: Read（release 与仓库内容，GitHub
+            没有独立的 Release 权限，release 归 Contents 管）+ Pull requests: Read（PR 信息，
+            Metadata 自动包含）；如需一键发布再升级 Contents: Read/Write。
+          </p>
+          <p>
+            有效期：GitHub 不提供读取 Token 到期时间的接口；创建时可选择「不过期（No
+            expiration）」，或在表单中填写过期时间，到期前 7 天会提醒更换。
           </p>
           <button
             type="button"
@@ -5304,6 +5363,18 @@ function CredentialsForm({
               </li>
             ))}
           </ul>
+          {githubExpiryWarning && (
+            <p
+              className={cn(
+                "text-[11px]",
+                githubExpiryWarning.expired
+                  ? "text-red-500 dark:text-red-400"
+                  : "text-amber-600 dark:text-amber-400",
+              )}
+            >
+              {githubExpiryWarning.text}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -5332,6 +5403,7 @@ function CredentialsForm({
               onClick={() => {
                 setEditing((prev) => ({ ...prev, github: true }));
                 setGithubToken(creds?.githubTokenMasked || "");
+                setGithubExpiresAt(creds?.githubExpiresAt || "");
                 setConfirmClear((prev) => ({ ...prev, github: false }));
               }}
               className={btnSmSecondary}

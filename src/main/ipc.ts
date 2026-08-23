@@ -53,6 +53,7 @@ function resolveEffectiveCredentials(s: any, projectId: string) {
   };
   return {
     githubToken: pick("githubToken"),
+    githubExpiresAt: pick("githubExpiresAt"),
     ascIssuerId: pick("ascIssuerId"),
     ascKeyId: pick("ascKeyId"),
     ascPrivateKeyPath: pick("ascPrivateKeyPath"),
@@ -1073,6 +1074,7 @@ export function registerIpcHandlers() {
     };
     return {
       hasGithubToken: Boolean(eff.githubToken),
+      githubExpiresAt: eff.githubExpiresAt || "",
       hasAscKey: Boolean(eff.ascIssuerId && eff.ascKeyId && eff.ascPrivateKeyPath),
       globalGithubTokenSet: Boolean(global.githubToken),
       globalAscKeySet: Boolean(
@@ -1103,6 +1105,7 @@ export function registerIpcHandlers() {
       creds: {
         scope?: "global" | "project";
         githubToken?: string;
+        githubExpiresAt?: string;
         ascIssuerId?: string;
         ascKeyId?: string;
         ascPrivateKeyPath?: string;
@@ -1124,7 +1127,8 @@ export function registerIpcHandlers() {
         else if (
           key === "ascPrivateKeyPath" ||
           key === "ascIssuerId" ||
-          key === "ascKeyId"
+          key === "ascKeyId" ||
+          key === "githubExpiresAt"
         ) {
           entry[key] = value.trim();
         }
@@ -1133,6 +1137,7 @@ export function registerIpcHandlers() {
       if (scope === "global") {
         const entry: Record<string, string> = { ...(s.get("globalCredentials") || {}) };
         setField(entry, "githubToken", creds.githubToken);
+        setField(entry, "githubExpiresAt", creds.githubExpiresAt);
         setField(entry, "ascIssuerId", creds.ascIssuerId);
         setField(entry, "ascKeyId", creds.ascKeyId);
         setField(entry, "ascPrivateKeyPath", ascCopy);
@@ -1141,6 +1146,7 @@ export function registerIpcHandlers() {
         const all: Record<string, Record<string, string>> = s.get("projectCredentials") || {};
         const entry: Record<string, string> = { ...(all[projectId] || {}) };
         setField(entry, "githubToken", creds.githubToken);
+        setField(entry, "githubExpiresAt", creds.githubExpiresAt);
         setField(entry, "ascIssuerId", creds.ascIssuerId);
         setField(entry, "ascKeyId", creds.ascKeyId);
         setField(entry, "ascPrivateKeyPath", ascCopy);
