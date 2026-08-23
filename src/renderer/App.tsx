@@ -866,6 +866,11 @@ function OverviewPage() {
                 </button>
               );
             })}
+            <CredentialBadge
+              kind="github"
+              enabled={Boolean(project.hasGithubToken)}
+              projectId={project.id}
+            />
             <button
               onClick={() => navigate(`/projects/${project.id}/settings`)}
               className="inline-flex items-center px-2.5 h-7 rounded-full border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
@@ -1979,6 +1984,18 @@ function ReleasePage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <CredentialBadge
+              kind="github"
+              enabled={Boolean(project.hasGithubToken)}
+              projectId={project.id}
+            />
+            <CredentialBadge
+              kind="asc"
+              enabled={Boolean(project.hasAscKey)}
+              projectId={project.id}
+            />
+          </div>
           {products.length > 0 && (
             <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-zinc-800/80 p-1 gap-1">
               {products.map((product) => (
@@ -3167,8 +3184,17 @@ function TaskMeta({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PlaceholderPage({ title, desc }: { title: string; desc: string }) {
+function PlaceholderPage({
+  title,
+  desc,
+  credentialBadges = [],
+}: {
+  title: string;
+  desc: string;
+  credentialBadges?: ("github" | "asc")[];
+}) {
   const { projects, currentProjectId } = useProject();
+  const project = projects.find((p) => p.id === currentProjectId) || null;
   if (!projects.some((p) => p.id === currentProjectId)) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示数据。" />;
   }
@@ -3176,6 +3202,22 @@ function PlaceholderPage({ title, desc }: { title: string; desc: string }) {
     <div className="p-10 max-w-6xl mx-auto">
       <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">{title}</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-8">{desc}</p>
+      {project && credentialBadges.length > 0 && (
+        <div className="flex items-center gap-1.5 -mt-4 mb-8">
+          {credentialBadges.map((kind) => (
+            <CredentialBadge
+              key={kind}
+              kind={kind}
+              enabled={
+                kind === "github"
+                  ? Boolean(project.hasGithubToken)
+                  : Boolean(project.hasAscKey)
+              }
+              projectId={project.id}
+            />
+          ))}
+        </div>
+      )}
       <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
         该界面将在 Phase A 后续步骤实现
       </div>
@@ -4926,8 +4968,8 @@ function ProjectSettingsPage() {
           <div className="p-5 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                全局凭据自动适用于本项目；这里填写的内容仅覆盖本项目，未填写的项继续使用全局。
-                清除本项目凭据后回退全局。
+                全局凭据自动适用于本项目；这里仅编辑本项目自己的凭据，未配置时显示空表单，
+                不会展示或改动全局值。清除本项目凭据后回退全局。
               </p>
               <button
                 type="button"
@@ -4949,14 +4991,14 @@ function ProjectSettingsPage() {
   );
 }
 
-function GithubIcon() {
+function GithubIcon({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 16 16"
       width="16"
       height="16"
       fill="currentColor"
-      className="text-zinc-700 dark:text-zinc-300 shrink-0"
+      className={cn("text-zinc-700 dark:text-zinc-300 shrink-0", className)}
       aria-hidden="true"
     >
       <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
@@ -4964,14 +5006,14 @@ function GithubIcon() {
   );
 }
 
-function AppleIcon() {
+function AppleIcon({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
       width="16"
       height="16"
       fill="currentColor"
-      className="text-zinc-700 dark:text-zinc-300 shrink-0"
+      className={cn("text-zinc-700 dark:text-zinc-300 shrink-0", className)}
       aria-hidden="true"
     >
       <path d="M17.05 12.53c-.02-2.36 1.93-3.49 2.02-3.55-1.1-1.61-2.81-1.83-3.42-1.85-1.45-.15-2.83.86-3.57.86-.74 0-1.88-.84-3.09-.82-1.59.02-3.06.92-3.88 2.35-1.65 2.87-.42 7.12 1.19 9.45.79 1.14 1.73 2.42 2.96 2.37 1.19-.05 1.64-.77 3.08-.77s1.84.77 3.11.74c1.28-.02 2.1-1.16 2.88-2.3.91-1.33 1.28-2.62 1.3-2.68-.03-.01-2.5-.96-2.52-3.84zM14.45 5.41c.65-.79 1.09-1.89.97-2.99-.94.04-2.08.63-2.75 1.42-.6.7-1.13 1.83-.99 2.91 1.05.08 2.12-.54 2.77-1.34z" />
@@ -4981,6 +5023,50 @@ function AppleIcon() {
 
 const GITHUB_CAPABILITIES = ["私有/草案 release 公告", "真实 PR 素材", "远程仓库数据"];
 const ASC_CAPABILITIES = ["版本/审核状态回读", "审核意见", "评论洞察", "销量/下载分析"];
+
+const CREDENTIAL_BADGE_DETAIL: Record<"github" | "asc", string> = {
+  github: "私有/草案 release 公告、真实 PR 素材、远程仓库数据",
+  asc: "版本/审核状态回读、审核意见、评论洞察、销量/下载分析",
+};
+
+/** Small chip marking a feature that is enhanced by a saved credential.
+ *  Configured → solid; missing → dashed, clickable to jump to project settings. */
+function CredentialBadge({
+  kind,
+  enabled,
+  projectId,
+}: {
+  kind: "github" | "asc";
+  enabled: boolean;
+  projectId: string;
+}) {
+  const navigate = useNavigate();
+  const Icon = kind === "github" ? GithubIcon : AppleIcon;
+  const label = kind === "github" ? "GitHub" : "ASC";
+  const detail = CREDENTIAL_BADGE_DETAIL[kind];
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (!enabled) navigate(`/projects/${projectId}/settings`);
+      }}
+      title={
+        enabled
+          ? `已配置，用于：${detail}`
+          : `未配置，可解锁：${detail}（点击前往项目设置）`
+      }
+      className={cn(
+        "inline-flex items-center gap-1 px-2 h-6 rounded-full text-[11px] transition-colors",
+        enabled
+          ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200 dark:ring-zinc-700"
+          : "border border-dashed border-zinc-300 dark:border-zinc-700 text-zinc-400 dark:text-zinc-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400",
+      )}
+    >
+      <Icon className="w-3.5 h-3.5 text-current" />
+      {label}
+    </button>
+  );
+}
 
 function CredentialsForm({
   projectId,
@@ -5017,6 +5103,11 @@ function CredentialsForm({
     asc: false,
   });
 
+  // Project scope edits only the project's own override credentials. It must
+  // NOT show effective (global ?? override) values, otherwise the override
+  // form looks like it is replacing the global credentials.
+  const isProject = scope === "project";
+
   useEffect(() => {
     refreshCreds().catch(() => setCreds(null));
   }, [projectId]);
@@ -5024,31 +5115,69 @@ function CredentialsForm({
   // Re-enter mode always shows the saved values: fill empty fields whenever
   // credentials arrive/refresh, preserving anything the user typed.
   useEffect(() => {
-    if (!editing.github || !creds?.githubTokenMasked) return;
-    setGithubToken((current) => current || creds.githubTokenMasked || "");
-    setGithubExpiresAt((current) => current || creds.githubExpiresAt || "");
-  }, [editing.github, creds?.githubTokenMasked]);
+    if (!editing.github || !creds) return;
+    const masked = isProject ? creds.projectGithubTokenMasked : creds.githubTokenMasked;
+    if (!masked) return;
+    setGithubToken((current) => current || masked || "");
+    setGithubExpiresAt(
+      (current) =>
+        current ||
+        (isProject ? creds.projectGithubExpiresAt : creds.githubExpiresAt) ||
+        "",
+    );
+  }, [editing.github, creds?.githubTokenMasked, creds?.projectGithubTokenMasked, isProject]);
 
   useEffect(() => {
     if (!editing.asc || !creds) return;
-    setAscIssuerId((current) => current || creds.ascIssuerId || "");
-    setAscKeyId((current) => current || creds.ascKeyId || "");
-    setAscKeyPath((current) => current || creds.ascPrivateKeyPath || "");
-  }, [editing.asc, creds]);
+    setAscIssuerId(
+      (current) => current || (isProject ? creds.projectAscIssuerId : creds.ascIssuerId) || "",
+    );
+    setAscKeyId(
+      (current) => current || (isProject ? creds.projectAscKeyId : creds.ascKeyId) || "",
+    );
+    setAscKeyPath(
+      (current) =>
+        current || (isProject ? creds.projectAscPrivateKeyPath : creds.ascPrivateKeyPath) || "",
+    );
+  }, [editing.asc, creds, isProject]);
 
   const refreshCreds = async () => {
     const next = await (window as any).appilot.projects.getCredentials(projectId);
     setCreds(next);
   };
 
-  const githubUnlocked = Boolean(creds?.hasGithubToken);
-  const ascUnlocked = Boolean(creds?.hasAscKey);
-  const githubSource =
-    creds?.githubSource === "project" ? "项目覆盖" : creds?.githubSource === "global" ? "全局" : null;
-  const ascSource =
-    creds?.ascSource === "project" ? "项目覆盖" : creds?.ascSource === "global" ? "全局" : null;
+  const githubUnlocked = isProject
+    ? Boolean(creds?.projectHasGithubToken)
+    : Boolean(creds?.hasGithubToken);
+  const ascUnlocked = isProject
+    ? Boolean(creds?.projectHasAscKey)
+    : Boolean(creds?.hasAscKey);
+  const githubSource = isProject
+    ? creds?.projectHasGithubToken
+      ? "项目覆盖"
+      : null
+    : creds?.githubSource === "project"
+      ? "项目覆盖"
+      : creds?.githubSource === "global"
+        ? "全局"
+        : null;
+  const ascSource = isProject
+    ? creds?.projectHasAscKey
+      ? "项目覆盖"
+      : null
+    : creds?.ascSource === "project"
+      ? "项目覆盖"
+      : creds?.ascSource === "global"
+        ? "全局"
+        : null;
+  const savedAscKeyPath = isProject
+    ? creds?.projectAscPrivateKeyPath
+    : creds?.ascPrivateKeyPath;
   const githubExpiryWarning = (() => {
-    const date = githubExpiresAt || creds?.githubExpiresAt || "";
+    const date =
+      githubExpiresAt ||
+      (isProject ? creds?.projectGithubExpiresAt : creds?.githubExpiresAt) ||
+      "";
     if (!date) return null;
     const days = Math.ceil(
       (new Date(`${date}T00:00:00`).getTime() - Date.now()) / 86_400_000,
@@ -5068,7 +5197,9 @@ function CredentialsForm({
     setSaveError(null);
     try {
       const githubValue =
-        kind === "github" && githubToken === creds?.githubTokenMasked
+        kind === "github" &&
+        githubToken ===
+          (isProject ? creds?.projectGithubTokenMasked : creds?.githubTokenMasked)
           ? undefined
           : githubToken;
       const r =
@@ -5437,8 +5568,12 @@ function CredentialsForm({
               type="button"
               onClick={() => {
                 setEditing((prev) => ({ ...prev, github: true }));
-                setGithubToken(creds?.githubTokenMasked || "");
-                setGithubExpiresAt(creds?.githubExpiresAt || "");
+                setGithubToken(
+                  (isProject ? creds?.projectGithubTokenMasked : creds?.githubTokenMasked) || "",
+                );
+                setGithubExpiresAt(
+                  (isProject ? creds?.projectGithubExpiresAt : creds?.githubExpiresAt) || "",
+                );
                 setConfirmClear((prev) => ({ ...prev, github: false }));
               }}
               className={btnSmSecondary}
@@ -5518,12 +5653,12 @@ function CredentialsForm({
             </button>
           </div>
           <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-            {(ascKeyPath || creds?.ascPrivateKeyPath) && (
+            {(ascKeyPath || savedAscKeyPath) && (
               <button
                 type="button"
                 onClick={() =>
                   (window as any).appilot?.revealInFolder?.(
-                    ascKeyPath || creds?.ascPrivateKeyPath,
+                    ascKeyPath || savedAscKeyPath,
                   )
                 }
                 className="text-amber-600 dark:text-amber-400 hover:underline"
@@ -5531,7 +5666,7 @@ function CredentialsForm({
                 在访达中显示
               </button>
             )}
-            {!ascKeyPath && !creds?.ascPrivateKeyPath && "仅支持文件选择，不提供粘贴"}
+            {!ascKeyPath && !savedAscKeyPath && "仅支持文件选择，不提供粘贴"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -5709,9 +5844,15 @@ function CredentialsForm({
               type="button"
               onClick={() => {
                 setEditing((prev) => ({ ...prev, asc: true }));
-                setAscIssuerId(creds?.ascIssuerId || "");
-                setAscKeyId(creds?.ascKeyId || "");
-                setAscKeyPath(creds?.ascPrivateKeyPath || "");
+                setAscIssuerId(
+                  (isProject ? creds?.projectAscIssuerId : creds?.ascIssuerId) || "",
+                );
+                setAscKeyId(
+                  (isProject ? creds?.projectAscKeyId : creds?.ascKeyId) || "",
+                );
+                setAscKeyPath(
+                  (isProject ? creds?.projectAscPrivateKeyPath : creds?.ascPrivateKeyPath) || "",
+                );
                 setConfirmClear((prev) => ({ ...prev, asc: false }));
               }}
               className={btnSmSecondary}
@@ -6057,7 +6198,16 @@ export function App() {
         <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/tasks" element={<TaskCenterPage />} />
         <Route path="/release" element={<ReleasePage />} />
-        <Route path="/reviews" element={<PlaceholderPage title="评论洞察" desc="用户评论聚类与洞察。" />} />
+        <Route
+          path="/reviews"
+          element={
+            <PlaceholderPage
+              title="评论洞察"
+              desc="用户评论聚类与洞察。"
+              credentialBadges={["asc"]}
+            />
+          }
+        />
         <Route path="/trend" element={<PlaceholderPage title="长期效果" desc="增长时间线与你采纳的动作。" />} />
         <Route path="/projects" element={<ManageProjectsPage />} />
         <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />

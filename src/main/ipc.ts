@@ -1072,6 +1072,12 @@ export function registerIpcHandlers() {
       if (!value) return "";
       return value.length <= 8 ? "••••••••" : `${value.slice(0, 4)}••••${value.slice(-4)}`;
     };
+    // Project-scope form must show only the project's own override values.
+    // Effective values (global ?? override) would make the override form look
+    // like it is replacing the global credentials.
+    const overrideGithubToken = override.githubToken
+      ? decryptApiKey(override.githubToken)
+      : "";
     return {
       hasGithubToken: Boolean(eff.githubToken),
       githubExpiresAt: eff.githubExpiresAt || "",
@@ -1094,6 +1100,15 @@ export function registerIpcHandlers() {
       ascIssuerId: eff.ascIssuerId,
       ascKeyId: eff.ascKeyId,
       ascPrivateKeyPath: eff.ascPrivateKeyPath || "",
+      projectHasGithubToken: Boolean(override.githubToken),
+      projectGithubTokenMasked: maskSecret(overrideGithubToken),
+      projectGithubExpiresAt: override.githubExpiresAt || "",
+      projectHasAscKey: Boolean(
+        override.ascIssuerId && override.ascKeyId && override.ascPrivateKeyPath,
+      ),
+      projectAscIssuerId: override.ascIssuerId || "",
+      projectAscKeyId: override.ascKeyId || "",
+      projectAscPrivateKeyPath: override.ascPrivateKeyPath || "",
     };
   });
 

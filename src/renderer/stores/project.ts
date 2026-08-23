@@ -72,6 +72,10 @@ export interface Project {
   id: string;
   name: string;
   localPath: string;
+  // Effective (global ?? project override) credential presence, surfaced by
+  // projects:list so pages can badge features that are enhanced by them.
+  hasGithubToken?: boolean;
+  hasAscKey?: boolean;
   createdAt: string;
   repo: RepoInfo | null;
   briefActions: BriefActionRecord[];
