@@ -2742,7 +2742,7 @@ function TaskCenterPage() {
             label="下次执行"
             value={
               overview.overdue > 0
-                ? `已到期 ×${overview.overdue}`
+                ? `待执行 ×${overview.overdue}`
                 : overview.nextDueAt
                   ? formatHumanTime(overview.nextDueAt)
                   : "—"
@@ -4452,14 +4452,14 @@ function KeywordsPage() {
                       {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
                       {schedulerStatus.nextDueAt
                         ? new Date(schedulerStatus.nextDueAt).getTime() <= Date.now()
-                          ? " · 已到期"
+                          ? " · 已到执行时间"
                           : ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
                         : ""}
                     </span>
                     <button
                       onClick={() => (window as any).appilot?.scheduler?.runDue()}
                       className="text-amber-600 dark:text-amber-400 hover:underline"
-                      title="立即执行已到期的采集任务"
+                      title="立即执行待处理任务"
                     >
                       立即执行
                     </button>
