@@ -13,6 +13,7 @@
 
 import { execFile } from "child_process";
 import { promisify } from "util";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { log } from "./logger";
@@ -93,9 +94,13 @@ export interface GithubApiCache {
 const RELEASE_DRAFT_FILENAME = "RELEASE_DRAFT.md";
 const MAX_MATERIAL_COMMITS = 60;
 
-async function git(localPath: string, args: string[]): Promise<string> {
+async function git(
+  localPath: string,
+  args: string[],
+  timeoutMs = 8000,
+): Promise<string> {
   const { stdout } = await execFileAsync("git", ["-C", localPath, ...args], {
-    timeout: 8000,
+    timeout: timeoutMs,
     maxBuffer: 4 * 1024 * 1024,
     windowsHide: true,
   });
@@ -120,7 +125,9 @@ export async function fetchRemoteTags(localPath: string): Promise<boolean> {
   try {
     const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
     if (!remote) return false;
-    await git(localPath, ["fetch", "--tags"]);
+    // Fetching can legitimately take a while on large/slow remotes; use a
+    // generous timeout so the background sync does not silently give up.
+    await git(localPath, ["fetch", "--tags"], 60_000);
     return true;
   } catch (err: any) {
     log.warn(`fetchRemoteTags failed for ${localPath}: ${err.message}`);
@@ -137,7 +144,7 @@ export async function syncLocalRepo(localPath: string): Promise<boolean> {
   try {
     const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
     if (!remote) return false;
-    await git(localPath, ["fetch", "--tags"]);
+    await git(localPath, ["fetch", "--tags"], 60_000);
     const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(() => "");
     if (branch) {
       const dirty = await git(localPath, ["status", "--porcelain"]).catch(() => "");
@@ -165,6 +172,7 @@ export async function fetchGitHubRelease(
   localPath: string,
   tag: string,
   token?: string | null,
+  onStats?: (requestBytes: number, responseBytes: number) => void,
 ): Promise<GitHubReleaseInfo | null> {
   try {
     const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
@@ -186,8 +194,13 @@ export async function fetchGitHubRelease(
         },
       );
       if (!response.ok) return null;
-      const data = await response.json();
+      const raw = await response.text();
+      const data = JSON.parse(raw);
       if (!data || typeof data.tag_name !== "string") return null;
+      onStats?.(
+        repoUrl.length + (token ? token.length + 24 : 0),
+        raw.length,
+      );
       return {
         name: typeof data.name === "string" ? data.name : null,
         body: typeof data.body === "string" ? data.body : "",
@@ -223,6 +236,7 @@ export async function fetchPullRequests(
   localPath: string,
   refs: ReleasePullRequest[],
   token?: string | null,
+  onStats?: (requestBytes: number, responseBytes: number) => void,
 ): Promise<ReleasePullRequest[]> {
   if (refs.length === 0) return [];
   const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
@@ -231,7 +245,13 @@ export async function fetchPullRequests(
   const ownerRepo = repoUrl.replace("https://github.com/", "");
   const results = await Promise.all(
     refs.map(async (ref) => {
-      const cacheKey = `${ownerRepo}#${ref.number}`;
+      // Anonymous and authenticated fetches can return different data
+      // (private PRs), and different tokens may see different repos — key the
+      // cache by token hash so a token change never serves stale PR info.
+      const tokenTag = token
+        ? `t${crypto.createHash("sha256").update(token).digest("hex").slice(0, 12)}`
+        : "anon";
+      const cacheKey = `${ownerRepo}#${ref.number}#${tokenTag}`;
       const cached = prInfoCache.get(cacheKey);
       if (cached && Date.now() - cached.at < PR_INFO_TTL_MS) {
         return { number: ref.number, ...cached.info };
@@ -251,7 +271,9 @@ export async function fetchPullRequests(
           },
         );
         if (!response.ok) return { number: ref.number, title: ref.title };
-        const data: any = await response.json();
+        const raw = await response.text();
+        const data: any = JSON.parse(raw);
+        onStats?.(ref.number.toString().length + (token ? token.length + 24 : 0) + 60, raw.length);
         const info = {
           title: typeof data.title === "string" ? data.title : ref.title,
           body: typeof data.body === "string" ? data.body : "",
@@ -486,7 +508,12 @@ export async function checkForRelease(
   localPath: string,
   lastSeenSha?: string | null,
   githubToken?: string | null,
-  options: { sync?: boolean; force?: boolean; githubCache?: GithubApiCache } = {},
+  options: {
+    sync?: boolean;
+    force?: boolean;
+    githubCache?: GithubApiCache;
+    onApiStats?: (requestBytes: number, responseBytes: number) => void;
+  } = {},
 ): Promise<ReleaseCheckResult> {
   const cacheKey = `${localPath}::${lastSeenSha || ""}`;
   const cacheEnabled = options.sync === true;
@@ -537,11 +564,21 @@ export async function checkForRelease(
     ...material,
     pullRequests: cacheMatches
       ? (options.githubCache?.pullRequests ?? material.pullRequests)
-      : await fetchPullRequests(localPath, material.pullRequests, githubToken),
+      : await fetchPullRequests(
+          localPath,
+          material.pullRequests,
+          githubToken,
+          options.onApiStats,
+        ),
     githubRelease: cacheMatches
       ? (options.githubCache?.release ?? material.githubRelease)
       : releaseTag
-        ? await fetchGitHubRelease(localPath, releaseTag.name, githubToken)
+        ? await fetchGitHubRelease(
+            localPath,
+            releaseTag.name,
+            githubToken,
+            options.onApiStats,
+          )
         : material.githubRelease,
   };
   const release: ReleaseInfo = {

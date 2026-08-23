@@ -13,6 +13,7 @@ import {
   normalizeTrackedKeyword,
 } from "../engine/rank-keywords";
 import { emitProjectsChanged } from "./project-events";
+import { importAscKeyFileTo } from "./asc-key-file";
 
 // electron-store v10+ is ESM-only. Use dynamic import for CJS compat.
 let store: any = null;
@@ -89,31 +90,6 @@ function ascJwt(issuerId: string, keyId: string, privateKeyPem: string): string 
   const signer = crypto.createSign("sha256");
   signer.update(unsigned);
   return `${unsigned}.${derToRawJwtSignature(signer.sign(privateKeyPem))}`;
-}
-
-/** Copy the selected .p8 into app-managed storage so credentials survive the
- *  original file being moved/deleted. Returns the stored copy path. */
-function importAscKeyFile(
-  sourcePath: string,
-  scope: "global" | "project",
-  projectId: string,
-): string {
-  const src = sourcePath.trim();
-  if (!src) return "";
-  if (!fs.existsSync(src)) throw new Error("无法读取 .p8 私钥文件");
-  const dir = path.join(app.getPath("userData"), "keys");
-  // Already managed by the app (e.g. a stored copy picked during re-enter):
-  // keep that path as-is instead of copying it again.
-  if (path.dirname(src) === dir) return src;
-  fs.mkdirSync(dir, { recursive: true });
-  const tag = scope === "global" ? "global" : projectId || "project";
-  const base = path
-    .basename(src, path.extname(src))
-    .replace(/[^A-Za-z0-9_-]/g, "_");
-  const dest = path.join(dir, `asc-${tag}-${base}.p8`);
-  if (fs.existsSync(dest)) return dest;
-  fs.copyFileSync(src, dest);
-  return dest;
 }
 
 /** Remove app-managed .p8 files that no credential references. */
@@ -357,16 +333,6 @@ function findProductContext(projects: any[], productId: string): { project: any;
     if (product) return { project: ensureProjectKeywordPool(project), product };
   }
   return null;
-}
-
-function updateProductInProjects(projects: any[], productId: string, updater: (product: any) => any): any[] {
-  return projects.map((project) => {
-    const index = (project.storeProducts || []).findIndex((item: any) => item.id === productId);
-    if (index < 0) return project;
-    const storeProducts = [...(project.storeProducts || [])];
-    storeProducts[index] = updater(storeProducts[index]);
-    return { ...project, storeProducts };
-  });
 }
 
 function updateProjectInProjects(projects: any[], projectId: string, updater: (project: any) => any): any[] {
@@ -878,6 +844,7 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
   let responseBytes = 0;
   let rank: number | null = null;
   let status: "success" | "failed" = "success";
+  let snapshot: any = null;
   try {
     const result = await searchAppStoreRank({
       term: task.keyword,
@@ -889,7 +856,7 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
     requestBytes = result.requestBytes;
     responseBytes = result.responseBytes;
     rank = result.rank;
-    const snapshot = {
+    snapshot = {
       keyword: task.keyword,
       language: task.queryLanguage,
       storefront: task.storefront,
@@ -897,8 +864,6 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
       totalResults: result.totalResults,
       checkedAt: new Date().toISOString(),
     };
-    const previous = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
-    product.rankSnapshots = appendRankSnapshots(previous, [snapshot]);
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
@@ -938,7 +903,22 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
     taskSeed(task),
     task.lastStatus === "failed" ? 30 : task.intervalMinutes,
   );
-  store.set("projects", projects);
+
+  // Re-read the latest projects before writing: the product object captured at
+  // task start may be stale after the network call (concurrent IPC handlers
+  // can replace the whole array, e.g. projects:remove). Apply the snapshot to
+  // the freshest copy so concurrent edits are not clobbered.
+  const latestProjects: any[] = store.get("projects") || [];
+  const latestProduct = latestProjects
+    .flatMap((p: any) => p.storeProducts || [])
+    .find((item: any) => item.id === task.productId);
+  if (latestProduct && snapshot) {
+    const previous = Array.isArray(latestProduct.rankSnapshots)
+      ? latestProduct.rankSnapshots
+      : [];
+    latestProduct.rankSnapshots = appendRankSnapshots(previous, [snapshot]);
+    store.set("projects", latestProjects);
+  }
 }
 
 async function runGithubSyncTask(store: any, task: GithubSyncTask): Promise<void> {
@@ -967,7 +947,13 @@ async function runGithubSyncTask(store: any, task: GithubSyncTask): Promise<void
       project.localPath,
       project.lastReleaseSha || null,
       token,
-      { sync: false },
+      {
+        sync: false,
+        onApiStats: (rb, pb) => {
+          requestBytes += rb;
+          responseBytes += pb;
+        },
+      },
     );
     const release = result.latest || null;
     const material = release?.material || null;
@@ -1048,7 +1034,16 @@ async function schedulerTick(): Promise<void> {
       }
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
-    store.set("scheduledTasks", tasks);
+    // Merge the tick's per-task updates into the latest task list instead of
+    // overwriting it: concurrent handlers (e.g. projects:remove) may have
+    // removed or replaced tasks while this tick was running.
+    const latestTasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    const merged = latestTasks.map((task) => byId.get(task.id) || task);
+    for (const task of byId.values()) {
+      if (!merged.some((item) => item.id === task.id)) merged.push(task);
+    }
+    store.set("scheduledTasks", merged);
   } catch (err: any) {
     log.error(`Task scheduler tick failed: ${err.message}`);
   } finally {
@@ -1205,8 +1200,12 @@ export function registerIpcHandlers() {
         }
       }
 
-      projects[index] = project;
-      s.set("projects", projects);
+      const latestProjects: any[] = s.get("projects") || [];
+      const latestIndex = latestProjects.findIndex((p: any) => p.id === projectId);
+      if (latestIndex >= 0) {
+        latestProjects[latestIndex] = project;
+        s.set("projects", latestProjects);
+      }
       void schedulerTick();
       emitProjectsChanged();
       return project;
@@ -1280,7 +1279,11 @@ export function registerIpcHandlers() {
       const scope = creds.scope === "project" ? "project" : "global";
       if (scope === "project") projectId = assertNonEmptyString(projectId, "projectId");
       const ascCopy = creds.ascPrivateKeyPath
-        ? importAscKeyFile(creds.ascPrivateKeyPath, scope, projectId)
+        ? importAscKeyFileTo(
+            path.join(app.getPath("userData"), "keys"),
+            creds.ascPrivateKeyPath,
+            scope === "global" ? "global" : projectId || "project",
+          )
         : undefined;
       const setField = (entry: Record<string, string>, key: string, value?: string) => {
         if (value === undefined) return;
@@ -1561,12 +1564,18 @@ export function registerIpcHandlers() {
       log.warn(`Repo info collection failed for ${localPath}: ${err.message}`);
     }
 
-    if (existingIndex >= 0) {
-      projects[existingIndex] = project;
+    // Re-read before writing: the analysis above awaits network calls, during
+    // which concurrent handlers may have replaced the projects array.
+    const latestProjects: any[] = s.get("projects") || [];
+    const latestIndex = latestProjects.findIndex(
+      (p: any) => normalizeLocalPath(p.localPath) === normalizedPath,
+    );
+    if (latestIndex >= 0) {
+      latestProjects[latestIndex] = project;
     } else {
-      projects.push(project);
+      latestProjects.push(project);
     }
-    s.set("projects", projects);
+    s.set("projects", latestProjects);
     void schedulerTick();
     emitProjectsChanged();
     return project;
@@ -1585,15 +1594,24 @@ export function registerIpcHandlers() {
       s.set("projectCredentials", creds);
     }
     garbageCollectKeys(s);
-    // Remove scheduled tasks that belonged to the deleted project's products.
+    // Remove the deleted project's scheduled tasks (both keyword-collection
+    // rows and its project-level GitHub sync task) and its sync cache entry.
     if (removed) {
-      const removedProductIds = new Set(
+      const removedProductIds = new Set<string>(
         (removed.storeProducts || []).map((product: any) => product.id),
       );
-      const tasks = (s.get("scheduledTasks") || []).filter(
-        (task: any) => !removedProductIds.has(task.productId),
+      const { filterTasksForRemovedProject } = await import("./task-cleanup");
+      const tasks = filterTasksForRemovedProject(
+        s.get("scheduledTasks") || [],
+        removedProductIds,
+        id,
       );
       s.set("scheduledTasks", tasks);
+    }
+    const syncCache = s.get("githubSyncCache") || {};
+    if (syncCache[id]) {
+      delete syncCache[id];
+      s.set("githubSyncCache", syncCache);
     }
     void schedulerTick();
     emitProjectsChanged();
@@ -2015,26 +2033,31 @@ export function registerIpcHandlers() {
       },
     });
 
-    const previous = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
-    product.rankSnapshots = appendRankSnapshots(previous, result.snapshots);
-    const nextProjects = updateProductInProjects(projects, productId, (item) => ({ ...item, rankSnapshots: product.rankSnapshots }));
-    s.set("projects", nextProjects);
-    return nextProjects.find((item) => item.id === project.id) || project;
+    // Re-read before writing: the product captured before the network call may
+    // be stale (concurrent handlers can replace the whole projects array).
+    const latestProjects: any[] = s.get("projects") || [];
+    const latestProduct = latestProjects
+      .flatMap((p: any) => p.storeProducts || [])
+      .find((item: any) => item.id === productId);
+    if (latestProduct) {
+      if (metadata?.kind) latestProduct.kind = metadata.kind;
+      const previous = Array.isArray(latestProduct.rankSnapshots)
+        ? latestProduct.rankSnapshots
+        : [];
+      latestProduct.rankSnapshots = appendRankSnapshots(previous, result.snapshots);
+      s.set("projects", latestProjects);
+    }
+    return latestProjects.find((item: any) => item.id === project.id) || project;
   });
 
   ipcMain.handle("scheduler:status", async () => {
     const s = await getStore();
     const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
     const now = Date.now();
-    const nextTask = tasks
-      .filter((task) => task.enabled)
-      .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime())[0];
+    const { computeRankSchedulerStatus } = await import("./scheduler-status");
     return {
       enabled: Boolean(schedulerTimer),
-      total: tasks.length,
-      due: tasks.filter((task) => task.enabled && new Date(task.nextRunAt).getTime() <= now).length,
-      failed: tasks.filter((task) => task.lastStatus === "failed").length,
-      nextDueAt: nextTask?.nextRunAt || null,
+      ...computeRankSchedulerStatus(tasks, now),
     };
   });
 
@@ -2333,13 +2356,19 @@ export function registerIpcHandlers() {
           },
           includedChanges,
         );
-        // Remember the tag (+ its commit) we generated for: name@sha identity
-        // so a moved tag redefines the boundary and triggers regeneration.
-        // Remember the HEAD we generated from: what's-new always covers
-        // everything committed after this point.
-        project.lastReleaseSha = release.commitSha || null;
-        upsertStoreSubmissionDraft(project, draft);
-        s.set("projects", projects);
+        // Re-read before writing: AI generation awaited for seconds, during
+        // which concurrent handlers may have replaced the projects array.
+        const latestProjects: any[] = s.get("projects") || [];
+        const latestProject = latestProjects.find((item: any) => item.id === projectId);
+        if (latestProject) {
+          // Remember the tag (+ its commit) we generated for: name@sha identity
+          // so a moved tag redefines the boundary and triggers regeneration.
+          // Remember the HEAD we generated from: what's-new always covers
+          // everything committed after this point.
+          latestProject.lastReleaseSha = release.commitSha || null;
+          upsertStoreSubmissionDraft(latestProject, draft);
+          s.set("projects", latestProjects);
+        }
         return { release, draft, actionable: true };
       }
       return { release, draft: existing, actionable: Boolean(existing) };
