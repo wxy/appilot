@@ -99,6 +99,15 @@ function formatHumanTime(iso: string | null | undefined): string {
   return target.toLocaleDateString();
 }
 
+function formatDurationMs(ms?: number | null): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${Math.round(ms)} 毫秒`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} 秒`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes} 分 ${seconds} 秒`;
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
   const { projects, currentProjectId, currentProductId, loading, load, select, selectProduct, addByFolder } = useProject();
   const location = useLocation();
@@ -2653,6 +2662,7 @@ function TaskCenterPage() {
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -2693,7 +2703,8 @@ function TaskCenterPage() {
   const tasks = (data?.tasks || [])
     .filter((task) => projectFilter === "all" || task.projectName === projectFilter)
     .filter((task) => platformFilter === "all" || task.platform === platformFilter)
-    .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter);
+    .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter)
+    .filter((task) => typeFilter === "all" || task.kind === typeFilter);
   const pending = tasks.filter((task) => task.enabled);
   const failed = tasks.filter((task) => task.lastStatus === "failed");
 
@@ -2794,6 +2805,15 @@ function TaskCenterPage() {
       <TaskTimelineChart timeline={timeline} />
 
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          className={inputLineClass + " max-w-36"}
+        >
+          <option value="all">全部类型</option>
+          <option value="rank">排名</option>
+          <option value="github-sync">GitHub 同步</option>
+        </select>
         <select
           value={projectFilter}
           onChange={(e) => setProjectFilter(e.target.value)}
@@ -3116,11 +3136,13 @@ function groupTasks(tasks: any[]): any[] {
         nextRunAt: task.nextRunAt,
         firstRunAt: task.firstRunAt,
         executionCount: task.executionCount || 0,
+        lastDurationMs: task.lastDurationMs,
       });
     } else {
       existing.tasks.push(task);
       if (task.lastRunAt && (!existing.lastRunAt || new Date(task.lastRunAt) > new Date(existing.lastRunAt))) {
         existing.lastRunAt = task.lastRunAt;
+        existing.lastDurationMs = task.lastDurationMs;
       }
       if (new Date(task.nextRunAt) < new Date(existing.nextRunAt)) {
         existing.nextRunAt = task.nextRunAt;
@@ -3182,17 +3204,20 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
               </div>
             </div>
 
-            <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
-              <TaskMeta
-                label="上次执行"
-                value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
-              />
-              <TaskMeta label="执行次数" value={`${group.executionCount} 次`} />
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
               <TaskMeta
                 label="首次执行"
                 value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
               />
+              <TaskMeta
+                label="执行时间"
+                value={formatDurationMs(group.lastDurationMs)}
+              />
+              <TaskMeta
+                label="上次执行"
+                value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+              />
+              <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
             </div>
           </div>
         ))}
@@ -3203,6 +3228,13 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             {page + 1} / {totalPages}
           </span>
           <div className="flex gap-2">
+            <button
+              onClick={() => setPage(0)}
+              disabled={page === 0}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40"
+            >
+              第一页
+            </button>
             <button
               onClick={() => setPage((value) => Math.max(0, value - 1))}
               disabled={page === 0}
@@ -3217,6 +3249,13 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             >
               下一页
             </button>
+            <button
+              onClick={() => setPage(totalPages - 1)}
+              disabled={page >= totalPages - 1}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40"
+            >
+              最后一页
+            </button>
           </div>
         </div>
       )}
@@ -3226,10 +3265,10 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
 
 function TaskMeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-0.5">{label}</div>
-      <div className="text-zinc-600 dark:text-zinc-300 truncate">{value}</div>
-    </div>
+    <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+      <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{label}</span>
+      <span className="text-xs text-zinc-600 dark:text-zinc-300">{value}</span>
+    </span>
   );
 }
 
