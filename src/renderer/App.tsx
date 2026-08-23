@@ -100,7 +100,7 @@ function formatHumanTime(iso: string | null | undefined): string {
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
-  const { projects, currentProjectId, currentProductId, load, select, selectProduct, addByFolder } = useProject();
+  const { projects, currentProjectId, currentProductId, loading, load, select, selectProduct, addByFolder } = useProject();
   const location = useLocation();
   const [aiUsage, setAiUsage] = useState<{ totalTokens: number; cachedTokens: number } | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -320,7 +320,16 @@ function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Content */}
       <main className="flex-1 overflow-auto">
-        <div className="h-full">{children}</div>
+        <div className="h-full">
+          {loading && projects.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
+              <span className="w-5 h-5 rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-transparent animate-spin" />
+              正在载入…
+            </div>
+          ) : (
+            children
+          )}
+        </div>
       </main>
     </div>
   );
@@ -1526,6 +1535,7 @@ function ReleasePage() {
   const [sourceLanguage, setSourceLanguage] = useState("");
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [releaseContext, setReleaseContext] = useState<any>(null);
+  const [contextLoading, setContextLoading] = useState(false);
   const [historyDraft, setHistoryDraft] = useState<any>(null);
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
@@ -1579,6 +1589,18 @@ function ReleasePage() {
     void loadReleases();
   }, [project?.id, searchParams]);
 
+  // Keep the selected product valid when the project or its products change
+  // (e.g. switching project, or products arriving after the initial load).
+  useEffect(() => {
+    setProductId((current) => {
+      if (products.some((item) => item.id === current)) return current;
+      if (currentProductId && products.some((item) => item.id === currentProductId)) {
+        return currentProductId;
+      }
+      return products[0]?.id || "";
+    });
+  }, [products, currentProductId]);
+
   // Keep the URL's ?tag= in sync with the release selected in the workbench,
   // so navigating away and back preserves the current draft.
   useEffect(() => {
@@ -1598,14 +1620,22 @@ function ReleasePage() {
 
   useEffect(() => {
     if (!project?.id || !productId || !selectedTag) return;
+    if (!products.some((item) => item.id === productId)) return;
     let cancelled = false;
+    setContextLoading(true);
     setHistoryDraft(null);
     (window as any).appilot?.release?.context(project.id, productId, selectedTag)
       .then((context: any) => {
-        if (!cancelled) setReleaseContext(context);
+        if (!cancelled) {
+          setReleaseContext(context);
+          setContextLoading(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setReleaseContext(null);
+        if (!cancelled) {
+          setReleaseContext(null);
+          setContextLoading(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -2110,41 +2140,46 @@ function ReleasePage() {
                     )}
                   </ReferenceSection>
 
-                  {releaseContext && step <= 2 && (
-                    <>
-                      <ReferenceSection title="固定素材" meta="始终发送给 AI" defaultOpen>
-                        <ul className="space-y-1.5">
-                          {fixedMaterialRows.map((row) => (
-                            <li
-                              key={row.label}
-                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-zinc-50/60 dark:bg-zinc-800/30"
-                            >
-                              <span className="min-w-0 flex-1">
-                                <span className="block text-xs text-zinc-700 dark:text-zinc-300 truncate">
-                                  {row.label}
+                  {step <= 2 &&
+                    (contextLoading ? (
+                      <div className="px-5 py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
+                        正在载入发布参考…
+                      </div>
+                    ) : releaseContext ? (
+                      <>
+                        <ReferenceSection title="固定素材" meta="始终发送给 AI" defaultOpen>
+                          <ul className="space-y-1.5">
+                            {fixedMaterialRows.map((row) => (
+                              <li
+                                key={row.label}
+                                className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-zinc-50/60 dark:bg-zinc-800/30"
+                              >
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-xs text-zinc-700 dark:text-zinc-300 truncate">
+                                    {row.label}
+                                  </span>
+                                  <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                                    {row.meta}
+                                  </span>
                                 </span>
-                                <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                                  {row.meta}
+                                <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                  始终发送
                                 </span>
-                              </span>
-                              <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
-                                始终发送
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
-                          这些素材无需逐项查看；如需调整素材范围，可在上方变更摘要中取消对应条目。
-                        </p>
-                      </ReferenceSection>
-                      <HistoryPanel
-                        drafts={releaseContext.drafts || []}
-                        selectedDraft={historyDraft}
-                        onSelect={(draft: any) => setHistoryDraft(draft)}
-                        currentTag={selectedTag}
-                      />
-                    </>
-                  )}
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+                            这些素材无需逐项查看；如需调整素材范围，可在上方变更摘要中取消对应条目。
+                          </p>
+                        </ReferenceSection>
+                        <HistoryPanel
+                          drafts={releaseContext.drafts || []}
+                          selectedDraft={historyDraft}
+                          onSelect={(draft: any) => setHistoryDraft(draft)}
+                          currentTag={selectedTag}
+                        />
+                      </>
+                    ) : null)}
                 </div>
               )}
             </div>
@@ -2634,6 +2669,13 @@ function TaskCenterPage() {
           </span>
         </div>
       </div>
+
+      {data === null && (
+        <div className="mb-6 flex items-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
+          <span className="w-4 h-4 rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-transparent animate-spin" />
+          正在载入任务中心…
+        </div>
+      )}
 
       {overview && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
