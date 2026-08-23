@@ -1,0 +1,39 @@
+appId: xingyu.wang.appilot
+productName: Appilot
+copyright: Copyright © 2026 Xingyu Wang
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - resources/**
+  - package.json
+asar: true
+
+# macOS: Developer ID signing happens automatically when CSC_LINK /
+# CSC_KEY_PASSWORD are set; notarization is enabled in the release workflow
+# via `-c.mac.notarize=true` (requires APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+# APPLE_TEAM_ID), so local unsigned builds keep working without secrets.
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  icon: resources/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+dmg:
+  title: Appilot ${version}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon_1024.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
