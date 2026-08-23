@@ -1740,7 +1740,11 @@ export function registerIpcHandlers() {
     const { readRepoDescription } = await import("../engine/app-store-discovery");
     const { checkForRelease } = await import("../engine/release-watcher");
 
-    const releaseResult = await checkForRelease(project.localPath, project.lastReleaseSha || null);
+    const releaseResult = await checkForRelease(
+      project.localPath,
+      project.lastReleaseSha || null,
+      resolveEffectiveCredentials(s, project.id).githubToken,
+    );
     const drafts = getStoreSubmissionDrafts(project)
       .filter((item: any) => item.productId === productId)
       .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -2003,9 +2007,12 @@ export function registerIpcHandlers() {
     if (!project) throw new Error("Project not found");
 
     const { checkForRelease } = await import("../engine/release-watcher");
-    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
-      sync: true,
-    });
+    const result = await checkForRelease(
+      project.localPath,
+      project.lastReleaseSha || null,
+      resolveEffectiveCredentials(s, project.id).githubToken,
+      { sync: true },
+    );
     return {
       releases: result.releases.map((release) => ({
         ...release,
@@ -2034,9 +2041,12 @@ export function registerIpcHandlers() {
 
       const { checkForRelease } = await import("../engine/release-watcher");
       const { readFullReadme, readRepoDescription } = await import("../engine/app-store-discovery");
-      const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
-        sync: true,
-      });
+      const result = await checkForRelease(
+        project.localPath,
+        project.lastReleaseSha || null,
+        resolveEffectiveCredentials(s, project.id).githubToken,
+        { sync: true },
+      );
       let release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) {
         const saved = findStoreSubmissionDraft(project, productId, releaseTag);
@@ -2113,9 +2123,12 @@ export function registerIpcHandlers() {
       phase: "read_draft",
       status: "started",
     });
-    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
-      sync: true,
-    });
+    const result = await checkForRelease(
+      project.localPath,
+      project.lastReleaseSha || null,
+      resolveEffectiveCredentials(s, project.id).githubToken,
+      { sync: true },
+    );
     let release = result.releases.find((item) => item.tag === releaseTag) || null;
     if (!release) {
       const saved = findStoreSubmissionDraft(project, productId, releaseTag);

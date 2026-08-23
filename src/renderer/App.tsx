@@ -1710,7 +1710,12 @@ function ReleasePage() {
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
-    const rows: { label: string; meta: string }[] = [];
+    const rows: {
+      label: string;
+      meta: string;
+      badge?: "github";
+      badgeTitle?: string;
+    }[] = [];
     rows.push({
       label: "README 全文",
       meta: releaseContext?.readme ? `${releaseContext.readme.length.toLocaleString()} 字符` : "无",
@@ -1739,6 +1744,10 @@ function ReleasePage() {
       rows.push({
         label: "GitHub 发布公告",
         meta: `${githubRelease.name || "发布正文"}${githubRelease.publishedAt ? ` · ${formatHumanTime(githubRelease.publishedAt)}` : ""}`,
+        badge: "github",
+        badgeTitle: githubRelease.viaToken
+          ? "发布公告来自 GitHub（通过 Token 获取，支持私有仓库与草案）"
+          : "发布公告来自 GitHub（公开仓库）",
       });
     }
     if (draft?.reviewFeedback) {
@@ -2186,6 +2195,15 @@ function ReleasePage() {
                                     {row.meta}
                                   </span>
                                 </span>
+                                {row.badge === "github" && (
+                                  <span
+                                    className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400"
+                                    title={row.badgeTitle || "发布公告来自 GitHub"}
+                                  >
+                                    <GithubIcon className="w-3 h-3 text-current" />
+                                    GitHub
+                                  </span>
+                                )}
                                 <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
                                   始终发送
                                 </span>
@@ -3509,6 +3527,7 @@ function KeywordsPage() {
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
+  const [runningDue, setRunningDue] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const urlKeyword = searchParams.get("keyword") || "";
   const urlLang = searchParams.get("lang") || "";
@@ -3536,6 +3555,24 @@ function KeywordsPage() {
       window.clearInterval(timer);
     };
   }, []);
+
+  const handleRunDue = async () => {
+    if (runningDue) return;
+    setRunningDue(true);
+    try {
+      await (window as any).appilot?.scheduler?.runDue();
+    } catch {
+      // The periodic status refresh will still surface the scheduler state.
+    } finally {
+      setRunningDue(false);
+      try {
+        const status = await (window as any).appilot?.scheduler?.status();
+        setSchedulerStatus(status || null);
+      } catch {
+        // Keep the last known status.
+      }
+    }
+  };
 
   useEffect(() => {
     const off = (window as any).appilot?.projects?.onKeywordProgress?.((progress: any) => {
@@ -4452,16 +4489,22 @@ function KeywordsPage() {
                       {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
                       {schedulerStatus.nextDueAt
                         ? new Date(schedulerStatus.nextDueAt).getTime() <= Date.now()
-                          ? " · 已到执行时间"
+                          ? " · 待执行"
                           : ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
                         : ""}
                     </span>
                     <button
-                      onClick={() => (window as any).appilot?.scheduler?.runDue()}
-                      className="text-amber-600 dark:text-amber-400 hover:underline"
-                      title="立即执行待处理任务"
+                      onClick={() => void handleRunDue()}
+                      disabled={runningDue}
+                      className={cn(
+                        "transition-colors",
+                        runningDue
+                          ? "text-zinc-400 dark:text-zinc-500 cursor-wait"
+                          : "text-amber-600 dark:text-amber-400 hover:underline",
+                      )}
+                      title={runningDue ? "正在执行待处理任务…" : "立即执行待处理任务"}
                     >
-                      立即执行
+                      {runningDue ? "执行中…" : "立即执行"}
                     </button>
                   </span>
                 )}

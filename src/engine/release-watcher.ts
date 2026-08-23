@@ -69,6 +69,9 @@ export interface GitHubReleaseInfo {
   body: string;
   publishedAt: string | null;
   url: string | null;
+  /** True when the announcement was fetched with the saved GitHub token
+   *  (private repositories, or draft releases the account can see). */
+  viaToken?: boolean;
 }
 
 const RELEASE_DRAFT_FILENAME = "RELEASE_DRAFT.md";
@@ -136,12 +139,16 @@ export async function syncLocalRepo(localPath: string): Promise<boolean> {
 }
 
 /**
- * Best-effort fetch of the public GitHub release announcement for a tag.
- * Returns null silently for private repos, drafts, rate limits, or offline.
+ * Best-effort fetch of the GitHub release announcement for a tag.
+ * Without a token only published releases of public repos are readable;
+ * with a token private repos work, and drafts are returned when the token
+ * account has push access to the repository.
+ * Returns null silently on 404 / drafts without access / rate limits / offline.
  */
-export async function fetchPublicGitHubRelease(
+export async function fetchGitHubRelease(
   localPath: string,
   tag: string,
+  token?: string | null,
 ): Promise<GitHubReleaseInfo | null> {
   try {
     const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
@@ -155,6 +162,7 @@ export async function fetchPublicGitHubRelease(
         `https://api.github.com/repos/${ownerRepo}/releases/tags/${encodeURIComponent(tag)}`,
         {
           headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
             Accept: "application/vnd.github+json",
             "User-Agent": "appilot",
           },
@@ -169,6 +177,7 @@ export async function fetchPublicGitHubRelease(
         body: typeof data.body === "string" ? data.body : "",
         publishedAt: typeof data.published_at === "string" ? data.published_at : null,
         url: typeof data.html_url === "string" ? data.html_url : null,
+        viaToken: Boolean(token),
       };
     } finally {
       clearTimeout(timer);
@@ -383,7 +392,7 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
 export async function checkForRelease(
   localPath: string,
   lastSeenSha?: string | null,
-  _legacyGithubToken?: string | null,
+  githubToken?: string | null,
   options: { sync?: boolean } = {},
 ): Promise<ReleaseCheckResult> {
   if (options.sync) {
@@ -425,7 +434,7 @@ export async function checkForRelease(
   const enrichedMaterial = releaseTag
     ? {
         ...material,
-        githubRelease: await fetchPublicGitHubRelease(localPath, releaseTag.name),
+        githubRelease: await fetchGitHubRelease(localPath, releaseTag.name, githubToken),
       }
     : material;
   const release: ReleaseInfo = {
