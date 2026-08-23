@@ -59,6 +59,26 @@ function resolveEffectiveCredentials(s: any, projectId: string) {
   };
 }
 
+/** Convert a DER-encoded ECDSA signature to the raw r||s form JWT ES256 needs. */
+function derToRawJwtSignature(der: Buffer): string {
+  if (der[0] !== 0x30) throw new Error("invalid ECDSA signature");
+  let offset = 2;
+  if (der[offset] !== 0x02) throw new Error("invalid R marker");
+  const rLen = der[offset + 1];
+  const r = der.subarray(offset + 2, offset + 2 + rLen);
+  offset += 2 + rLen;
+  if (der[offset] !== 0x02) throw new Error("invalid S marker");
+  const sLen = der[offset + 1];
+  const s = der.subarray(offset + 2, offset + 2 + sLen);
+  const padded = (buf: Buffer): Buffer => {
+    const slice = buf.length > 32 ? buf.subarray(buf.length - 32) : buf;
+    const out = Buffer.alloc(32);
+    slice.copy(out, 32 - slice.length);
+    return out;
+  };
+  return Buffer.concat([padded(r), padded(s)]).toString("base64url");
+}
+
 function ascJwt(issuerId: string, keyId: string, privateKeyPem: string): string {
   const header = { alg: "ES256", kid: keyId, typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
@@ -67,7 +87,28 @@ function ascJwt(issuerId: string, keyId: string, privateKeyPem: string): string 
   const unsigned = `${b64(header)}.${b64(payload)}`;
   const signer = crypto.createSign("sha256");
   signer.update(unsigned);
-  return `${unsigned}.${signer.sign(privateKeyPem, "base64url")}`;
+  return `${unsigned}.${derToRawJwtSignature(signer.sign(privateKeyPem))}`;
+}
+
+/** Copy the selected .p8 into app-managed storage so credentials survive the
+ *  original file being moved/deleted. Returns the stored copy path. */
+function importAscKeyFile(
+  sourcePath: string,
+  scope: "global" | "project",
+  projectId: string,
+): string {
+  const src = sourcePath.trim();
+  if (!src) return "";
+  if (!fs.existsSync(src)) throw new Error("无法读取 .p8 私钥文件");
+  const dir = path.join(app.getPath("userData"), "keys");
+  fs.mkdirSync(dir, { recursive: true });
+  const tag = scope === "global" ? "global" : projectId || "project";
+  const base = path
+    .basename(src, path.extname(src))
+    .replace(/[^A-Za-z0-9_-]/g, "_");
+  const dest = path.join(dir, `asc-${tag}-${base}-${Date.now().toString(36)}.p8`);
+  fs.copyFileSync(src, dest);
+  return dest;
 }
 
 /** True when the value looks like an encrypted blob rather than a real key
@@ -1030,6 +1071,9 @@ export function registerIpcHandlers() {
       const s = await getStore();
       const scope = creds.scope === "project" ? "project" : "global";
       if (scope === "project") projectId = assertNonEmptyString(projectId, "projectId");
+      const ascCopy = creds.ascPrivateKeyPath
+        ? importAscKeyFile(creds.ascPrivateKeyPath, scope, projectId)
+        : undefined;
       const setField = (entry: Record<string, string>, key: string, value?: string) => {
         if (value === undefined) return;
         if (value.trim() === "") delete entry[key];
@@ -1041,7 +1085,7 @@ export function registerIpcHandlers() {
         setField(entry, "githubToken", creds.githubToken);
         setField(entry, "ascIssuerId", creds.ascIssuerId);
         setField(entry, "ascKeyId", creds.ascKeyId);
-        setField(entry, "ascPrivateKeyPath", creds.ascPrivateKeyPath);
+        setField(entry, "ascPrivateKeyPath", ascCopy);
         s.set("globalCredentials", entry);
       } else {
         const all: Record<string, Record<string, string>> = s.get("projectCredentials") || {};
@@ -1049,7 +1093,7 @@ export function registerIpcHandlers() {
         setField(entry, "githubToken", creds.githubToken);
         setField(entry, "ascIssuerId", creds.ascIssuerId);
         setField(entry, "ascKeyId", creds.ascKeyId);
-        setField(entry, "ascPrivateKeyPath", creds.ascPrivateKeyPath);
+        setField(entry, "ascPrivateKeyPath", ascCopy);
         if (Object.keys(entry).length === 0) delete all[projectId];
         else all[projectId] = entry;
         s.set("projectCredentials", all);

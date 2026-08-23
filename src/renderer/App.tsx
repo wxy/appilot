@@ -4997,10 +4997,6 @@ function CredentialsForm({
       });
       setCredentialsSaved(true);
       setValidated({ github: false, asc: false });
-      setGithubToken("");
-      setAscIssuerId("");
-      setAscKeyId("");
-      setAscKeyPath("");
       const next = await (window as any).appilot.projects.getCredentials(projectId);
       setCreds(next);
       onChanged?.();
@@ -5190,7 +5186,20 @@ function CredentialsForm({
           </div>
           <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
             {creds?.ascPrivateKeyPath && !ascKeyPath
-              ? `当前已选：${creds.ascPrivateKeyPath}`
+              ? (
+                  <>
+                    已保存副本：{creds.ascPrivateKeyPath}{" "}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        (window as any).appilot?.revealInFolder?.(creds.ascPrivateKeyPath)
+                      }
+                      className="text-amber-600 dark:text-amber-400 hover:underline"
+                    >
+                      在访达中显示
+                    </button>
+                  </>
+                )
               : "仅支持文件选择，不提供粘贴"}
           </p>
         </div>
@@ -5224,6 +5233,11 @@ function CredentialsForm({
             获取：App Store Connect → 用户和访问 → 集成 → App Store Connect API；
             Issuer ID 在该页顶部，Key ID 与 .p8 文件在创建密钥时下载。一把 Key 适用于同一账户（Team）
             下的所有应用；不同账户的应用需单独一把 Key（可在项目设置中覆盖）。
+            创建密钥时**权限请选择 App Manager（App 管理）**，否则无法读取/更新应用元数据。
+          </p>
+          <p>
+            保存时会把 .p8 复制到应用数据目录（副本随凭据保存，原文件移动/删除不影响）；
+            Apple 不支持重新下载密钥，请妥善保管或必要时新建。
           </p>
           <button
             type="button"
