@@ -5016,6 +5016,20 @@ function CredentialsForm({
     refreshCreds().catch(() => setCreds(null));
   }, [projectId]);
 
+  // Re-enter mode always shows the saved values: fill empty fields whenever
+  // credentials arrive/refresh, preserving anything the user typed.
+  useEffect(() => {
+    if (!editing.github || !creds?.githubTokenMasked) return;
+    setGithubToken((current) => current || creds.githubTokenMasked || "");
+  }, [editing.github, creds?.githubTokenMasked]);
+
+  useEffect(() => {
+    if (!editing.asc || !creds) return;
+    setAscIssuerId((current) => current || creds.ascIssuerId || "");
+    setAscKeyId((current) => current || creds.ascKeyId || "");
+    setAscKeyPath((current) => current || creds.ascPrivateKeyPath || "");
+  }, [editing.asc, creds]);
+
   const refreshCreds = async () => {
     const next = await (window as any).appilot.projects.getCredentials(projectId);
     setCreds(next);
@@ -5186,7 +5200,7 @@ function CredentialsForm({
               setFeedback((prev) => ({ ...prev, github: undefined }));
               setConfirmClear((prev) => ({ ...prev, github: false }));
             }}
-            placeholder={githubUnlocked ? "新 Token（留空保持不变）" : "ghp_… 或 github_pat_…"}
+            placeholder={githubUnlocked ? "原 Token（修改则输入新值）" : "ghp_… 或 github_pat_…"}
           />
           <button
             type="button"
@@ -5353,7 +5367,7 @@ function CredentialsForm({
               setFeedback((prev) => ({ ...prev, asc: undefined }));
               setConfirmClear((prev) => ({ ...prev, asc: false }));
             }}
-            placeholder={ascUnlocked ? "新 Issuer ID（留空保持不变）" : "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"}
+            placeholder={ascUnlocked ? "原 Issuer ID（修改则输入新值）" : "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"}
           />
         </div>
         <div>
@@ -5367,7 +5381,7 @@ function CredentialsForm({
               setFeedback((prev) => ({ ...prev, asc: undefined }));
               setConfirmClear((prev) => ({ ...prev, asc: false }));
             }}
-            placeholder={ascUnlocked ? "新 Key ID（留空保持不变）" : "XXXXXXXXXX"}
+            placeholder={ascUnlocked ? "原 Key ID（修改则输入新值）" : "XXXXXXXXXX"}
           />
         </div>
         <div>
