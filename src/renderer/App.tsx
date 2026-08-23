@@ -5032,9 +5032,13 @@ function CredentialsForm({
     setTesting(kind);
     setSaveError(null);
     try {
+      const githubValue =
+        kind === "github" && githubToken === creds?.githubTokenMasked
+          ? undefined
+          : githubToken;
       const r =
         kind === "github"
-          ? await (window as any).appilot.projects.testGithubToken(projectId, githubToken)
+          ? await (window as any).appilot.projects.testGithubToken(projectId, githubValue)
           : await (window as any).appilot.projects.testAscKey(projectId, {
               issuerId: ascIssuerId,
               keyId: ascKeyId,
@@ -5053,7 +5057,7 @@ function CredentialsForm({
       }));
       await (window as any).appilot.projects.saveCredentials(projectId, {
         scope,
-        githubToken: kind === "github" ? githubToken : undefined,
+        githubToken: kind === "github" ? githubValue : undefined,
         ascIssuerId: kind === "asc" ? ascIssuerId : undefined,
         ascKeyId: kind === "asc" ? ascKeyId : undefined,
         ascPrivateKeyPath: kind === "asc" ? ascKeyPath : undefined,
@@ -5171,23 +5175,6 @@ function CredentialsForm({
           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">GitHub Token</span>
           <CredentialStatus unlocked={githubUnlocked} source={githubSource} />
         </div>
-        {githubUnlocked && (
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-              当前已保存：<span className="font-mono">{creds?.githubTokenMasked || "••••"}</span>
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setEditing((prev) => ({ ...prev, github: false }));
-                setConfirmClear((prev) => ({ ...prev, github: false }));
-              }}
-              className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-            >
-              返回已解锁
-            </button>
-          </div>
-        )}
         <div className="flex gap-2">
           <input
             className={inputLineClass + " font-mono"}
@@ -5254,6 +5241,20 @@ function CredentialsForm({
           >
             {confirmClear.github ? "确认清除？" : "清除"}
           </button>
+          {githubUnlocked && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditing((prev) => ({ ...prev, github: false }));
+                setConfirmClear((prev) => ({ ...prev, github: false }));
+                setGithubToken("");
+                setFeedback((prev) => ({ ...prev, github: undefined }));
+              }}
+              className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+            >
+              放弃修改
+            </button>
+          )}
         </div>
         {feedback.github && !feedback.github.ok && (
           <p className="text-[11px] text-red-500 dark:text-red-400">{feedback.github.msg}</p>
@@ -5314,7 +5315,11 @@ function CredentialsForm({
             </button>
             <button
               type="button"
-              onClick={() => setEditing((prev) => ({ ...prev, github: true }))}
+              onClick={() => {
+                setEditing((prev) => ({ ...prev, github: true }));
+                setGithubToken(creds?.githubTokenMasked || "");
+                setConfirmClear((prev) => ({ ...prev, github: false }));
+              }}
               className={btnSmSecondary}
             >
               重新输入凭证
@@ -5337,26 +5342,6 @@ function CredentialsForm({
           </span>
           <CredentialStatus unlocked={ascUnlocked} source={ascSource} />
         </div>
-        {ascUnlocked && (
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-              当前已保存：Issuer{" "}
-              <span className="font-mono">{creds?.ascIssuerId || "—"}</span> · Key ID{" "}
-              <span className="font-mono">{creds?.ascKeyId || "—"}</span> · 密钥{" "}
-              {creds?.ascPrivateKeyPath ? basename(creds.ascPrivateKeyPath) : "—"}
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setEditing((prev) => ({ ...prev, asc: false }));
-                setConfirmClear((prev) => ({ ...prev, asc: false }));
-              }}
-              className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-            >
-              返回已解锁
-            </button>
-          </div>
-        )}
         <div>
           <label className="block text-[11px] text-zinc-400 mb-1">Issuer ID</label>
           <input
@@ -5477,6 +5462,22 @@ function CredentialsForm({
           >
             {confirmClear.asc ? "确认清除？" : "清除"}
           </button>
+          {ascUnlocked && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditing((prev) => ({ ...prev, asc: false }));
+                setConfirmClear((prev) => ({ ...prev, asc: false }));
+                setAscIssuerId("");
+                setAscKeyId("");
+                setAscKeyPath("");
+                setFeedback((prev) => ({ ...prev, asc: undefined }));
+              }}
+              className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+            >
+              放弃修改
+            </button>
+          )}
         </div>
         {feedback.asc && !feedback.asc.ok && (
           <p className="text-[11px] text-red-500 dark:text-red-400">{feedback.asc.msg}</p>
@@ -5545,7 +5546,13 @@ function CredentialsForm({
             </button>
             <button
               type="button"
-              onClick={() => setEditing((prev) => ({ ...prev, asc: true }))}
+              onClick={() => {
+                setEditing((prev) => ({ ...prev, asc: true }));
+                setAscIssuerId(creds?.ascIssuerId || "");
+                setAscKeyId(creds?.ascKeyId || "");
+                setAscKeyPath(creds?.ascPrivateKeyPath || "");
+                setConfirmClear((prev) => ({ ...prev, asc: false }));
+              }}
               className={btnSmSecondary}
             >
               重新输入凭证
