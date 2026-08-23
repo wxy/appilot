@@ -1,11 +1,12 @@
 import { decryptApiKey } from "./credentials";
+import type { AppStore } from "./store";
 
 /**
  * Single factory for real AI providers (not testConnection): persists every
  * completed request's token usage (incl. cached input) into the aiUsage store
  * so the UI can show total tokens + cache hits instead of billing amounts.
  */
-export async function createAiProvider(s: any) {
+export async function createAiProvider(s: AppStore) {
   const { AIProvider } = await import("../engine/ai/ai-provider");
   return new AIProvider({
     baseURL: s.get("aiProviderUrl"),
