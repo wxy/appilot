@@ -4945,6 +4945,36 @@ function ProjectSettingsPage() {
   );
 }
 
+function GithubIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
+      fill="currentColor"
+      className="text-zinc-700 dark:text-zinc-300 shrink-0"
+      aria-hidden="true"
+    >
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+    </svg>
+  );
+}
+
+function AppleIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="currentColor"
+      className="text-zinc-700 dark:text-zinc-300 shrink-0"
+      aria-hidden="true"
+    >
+      <path d="M17.05 12.53c-.02-2.36 1.93-3.49 2.02-3.55-1.1-1.61-2.81-1.83-3.42-1.85-1.45-.15-2.83.86-3.57.86-.74 0-1.88-.84-3.09-.82-1.59.02-3.06.92-3.88 2.35-1.65 2.87-.42 7.12 1.19 9.45.79 1.14 1.73 2.42 2.96 2.37 1.19-.05 1.64-.77 3.08-.77s1.84.77 3.11.74c1.28-.02 2.1-1.16 2.88-2.3.91-1.33 1.28-2.62 1.3-2.68-.03-.01-2.5-.96-2.52-3.84zM14.45 5.41c.65-.79 1.09-1.89.97-2.99-.94.04-2.08.63-2.75 1.42-.6.7-1.13 1.83-.99 2.91 1.05.08 2.12-.54 2.77-1.34z" />
+    </svg>
+  );
+}
+
 function CredentialsForm({
   projectId,
   scope,
@@ -5094,7 +5124,7 @@ function CredentialsForm({
     <div className="space-y-5">
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <span className="text-base">🔗</span>
+          <GithubIcon />
           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">GitHub Token</span>
           <CredentialStatus unlocked={githubUnlocked} source={githubSource} />
         </div>
@@ -5124,7 +5154,7 @@ function CredentialsForm({
           <button
             type="button"
             onClick={() => void handleTestGithub()}
-            disabled={testing === "asc"}
+            disabled={testing === "asc" || !githubToken.trim()}
             className={cn(
               btnSmSecondary,
               feedback.github?.ok &&
@@ -5135,7 +5165,9 @@ function CredentialsForm({
             )}
             title={feedback.github?.msg}
           >
-            {testing === "github"
+            {!githubToken.trim()
+              ? "测试连接"
+              : testing === "github"
               ? "测试中…"
               : feedback.github
                 ? feedback.github.ok
@@ -5187,7 +5219,7 @@ function CredentialsForm({
 
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <span className="text-base">🛒</span>
+          <AppleIcon />
           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
             App Store Connect API Key
           </span>
@@ -5268,7 +5300,12 @@ function CredentialsForm({
           <button
             type="button"
             onClick={() => void handleTestAsc()}
-            disabled={testing === "github"}
+            disabled={
+              testing === "github" ||
+              !ascIssuerId.trim() ||
+              !ascKeyId.trim() ||
+              !ascKeyPath
+            }
             className={cn(
               btnSmSecondary,
               feedback.asc?.ok &&
@@ -5279,7 +5316,9 @@ function CredentialsForm({
             )}
             title={feedback.asc?.msg}
           >
-            {testing === "asc"
+            {!ascIssuerId.trim() || !ascKeyId.trim() || !ascKeyPath
+              ? "测试连接"
+              : testing === "asc"
               ? "测试中…"
               : feedback.asc
                 ? feedback.asc.ok
@@ -5341,17 +5380,20 @@ function CredentialsForm({
 function CredentialStatus({ unlocked, source }: { unlocked: boolean; source: string | null }) {
   if (!unlocked) {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500" title="未配置">
-        <span className="text-zinc-300 dark:text-zinc-600">🔒</span> 未配置
+      <span
+        className="inline-flex items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500"
+        title="先填写并测试通过，再保存后解锁"
+      >
+        <span className="text-zinc-300 dark:text-zinc-600">🔒</span> 未解锁
       </span>
     );
   }
   return (
     <span
-      className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400"
-      title={`来自${source || ""}凭据`}
+      className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium"
+      title="已通过测试并保存"
     >
-      <span>✓</span> {source || "已配置"}
+      <span>✓</span> 已解锁{source ? ` · ${source}` : ""}
     </span>
   );
 }
