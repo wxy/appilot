@@ -18,7 +18,33 @@ import { briefRuleSignals } from "./lib/overview-brief";
 import type { BriefSuggestion } from "../engine/ai/overview-brief";
 import { summarizeChanges, CHANGE_TYPE_META } from "./lib/release-summary";
 import type { ChangeSummaryItem } from "./lib/release-summary";
-import { languageLabel, platformLabel, formatHumanTime, formatDurationMs } from "./lib/format";
+import {
+  languageLabel,
+  platformLabel,
+  formatHumanTime,
+  formatDurationMs,
+  formatKilo,
+  formatTokens,
+  formatBytes,
+  formatDuration,
+} from "./lib/format";
+import {
+  inputClass,
+  inputLineClass,
+  btnPrimary,
+  btnSecondary,
+  btnSmPrimary,
+  btnSmSecondary,
+  credentialHelpPanelClass,
+  credentialCodeChipClass,
+} from "./components/ui/styles";
+import { GithubIcon, AppleIcon } from "./components/ui/Icons";
+import { EmptyState } from "./components/ui/EmptyState";
+import { FieldBlock, FieldHeader } from "./components/ui/Fields";
+import { StatusChip } from "./components/ui/StatusChip";
+import { AIProgressButton } from "./components/ui/AIProgressButton";
+import { CredentialBadge } from "./components/ui/CredentialBadge";
+import { CredentialStatus } from "./components/ui/CredentialStatus";
 
 /* ── Layout ── */
 
@@ -432,32 +458,6 @@ const STORE_STATUS_META: Record<
   rejected: { label: "被驳回", tone: "red" },
   released: { label: "已发布", tone: "emerald" },
 };
-
-function StatusChip({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: "muted" | "amber" | "emerald" | "red" | "blue";
-}) {
-  const tones: Record<string, string> = {
-    muted: "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
-    amber: "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
-    emerald: "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-    red: "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400",
-    blue: "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
-  };
-  return (
-    <span
-      className={cn(
-        "shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium",
-        tones[tone],
-      )}
-    >
-      {label}
-    </span>
-  );
-}
 
 function localDayKey(iso: string): string {
   const date = new Date(iso);
@@ -2530,47 +2530,6 @@ function ReleasePage() {
   );
 }
 
-function FieldBlock({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 mb-2">{label}</p>
-      {children}
-    </div>
-  );
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      className="text-xs text-amber-600 dark:text-amber-400 hover:underline"
-    >
-      {copied ? "已复制" : "复制"}
-    </button>
-  );
-}
-
-function FieldHeader({ label, text, copy = true }: { label: string; text: string; copy?: boolean }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500">{label}</span>
-      {copy ? <CopyButton text={text} /> : null}
-    </div>
-  );
-}
-
 function TaskCenterPage() {
   const [data, setData] = useState<{
     running: boolean;
@@ -3247,20 +3206,6 @@ function PlaceholderPage({
   );
 }
 
-function EmptyState({ title, desc }: { title: string; desc: string }) {
-  return (
-    <div className="p-10 max-w-2xl mx-auto">
-      <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-2xl bg-white dark:bg-zinc-900/50">
-        <div className="w-12 h-12 rounded-full bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center mb-3">
-          <span className="text-amber-500 text-lg">⌖</span>
-        </div>
-        <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">{title}</h3>
-        <p className="text-sm text-zinc-400 dark:text-zinc-500">{desc}</p>
-      </div>
-    </div>
-  );
-}
-
 /* ── Manage projects (remove is a deliberate, typed-confirmation action) ── */
 
 function ManageProjectsPage() {
@@ -3377,77 +3322,6 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
         </span>
       )}
     </span>
-  );
-}
-
-function formatKilo(chars: number): string {
-  return `${(chars / 1000).toFixed(1).replace(/\.0$/, "")}K字`;
-}
-
-function formatTokens(n: number): string {
-  if (n < 1000) return `${Math.round(n)}`;
-  return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}K`;
-}
-
-function formatBytes(bytes: number): string {
-  if (!bytes) return "0B";
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}
-
-function formatDuration(ms: number): string {
-  if (!ms) return "—";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${seconds}秒`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}分${s > 0 ? `${String(s).padStart(2, "0")}秒` : ""}`;
-}
-
-function AIProgressButton({
-  onClick,
-  disabled = false,
-  idleLabel,
-  loading,
-  progress,
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-  idleLabel: string;
-  loading: boolean;
-  progress: { chars: number; phase: "reasoning" | "content" } | null;
-}) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    if (!loading) return;
-    setElapsed(0);
-    const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, [loading]);
-  const chars = progress?.chars || 0;
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled || loading}
-      className={cn(btnPrimary, "h-10 min-w-36 whitespace-nowrap", loading && "py-1")}
-    >
-      {loading ? (
-        <span className="flex flex-col items-center text-[11px] leading-tight">
-          <span className="inline-flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-            {progress?.phase === "content" ? "生成中" : "思考中"}
-          </span>
-          <span className="mt-0.5 font-mono">{formatKilo(chars)} · {formatElapsed(elapsed)}</span>
-        </span>
-      ) : (
-        idleLabel
-      )}
-    </button>
   );
 }
 
@@ -4818,17 +4692,6 @@ const AI_PRESETS = [
   { label: "Custom", url: "", model: "" },
 ];
 
-const inputClass = "w-full px-3.5 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-900 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 dark:focus:border-amber-400 transition-shadow";
-const inputLineClass = "w-full h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-900 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 dark:focus:border-amber-400 transition-shadow";
-const btnPrimary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed";
-const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
-const btnSmPrimary = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-all duration-150";
-const btnSmSecondary = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
-const credentialHelpPanelClass =
-  "rounded-lg bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-100 dark:border-zinc-800/70 px-3.5 py-3 space-y-2.5";
-const credentialCodeChipClass =
-  "inline-block font-mono text-[10px] leading-4 px-1.5 rounded bg-white dark:bg-zinc-800 border border-zinc-200/90 dark:border-zinc-700/60 text-zinc-600 dark:text-zinc-300";
-
 function ProjectSettingsPage() {
   const { projectId = "" } = useParams();
   const { projects, load } = useProject();
@@ -5038,82 +4901,8 @@ function ProjectSettingsPage() {
   );
 }
 
-function GithubIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      fill="currentColor"
-      className={cn("text-zinc-700 dark:text-zinc-300 shrink-0", className)}
-      aria-hidden="true"
-    >
-      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
-    </svg>
-  );
-}
-
-function AppleIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="currentColor"
-      className={cn("text-zinc-700 dark:text-zinc-300 shrink-0", className)}
-      aria-hidden="true"
-    >
-      <path d="M17.05 12.53c-.02-2.36 1.93-3.49 2.02-3.55-1.1-1.61-2.81-1.83-3.42-1.85-1.45-.15-2.83.86-3.57.86-.74 0-1.88-.84-3.09-.82-1.59.02-3.06.92-3.88 2.35-1.65 2.87-.42 7.12 1.19 9.45.79 1.14 1.73 2.42 2.96 2.37 1.19-.05 1.64-.77 3.08-.77s1.84.77 3.11.74c1.28-.02 2.1-1.16 2.88-2.3.91-1.33 1.28-2.62 1.3-2.68-.03-.01-2.5-.96-2.52-3.84zM14.45 5.41c.65-.79 1.09-1.89.97-2.99-.94.04-2.08.63-2.75 1.42-.6.7-1.13 1.83-.99 2.91 1.05.08 2.12-.54 2.77-1.34z" />
-    </svg>
-  );
-}
-
 const GITHUB_CAPABILITIES = ["私有/草案 release 公告", "真实 PR 素材", "远程仓库数据"];
 const ASC_CAPABILITIES = ["版本/审核状态回读", "审核意见", "评论洞察", "销量/下载分析"];
-
-const CREDENTIAL_BADGE_DETAIL: Record<"github" | "asc", string> = {
-  github: "私有/草案 release 公告、真实 PR 素材、远程仓库数据",
-  asc: "版本/审核状态回读、审核意见、评论洞察、销量/下载分析",
-};
-
-/** Small chip marking a feature that is enhanced by a saved credential.
- *  Configured → solid; missing → dashed, clickable to jump to project settings. */
-function CredentialBadge({
-  kind,
-  enabled,
-  projectId,
-}: {
-  kind: "github" | "asc";
-  enabled: boolean;
-  projectId: string;
-}) {
-  const navigate = useNavigate();
-  const Icon = kind === "github" ? GithubIcon : AppleIcon;
-  const label = kind === "github" ? "GitHub" : "ASC";
-  const detail = CREDENTIAL_BADGE_DETAIL[kind];
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        if (!enabled) navigate(`/projects/${projectId}/settings`);
-      }}
-      title={
-        enabled
-          ? `已配置，用于：${detail}`
-          : `未配置，可解锁：${detail}（点击前往项目设置）`
-      }
-      className={cn(
-        "inline-flex items-center gap-1 px-2 h-6 rounded-full text-[11px] transition-colors",
-        enabled
-          ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200 dark:ring-zinc-700"
-          : "border border-dashed border-zinc-300 dark:border-zinc-700 text-zinc-400 dark:text-zinc-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400",
-      )}
-    >
-      <Icon className="w-3.5 h-3.5 text-current" />
-      {label}
-    </button>
-  );
-}
 
 function CredentialsForm({
   projectId,
@@ -5915,27 +5704,6 @@ function CredentialsForm({
         </div>
       )}
     </div>
-  );
-}
-
-function CredentialStatus({ unlocked, source }: { unlocked: boolean; source: string | null }) {
-  if (!unlocked) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500"
-        title="先填写并测试通过，再保存后解锁"
-      >
-        <span className="text-zinc-300 dark:text-zinc-600">🔒</span> 未解锁
-      </span>
-    );
-  }
-  return (
-    <span
-      className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium"
-      title="已通过测试并保存"
-    >
-      <span>✓</span> 已解锁{source ? ` · ${source}` : ""}
-    </span>
   );
 }
 

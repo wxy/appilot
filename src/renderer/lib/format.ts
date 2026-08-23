@@ -78,3 +78,32 @@ export function formatDurationMs(ms?: number | null): string {
   const seconds = Math.round((ms % 60_000) / 1000);
   return `${minutes} 分 ${seconds} 秒`;
 }
+
+export function formatKilo(chars: number): string {
+  return `${(chars / 1000).toFixed(1).replace(/\.0$/, "")}K字`;
+}
+
+export function formatTokens(n: number): string {
+  if (n < 1000) return `${Math.round(n)}`;
+  return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}K`;
+}
+
+export function formatBytes(bytes: number): string {
+  if (!bytes) return "0B";
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+export function formatDuration(ms: number): string {
+  if (!ms) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+export function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}秒`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}分${s > 0 ? `${String(s).padStart(2, "0")}秒` : ""}`;
+}

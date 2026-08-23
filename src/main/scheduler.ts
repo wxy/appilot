@@ -1,0 +1,535 @@
+import { log } from "../engine/logger";
+import {
+  enrichKeywordFromSnapshots,
+  evaluatePause,
+  normalizeTrackedKeyword,
+} from "../engine/rank-keywords";
+import { appendRankSnapshots } from "../engine/rank-snapshots";
+import { storefrontsForLanguage } from "../engine/storefronts";
+import { resolveEffectiveCredentials } from "./credentials";
+import {
+  ensureProjectKeywordPool,
+  isProductPostRelease,
+  migrateLegacyStoreProducts,
+} from "./project-state";
+import { getStore } from "./store";
+
+interface ScheduledTaskBase {
+  id: string;
+  intervalMinutes: number;
+  nextRunAt: string;
+  lastRunAt?: string | null;
+  firstRunAt?: string | null;
+  executionCount: number;
+  lastStatus?: "success" | "failed";
+  enabled: boolean;
+  consecutiveFailures?: number;
+}
+
+interface RankScheduledTask extends ScheduledTaskBase {
+  kind: "rank";
+  productId: string;
+  keyword: string;
+  queryLanguage: string;
+  storefront: string;
+  lastDurationMs?: number;
+}
+
+interface GithubSyncTask extends ScheduledTaskBase {
+  kind: "github-sync";
+  projectId: string;
+  lastDurationMs?: number;
+}
+
+export type ScheduledTask = RankScheduledTask | GithubSyncTask;
+
+export interface RunningTaskInfo {
+  kind?: "rank" | "github-sync";
+  keyword: string;
+  language: string;
+  storefront: string;
+  startedAt: string;
+}
+
+let schedulerTimer: NodeJS.Timeout | null = null;
+let schedulerRunning = false;
+let overdueScattered = false;
+/** How many rank tasks one scheduler tick may execute (throughput vs load). */
+const MAX_RANK_TASKS_PER_TICK = 8;
+/** What the scheduler is executing right now (for the timeline UI). */
+let nowRunningTask: RunningTaskInfo | null = null;
+const rankEntityCache = new Map<string, "software" | "macSoftware">();
+
+export function isSchedulerTimerActive(): boolean {
+  return Boolean(schedulerTimer);
+}
+
+export function schedulerStatusSnapshot(): {
+  running: boolean;
+  nowRunning: RunningTaskInfo | null;
+} {
+  return { running: schedulerRunning, nowRunning: nowRunningTask };
+}
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function rankTaskId(productId: string, keyword: string, queryLanguage: string, storefront: string): string {
+  return `${productId}:${queryLanguage}:${storefront}:${keyword}`;
+}
+
+function taskSeed(task: Pick<RankScheduledTask, "productId" | "keyword" | "queryLanguage" | "storefront">): string {
+  return [task.productId, task.queryLanguage, task.storefront, task.keyword].join(":");
+}
+
+function githubSyncTaskId(projectId: string): string {
+  return `github-sync:${projectId}`;
+}
+
+/** Fresh pre-warmed GitHub data for a project, or null when stale/mismatched. */
+export function githubSyncCacheEntry(
+  s: any,
+  project: any,
+): { tag: string | null; release: any | null; pullRequests: any[] } | null {
+  const all = s.get("githubSyncCache") || {};
+  const entry = all?.[project?.id];
+  if (!entry) return null;
+  if (new Date(entry.syncedAt).getTime() < Date.now() - 60 * 60_000) return null;
+  if ((entry.lastSeenSha || null) !== (project?.lastReleaseSha || null)) return null;
+  return {
+    tag: entry.tag ?? null,
+    release: entry.release ?? null,
+    pullRequests: entry.pullRequests || [],
+  };
+}
+
+function nextRunAt(seed: string, intervalMinutes: number, now = new Date()): string {
+  const slot = hashString(seed) % intervalMinutes;
+  const candidate = new Date(now);
+  candidate.setSeconds(0, 0);
+  candidate.setMinutes(candidate.getMinutes() + slot + 1);
+  return candidate.toISOString();
+}
+
+async function resolveRankEntity(product: any): Promise<"software" | "macSoftware"> {
+  const cached = rankEntityCache.get(product.trackId);
+  if (cached) return cached;
+  const { lookupApp } = await import("../engine/app-store-discovery");
+  const metadata = await lookupApp(product.trackId);
+  const entity: "software" | "macSoftware" = metadata?.kind === "mac-software" ? "macSoftware" : "software";
+  rankEntityCache.set(product.trackId, entity);
+  return entity;
+}
+
+async function reconcileRankTasks(store: any): Promise<void> {
+  const projects: any[] = (store.get("projects") || []).map(migrateLegacyStoreProducts);
+  for (const project of projects) ensureProjectKeywordPool(project);
+  store.set("projects", projects);
+  const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const activeKeys = new Set<string>();
+  const desiredTasks = new Map<string, ScheduledTask>();
+
+  for (const project of projects) {
+    const pool: any[] = (project.trackedKeywords || []).map((item: any) =>
+      normalizeTrackedKeyword(item),
+    );
+    const poolBefore = JSON.stringify(pool);
+    const storeProducts: any[] = project.storeProducts || [];
+    for (const product of storeProducts) {
+      if (!product.trackId) continue;
+      if (!isProductPostRelease(project, product)) continue;
+      const snapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
+      const platformKey = product.platform || "unknown";
+
+      // The shared pool is queried per platform; auto-pause is evaluated per
+      // platform (stored in pausedPlatforms) while a manual pause is global.
+      for (const localization of product.supportedLanguages || []) {
+        const localizationCode = localization.code;
+        const queryLanguages = localizationCode === "en" ? ["en"] : [localizationCode, "en"];
+        for (const keyword of pool) {
+          if (keyword.status === "paused") continue;
+          const evaluated = evaluatePause(
+            enrichKeywordFromSnapshots(keyword, snapshots),
+            snapshots,
+          );
+          const platforms = Array.isArray(keyword.pausedPlatforms)
+            ? keyword.pausedPlatforms
+            : [];
+          if (evaluated.status === "paused" && !platforms.includes(platformKey)) {
+            keyword.pausedPlatforms = [...platforms, platformKey];
+            keyword.pausedReason = evaluated.pausedReason || null;
+          } else if (evaluated.status !== "paused" && platforms.includes(platformKey)) {
+            keyword.pausedPlatforms = platforms.filter((item: string) => item !== platformKey);
+          }
+          if ((keyword.pausedPlatforms || []).includes(platformKey)) continue;
+          if (!queryLanguages.includes(keyword.language)) continue;
+          for (const storefront of storefrontsForLanguage(localizationCode)) {
+            const id = rankTaskId(product.id, keyword.keyword, keyword.language, storefront);
+            activeKeys.add(id);
+            const previous = existing.find((task) => task.id === id);
+            desiredTasks.set(id, {
+              id,
+              kind: "rank",
+              productId: product.id,
+              keyword: keyword.keyword,
+              queryLanguage: keyword.language,
+              storefront,
+              intervalMinutes: previous?.intervalMinutes || 24 * 60,
+              nextRunAt: previous?.nextRunAt || nextRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), 24 * 60),
+              lastRunAt: previous?.lastRunAt ?? null,
+              firstRunAt: previous?.firstRunAt ?? null,
+              executionCount: previous?.executionCount || 0,
+              lastStatus: previous?.lastStatus,
+              enabled: previous?.enabled ?? true,
+              consecutiveFailures: previous?.consecutiveFailures || 0,
+            });
+          }
+        }
+      }
+    }
+    if (JSON.stringify(pool) !== poolBefore) {
+      project.trackedKeywords = pool;
+    }
+  }
+
+  const next = existing
+    // Rank tasks are re-derived below; github-sync tasks are reconciled
+    // separately and must survive this pass. Drop any other stale task kind.
+    .filter((task) =>
+      task.kind === "github-sync" ||
+      (task.kind === "rank" && activeKeys.has(task.id)),
+    )
+    .map((task) => desiredTasks.get(task.id) || task);
+  for (const task of desiredTasks.values()) {
+    if (!next.some((existingTask) => existingTask.id === task.id)) {
+      next.push(task);
+    }
+  }
+
+  store.set("scheduledTasks", next);
+  store.set("projects", projects);
+}
+
+/**
+ * One per-project background task that keeps the GitHub data cache warm:
+ * fetch remote tags (never touches the worktree), then refresh the release
+ * announcement + PR info cache so opening the workbench does not wait on the
+ * GitHub API. The cache is consumed by checkForRelease via `githubCache`.
+ */
+async function reconcileGithubSyncTasks(store: any): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const desired = new Map<string, GithubSyncTask>();
+  for (const project of projects) {
+    if (!project?.repo?.githubUrl) continue;
+    const id = githubSyncTaskId(project.id);
+    const previous = existing.find((task) => task.id === id) as
+      | GithubSyncTask
+      | undefined;
+    desired.set(id, {
+      id,
+      kind: "github-sync",
+      projectId: project.id,
+      intervalMinutes: previous?.intervalMinutes || 60,
+      nextRunAt: previous?.nextRunAt || nextRunAt(id, 60),
+      lastRunAt: previous?.lastRunAt ?? null,
+      firstRunAt: previous?.firstRunAt ?? null,
+      executionCount: previous?.executionCount || 0,
+      lastStatus: previous?.lastStatus,
+      enabled: previous?.enabled ?? true,
+      consecutiveFailures: previous?.consecutiveFailures || 0,
+      lastDurationMs: previous?.lastDurationMs,
+    });
+  }
+  const next: ScheduledTask[] = [
+    ...existing.filter((task) => task.kind === "rank"),
+    ...Array.from(desired.values()),
+  ];
+  store.set("scheduledTasks", next);
+}
+
+async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  let product: any = null;
+  let project: any = null;
+  for (const candidateProject of projects) {
+    const candidate = (candidateProject.storeProducts || []).find(
+      (item: any) => item.id === task.productId,
+    );
+    if (candidate) {
+      project = candidateProject;
+      product = candidate;
+      break;
+    }
+  }
+  if (!project || !product?.trackId) return;
+
+  const pool = ensureProjectKeywordPool(project).trackedKeywords || [];
+  const isActive = pool.some(
+    (keyword: any) =>
+      keyword.keyword === task.keyword &&
+      keyword.language === task.queryLanguage &&
+      keyword.status !== "paused" &&
+      !(keyword.pausedPlatforms || []).includes(product.platform || "unknown"),
+  );
+  if (!isActive) {
+    task.enabled = false;
+    task.lastStatus = "failed";
+    return;
+  }
+
+  const { searchAppStoreRank } = await import("../engine/rank-collector");
+  const entity = await resolveRankEntity(product);
+  const startedAt = Date.now();
+  nowRunningTask = {
+    keyword: task.keyword,
+    language: task.queryLanguage,
+    storefront: task.storefront,
+    startedAt: new Date().toISOString(),
+  };
+  let durationMs = 0;
+  let requestBytes = 0;
+  let responseBytes = 0;
+  let rank: number | null = null;
+  let status: "success" | "failed" = "success";
+  let snapshot: any = null;
+  try {
+    const result = await searchAppStoreRank({
+      term: task.keyword,
+      country: task.storefront,
+      trackId: product.trackId,
+      entity,
+    });
+    durationMs = result.durationMs;
+    requestBytes = result.requestBytes;
+    responseBytes = result.responseBytes;
+    rank = result.rank;
+    snapshot = {
+      keyword: task.keyword,
+      language: task.queryLanguage,
+      storefront: task.storefront,
+      rank: result.rank,
+      totalResults: result.totalResults,
+      checkedAt: new Date().toISOString(),
+    };
+    task.consecutiveFailures = 0;
+    task.lastStatus = "success";
+  } catch (err: any) {
+    status = "failed";
+    durationMs = Date.now() - startedAt;
+    log.warn(`Scheduled rank task failed for "${task.keyword}" in ${task.storefront}: ${err.message}`);
+    task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
+    task.lastStatus = "failed";
+    if (task.consecutiveFailures >= 5) {
+      task.enabled = false;
+    }
+  } finally {
+    nowRunningTask = null;
+  }
+
+  task.lastRunAt = new Date().toISOString();
+  task.executionCount += 1;
+  task.lastDurationMs = durationMs;
+  const executions: any[] = Array.isArray(store.get("rankExecutions"))
+    ? store.get("rankExecutions")
+    : [];
+  executions.push({
+    ts: new Date().toISOString(),
+    productId: task.productId,
+    keyword: task.keyword,
+    language: task.queryLanguage,
+    storefront: task.storefront,
+    status,
+    rank,
+    durationMs,
+    requestBytes,
+    responseBytes,
+  });
+  store.set("rankExecutions", executions.slice(-5000));
+  task.firstRunAt = task.firstRunAt || task.lastRunAt;
+  task.nextRunAt = nextRunAt(
+    taskSeed(task),
+    task.lastStatus === "failed" ? 30 : task.intervalMinutes,
+  );
+
+  // Re-read the latest projects before writing: the product object captured at
+  // task start may be stale after the network call (concurrent IPC handlers
+  // can replace the whole array, e.g. projects:remove). Apply the snapshot to
+  // the freshest copy so concurrent edits are not clobbered.
+  const latestProjects: any[] = store.get("projects") || [];
+  const latestProduct = latestProjects
+    .flatMap((p: any) => p.storeProducts || [])
+    .find((item: any) => item.id === task.productId);
+  if (latestProduct && snapshot) {
+    const previous = Array.isArray(latestProduct.rankSnapshots)
+      ? latestProduct.rankSnapshots
+      : [];
+    latestProduct.rankSnapshots = appendRankSnapshots(previous, [snapshot]);
+    store.set("projects", latestProjects);
+  }
+}
+
+async function runGithubSyncTask(store: any, task: GithubSyncTask): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  const project = projects.find((item: any) => item.id === task.projectId) || null;
+  const startedAt = Date.now();
+  nowRunningTask = {
+    kind: "github-sync",
+    keyword: "GitHub 同步",
+    language: "",
+    storefront: "",
+    startedAt: new Date().toISOString(),
+  };
+  let durationMs = 0;
+  let requestBytes = 0;
+  let responseBytes = 0;
+  let status: "success" | "failed" = "success";
+  try {
+    if (!project?.localPath) throw new Error("Project not found");
+    const { fetchRemoteTags, checkForRelease } = await import("../engine/release-watcher");
+    // Background sync must never touch the worktree or local branches: fetch
+    // only updates remote-tracking refs and tags.
+    await fetchRemoteTags(project.localPath);
+    const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
+    const result = await checkForRelease(
+      project.localPath,
+      project.lastReleaseSha || null,
+      token,
+      {
+        sync: false,
+        onApiStats: (rb, pb) => {
+          requestBytes += rb;
+          responseBytes += pb;
+        },
+      },
+    );
+    const release = result.latest || null;
+    const material = release?.material || null;
+    const all: Record<string, any> = store.get("githubSyncCache") || {};
+    all[task.projectId] = {
+      tag: release?.tag || null,
+      release: material?.githubRelease ?? null,
+      pullRequests: material?.pullRequests || [],
+      lastSeenSha: project.lastReleaseSha || null,
+      syncedAt: new Date().toISOString(),
+    };
+    store.set("githubSyncCache", all);
+    task.consecutiveFailures = 0;
+    task.lastStatus = "success";
+  } catch (err: any) {
+    status = "failed";
+    durationMs = Date.now() - startedAt;
+    log.warn(`Scheduled GitHub sync failed for ${task.projectId}: ${err.message}`);
+    task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
+    task.lastStatus = "failed";
+    if (task.consecutiveFailures >= 5) {
+      task.enabled = false;
+    }
+  } finally {
+    nowRunningTask = null;
+  }
+
+  task.lastRunAt = new Date().toISOString();
+  task.executionCount += 1;
+  task.lastDurationMs = durationMs;
+  const executions: any[] = Array.isArray(store.get("rankExecutions"))
+    ? store.get("rankExecutions")
+    : [];
+  executions.push({
+    ts: new Date().toISOString(),
+    productId: task.projectId,
+    kind: "github-sync",
+    status,
+    durationMs,
+    requestBytes,
+    responseBytes,
+  });
+  store.set("rankExecutions", executions.slice(-5000));
+  task.firstRunAt = task.firstRunAt || task.lastRunAt;
+  task.nextRunAt = nextRunAt(
+    task.id,
+    task.lastStatus === "failed" ? 30 : task.intervalMinutes,
+  );
+}
+
+export async function schedulerTick(): Promise<void> {
+  if (schedulerRunning) return;
+  schedulerRunning = true;
+  try {
+    const store = await getStore();
+    await reconcileRankTasks(store);
+    await reconcileGithubSyncTasks(store);
+
+    const now = Date.now();
+    const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    // Oldest-overdue first: array order is per-project, so an early project can
+    // otherwise starve every later project (GloWalk sat enabled but untouched
+    // behind ai-pulse's larger task list).
+    const due = tasks
+      .filter(
+        (task) =>
+          task.enabled &&
+          new Date(task.nextRunAt).getTime() <= now,
+      )
+      .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime())
+      .slice(0, MAX_RANK_TASKS_PER_TICK);
+
+    for (const task of due) {
+      if (task.kind === "github-sync") {
+        await runGithubSyncTask(store, task);
+      } else {
+        await runRankTask(store, task);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    // Merge the tick's per-task updates into the latest task list instead of
+    // overwriting it: concurrent handlers (e.g. projects:remove) may have
+    // removed or replaced tasks while this tick was running.
+    const latestTasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    const merged = latestTasks.map((task) => byId.get(task.id) || task);
+    for (const task of byId.values()) {
+      if (!merged.some((item) => item.id === task.id)) merged.push(task);
+    }
+    store.set("scheduledTasks", merged);
+  } catch (err: any) {
+    log.error(`Task scheduler tick failed: ${err.message}`);
+  } finally {
+    schedulerRunning = false;
+  }
+}
+
+async function scatterOverdueTasks(store: any): Promise<void> {
+  const now = Date.now();
+  const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+  let changed = false;
+  for (const task of tasks) {
+    if (task.enabled && new Date(task.nextRunAt).getTime() <= now) {
+      task.nextRunAt = nextRunAt(task.id, 120);
+      changed = true;
+    }
+  }
+  if (changed) {
+    store.set("scheduledTasks", tasks);
+  }
+}
+
+export function startTaskScheduler(): void {
+  if (schedulerTimer) return;
+  void (async () => {
+    const store = await getStore();
+    if (!overdueScattered) {
+      await scatterOverdueTasks(store);
+      overdueScattered = true;
+    }
+    schedulerTimer = setInterval(() => {
+      void schedulerTick();
+    }, 60_000);
+    await schedulerTick();
+  })();
+}
