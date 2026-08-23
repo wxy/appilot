@@ -1,7 +1,8 @@
 import { app, BrowserWindow, Menu, shell } from "electron";
 import path from "path";
 import { getStore } from "./store";
-import { registerIpcHandlers, startTaskScheduler } from "./ipc";
+import { registerIpcHandlers } from "./ipc";
+import { startTaskScheduler } from "./scheduler";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
 import { setupLogger } from "./logger";
 
