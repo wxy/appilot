@@ -1505,7 +1505,7 @@ function HistoryViewer({ draft }: { draft: any }) {
 
 function ReleasePage() {
   const { projects, currentProjectId, currentProductId } = useProject();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlTag = searchParams.get("tag") || "";
   const project = projects.find((item) => item.id === currentProjectId);
   const products = project?.storeProducts || [];
@@ -1578,6 +1578,16 @@ function ReleasePage() {
   useEffect(() => {
     void loadReleases();
   }, [project?.id, searchParams]);
+
+  // Keep the URL's ?tag= in sync with the release selected in the workbench,
+  // so navigating away and back preserves the current draft.
+  useEffect(() => {
+    if (!project?.id || !selectedTag) return;
+    if (urlTag === selectedTag) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("tag", selectedTag);
+    setSearchParams(next, { replace: true });
+  }, [project?.id, selectedTag, urlTag, searchParams]);
 
   useEffect(() => {
     setSourceLanguage(UI_SOURCE_LANGUAGE);
@@ -2763,6 +2773,24 @@ function TaskTimelineChart({
   } | null>(null);
   const recent = timeline?.recent ?? [];
   const upcoming = timeline?.upcoming ?? [];
+  // One continuous timeline: each hour bucket stacks planned (future) and
+  // executed (past) activity, so past and future read as a single chart.
+  const buckets: { hour: number; planned: number; success: number; failed: number }[] =
+    Array.from({ length: 48 }, (_, index) =>
+      index < 24
+        ? {
+            hour: (recent[index] || { hour: 0 }).hour,
+            planned: 0,
+            success: recent[index]?.success || 0,
+            failed: recent[index]?.failed || 0,
+          }
+        : {
+            hour: (upcoming[index - 24] || { hour: 0 }).hour,
+            planned: upcoming[index - 24]?.count || 0,
+            success: 0,
+            failed: 0,
+          },
+    );
   const W = 780;
   const H = 200;
   const padL = 36;
@@ -2774,8 +2802,7 @@ function TaskTimelineChart({
   const plotH = H - padT - padB;
   const maxV = Math.max(
     1,
-    ...recent.map((r) => r.success + r.failed),
-    ...upcoming.map((u) => u.count),
+    ...buckets.map((b) => b.planned + b.success + b.failed),
   );
   const step = niceStep(Math.max(1, Math.ceil(maxV / 4)));
   const yTicks: number[] = [];
@@ -2790,18 +2817,15 @@ function TaskTimelineChart({
     i === 24 ? "现在" : `${i < 24 ? "-" : "+"}${Math.abs(i - 24)}h`;
 
   const hoverInfo = (index: number): { title: string; lines: [string, string][] } => {
-    if (index < 24) {
-      const r = recent[index] || { hour: 0, success: 0, failed: 0 };
-      const lines: [string, string][] = [];
-      if (r.success > 0) lines.push(["成功", `${r.success} 次`]);
-      if (r.failed > 0) lines.push(["失败", `${r.failed} 次`]);
-      if (lines.length === 0) lines.push(["本时段", "无执行"]);
-      return { title: hourLabel(r.hour), lines };
-    }
-    const u = upcoming[index - 24] || { hour: 0, count: 0 };
+    const b = buckets[index] || { hour: 0, planned: 0, success: 0, failed: 0 };
+    const lines: [string, string][] = [];
+    if (b.planned > 0) lines.push(["计划任务", `${b.planned} 个`]);
+    if (b.success > 0) lines.push(["成功", `${b.success} 次`]);
+    if (b.failed > 0) lines.push(["失败", `${b.failed} 次`]);
+    if (lines.length === 0) lines.push(["本时段", "无活动"]);
     return {
-      title: hourLabel(u.hour),
-      lines: [["计划任务", `${u.count} 个`]],
+      title: hourLabel(b.hour),
+      lines,
     };
   };
 
@@ -2810,7 +2834,7 @@ function TaskTimelineChart({
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">执行时间线</h3>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-          过去 24 小时实际执行与未来 24 小时计划任务（悬停查看详情）
+          每小时计划任务与实际执行叠加（悬停查看详情）
         </p>
       </div>
       <div className="px-6 py-4 relative">
@@ -2857,26 +2881,38 @@ function TaskTimelineChart({
             className="text-zinc-300 dark:text-zinc-700"
             strokeWidth="1"
           />
-          {recent.map((r, i) => {
+          {buckets.map((b, i) => {
             const x = padL + i * barW;
-            const successH = (r.success / maxV) * plotH;
-            const failedH = (r.failed / maxV) * plotH;
+            const plannedH = (b.planned / maxV) * plotH;
+            const successH = (b.success / maxV) * plotH;
+            const failedH = (b.failed / maxV) * plotH;
             return (
-              <g key={`r-${i}`}>
-                {r.success > 0 && (
+              <g key={`b-${i}`}>
+                {b.planned > 0 && (
                   <rect
                     x={x}
-                    y={padT + plotH - successH}
+                    y={padT + plotH - plannedH}
+                    width={barW - 1}
+                    height={plannedH}
+                    fill="#f59e0b"
+                    opacity="0.55"
+                    rx="1"
+                  />
+                )}
+                {b.success > 0 && (
+                  <rect
+                    x={x}
+                    y={padT + plotH - plannedH - successH}
                     width={barW - 1}
                     height={successH}
                     fill="#10b981"
                     rx="1"
                   />
                 )}
-                {r.failed > 0 && (
+                {b.failed > 0 && (
                   <rect
                     x={x}
-                    y={padT + plotH - successH - failedH}
+                    y={padT + plotH - plannedH - successH - failedH}
                     width={barW - 1}
                     height={failedH}
                     fill="#ef4444"
@@ -2884,22 +2920,6 @@ function TaskTimelineChart({
                   />
                 )}
               </g>
-            );
-          })}
-          {upcoming.map((u, i) => {
-            const x = padL + (24 + i) * barW;
-            const h = (u.count / maxV) * plotH;
-            return (
-              <rect
-                key={`u-${i}`}
-                x={x}
-                y={y(u.count)}
-                width={barW - 1}
-                height={h}
-                fill="#f59e0b"
-                opacity="0.55"
-                rx="1"
-              />
             );
           })}
           {hovered && (
@@ -3603,7 +3623,13 @@ function KeywordsPage() {
       key={`${keyword.language}:${keyword.keyword}`}
       data-keyword={keyword.keyword}
       data-language={keyword.language}
-      onClick={() => setSelectedKeyword(keyword.keyword)}
+      onClick={() => {
+        setSelectedKeyword(keyword.keyword);
+        const next = new URLSearchParams(searchParams);
+        next.set("keyword", keyword.keyword);
+        next.set("lang", currentLang);
+        setSearchParams(next, { replace: true });
+      }}
       className={cn(
         "grid items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
         dimmed && "opacity-55",
