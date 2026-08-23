@@ -29,6 +29,21 @@ contextBridge.exposeInMainWorld("appilot", {
     list: (): Promise<any[]> => ipcRenderer.invoke("projects:list"),
     add: (localPath: string): Promise<any> => ipcRenderer.invoke("projects:add", localPath),
     remove: (id: string): Promise<boolean> => ipcRenderer.invoke("projects:remove", id),
+    updateSettings: (projectId: string, settings: { name?: string; localPath?: string; githubUrl?: string | null }): Promise<any> =>
+      ipcRenderer.invoke("projects:updateSettings", projectId, settings),
+    getCredentials: (projectId: string): Promise<any> =>
+      ipcRenderer.invoke("projects:getCredentials", projectId),
+    saveCredentials: (
+      projectId: string,
+      creds: { scope?: "global" | "project"; githubToken?: string; ascIssuerId?: string; ascKeyId?: string; ascPrivateKeyPath?: string },
+    ): Promise<boolean> => ipcRenderer.invoke("projects:saveCredentials", projectId, creds),
+    clearCredentials: (projectId: string, scope: "global" | "project"): Promise<boolean> =>
+      ipcRenderer.invoke("projects:clearCredentials", projectId, scope),
+    testGithubToken: (projectId: string, token?: string): Promise<any> =>
+      ipcRenderer.invoke("projects:testGithubToken", projectId, token),
+    testAscKey: (projectId: string, params?: { issuerId?: string; keyId?: string; privateKeyPath?: string }): Promise<any> =>
+      ipcRenderer.invoke("projects:testAscKey", projectId, params),
+    selectAscKeyFile: (): Promise<string | null> => ipcRenderer.invoke("projects:selectAscKeyFile"),
     generateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language),
     curateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:curateKeywords", projectId, language),
     getSubmissionReference: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:getSubmissionReference", projectId, language),
