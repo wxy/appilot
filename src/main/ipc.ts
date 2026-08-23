@@ -1,4 +1,5 @@
 import { app, ipcMain, shell, safeStorage, dialog } from "electron";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { log } from "../engine/logger";
@@ -36,6 +37,37 @@ function decryptApiKey(stored: string): string {
     }
   }
   return current;
+}
+
+/**
+ * Project credentials (GitHub / App Store Connect) — Phase 1 of project
+ * settings. Global defaults + optional per-project overrides, encrypted via
+ * safeStorage. Effective value = project override ?? global default.
+ */
+function resolveEffectiveCredentials(s: any, projectId: string) {
+  const global = s.get("globalCredentials") || {};
+  const override = (s.get("projectCredentials") || {})[projectId] || {};
+  const pick = (key: string): string => {
+    const hasOverride = override[key] !== undefined && override[key] !== "";
+    return hasOverride ? decryptApiKey(override[key]) : decryptApiKey(global[key]);
+  };
+  return {
+    githubToken: pick("githubToken"),
+    ascIssuerId: pick("ascIssuerId"),
+    ascKeyId: pick("ascKeyId"),
+    ascPrivateKeyPath: pick("ascPrivateKeyPath"),
+  };
+}
+
+function ascJwt(issuerId: string, keyId: string, privateKeyPem: string): string {
+  const header = { alg: "ES256", kid: keyId, typ: "JWT" };
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { iss: issuerId, exp: now + 1200, aud: "appstoreconnect-v1" };
+  const b64 = (value: any) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const unsigned = `${b64(header)}.${b64(payload)}`;
+  const signer = crypto.createSign("sha256");
+  signer.update(unsigned);
+  return `${unsigned}.${signer.sign(privateKeyPem, "base64url")}`;
 }
 
 /** True when the value looks like an encrypted blob rather than a real key
@@ -889,7 +921,219 @@ export function registerIpcHandlers() {
       }
     }
     if (repoChanged) s.set("projects", cleaned);
-    return cleaned;
+    return cleaned.map((project) => {
+      const creds = resolveEffectiveCredentials(s, project.id);
+      return {
+        ...project,
+        hasGithubToken: Boolean(creds.githubToken),
+        hasAscKey: Boolean(
+          creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath,
+        ),
+      };
+    });
+  });
+
+  ipcMain.handle(
+    "projects:updateSettings",
+    async (
+      _event,
+      projectId: string,
+      settings: { name?: string; localPath?: string; githubUrl?: string | null },
+    ) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const index = projects.findIndex((project) => project.id === projectId);
+      if (index < 0) throw new Error("Project not found");
+      const project = { ...projects[index] };
+
+      if (typeof settings.name === "string" && settings.name.trim()) {
+        project.name = settings.name.trim();
+      }
+      if (
+        typeof settings.localPath === "string" &&
+        settings.localPath.trim() &&
+        settings.localPath.trim() !== project.localPath
+      ) {
+        const candidate = normalizeLocalPath(settings.localPath);
+        if (!candidate || !fs.existsSync(candidate)) throw new Error("本地目录不存在");
+        if (!fs.statSync(candidate).isDirectory()) throw new Error("本地目录不是文件夹");
+        if (!fs.existsSync(path.join(candidate, ".git"))) {
+          throw new Error("目录不是 git 仓库（缺少 .git）");
+        }
+        project.localPath = candidate;
+        try {
+          const { collectRepoInfo } = await import("../engine/git-info");
+          project.repo = await collectRepoInfo(candidate);
+        } catch (err: any) {
+          log.warn(`Repo info refresh failed after path change: ${err.message}`);
+        }
+      }
+      if (typeof settings.githubUrl === "string" && settings.githubUrl.trim()) {
+        project.repo = { ...(project.repo || {}), githubUrl: settings.githubUrl.trim() };
+      } else if (settings.githubUrl === null || settings.githubUrl === "") {
+        try {
+          const { collectRepoInfo } = await import("../engine/git-info");
+          project.repo = await collectRepoInfo(project.localPath || "");
+        } catch (err: any) {
+          log.warn(`Repo info refresh failed while clearing github url: ${err.message}`);
+        }
+      }
+
+      projects[index] = project;
+      s.set("projects", projects);
+      void schedulerTick();
+      emitProjectsChanged();
+      return project;
+    },
+  );
+
+  ipcMain.handle("projects:getCredentials", async (_event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const s = await getStore();
+    const eff = resolveEffectiveCredentials(s, projectId);
+    const global = s.get("globalCredentials") || {};
+    const override = (s.get("projectCredentials") || {})[projectId] || {};
+    return {
+      hasGithubToken: Boolean(eff.githubToken),
+      hasAscKey: Boolean(eff.ascIssuerId && eff.ascKeyId && eff.ascPrivateKeyPath),
+      githubSource: override.githubToken ? "project" : global.githubToken ? "global" : null,
+      ascSource:
+        override.ascIssuerId || override.ascKeyId || override.ascPrivateKeyPath
+          ? "project"
+          : global.ascIssuerId || global.ascKeyId || global.ascPrivateKeyPath
+            ? "global"
+            : null,
+      ascIssuerIdSet: Boolean(eff.ascIssuerId),
+      ascKeyIdSet: Boolean(eff.ascKeyId),
+      ascPrivateKeyPathSet: Boolean(eff.ascPrivateKeyPath),
+      ascPrivateKeyPath: eff.ascPrivateKeyPath || "",
+    };
+  });
+
+  ipcMain.handle(
+    "projects:saveCredentials",
+    async (
+      _event,
+      projectId: string,
+      creds: {
+        scope?: "global" | "project";
+        githubToken?: string;
+        ascIssuerId?: string;
+        ascKeyId?: string;
+        ascPrivateKeyPath?: string;
+      },
+    ) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      const s = await getStore();
+      const scope = creds.scope === "project" ? "project" : "global";
+      const setField = (entry: Record<string, string>, key: string, value?: string) => {
+        if (value === undefined) return;
+        if (value.trim() === "") delete entry[key];
+        else if (key === "ascPrivateKeyPath") entry[key] = value.trim();
+        else entry[key] = encryptApiKey(value);
+      };
+      if (scope === "global") {
+        const entry: Record<string, string> = { ...(s.get("globalCredentials") || {}) };
+        setField(entry, "githubToken", creds.githubToken);
+        setField(entry, "ascIssuerId", creds.ascIssuerId);
+        setField(entry, "ascKeyId", creds.ascKeyId);
+        setField(entry, "ascPrivateKeyPath", creds.ascPrivateKeyPath);
+        s.set("globalCredentials", entry);
+      } else {
+        const all: Record<string, Record<string, string>> = s.get("projectCredentials") || {};
+        const entry: Record<string, string> = { ...(all[projectId] || {}) };
+        setField(entry, "githubToken", creds.githubToken);
+        setField(entry, "ascIssuerId", creds.ascIssuerId);
+        setField(entry, "ascKeyId", creds.ascKeyId);
+        setField(entry, "ascPrivateKeyPath", creds.ascPrivateKeyPath);
+        if (Object.keys(entry).length === 0) delete all[projectId];
+        else all[projectId] = entry;
+        s.set("projectCredentials", all);
+      }
+      return true;
+    },
+  );
+
+  ipcMain.handle(
+    "projects:clearCredentials",
+    async (_event, projectId: string, scope: "global" | "project") => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      const s = await getStore();
+      if (scope === "global") {
+        s.set("globalCredentials", {});
+      } else {
+        const all = s.get("projectCredentials") || {};
+        delete all[projectId];
+        s.set("projectCredentials", all);
+      }
+      return true;
+    },
+  );
+
+  ipcMain.handle("projects:testGithubToken", async (_event, projectId: string, token?: string) => {
+    const s = await getStore();
+    const eff = resolveEffectiveCredentials(s, projectId);
+    const candidate = token?.trim() || eff.githubToken;
+    if (!candidate) return { ok: false, error: "未配置 GitHub Token" };
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${candidate}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "Appilot",
+        },
+      });
+      if (!res.ok) return { ok: false, error: `GitHub API ${res.status}` };
+      const data: any = await res.json();
+      return { ok: true, user: data.login || "" };
+    } catch (err: any) {
+      return { ok: false, error: err.message || "连接失败" };
+    }
+  });
+
+  ipcMain.handle(
+    "projects:testAscKey",
+    async (
+      _event,
+      projectId: string,
+      params?: { issuerId?: string; keyId?: string; privateKeyPath?: string },
+    ) => {
+      const s = await getStore();
+      const eff = resolveEffectiveCredentials(s, projectId);
+      const issuerId = params?.issuerId?.trim() || eff.ascIssuerId || "";
+      const keyId = params?.keyId?.trim() || eff.ascKeyId || "";
+      const keyPath = params?.privateKeyPath?.trim() || eff.ascPrivateKeyPath || "";
+      if (!issuerId || !keyId || !keyPath) {
+        return { ok: false, error: "ASC Key 信息不完整（Issuer / Key ID / .p8 文件）" };
+      }
+      let pem = "";
+      try {
+        pem = fs.readFileSync(keyPath, "utf8");
+      } catch {
+        return { ok: false, error: "无法读取 .p8 私钥文件" };
+      }
+      try {
+        const token = ascJwt(issuerId, keyId, pem);
+        const res = await fetch("https://api.appstoreconnect.apple.com/v1/apps?limit=1", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return { ok: false, error: `ASC API ${res.status}` };
+        return { ok: true };
+      } catch (err: any) {
+        return { ok: false, error: err.message || "连接失败" };
+      }
+    },
+  );
+
+  ipcMain.handle("projects:selectAscKeyFile", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "选择 App Store Connect API 私钥（.p8）",
+      properties: ["openFile"],
+      filters: [{ name: "App Store Connect Key", extensions: ["p8"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
   });
 
   ipcMain.handle("projects:add", async (_event, localPath: string) => {
