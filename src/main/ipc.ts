@@ -115,6 +115,35 @@ function importAscKeyFile(
   return dest;
 }
 
+/** Remove app-managed .p8 files that no credential references. */
+function garbageCollectKeys(s: any): void {
+  try {
+    const dir = path.join(app.getPath("userData"), "keys");
+    if (!fs.existsSync(dir)) return;
+    const referenced = new Set<string>();
+    const global: any = s.get("globalCredentials") || {};
+    if (global.ascPrivateKeyPath) referenced.add(path.resolve(global.ascPrivateKeyPath));
+    const overrides: any = s.get("projectCredentials") || {};
+    for (const entry of Object.values(overrides) as any[]) {
+      const keyPath = entry?.ascPrivateKeyPath;
+      if (keyPath) referenced.add(path.resolve(keyPath));
+    }
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.toLowerCase().endsWith(".p8")) continue;
+      const full = path.join(dir, file);
+      if (!referenced.has(path.resolve(full))) {
+        try {
+          fs.unlinkSync(full);
+        } catch {
+          // best effort
+        }
+      }
+    }
+  } catch {
+    // best effort
+  }
+}
+
 /** True when the value looks like an encrypted blob rather than a real key
  *  (printable ASCII). Real API keys virtually always contain a hyphen (e.g.
  *  "sk-…"), which strict base64 rejects — so only genuine ciphertext blobs
@@ -1119,6 +1148,7 @@ export function registerIpcHandlers() {
         else all[projectId] = entry;
         s.set("projectCredentials", all);
       }
+      garbageCollectKeys(s);
       return true;
     },
   );
@@ -1135,6 +1165,7 @@ export function registerIpcHandlers() {
         delete all[projectId];
         s.set("projectCredentials", all);
       }
+      garbageCollectKeys(s);
       return true;
     },
   );
@@ -1376,6 +1407,13 @@ export function registerIpcHandlers() {
     const removed = all.find((p: any) => p.id === id);
     const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
     s.set("projects", projects);
+    // Drop the removed project's credential overrides and reclaim its .p8 copy.
+    const creds = s.get("projectCredentials") || {};
+    if (creds[id]) {
+      delete creds[id];
+      s.set("projectCredentials", creds);
+    }
+    garbageCollectKeys(s);
     // Remove scheduled tasks that belonged to the deleted project's products.
     if (removed) {
       const removedProductIds = new Set(
