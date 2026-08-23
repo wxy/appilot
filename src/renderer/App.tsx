@@ -3282,7 +3282,7 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
     : cell.trend === "down" ? `▼ ${Math.abs(cell.delta ?? 0)}`
     : null;
   return (
-    <span className="flex flex-col items-end gap-0.5">
+    <span className="inline-flex items-baseline gap-1 justify-end">
       <span
         className={cn(
           "font-mono",
@@ -3293,18 +3293,18 @@ function MatrixCellView({ cell }: { cell: MatrixCell }) {
       >
         {rankText}
       </span>
-      <span
-        className={cn(
-          "text-[10px] font-mono min-h-3.5",
-          trendText
-            ? cell.trend === "up" || cell.trend === "new"
+      {trendText && (
+        <span
+          className={cn(
+            "text-[10px] font-mono",
+            cell.trend === "up" || cell.trend === "new"
               ? "text-emerald-600 dark:text-emerald-400"
-              : "text-red-600 dark:text-red-400"
-            : "text-zinc-300 dark:text-zinc-600",
-        )}
-      >
-        {trendText ?? "—"}
-      </span>
+              : "text-red-600 dark:text-red-400",
+          )}
+        >
+          {trendText}
+        </span>
+      )}
     </span>
   );
 }
@@ -3685,7 +3685,7 @@ function KeywordsPage() {
       )}
       style={{ gridTemplateColumns: matrixGridTemplate }}
     >
-      <div className="py-3 pl-5 pr-4 min-w-0">
+      <div className="py-1.5 pl-5 pr-4 min-w-0">
         <div
           className={cn(
             "font-mono text-sm truncate",
@@ -3733,7 +3733,7 @@ function KeywordsPage() {
           <div
             key={column.storefront}
             className={cn(
-              "px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800",
+              "px-3 py-1.5 text-right border-l border-zinc-100 dark:border-zinc-800",
               column.meta.stale && "opacity-60",
             )}
             title={cellTitle(cell)}
@@ -3742,7 +3742,7 @@ function KeywordsPage() {
           </div>
         );
       })}
-      <div className="pl-3 pr-5 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
+      <div className="pl-3 pr-5 py-1.5 text-right border-l border-zinc-100 dark:border-zinc-800">
         <span
           role="button"
           tabIndex={0}
