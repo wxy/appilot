@@ -27,13 +27,3 @@ mac:
 
 dmg:
   title: Appilot ${version}
-
-win:
-  target:
-    - target: nsis
-      arch: [x64]
-  icon: resources/icon_1024.png
-
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
