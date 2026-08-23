@@ -4735,6 +4735,10 @@ const btnPrimary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 te
 const btnSecondary = "inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
 const btnSmPrimary = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-all duration-150";
 const btnSmSecondary = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all duration-150";
+const credentialHelpPanelClass =
+  "rounded-lg bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-100 dark:border-zinc-800/70 px-3.5 py-3 space-y-2.5";
+const credentialCodeChipClass =
+  "inline-block font-mono text-[10px] leading-4 px-1.5 rounded bg-white dark:bg-zinc-800 border border-zinc-200/90 dark:border-zinc-700/60 text-zinc-600 dark:text-zinc-300";
 
 function ProjectSettingsPage() {
   const { projectId = "" } = useParams();
@@ -5326,36 +5330,55 @@ function CredentialsForm({
         {feedback.github && !feedback.github.ok && (
           <p className="text-[11px] text-red-500 dark:text-red-400">{feedback.github.msg}</p>
         )}
-        <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1.5">
-          <p>
-            获取：GitHub → Settings → Developer settings → Personal access tokens，
-            建议使用 fine-grained（细粒度）Token。
-          </p>
+        <div className={credentialHelpPanelClass}>
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">
+              GitHub → Settings → Developer settings → Personal access tokens，
+              建议使用 fine-grained（细粒度）Token
+            </p>
+            <button
+              type="button"
+              onClick={() => (window as any).appilot?.openExternal("https://github.com/settings/personal-access-tokens")}
+              className="shrink-0 whitespace-nowrap text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+            >
+              前往创建 ↗
+            </button>
+          </div>
           <div>
-            <p>推荐权限：</p>
-            <ul className="list-disc pl-4 space-y-0.5">
-              <li>
-                Contents: Read —— release 与仓库内容（GitHub 没有独立的 Release 权限，
-                release 归 Contents 管）；
+            <p className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500">
+              推荐权限
+            </p>
+            <ul className="mt-1 space-y-1">
+              <li className="flex items-start gap-1.5">
+                <code className={credentialCodeChipClass + " mt-px shrink-0"}>
+                  Contents: Read
+                </code>
+                <span className="text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">
+                  release 与仓库内容（GitHub 没有独立的 Release 权限，release 归
+                  Contents 管）
+                </span>
               </li>
-              <li>Pull requests: Read —— PR 信息（Metadata 自动包含）。</li>
+              <li className="flex items-start gap-1.5">
+                <code className={credentialCodeChipClass + " mt-px shrink-0"}>
+                  Pull requests: Read
+                </code>
+                <span className="text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">
+                  PR 信息（Metadata 自动包含）
+                </span>
+              </li>
             </ul>
           </div>
-          <p>
-            读取已发布的 release 只需 Contents: Read；草案 release 与一键发布需要对该仓库有
-            写权限（push access），即 Contents: Write。
+          <p className="text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">
+            读取已发布的 release 只需{" "}
+            <code className={credentialCodeChipClass}>Contents: Read</code>
+            ；草案 release 与一键发布需要{" "}
+            <code className={credentialCodeChipClass}>Contents: Write</code>
+            （对该仓库有写权限 push access）。
           </p>
-          <p>
+          <p className="text-[11px] leading-5 text-zinc-400 dark:text-zinc-500">
             有效期：GitHub 不提供读取 Token 到期时间的接口；创建时可选择「不过期（No
             expiration）」，或在表单中填写过期时间，到期前 7 天会提醒更换。
           </p>
-          <button
-            type="button"
-            onClick={() => (window as any).appilot?.openExternal("https://github.com/settings/personal-access-tokens")}
-            className="text-amber-600 dark:text-amber-400 hover:underline"
-          >
-            前往创建 GitHub Token ↗
-          </button>
         </div>
       </div>
       ) : (
@@ -5580,33 +5603,64 @@ function CredentialsForm({
         {feedback.asc && !feedback.asc.ok && (
           <p className="text-[11px] text-red-500 dark:text-red-400">{feedback.asc.msg}</p>
         )}
-        <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1.5">
-          <p>获取：App Store Connect → 用户和访问 → 集成 → App Store Connect API。</p>
+        <div className={credentialHelpPanelClass}>
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">
+              App Store Connect → 用户和访问 → 集成 → App Store Connect API
+            </p>
+            <button
+              type="button"
+              onClick={() => (window as any).appilot?.openExternal("https://appstoreconnect.apple.com/access/integrations/api")}
+              className="shrink-0 whitespace-nowrap text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+            >
+              前往创建密钥 ↗
+            </button>
+          </div>
           <div>
-            <p>字段来源：</p>
-            <ul className="list-disc pl-4 space-y-0.5">
-              <li>Issuer ID —— 该页顶部；</li>
-              <li>Key ID 与 .p8 文件 —— 创建密钥时下载。</li>
+            <p className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500">
+              字段来源
+            </p>
+            <ul className="mt-1 space-y-1">
+              <li className="flex items-start gap-1.5">
+                <code className={credentialCodeChipClass + " mt-px shrink-0"}>
+                  Issuer ID
+                </code>
+                <span className="text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">
+                  该页顶部
+                </span>
+              </li>
+              <li className="flex items-start gap-1.5">
+                <code className={credentialCodeChipClass + " mt-px shrink-0"}>
+                  Key ID
+                </code>
+                <code className={credentialCodeChipClass + " mt-px shrink-0"}>
+                  .p8 文件
+                </code>
+                <span className="text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">
+                  创建密钥时下载
+                </span>
+              </li>
             </ul>
           </div>
-          <p>
-            一把 Key 适用于同一账户（Team）下的所有应用；不同账户的应用需单独一把 Key
-            （可在项目设置中覆盖）。
+          <p className="text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">
+            一把 Key 适用于同一账户（Team）下的所有应用；不同账户的应用需单独一把
+            Key（可在项目设置中覆盖）。
           </p>
-          <p className="text-amber-600 dark:text-amber-400">
-            创建密钥时权限请选择 App Manager（App 管理），否则无法读取/更新应用元数据。
-          </p>
-          <p>
+          <div className="flex items-start gap-1.5 rounded-md border border-amber-200/70 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 px-2.5 py-2">
+            <span
+              aria-hidden="true"
+              className="mt-px text-[11px] leading-5 text-amber-500"
+            >
+              ⚠
+            </span>
+            <p className="text-[11px] leading-5 text-amber-700 dark:text-amber-300">
+              创建密钥时权限请选择 App Manager（App 管理），否则无法读取/更新应用元数据。
+            </p>
+          </div>
+          <p className="text-[11px] leading-5 text-zinc-400 dark:text-zinc-500">
             保存时会把 .p8 复制到应用数据目录（副本随凭据保存，原文件移动/删除不影响）；
             Apple 不支持重新下载密钥，请妥善保管或必要时新建。
           </p>
-          <button
-            type="button"
-            onClick={() => (window as any).appilot?.openExternal("https://appstoreconnect.apple.com/access/integrations/api")}
-            className="text-amber-600 dark:text-amber-400 hover:underline"
-          >
-            前往 App Store Connect API 密钥 ↗
-          </button>
         </div>
       </div>
       ) : (
