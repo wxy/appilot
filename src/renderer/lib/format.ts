@@ -18,6 +18,8 @@ const LANGUAGE_LABELS: Record<string, string> = {
   ru: "俄文",
 };
 
+export const UI_SOURCE_LANGUAGE = "zh-Hans";
+
 export function languageLabel(code: string): string {
   return LANGUAGE_LABELS[code] || code;
 }
