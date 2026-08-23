@@ -2933,11 +2933,14 @@ function TaskTimelineChart({
     ...buckets.map((b) => b.planned + b.success + b.failed),
   );
   const step = niceStep(Math.max(1, Math.ceil(maxV / 4)));
+  // Top tick is the next multiple of step (never smaller than maxV), so the
+  // axis stays evenly spaced and the last label cannot collide with the
+  // previous one (e.g. maxV=5, step=2 → ticks 0,2,4,6 instead of 0,2,4,5).
+  const topTick = Math.max(step, Math.ceil(maxV / step) * step);
   const yTicks: number[] = [];
-  for (let value = 0; value < maxV; value += step) yTicks.push(value);
-  yTicks.push(maxV);
+  for (let value = 0; value <= topTick; value += step) yTicks.push(value);
   const nowX = padL + (currentIndex + 0.5) * barW;
-  const y = (v: number) => padT + plotH - (v / maxV) * plotH;
+  const y = (v: number) => padT + plotH - (v / topTick) * plotH;
   const hourLabel = (ts: number) =>
     `${String(new Date(ts).getHours()).padStart(2, "0")}:00`;
   const xTickIndexes = [0, 6, 12, 18, 23, 29, 35, 41, 46];
@@ -3174,8 +3177,8 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
       <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
         {visible.map((group) => (
           <div key={group.key} className="px-5 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-2 min-w-0">
+            <div className="flex items-center gap-4">
+              <div className="flex items-start gap-2 min-w-0 flex-1">
                 <span
                   className={cn(
                     "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
@@ -3202,22 +3205,28 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
                   </div>
                 </div>
               </div>
-            </div>
-
-            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-              <TaskMeta
-                label="首次执行"
-                value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
-              />
-              <TaskMeta
-                label="执行时间"
-                value={formatDurationMs(group.lastDurationMs)}
-              />
-              <TaskMeta
-                label="上次执行"
-                value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
-              />
-              <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
+              <div className="shrink-0 flex items-center gap-2">
+                <TaskMeta
+                  label="首次执行"
+                  value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
+                  className="w-24"
+                />
+                <TaskMeta
+                  label="执行时间"
+                  value={formatDurationMs(group.lastDurationMs)}
+                  className="w-20"
+                />
+                <TaskMeta
+                  label="上次执行"
+                  value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+                  className="w-24"
+                />
+                <TaskMeta
+                  label="下次执行"
+                  value={formatHumanTime(group.nextRunAt)}
+                  className="w-24"
+                />
+              </div>
             </div>
           </div>
         ))}
@@ -3263,9 +3272,22 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
   );
 }
 
-function TaskMeta({ label, value }: { label: string; value: string }) {
+function TaskMeta({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
   return (
-    <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+    <span
+      className={cn(
+        "inline-flex items-baseline justify-end gap-1 whitespace-nowrap",
+        className,
+      )}
+    >
       <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{label}</span>
       <span className="text-xs text-zinc-600 dark:text-zinc-300">{value}</span>
     </span>
