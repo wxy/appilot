@@ -4961,20 +4961,28 @@ function CredentialsForm({
   const [ascKeyPath, setAscKeyPath] = useState("");
   const [creds, setCreds] = useState<any>(null);
   const [testing, setTesting] = useState<"github" | "asc" | null>(null);
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [credentialsSaved, setCredentialsSaved] = useState(false);
-  const [error, setError] = useState("");
   const [validated, setValidated] = useState<{ github: boolean; asc: boolean }>({
     github: false,
     asc: false,
   });
+  const [feedback, setFeedback] = useState<{
+    github?: { ok: boolean; msg: string };
+    asc?: { ok: boolean; msg: string };
+  }>({});
+  const [saved, setSaved] = useState<{ github: boolean; asc: boolean }>({
+    github: false,
+    asc: false,
+  });
+  const [saveError, setSaveError] = useState<"github" | "asc" | null>(null);
 
   useEffect(() => {
-    (window as any).appilot?.projects
-      ?.getCredentials(projectId)
-      .then(setCreds)
-      .catch(() => setCreds(null));
+    refreshCreds().catch(() => setCreds(null));
   }, [projectId]);
+
+  const refreshCreds = async () => {
+    const next = await (window as any).appilot.projects.getCredentials(projectId);
+    setCreds(next);
+  };
 
   const githubUnlocked = Boolean(creds?.hasGithubToken);
   const ascUnlocked = Boolean(creds?.hasAscKey);
@@ -4983,62 +4991,71 @@ function CredentialsForm({
   const ascSource =
     creds?.ascSource === "project" ? "项目覆盖" : creds?.ascSource === "global" ? "全局" : null;
 
-  const handleSave = async () => {
-    setError("");
-    setTestResult(null);
-    setCredentialsSaved(false);
+  const saveBlock = async (kind: "github" | "asc") => {
+    setSaveError(null);
     try {
       await (window as any).appilot.projects.saveCredentials(projectId, {
         scope,
-        githubToken: githubToken || undefined,
-        ascIssuerId: ascIssuerId || undefined,
-        ascKeyId: ascKeyId || undefined,
-        ascPrivateKeyPath: ascKeyPath || undefined,
+        githubToken: kind === "github" ? githubToken : undefined,
+        ascIssuerId: kind === "asc" ? ascIssuerId : undefined,
+        ascKeyId: kind === "asc" ? ascKeyId : undefined,
+        ascPrivateKeyPath: kind === "asc" ? ascKeyPath : undefined,
       });
-      setCredentialsSaved(true);
-      setValidated({ github: false, asc: false });
-      const next = await (window as any).appilot.projects.getCredentials(projectId);
-      setCreds(next);
+      setSaved((prev) => ({ ...prev, [kind]: true }));
+      await refreshCreds();
       onChanged?.();
     } catch (e: any) {
-      setError(e.message || "保存凭据失败");
+      setSaveError(kind);
     }
   };
 
-  const handleClear = async () => {
-    setError("");
-    setTestResult(null);
+  const clearBlock = async (kind: "github" | "asc") => {
+    setSaveError(null);
     try {
-      await (window as any).appilot.projects.clearCredentials(projectId, scope);
-      setValidated({ github: false, asc: false });
-      setGithubToken("");
-      setAscIssuerId("");
-      setAscKeyId("");
-      setAscKeyPath("");
-      const next = await (window as any).appilot.projects.getCredentials(projectId);
-      setCreds(next);
+      await (window as any).appilot.projects.saveCredentials(projectId, {
+        scope,
+        githubToken: kind === "github" ? "" : undefined,
+        ascIssuerId: kind === "asc" ? "" : undefined,
+        ascKeyId: kind === "asc" ? "" : undefined,
+        ascPrivateKeyPath: kind === "asc" ? "" : undefined,
+      });
+      setValidated((prev) => ({ ...prev, [kind]: false }));
+      setSaved((prev) => ({ ...prev, [kind]: false }));
+      setFeedback((prev) => ({ ...prev, [kind]: undefined }));
+      if (kind === "github") setGithubToken("");
+      else {
+        setAscIssuerId("");
+        setAscKeyId("");
+        setAscKeyPath("");
+      }
+      await refreshCreds();
       onChanged?.();
     } catch (e: any) {
-      setError(e.message || "清除失败");
+      setSaveError(kind);
     }
   };
 
   const handleTestGithub = async () => {
     setTesting("github");
-    setTestResult(null);
+    setSaveError(null);
     try {
       const r = await (window as any).appilot.projects.testGithubToken(
         projectId,
         githubToken || undefined,
       );
-      setTestResult(
-        r.ok
-          ? { ok: true, msg: `连接成功${r.user ? `：${r.user}` : ""}` }
-          : { ok: false, msg: r.error || "连接失败" },
-      );
       setValidated((prev) => ({ ...prev, github: Boolean(r.ok) }));
+      setFeedback((prev) => ({
+        ...prev,
+        github: r.ok
+          ? { ok: true, msg: `测试通过${r.user ? `：${r.user}` : ""}` }
+          : { ok: false, msg: r.error || "连接失败" },
+      }));
     } catch (e: any) {
-      setTestResult({ ok: false, msg: e.message || "连接失败" });
+      setValidated((prev) => ({ ...prev, github: false }));
+      setFeedback((prev) => ({
+        ...prev,
+        github: { ok: false, msg: e.message || "连接失败" },
+      }));
     } finally {
       setTesting(null);
     }
@@ -5046,34 +5063,35 @@ function CredentialsForm({
 
   const handleTestAsc = async () => {
     setTesting("asc");
-    setTestResult(null);
+    setSaveError(null);
     try {
       const r = await (window as any).appilot.projects.testAscKey(projectId, {
         issuerId: ascIssuerId || undefined,
         keyId: ascKeyId || undefined,
         privateKeyPath: ascKeyPath || undefined,
       });
-      setTestResult(
-        r.ok
-          ? { ok: true, msg: "连接成功" }
-          : { ok: false, msg: r.error || "连接失败" },
-      );
       setValidated((prev) => ({ ...prev, asc: Boolean(r.ok) }));
+      setFeedback((prev) => ({
+        ...prev,
+        asc: r.ok
+          ? { ok: true, msg: "测试通过" }
+          : { ok: false, msg: r.error || "连接失败" },
+      }));
     } catch (e: any) {
-      setTestResult({ ok: false, msg: e.message || "连接失败" });
+      setValidated((prev) => ({ ...prev, asc: false }));
+      setFeedback((prev) => ({
+        ...prev,
+        asc: { ok: false, msg: e.message || "连接失败" },
+      }));
     } finally {
       setTesting(null);
     }
   };
 
+  const basename = (full: string) => full.split("/").pop() || full;
+
   return (
     <div className="space-y-5">
-      {error && (
-        <div className="p-3 rounded-xl border text-sm bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-400">
-          {error}
-        </div>
-      )}
-
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
         <div className="flex items-center gap-2">
           <span className="text-base">🔗</span>
@@ -5085,7 +5103,12 @@ function CredentialsForm({
             className={inputLineClass + " font-mono"}
             type={showToken ? "text" : "password"}
             value={githubToken}
-            onChange={(e) => setGithubToken(e.target.value)}
+            onChange={(e) => {
+              setGithubToken(e.target.value);
+              setValidated((prev) => ({ ...prev, github: false }));
+              setSaved((prev) => ({ ...prev, github: false }));
+              setFeedback((prev) => ({ ...prev, github: undefined }));
+            }}
             placeholder={githubUnlocked ? "已配置（输入新值可覆盖）" : "ghp_… 或 github_pat_…"}
           />
           <button
@@ -5102,24 +5125,49 @@ function CredentialsForm({
             type="button"
             onClick={() => void handleTestGithub()}
             disabled={testing === "asc"}
-            className={btnSmSecondary}
+            className={cn(
+              btnSmSecondary,
+              feedback.github?.ok &&
+                "!text-emerald-600 dark:!text-emerald-400 !border-emerald-300 dark:!border-emerald-800",
+              feedback.github &&
+                !feedback.github.ok &&
+                "!text-red-600 dark:!text-red-400 !border-red-300 dark:!border-red-800",
+            )}
+            title={feedback.github?.msg}
           >
-            {testing === "github" ? "测试中…" : "测试连接"}
+            {testing === "github"
+              ? "测试中…"
+              : feedback.github
+                ? feedback.github.ok
+                  ? "✓ 测试通过"
+                  : "✕ 连接失败"
+                : "测试连接"}
           </button>
           <button
             type="button"
-            onClick={() => void handleSave()}
-            disabled={testing !== null}
-            className={btnSmPrimary}
+            onClick={() => void saveBlock("github")}
+            disabled={testing !== null || !validated.github}
+            className={cn(
+              btnSmPrimary,
+              saveError === "github" && "!bg-red-500",
+              saved.github && "!bg-emerald-500",
+            )}
+            title={
+              saveError === "github"
+                ? "保存失败，请重试"
+                : saved.github
+                  ? "已保存"
+                  : "请先测试连接"
+            }
           >
-            保存
+            {saveError === "github" ? "✕ 保存失败" : saved.github ? "✓ 已保存" : "保存"}
           </button>
           <button
             type="button"
-            onClick={() => void handleClear()}
+            onClick={() => void clearBlock("github")}
             className="text-xs text-zinc-400 hover:text-red-500 transition-colors"
           >
-            清除{scope === "global" ? "全局" : "本项目"}凭据
+            清除
           </button>
         </div>
         <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1">
@@ -5150,7 +5198,12 @@ function CredentialsForm({
           <input
             className={inputLineClass + " font-mono"}
             value={ascIssuerId}
-            onChange={(e) => setAscIssuerId(e.target.value)}
+            onChange={(e) => {
+              setAscIssuerId(e.target.value);
+              setValidated((prev) => ({ ...prev, asc: false }));
+              setSaved((prev) => ({ ...prev, asc: false }));
+              setFeedback((prev) => ({ ...prev, asc: undefined }));
+            }}
             placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
           />
         </div>
@@ -5159,7 +5212,12 @@ function CredentialsForm({
           <input
             className={inputLineClass + " font-mono"}
             value={ascKeyId}
-            onChange={(e) => setAscKeyId(e.target.value)}
+            onChange={(e) => {
+              setAscKeyId(e.target.value);
+              setValidated((prev) => ({ ...prev, asc: false }));
+              setSaved((prev) => ({ ...prev, asc: false }));
+              setFeedback((prev) => ({ ...prev, asc: undefined }));
+            }}
             placeholder="XXXXXXXXXX"
           />
         </div>
@@ -5168,7 +5226,7 @@ function CredentialsForm({
           <div className="flex gap-2">
             <input
               className={inputLineClass + " font-mono text-xs"}
-              value={ascKeyPath}
+              value={ascKeyPath ? basename(ascKeyPath) : ""}
               onChange={(e) => setAscKeyPath(e.target.value)}
               placeholder="仅通过文件选择"
               readOnly
@@ -5177,7 +5235,12 @@ function CredentialsForm({
               type="button"
               onClick={async () => {
                 const file = await (window as any).appilot?.projects?.selectAscKeyFile();
-                if (file) setAscKeyPath(file);
+                if (file) {
+                  setAscKeyPath(file);
+                  setValidated((prev) => ({ ...prev, asc: false }));
+                  setSaved((prev) => ({ ...prev, asc: false }));
+                  setFeedback((prev) => ({ ...prev, asc: undefined }));
+                }
               }}
               className={btnSmSecondary + " shrink-0"}
             >
@@ -5185,22 +5248,20 @@ function CredentialsForm({
             </button>
           </div>
           <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-            {creds?.ascPrivateKeyPath && !ascKeyPath
-              ? (
-                  <>
-                    已保存副本：{creds.ascPrivateKeyPath}{" "}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        (window as any).appilot?.revealInFolder?.(creds.ascPrivateKeyPath)
-                      }
-                      className="text-amber-600 dark:text-amber-400 hover:underline"
-                    >
-                      在访达中显示
-                    </button>
-                  </>
-                )
-              : "仅支持文件选择，不提供粘贴"}
+            {(ascKeyPath || creds?.ascPrivateKeyPath) && (
+              <button
+                type="button"
+                onClick={() =>
+                  (window as any).appilot?.revealInFolder?.(
+                    ascKeyPath || creds?.ascPrivateKeyPath,
+                  )
+                }
+                className="text-amber-600 dark:text-amber-400 hover:underline"
+              >
+                在访达中显示
+              </button>
+            )}
+            {!ascKeyPath && !creds?.ascPrivateKeyPath && "仅支持文件选择，不提供粘贴"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -5208,24 +5269,49 @@ function CredentialsForm({
             type="button"
             onClick={() => void handleTestAsc()}
             disabled={testing === "github"}
-            className={btnSmSecondary}
+            className={cn(
+              btnSmSecondary,
+              feedback.asc?.ok &&
+                "!text-emerald-600 dark:!text-emerald-400 !border-emerald-300 dark:!border-emerald-800",
+              feedback.asc &&
+                !feedback.asc.ok &&
+                "!text-red-600 dark:!text-red-400 !border-red-300 dark:!border-red-800",
+            )}
+            title={feedback.asc?.msg}
           >
-            {testing === "asc" ? "测试中…" : "测试连接"}
+            {testing === "asc"
+              ? "测试中…"
+              : feedback.asc
+                ? feedback.asc.ok
+                  ? "✓ 测试通过"
+                  : "✕ 连接失败"
+                : "测试连接"}
           </button>
           <button
             type="button"
-            onClick={() => void handleSave()}
-            disabled={testing !== null}
-            className={btnSmPrimary}
+            onClick={() => void saveBlock("asc")}
+            disabled={testing !== null || !validated.asc}
+            className={cn(
+              btnSmPrimary,
+              saveError === "asc" && "!bg-red-500",
+              saved.asc && "!bg-emerald-500",
+            )}
+            title={
+              saveError === "asc"
+                ? "保存失败，请重试"
+                : saved.asc
+                  ? "已保存"
+                  : "请先测试连接"
+            }
           >
-            保存
+            {saveError === "asc" ? "✕ 保存失败" : saved.asc ? "✓ 已保存" : "保存"}
           </button>
           <button
             type="button"
-            onClick={() => void handleClear()}
+            onClick={() => void clearBlock("asc")}
             className="text-xs text-zinc-400 hover:text-red-500 transition-colors"
           >
-            清除{scope === "global" ? "全局" : "本项目"}凭据
+            清除
           </button>
         </div>
         <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1">
@@ -5248,50 +5334,6 @@ function CredentialsForm({
           </button>
         </div>
       </div>
-
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          能力状态
-        </div>
-        <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-          <div className="px-4 py-3 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm text-zinc-800 dark:text-zinc-200">GitHub Token</div>
-              <div className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-0.5">
-                私有/草案 release 公告、真实 PR 素材、远程仓库数据
-              </div>
-            </div>
-            <CapabilityChip unlocked={githubUnlocked || validated.github} source={githubSource} />
-          </div>
-          <div className="px-4 py-3 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm text-zinc-800 dark:text-zinc-200">App Store Connect</div>
-              <div className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-0.5">
-                版本/审核状态、审核意见、评论洞察、销量/下载分析
-              </div>
-            </div>
-            <CapabilityChip unlocked={ascUnlocked || validated.asc} source={ascSource} />
-          </div>
-        </div>
-      </div>
-
-      {testResult && (
-        <div
-          className={cn(
-            "p-3 rounded-xl border text-sm",
-            testResult.ok
-              ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-400"
-              : "bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-400",
-          )}
-        >
-          {testResult.msg}
-        </div>
-      )}
-      {credentialsSaved && (
-        <div className="p-3 rounded-xl border text-sm bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-400">
-          凭据已保存
-        </div>
-      )}
     </div>
   );
 }
@@ -5310,23 +5352,6 @@ function CredentialStatus({ unlocked, source }: { unlocked: boolean; source: str
       title={`来自${source || ""}凭据`}
     >
       <span>✓</span> {source || "已配置"}
-    </span>
-  );
-}
-
-function CapabilityChip({ unlocked, source }: { unlocked: boolean; source: string | null }) {
-  return (
-    <span
-      className={cn(
-        "shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium",
-        unlocked
-          ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-          : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500",
-      )}
-      title={unlocked ? `来自${source || ""}凭据` : "需要配置 Token"}
-    >
-      {unlocked ? "已解锁" : "🔒 未配置"}
-      {source && <span className="opacity-70">· {source}</span>}
     </span>
   );
 }
