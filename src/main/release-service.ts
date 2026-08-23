@@ -2,11 +2,31 @@ import { createStoreSubmissionDraft } from "../engine/store-submission";
 import type { StoreSubmissionDraft } from "../engine/store-submission";
 import { createAiProvider } from "./ai-service";
 import { ensureProjectKeywordPool, getStoreSubmissionDrafts } from "./project-state";
+import type { AppStore } from "./store";
+import type { ReleaseInfo } from "../engine/release-watcher";
+
+export interface ProjectLike {
+  id: string;
+  name: string;
+  localPath: string;
+  trackedKeywords?: any[];
+  submissionKeywords?: any[];
+  storeSubmissionDrafts?: any[];
+}
+
+export interface ProductLike {
+  id: string;
+  trackName?: string | null;
+  platform?: string | null;
+  supportedLanguages?: { code: string; name?: string }[];
+  rankSnapshots?: any[];
+  storeLinks?: any[];
+}
 
 /** Build the stable project-profile context block shared by AI tasks. */
 export async function buildProjectProfileFor(
-  project: any,
-  product: any,
+  project: ProjectLike,
+  product: ProductLike,
   subtitle?: string,
   description?: string,
 ) {
@@ -54,10 +74,10 @@ export function synthesizeReleaseFromDraft(draft: any): any {
 }
 
 export async function generateStoreSubmissionDraft(
-  store: any,
-  project: any,
-  product: any,
-  release: any,
+  store: AppStore,
+  project: ProjectLike,
+  product: ProductLike,
+  release: ReleaseInfo,
   existingDraft: StoreSubmissionDraft | null,
   onProgress?: (event: any) => void,
   sourceLanguage?: string,

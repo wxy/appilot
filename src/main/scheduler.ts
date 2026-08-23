@@ -13,6 +13,7 @@ import {
   migrateLegacyStoreProducts,
 } from "./project-state";
 import { getStore } from "./store";
+import type { AppStore } from "./store";
 
 interface ScheduledTaskBase {
   id: string;
@@ -126,7 +127,7 @@ async function resolveRankEntity(product: any): Promise<"software" | "macSoftwar
   return entity;
 }
 
-async function reconcileRankTasks(store: any): Promise<void> {
+async function reconcileRankTasks(store: AppStore): Promise<void> {
   const projects: any[] = (store.get("projects") || []).map(migrateLegacyStoreProducts);
   for (const project of projects) ensureProjectKeywordPool(project);
   store.set("projects", projects);
@@ -221,7 +222,7 @@ async function reconcileRankTasks(store: any): Promise<void> {
  * announcement + PR info cache so opening the workbench does not wait on the
  * GitHub API. The cache is consumed by checkForRelease via `githubCache`.
  */
-async function reconcileGithubSyncTasks(store: any): Promise<void> {
+async function reconcileGithubSyncTasks(store: AppStore): Promise<void> {
   const projects: any[] = store.get("projects") || [];
   const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
   const desired = new Map<string, GithubSyncTask>();
@@ -253,7 +254,7 @@ async function reconcileGithubSyncTasks(store: any): Promise<void> {
   store.set("scheduledTasks", next);
 }
 
-async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
+async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<void> {
   const projects: any[] = store.get("projects") || [];
   let product: any = null;
   let project: any = null;
@@ -374,7 +375,7 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
   }
 }
 
-async function runGithubSyncTask(store: any, task: GithubSyncTask): Promise<void> {
+async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise<void> {
   const projects: any[] = store.get("projects") || [];
   const project = projects.find((item: any) => item.id === task.projectId) || null;
   const startedAt = Date.now();
@@ -504,7 +505,7 @@ export async function schedulerTick(): Promise<void> {
   }
 }
 
-async function scatterOverdueTasks(store: any): Promise<void> {
+async function scatterOverdueTasks(store: AppStore): Promise<void> {
   const now = Date.now();
   const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
   let changed = false;

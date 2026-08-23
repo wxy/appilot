@@ -35,6 +35,11 @@ async function git(localPath: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/** Read the origin remote URL (empty string when unavailable). */
+export async function getRemoteUrl(localPath: string): Promise<string> {
+  return git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
+}
+
 /** Convert common GitHub remote forms to a plain https repo URL (null when not GitHub). */
 export function normalizeGitHubUrl(remote: string | null): string | null {
   if (!remote) return null;

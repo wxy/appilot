@@ -1,14 +1,22 @@
 import type { MatrixCell } from "../../lib/matrix";
 import { cn } from "../../lib/utils";
 
-export function MatrixCellView({ cell }: { cell: MatrixCell }) {
-  const rankText = cell.beyond200 ? "200+" : cell.rank ?? "—";
-  const trendText =
-    cell.trend === "new" ? "进榜"
+export function matrixRankText(cell: MatrixCell): string {
+  if (cell.beyond200) return "200+";
+  return cell.rank != null ? String(cell.rank) : "—";
+}
+
+export function matrixTrendText(cell: MatrixCell): string | null {
+  return cell.trend === "new" ? "进榜"
     : cell.trend === "lost" ? "掉榜"
     : cell.trend === "up" ? `▲ ${cell.delta}`
     : cell.trend === "down" ? `▼ ${Math.abs(cell.delta ?? 0)}`
     : null;
+}
+
+export function MatrixCellView({ cell }: { cell: MatrixCell }) {
+  const rankText = matrixRankText(cell);
+  const trendText = matrixTrendText(cell);
   return (
     <span className="inline-flex items-baseline gap-1 justify-end">
       <span
