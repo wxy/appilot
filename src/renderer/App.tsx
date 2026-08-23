@@ -4748,6 +4748,24 @@ function ProjectSettingsPage() {
   const [savingInfo, setSavingInfo] = useState(false);
   const [infoMsg, setInfoMsg] = useState("");
   const [error, setError] = useState("");
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [creds, setCreds] = useState<any>(null);
+
+  useEffect(() => {
+    if (!projectId) return;
+    (window as any).appilot?.projects
+      ?.getCredentials(projectId)
+      .then(setCreds)
+      .catch(() => setCreds(null));
+  }, [projectId]);
+
+  const refreshCreds = async () => {
+    if (!projectId) return;
+    const next = await (window as any).appilot.projects.getCredentials(projectId);
+    setCreds(next);
+  };
+  const hasOverride =
+    creds?.githubSource === "project" || creds?.ascSource === "project";
 
   useEffect(() => {
     if (!project) return;
@@ -4876,12 +4894,52 @@ function ProjectSettingsPage() {
             API 凭据（本项目覆盖）
           </h3>
         </div>
-        <div className="p-5 space-y-4">
-          <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-            全局凭据在「设置」页配置，自动适用于本项目；如需为本项目指定不同凭据，在下方填写并保存，未填写的项继续使用全局。
-          </p>
-          <CredentialsForm projectId={project.id} scope="project" />
-        </div>
+        {!overrideOpen ? (
+          <div className="p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm text-zinc-800 dark:text-zinc-200">
+                  {hasOverride ? "已使用本项目凭据" : "默认使用全局凭据"}
+                </div>
+                <div className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
+                  全局 GitHub Token {creds?.globalGithubTokenSet ? "✓ 已配置" : "✕ 未配置"}
+                  {" · "}全局 ASC Key {creds?.globalAscKeySet ? "✓ 已配置" : "✕ 未配置"}
+                  {hasOverride
+                    ? "；本项目已覆盖，可点击右侧查看/修改。"
+                    : "；未配置全局时相关能力不可用。"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOverrideOpen(true)}
+                className={btnSmSecondary + " shrink-0"}
+              >
+                {hasOverride ? "查看/修改本项目凭据" : "使用其他凭证"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-5 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                全局凭据自动适用于本项目；这里填写的内容仅覆盖本项目，未填写的项继续使用全局。
+                清除本项目凭据后回退全局。
+              </p>
+              <button
+                type="button"
+                onClick={() => setOverrideOpen(false)}
+                className={btnSmSecondary + " shrink-0"}
+              >
+                收起
+              </button>
+            </div>
+            <CredentialsForm
+              projectId={project.id}
+              scope="project"
+              onChanged={() => void refreshCreds()}
+            />
+          </div>
+        )}
       </section>
     </div>
   );
@@ -4890,9 +4948,11 @@ function ProjectSettingsPage() {
 function CredentialsForm({
   projectId,
   scope,
+  onChanged,
 }: {
   projectId: string;
   scope: "global" | "project";
+  onChanged?: () => void;
 }) {
   const [githubToken, setGithubToken] = useState("");
   const [showToken, setShowToken] = useState(false);
@@ -4943,6 +5003,7 @@ function CredentialsForm({
       setAscKeyPath("");
       const next = await (window as any).appilot.projects.getCredentials(projectId);
       setCreds(next);
+      onChanged?.();
     } catch (e: any) {
       setError(e.message || "保存凭据失败");
     }
@@ -4960,6 +5021,7 @@ function CredentialsForm({
       setAscKeyPath("");
       const next = await (window as any).appilot.projects.getCredentials(projectId);
       setCreds(next);
+      onChanged?.();
     } catch (e: any) {
       setError(e.message || "清除失败");
     }
@@ -5160,7 +5222,8 @@ function CredentialsForm({
         <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1">
           <p>
             获取：App Store Connect → 用户和访问 → 集成 → App Store Connect API；
-            Issuer ID 在该页顶部，Key ID 与 .p8 文件在创建密钥时下载。
+            Issuer ID 在该页顶部，Key ID 与 .p8 文件在创建密钥时下载。一把 Key 适用于同一账户（Team）
+            下的所有应用；不同账户的应用需单独一把 Key（可在项目设置中覆盖）。
           </p>
           <button
             type="button"
