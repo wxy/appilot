@@ -26,3 +26,9 @@ data/
 # Environment
 .env
 .env.local
+.release.env
+
+# Release signing secrets (never commit)
+.secrets/
+*.p12
+*.pfx
