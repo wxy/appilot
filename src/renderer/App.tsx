@@ -2815,24 +2815,26 @@ function TaskTimelineChart({
   } | null>(null);
   const recent = timeline?.recent ?? [];
   const upcoming = timeline?.upcoming ?? [];
-  // One continuous timeline: each hour bucket stacks planned (future) and
-  // executed (past) activity, so past and future read as a single chart.
-  const buckets: { hour: number; planned: number; success: number; failed: number }[] =
-    Array.from({ length: 48 }, (_, index) =>
-      index < 24
-        ? {
-            hour: (recent[index] || { hour: 0 }).hour,
-            planned: 0,
-            success: recent[index]?.success || 0,
-            failed: recent[index]?.failed || 0,
-          }
-        : {
-            hour: (upcoming[index - 24] || { hour: 0 }).hour,
-            planned: upcoming[index - 24]?.count || 0,
-            success: 0,
-            failed: 0,
-          },
-    );
+  // One continuous timeline. The current hour appears in BOTH the recent
+  // (executed) and upcoming (planned) arrays, so merge it into a single
+  // stacked bucket: 23 past + 1 current + 23 future = 47 bars.
+  const buckets: { hour: number; planned: number; success: number; failed: number }[] = [];
+  for (let index = 0; index < 23; index++) {
+    const r = recent[index] || { hour: 0, success: 0, failed: 0 };
+    buckets.push({ hour: r.hour, planned: 0, success: r.success, failed: r.failed });
+  }
+  const currentR = recent[23] || { hour: 0, success: 0, failed: 0 };
+  const currentU = upcoming[0] || { hour: 0, count: 0 };
+  buckets.push({
+    hour: currentR.hour || currentU.hour,
+    planned: currentU.count,
+    success: currentR.success,
+    failed: currentR.failed,
+  });
+  for (let index = 1; index < 24; index++) {
+    const u = upcoming[index] || { hour: 0, count: 0 };
+    buckets.push({ hour: u.hour, planned: u.count, success: 0, failed: 0 });
+  }
   const W = 780;
   const H = 200;
   const padL = 36;
@@ -2840,7 +2842,8 @@ function TaskTimelineChart({
   const padT = 26;
   const padB = 30;
   const chartW = W - padL - padR;
-  const barW = chartW / 48;
+  const currentIndex = 23;
+  const barW = chartW / buckets.length;
   const plotH = H - padT - padB;
   const maxV = Math.max(
     1,
@@ -2850,13 +2853,13 @@ function TaskTimelineChart({
   const yTicks: number[] = [];
   for (let value = 0; value < maxV; value += step) yTicks.push(value);
   yTicks.push(maxV);
-  const nowX = padL + 24 * barW;
+  const nowX = padL + (currentIndex + 0.5) * barW;
   const y = (v: number) => padT + plotH - (v / maxV) * plotH;
   const hourLabel = (ts: number) =>
     `${String(new Date(ts).getHours()).padStart(2, "0")}:00`;
-  const xTickIndexes = [0, 6, 12, 18, 24, 30, 36, 42];
+  const xTickIndexes = [0, 6, 12, 18, 23, 29, 35, 41, 46];
   const relLabel = (i: number) =>
-    i === 24 ? "现在" : `${i < 24 ? "-" : "+"}${Math.abs(i - 24)}h`;
+    i === 23 ? "现在" : `${i < 23 ? "-" : "+"}${Math.abs(i - 23)}h`;
 
   const hoverInfo = (index: number): { title: string; lines: [string, string][] } => {
     const b = buckets[index] || { hour: 0, planned: 0, success: 0, failed: 0 };
@@ -2999,7 +3002,7 @@ function TaskTimelineChart({
           <text x={W - padR} y={H - 10} textAnchor="end" fontSize="10" className="fill-zinc-400">
             +24h
           </text>
-          {Array.from({ length: 48 }, (_, i) => (
+          {Array.from({ length: buckets.length }, (_, i) => (
             <rect
               key={`o-${i}`}
               x={padL + i * barW}
