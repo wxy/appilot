@@ -26,7 +26,10 @@ source .release.env
 npm run dist:mac -- -c.mac.notarize=true
 ```
 
-产出 `dist/Appilot-0.3.0.dmg`（已 Developer ID 签名 + 公证 + staple）。
+产出两个分架构 DMG（已 Developer ID 签名 + 公证，`.app` 内部已 staple）：
+
+- `dist/Appilot-0.3.0-arm64.dmg`（Apple Silicon）
+- `dist/Appilot-0.3.0-x64.dmg`（Intel）
 
 ## 验证
 
@@ -51,7 +54,10 @@ xcrun stapler validate "dist/mac-arm64/Appilot.app"
 ```bash
 git tag -a v0.3.0 -m "v0.3.0: 里程碑版本"
 git push origin v0.3.0
-gh release create v0.3.0 dist/Appilot-0.3.0.dmg --draft
+gh release create v0.3.0 \
+  dist/Appilot-0.3.0-arm64.dmg \
+  dist/Appilot-0.3.0-x64.dmg \
+  --draft
 ```
 
 检查 draft release（标题、说明、附件）后点发布。
