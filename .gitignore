@@ -29,6 +29,6 @@ data/
 .release.env
 
 # Release signing secrets (never commit)
-secrets/
+.secrets/
 *.p12
 *.pfx
