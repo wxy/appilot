@@ -101,12 +101,16 @@ function importAscKeyFile(
   if (!src) return "";
   if (!fs.existsSync(src)) throw new Error("无法读取 .p8 私钥文件");
   const dir = path.join(app.getPath("userData"), "keys");
+  // Already managed by the app (e.g. a stored copy picked during re-enter):
+  // keep that path as-is instead of copying it again.
+  if (path.dirname(src) === dir) return src;
   fs.mkdirSync(dir, { recursive: true });
   const tag = scope === "global" ? "global" : projectId || "project";
   const base = path
     .basename(src, path.extname(src))
     .replace(/[^A-Za-z0-9_-]/g, "_");
-  const dest = path.join(dir, `asc-${tag}-${base}-${Date.now().toString(36)}.p8`);
+  const dest = path.join(dir, `asc-${tag}-${base}.p8`);
+  if (fs.existsSync(dest)) return dest;
   fs.copyFileSync(src, dest);
   return dest;
 }
