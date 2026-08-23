@@ -4975,6 +4975,9 @@ function AppleIcon() {
   );
 }
 
+const GITHUB_CAPABILITIES = ["私有/草案 release 公告", "真实 PR 素材", "远程仓库数据"];
+const ASC_CAPABILITIES = ["版本/审核状态回读", "审核意见", "评论洞察", "销量/下载分析"];
+
 function CredentialsForm({
   projectId,
   scope,
@@ -5004,6 +5007,10 @@ function CredentialsForm({
     asc: false,
   });
   const [saveError, setSaveError] = useState<"github" | "asc" | null>(null);
+  const [editing, setEditing] = useState<{ github: boolean; asc: boolean }>({
+    github: false,
+    asc: false,
+  });
 
   useEffect(() => {
     refreshCreds().catch(() => setCreds(null));
@@ -5032,6 +5039,7 @@ function CredentialsForm({
         ascPrivateKeyPath: kind === "asc" ? ascKeyPath : undefined,
       });
       setSaved((prev) => ({ ...prev, [kind]: true }));
+      setEditing((prev) => ({ ...prev, [kind]: false }));
       await refreshCreds();
       onChanged?.();
     } catch (e: any) {
@@ -5052,6 +5060,7 @@ function CredentialsForm({
       setValidated((prev) => ({ ...prev, [kind]: false }));
       setSaved((prev) => ({ ...prev, [kind]: false }));
       setFeedback((prev) => ({ ...prev, [kind]: undefined }));
+      setEditing((prev) => ({ ...prev, [kind]: false }));
       if (kind === "github") setGithubToken("");
       else {
         setAscIssuerId("");
@@ -5122,6 +5131,7 @@ function CredentialsForm({
 
   return (
     <div className="space-y-5">
+      {!githubUnlocked || editing.github ? (
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
         <div className="flex items-center gap-2">
           <GithubIcon />
@@ -5166,14 +5176,14 @@ function CredentialsForm({
             title={feedback.github?.msg}
           >
             {!githubToken.trim()
-              ? "测试连接"
+              ? "测试凭证"
               : testing === "github"
               ? "测试中…"
               : feedback.github
                 ? feedback.github.ok
                   ? "✓ 测试通过"
-                  : "✕ 连接失败"
-                : "测试连接"}
+                  : "✕ 测试失败"
+                : "测试凭证"}
           </button>
           <button
             type="button"
@@ -5189,7 +5199,7 @@ function CredentialsForm({
                 ? "保存失败，请重试"
                 : saved.github
                   ? "已保存"
-                  : "请先测试连接"
+                  : "请先测试凭证"
             }
           >
             {saveError === "github" ? "✕ 保存失败" : saved.github ? "✓ 已保存" : "保存"}
@@ -5216,7 +5226,63 @@ function CredentialsForm({
           </button>
         </div>
       </div>
+      ) : (
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <GithubIcon />
+            <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">GitHub Token</span>
+            <CredentialStatus unlocked source={githubSource} />
+          </div>
+          <ul className="space-y-1">
+            {GITHUB_CAPABILITIES.map((capability) => (
+              <li
+                key={capability}
+                className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400"
+              >
+                <span className="text-emerald-500">✓</span> {capability}
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleTestGithub()}
+              disabled={testing === "asc"}
+              className={cn(
+                btnSmSecondary,
+                feedback.github?.ok &&
+                  "!text-emerald-600 dark:!text-emerald-400 !border-emerald-300 dark:!border-emerald-800",
+                feedback.github &&
+                  !feedback.github.ok &&
+                  "!text-red-600 dark:!text-red-400 !border-red-300 dark:!border-red-800",
+              )}
+              title={feedback.github?.msg}
+            >
+              {testing === "github"
+                ? "测试中…"
+                : feedback.github
+                  ? feedback.github.ok
+                    ? "✓ 测试通过"
+                    : "✕ 测试失败"
+                  : "测试凭证"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing((prev) => ({ ...prev, github: true }))}
+              className={btnSmSecondary}
+            >
+              重新输入凭证
+            </button>
+          </div>
+          {feedback.github && !feedback.github.ok && (
+            <p className="text-[11px] text-red-500 dark:text-red-400">
+              已保存的凭证可能已失效，可点击「重新输入凭证」更新。
+            </p>
+          )}
+        </div>
+      )}
 
+      {!ascUnlocked || editing.asc ? (
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
         <div className="flex items-center gap-2">
           <AppleIcon />
@@ -5317,14 +5383,14 @@ function CredentialsForm({
             title={feedback.asc?.msg}
           >
             {!ascIssuerId.trim() || !ascKeyId.trim() || !ascKeyPath
-              ? "测试连接"
+              ? "测试凭证"
               : testing === "asc"
               ? "测试中…"
               : feedback.asc
                 ? feedback.asc.ok
                   ? "✓ 测试通过"
-                  : "✕ 连接失败"
-                : "测试连接"}
+                  : "✕ 测试失败"
+                : "测试凭证"}
           </button>
           <button
             type="button"
@@ -5340,7 +5406,7 @@ function CredentialsForm({
                 ? "保存失败，请重试"
                 : saved.asc
                   ? "已保存"
-                  : "请先测试连接"
+                  : "请先测试凭证"
             }
           >
             {saveError === "asc" ? "✕ 保存失败" : saved.asc ? "✓ 已保存" : "保存"}
@@ -5373,6 +5439,63 @@ function CredentialsForm({
           </button>
         </div>
       </div>
+      ) : (
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <AppleIcon />
+            <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              App Store Connect API Key
+            </span>
+            <CredentialStatus unlocked source={ascSource} />
+          </div>
+          <ul className="space-y-1">
+            {ASC_CAPABILITIES.map((capability) => (
+              <li
+                key={capability}
+                className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400"
+              >
+                <span className="text-emerald-500">✓</span> {capability}
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleTestAsc()}
+              disabled={testing === "github"}
+              className={cn(
+                btnSmSecondary,
+                feedback.asc?.ok &&
+                  "!text-emerald-600 dark:!text-emerald-400 !border-emerald-300 dark:!border-emerald-800",
+                feedback.asc &&
+                  !feedback.asc.ok &&
+                  "!text-red-600 dark:!text-red-400 !border-red-300 dark:!border-red-800",
+              )}
+              title={feedback.asc?.msg}
+            >
+              {testing === "asc"
+                ? "测试中…"
+                : feedback.asc
+                  ? feedback.asc.ok
+                    ? "✓ 测试通过"
+                    : "✕ 测试失败"
+                  : "测试凭证"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing((prev) => ({ ...prev, asc: true }))}
+              className={btnSmSecondary}
+            >
+              重新输入凭证
+            </button>
+          </div>
+          {feedback.asc && !feedback.asc.ok && (
+            <p className="text-[11px] text-red-500 dark:text-red-400">
+              已保存的凭证可能已失效，可点击「重新输入凭证」更新。
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
