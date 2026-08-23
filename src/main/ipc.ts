@@ -627,9 +627,16 @@ interface RankScheduledTask extends ScheduledTaskBase {
   lastDurationMs?: number;
 }
 
-type ScheduledTask = RankScheduledTask;
+interface GithubSyncTask extends ScheduledTaskBase {
+  kind: "github-sync";
+  projectId: string;
+  lastDurationMs?: number;
+}
+
+type ScheduledTask = RankScheduledTask | GithubSyncTask;
 
 interface RunningTaskInfo {
+  kind?: "rank" | "github-sync";
   keyword: string;
   language: string;
   storefront: string;
@@ -659,6 +666,27 @@ function rankTaskId(productId: string, keyword: string, queryLanguage: string, s
 
 function taskSeed(task: Pick<RankScheduledTask, "productId" | "keyword" | "queryLanguage" | "storefront">): string {
   return [task.productId, task.queryLanguage, task.storefront, task.keyword].join(":");
+}
+
+function githubSyncTaskId(projectId: string): string {
+  return `github-sync:${projectId}`;
+}
+
+/** Fresh pre-warmed GitHub data for a project, or null when stale/mismatched. */
+function githubSyncCacheEntry(
+  s: any,
+  project: any,
+): { tag: string | null; release: any | null; pullRequests: any[] } | null {
+  const all = s.get("githubSyncCache") || {};
+  const entry = all?.[project?.id];
+  if (!entry) return null;
+  if (new Date(entry.syncedAt).getTime() < Date.now() - 60 * 60_000) return null;
+  if ((entry.lastSeenSha || null) !== (project?.lastReleaseSha || null)) return null;
+  return {
+    tag: entry.tag ?? null,
+    release: entry.release ?? null,
+    pullRequests: entry.pullRequests || [],
+  };
 }
 
 function nextRunAt(seed: string, intervalMinutes: number, now = new Date()): string {
@@ -751,9 +779,12 @@ async function reconcileRankTasks(store: any): Promise<void> {
   }
 
   const next = existing
-    // Only rank tasks are runnable; drop stale task kinds (e.g. legacy release
-    // tasks with no executor) instead of letting them linger forever overdue.
-    .filter((task) => task.kind === "rank" && activeKeys.has(task.id))
+    // Rank tasks are re-derived below; github-sync tasks are reconciled
+    // separately and must survive this pass. Drop any other stale task kind.
+    .filter((task) =>
+      task.kind === "github-sync" ||
+      (task.kind === "rank" && activeKeys.has(task.id)),
+    )
     .map((task) => desiredTasks.get(task.id) || task);
   for (const task of desiredTasks.values()) {
     if (!next.some((existingTask) => existingTask.id === task.id)) {
@@ -763,6 +794,44 @@ async function reconcileRankTasks(store: any): Promise<void> {
 
   store.set("scheduledTasks", next);
   store.set("projects", projects);
+}
+
+/**
+ * One per-project background task that keeps the GitHub data cache warm:
+ * fetch remote tags (never touches the worktree), then refresh the release
+ * announcement + PR info cache so opening the workbench does not wait on the
+ * GitHub API. The cache is consumed by checkForRelease via `githubCache`.
+ */
+async function reconcileGithubSyncTasks(store: any): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const desired = new Map<string, GithubSyncTask>();
+  for (const project of projects) {
+    if (!project?.repo?.githubUrl) continue;
+    const id = githubSyncTaskId(project.id);
+    const previous = existing.find((task) => task.id === id) as
+      | GithubSyncTask
+      | undefined;
+    desired.set(id, {
+      id,
+      kind: "github-sync",
+      projectId: project.id,
+      intervalMinutes: previous?.intervalMinutes || 60,
+      nextRunAt: previous?.nextRunAt || nextRunAt(id, 60),
+      lastRunAt: previous?.lastRunAt ?? null,
+      firstRunAt: previous?.firstRunAt ?? null,
+      executionCount: previous?.executionCount || 0,
+      lastStatus: previous?.lastStatus,
+      enabled: previous?.enabled ?? true,
+      consecutiveFailures: previous?.consecutiveFailures || 0,
+      lastDurationMs: previous?.lastDurationMs,
+    });
+  }
+  const next: ScheduledTask[] = [
+    ...existing.filter((task) => task.kind === "rank"),
+    ...Array.from(desired.values()),
+  ];
+  store.set("scheduledTasks", next);
 }
 
 async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
@@ -872,12 +941,90 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
   store.set("projects", projects);
 }
 
+async function runGithubSyncTask(store: any, task: GithubSyncTask): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  const project = projects.find((item: any) => item.id === task.projectId) || null;
+  const startedAt = Date.now();
+  nowRunningTask = {
+    kind: "github-sync",
+    keyword: "GitHub 同步",
+    language: "",
+    storefront: "",
+    startedAt: new Date().toISOString(),
+  };
+  let durationMs = 0;
+  let requestBytes = 0;
+  let responseBytes = 0;
+  let status: "success" | "failed" = "success";
+  try {
+    if (!project?.localPath) throw new Error("Project not found");
+    const { fetchRemoteTags, checkForRelease } = await import("../engine/release-watcher");
+    // Background sync must never touch the worktree or local branches: fetch
+    // only updates remote-tracking refs and tags.
+    await fetchRemoteTags(project.localPath);
+    const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
+    const result = await checkForRelease(
+      project.localPath,
+      project.lastReleaseSha || null,
+      token,
+      { sync: false },
+    );
+    const release = result.latest || null;
+    const material = release?.material || null;
+    const all: Record<string, any> = store.get("githubSyncCache") || {};
+    all[task.projectId] = {
+      tag: release?.tag || null,
+      release: material?.githubRelease ?? null,
+      pullRequests: material?.pullRequests || [],
+      lastSeenSha: project.lastReleaseSha || null,
+      syncedAt: new Date().toISOString(),
+    };
+    store.set("githubSyncCache", all);
+    task.consecutiveFailures = 0;
+    task.lastStatus = "success";
+  } catch (err: any) {
+    status = "failed";
+    durationMs = Date.now() - startedAt;
+    log.warn(`Scheduled GitHub sync failed for ${task.projectId}: ${err.message}`);
+    task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
+    task.lastStatus = "failed";
+    if (task.consecutiveFailures >= 5) {
+      task.enabled = false;
+    }
+  } finally {
+    nowRunningTask = null;
+  }
+
+  task.lastRunAt = new Date().toISOString();
+  task.executionCount += 1;
+  task.lastDurationMs = durationMs;
+  const executions: any[] = Array.isArray(store.get("rankExecutions"))
+    ? store.get("rankExecutions")
+    : [];
+  executions.push({
+    ts: new Date().toISOString(),
+    productId: task.projectId,
+    kind: "github-sync",
+    status,
+    durationMs,
+    requestBytes,
+    responseBytes,
+  });
+  store.set("rankExecutions", executions.slice(-5000));
+  task.firstRunAt = task.firstRunAt || task.lastRunAt;
+  task.nextRunAt = nextRunAt(
+    task.id,
+    task.lastStatus === "failed" ? 30 : task.intervalMinutes,
+  );
+}
+
 async function schedulerTick(): Promise<void> {
   if (schedulerRunning) return;
   schedulerRunning = true;
   try {
     const store = await getStore();
     await reconcileRankTasks(store);
+    await reconcileGithubSyncTasks(store);
 
     const now = Date.now();
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
@@ -887,7 +1034,6 @@ async function schedulerTick(): Promise<void> {
     const due = tasks
       .filter(
         (task) =>
-          task.kind === "rank" &&
           task.enabled &&
           new Date(task.nextRunAt).getTime() <= now,
       )
@@ -895,7 +1041,11 @@ async function schedulerTick(): Promise<void> {
       .slice(0, MAX_RANK_TASKS_PER_TICK);
 
     for (const task of due) {
-      await runRankTask(store, task);
+      if (task.kind === "github-sync") {
+        await runGithubSyncTask(store, task);
+      } else {
+        await runRankTask(store, task);
+      }
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
     store.set("scheduledTasks", tasks);
@@ -1072,6 +1222,12 @@ export function registerIpcHandlers() {
       if (!value) return "";
       return value.length <= 8 ? "••••••••" : `${value.slice(0, 4)}••••${value.slice(-4)}`;
     };
+    // Project-scope form must show only the project's own override values.
+    // Effective values (global ?? override) would make the override form look
+    // like it is replacing the global credentials.
+    const overrideGithubToken = override.githubToken
+      ? decryptApiKey(override.githubToken)
+      : "";
     return {
       hasGithubToken: Boolean(eff.githubToken),
       githubExpiresAt: eff.githubExpiresAt || "",
@@ -1094,6 +1250,15 @@ export function registerIpcHandlers() {
       ascIssuerId: eff.ascIssuerId,
       ascKeyId: eff.ascKeyId,
       ascPrivateKeyPath: eff.ascPrivateKeyPath || "",
+      projectHasGithubToken: Boolean(override.githubToken),
+      projectGithubTokenMasked: maskSecret(overrideGithubToken),
+      projectGithubExpiresAt: override.githubExpiresAt || "",
+      projectHasAscKey: Boolean(
+        override.ascIssuerId && override.ascKeyId && override.ascPrivateKeyPath,
+      ),
+      projectAscIssuerId: override.ascIssuerId || "",
+      projectAscKeyId: override.ascKeyId || "",
+      projectAscPrivateKeyPath: override.ascPrivateKeyPath || "",
     };
   });
 
@@ -1725,7 +1890,12 @@ export function registerIpcHandlers() {
     const { readRepoDescription } = await import("../engine/app-store-discovery");
     const { checkForRelease } = await import("../engine/release-watcher");
 
-    const releaseResult = await checkForRelease(project.localPath, project.lastReleaseSha || null);
+    const releaseResult = await checkForRelease(
+      project.localPath,
+      project.lastReleaseSha || null,
+      resolveEffectiveCredentials(s, project.id).githubToken,
+      { githubCache: githubSyncCacheEntry(s, project) ?? undefined },
+    );
     const drafts = getStoreSubmissionDrafts(project)
       .filter((item: any) => item.productId === productId)
       .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -1963,13 +2133,18 @@ export function registerIpcHandlers() {
       },
       timeline: { recent: recentTimeline, upcoming: upcomingTimeline },
       tasks: tasks.map((task) => {
-        const context = findProductContext(projects, task.productId);
+        const isSync = task.kind === "github-sync";
+        const context: { project: any; product?: any } | null = isSync
+          ? { project: projects.find((item: any) => item.id === task.projectId) || null }
+          : findProductContext(projects, task.productId);
         const project = context?.project || null;
         return {
           ...task,
           projectName: project?.name || "已删除项目",
-          productName: context?.product.trackName || context?.project.name || "未知产品",
-          platform: context?.product.platform || "unknown",
+          productName: isSync
+            ? project?.name || ""
+            : context?.product.trackName || context?.project.name || "未知产品",
+          platform: isSync ? null : context?.product.platform || "unknown",
         };
       }),
     };
@@ -1980,7 +2155,7 @@ export function registerIpcHandlers() {
     return true;
   });
 
-  ipcMain.handle("release:list", async (_event, projectId: string) => {
+  ipcMain.handle("release:list", async (_event, projectId: string, force?: boolean) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
@@ -1988,9 +2163,16 @@ export function registerIpcHandlers() {
     if (!project) throw new Error("Project not found");
 
     const { checkForRelease } = await import("../engine/release-watcher");
-    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
-      sync: true,
-    });
+    const result = await checkForRelease(
+      project.localPath,
+      project.lastReleaseSha || null,
+      resolveEffectiveCredentials(s, project.id).githubToken,
+      {
+        sync: true,
+        force: Boolean(force),
+        githubCache: githubSyncCacheEntry(s, project) ?? undefined,
+      },
+    );
     return {
       releases: result.releases.map((release) => ({
         ...release,
@@ -2019,9 +2201,12 @@ export function registerIpcHandlers() {
 
       const { checkForRelease } = await import("../engine/release-watcher");
       const { readFullReadme, readRepoDescription } = await import("../engine/app-store-discovery");
-      const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
-        sync: true,
-      });
+      const result = await checkForRelease(
+        project.localPath,
+        project.lastReleaseSha || null,
+        resolveEffectiveCredentials(s, project.id).githubToken,
+        { sync: true, githubCache: githubSyncCacheEntry(s, project) ?? undefined },
+      );
       let release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) {
         const saved = findStoreSubmissionDraft(project, productId, releaseTag);
@@ -2098,9 +2283,12 @@ export function registerIpcHandlers() {
       phase: "read_draft",
       status: "started",
     });
-    const result = await checkForRelease(project.localPath, project.lastReleaseSha || null, undefined, {
-      sync: true,
-    });
+    const result = await checkForRelease(
+      project.localPath,
+      project.lastReleaseSha || null,
+      resolveEffectiveCredentials(s, project.id).githubToken,
+      { sync: true, githubCache: githubSyncCacheEntry(s, project) ?? undefined },
+    );
     let release = result.releases.find((item) => item.tag === releaseTag) || null;
     if (!release) {
       const saved = findStoreSubmissionDraft(project, productId, releaseTag);

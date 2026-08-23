@@ -99,6 +99,15 @@ function formatHumanTime(iso: string | null | undefined): string {
   return target.toLocaleDateString();
 }
 
+function formatDurationMs(ms?: number | null): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${Math.round(ms)} 毫秒`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} 秒`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes} 分 ${seconds} 秒`;
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
   const { projects, currentProjectId, currentProductId, loading, load, select, selectProduct, addByFolder } = useProject();
   const location = useLocation();
@@ -866,6 +875,11 @@ function OverviewPage() {
                 </button>
               );
             })}
+            <CredentialBadge
+              kind="github"
+              enabled={Boolean(project.hasGithubToken)}
+              projectId={project.id}
+            />
             <button
               onClick={() => navigate(`/projects/${project.id}/settings`)}
               className="inline-flex items-center px-2.5 h-7 rounded-full border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
@@ -1561,12 +1575,12 @@ function ReleasePage() {
     return () => off?.();
   }, []);
 
-  const loadReleases = async () => {
+  const loadReleases = async (force = false) => {
     if (!project?.id) return;
     setChecking(true);
     setError("");
     try {
-      const next = await (window as any).appilot.release.list(project.id);
+      const next = await (window as any).appilot.release.list(project.id, force);
       setReleases(next.releases || []);
       setActive((prev: any) => {
         if (prev?.draft?.releaseTag && next.releases?.some((item: any) => item.tag === prev.draft.releaseTag)) {
@@ -1705,7 +1719,12 @@ function ReleasePage() {
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
-    const rows: { label: string; meta: string }[] = [];
+    const rows: {
+      label: string;
+      meta: string;
+      badge?: "github";
+      badgeTitle?: string;
+    }[] = [];
     rows.push({
       label: "README 全文",
       meta: releaseContext?.readme ? `${releaseContext.readme.length.toLocaleString()} 字符` : "无",
@@ -1734,6 +1753,10 @@ function ReleasePage() {
       rows.push({
         label: "GitHub 发布公告",
         meta: `${githubRelease.name || "发布正文"}${githubRelease.publishedAt ? ` · ${formatHumanTime(githubRelease.publishedAt)}` : ""}`,
+        badge: "github",
+        badgeTitle: githubRelease.viaToken
+          ? "发布公告来自 GitHub（通过 Token 获取，支持私有仓库与草案）"
+          : "发布公告来自 GitHub（公开仓库）",
       });
     }
     if (draft?.reviewFeedback) {
@@ -1979,6 +2002,18 @@ function ReleasePage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <CredentialBadge
+              kind="github"
+              enabled={Boolean(project.hasGithubToken)}
+              projectId={project.id}
+            />
+            <CredentialBadge
+              kind="asc"
+              enabled={Boolean(project.hasAscKey)}
+              projectId={project.id}
+            />
+          </div>
           {products.length > 0 && (
             <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-zinc-800/80 p-1 gap-1">
               {products.map((product) => (
@@ -1998,7 +2033,7 @@ function ReleasePage() {
               ))}
             </div>
           )}
-          <button onClick={loadReleases} disabled={checking} className={btnPrimary}>
+          <button onClick={() => void loadReleases(true)} disabled={checking} className={btnPrimary}>
             {checking ? "检查中..." : "检查发布"}
           </button>
         </div>
@@ -2125,6 +2160,27 @@ function ReleasePage() {
                                     {subLine}
                                   </span>
                                 </span>
+                                {item.github && (
+                                  item.prUrl ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        (window as any).appilot?.openExternal?.(item.prUrl)
+                                      }
+                                      className="shrink-0 inline-flex items-center text-zinc-400 dark:text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                                      title={`打开 GitHub PR #${item.prNumber || ""}`}
+                                    >
+                                      <GithubIcon className="w-3 h-3 text-current" />
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className="shrink-0 inline-flex items-center text-zinc-400 dark:text-zinc-500"
+                                      title={`GitHub PR #${item.prNumber || ""}`}
+                                    >
+                                      <GithubIcon className="w-3 h-3 text-current" />
+                                    </span>
+                                  )
+                                )}
                                 <span
                                   className={cn(
                                     "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
@@ -2169,6 +2225,14 @@ function ReleasePage() {
                                     {row.meta}
                                   </span>
                                 </span>
+                                {row.badge === "github" && (
+                                  <span
+                                    className="shrink-0 inline-flex items-center text-zinc-400 dark:text-zinc-500"
+                                    title={row.badgeTitle || "发布公告来自 GitHub"}
+                                  >
+                                    <GithubIcon className="w-3 h-3 text-current" />
+                                  </span>
+                                )}
                                 <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
                                   始终发送
                                 </span>
@@ -2598,6 +2662,7 @@ function TaskCenterPage() {
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -2638,7 +2703,8 @@ function TaskCenterPage() {
   const tasks = (data?.tasks || [])
     .filter((task) => projectFilter === "all" || task.projectName === projectFilter)
     .filter((task) => platformFilter === "all" || task.platform === platformFilter)
-    .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter);
+    .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter)
+    .filter((task) => typeFilter === "all" || task.kind === typeFilter);
   const pending = tasks.filter((task) => task.enabled);
   const failed = tasks.filter((task) => task.lastStatus === "failed");
 
@@ -2654,14 +2720,15 @@ function TaskCenterPage() {
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            后台排名采集的调度健康度、执行负载与时间线。
+            后台采集与 GitHub 同步的调度健康度、执行负载与时间线。
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {nowRunning && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              正在执行 {nowRunning.keyword}
+              正在执行{" "}
+              {nowRunning.kind === "github-sync" ? "GitHub 同步" : nowRunning.keyword}
             </span>
           )}
           <span
@@ -2725,7 +2792,7 @@ function TaskCenterPage() {
             label="下次执行"
             value={
               overview.overdue > 0
-                ? `已到期 ×${overview.overdue}`
+                ? `待执行 ×${overview.overdue}`
                 : overview.nextDueAt
                   ? formatHumanTime(overview.nextDueAt)
                   : "—"
@@ -2738,6 +2805,15 @@ function TaskCenterPage() {
       <TaskTimelineChart timeline={timeline} />
 
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          className={inputLineClass + " max-w-36"}
+        >
+          <option value="all">全部类型</option>
+          <option value="rank">排名</option>
+          <option value="github-sync">GitHub 同步</option>
+        </select>
         <select
           value={projectFilter}
           onChange={(e) => setProjectFilter(e.target.value)}
@@ -2857,14 +2933,19 @@ function TaskTimelineChart({
     ...buckets.map((b) => b.planned + b.success + b.failed),
   );
   const step = niceStep(Math.max(1, Math.ceil(maxV / 4)));
+  // Top tick is the next multiple of step (never smaller than maxV), so the
+  // axis stays evenly spaced and the last label cannot collide with the
+  // previous one (e.g. maxV=5, step=2 → ticks 0,2,4,6 instead of 0,2,4,5).
+  const topTick = Math.max(step, Math.ceil(maxV / step) * step);
   const yTicks: number[] = [];
-  for (let value = 0; value < maxV; value += step) yTicks.push(value);
-  yTicks.push(maxV);
+  for (let value = 0; value <= topTick; value += step) yTicks.push(value);
   const nowX = padL + (currentIndex + 0.5) * barW;
-  const y = (v: number) => padT + plotH - (v / maxV) * plotH;
+  const y = (v: number) => padT + plotH - (v / topTick) * plotH;
   const hourLabel = (ts: number) =>
     `${String(new Date(ts).getHours()).padStart(2, "0")}:00`;
-  const xTickIndexes = [0, 6, 12, 18, 23, 29, 35, 41, 46];
+  // The far-right +23h tick crowds the +24h end label; -23h already marks the
+  // symmetric left edge, so the last future tick is dropped.
+  const xTickIndexes = [0, 6, 12, 18, 23, 29, 35, 41];
   const relLabel = (i: number) =>
     i === 23 ? "现在" : `${i < 23 ? "-" : "+"}${Math.abs(i - 23)}h`;
 
@@ -3041,12 +3122,15 @@ function TaskTimelineChart({
 function groupTasks(tasks: any[]): any[] {
   const map = new Map<string, any>();
   for (const task of tasks) {
-    const key = `${task.projectName}\u0000${task.platform}\u0000${task.queryLanguage || ""}\u0000${task.storefront || ""}`;
+    const isSync = task.kind === "github-sync";
+    const key = isSync
+      ? `sync\u0000${task.projectName}`
+      : `${task.projectName}\u0000${task.platform}\u0000${task.queryLanguage || ""}\u0000${task.storefront || ""}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, {
         key,
-        kind: "rank",
+        kind: isSync ? "github-sync" : "rank",
         projectName: task.projectName,
         productName: task.productName,
         platform: task.platform,
@@ -3057,11 +3141,13 @@ function groupTasks(tasks: any[]): any[] {
         nextRunAt: task.nextRunAt,
         firstRunAt: task.firstRunAt,
         executionCount: task.executionCount || 0,
+        lastDurationMs: task.lastDurationMs,
       });
     } else {
       existing.tasks.push(task);
       if (task.lastRunAt && (!existing.lastRunAt || new Date(task.lastRunAt) > new Date(existing.lastRunAt))) {
         existing.lastRunAt = task.lastRunAt;
+        existing.lastDurationMs = task.lastDurationMs;
       }
       if (new Date(task.nextRunAt) < new Date(existing.nextRunAt)) {
         existing.nextRunAt = task.nextRunAt;
@@ -3077,7 +3163,7 @@ function groupTasks(tasks: any[]): any[] {
 
 function TaskSection({ title, groups }: { title: string; groups: any[] }) {
   const [page, setPage] = useState(0);
-  const pageSize = 8;
+  const pageSize = 20;
   useEffect(() => {
     setPage(0);
   }, [title, groups.length]);
@@ -3092,42 +3178,50 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
       </div>
       <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
         {visible.map((group) => (
-          <div key={group.key} className="px-5 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-2 min-w-0">
-                <span
-                  className="mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
-                >
-                  排名
-                </span>
-                <div className="min-w-0">
-                  <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                    {`${group.projectName} · ${
-                      group.platform === "ios"
-                        ? "iOS"
-                        : group.platform === "macos"
-                          ? "macOS"
-                          : "未识别"
-                    } · ${languageLabel(group.queryLanguage || "")} · ${
-                      storefrontDisplayName(group.storefront || "")
-                    } · ${group.tasks.length} 个关键词`}
-                  </div>
+          <div
+            key={group.key}
+            className="grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,8.5rem))] items-center gap-4 px-5 py-3"
+          >
+            <div className="flex items-start gap-2 min-w-0">
+              <span
+                className={cn(
+                  "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
+                  group.kind === "github-sync"
+                    ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                    : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+                )}
+              >
+                {group.kind === "github-sync" ? "GitHub 同步" : "排名"}
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                  {group.kind === "github-sync"
+                    ? `${group.projectName} · GitHub 同步`
+                    : `${group.projectName} · ${
+                        group.platform === "ios"
+                          ? "iOS"
+                          : group.platform === "macos"
+                            ? "macOS"
+                            : "未识别"
+                      } · ${languageLabel(group.queryLanguage || "")} · ${
+                        storefrontDisplayName(group.storefront || "")
+                      } · ${group.tasks.length} 个关键词`}
                 </div>
               </div>
             </div>
-
-            <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
-              <TaskMeta
-                label="上次执行"
-                value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
-              />
-              <TaskMeta label="执行次数" value={`${group.executionCount} 次`} />
-              <TaskMeta
-                label="首次执行"
-                value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
-              />
-            </div>
+            <TaskMeta
+              label="首次执行"
+              value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
+            />
+            <TaskMeta
+              label="执行时间"
+              value={formatDurationMs(group.lastDurationMs)}
+            />
+            <TaskMeta
+              label="上次执行"
+              value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+            />
+            <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
           </div>
         ))}
       </div>
@@ -3137,6 +3231,13 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             {page + 1} / {totalPages}
           </span>
           <div className="flex gap-2">
+            <button
+              onClick={() => setPage(0)}
+              disabled={page === 0}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40"
+            >
+              第一页
+            </button>
             <button
               onClick={() => setPage((value) => Math.max(0, value - 1))}
               disabled={page === 0}
@@ -3151,6 +3252,13 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             >
               下一页
             </button>
+            <button
+              onClick={() => setPage(totalPages - 1)}
+              disabled={page >= totalPages - 1}
+              className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40"
+            >
+              最后一页
+            </button>
           </div>
         </div>
       )}
@@ -3158,17 +3266,34 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
   );
 }
 
-function TaskMeta({ label, value }: { label: string; value: string }) {
+function TaskMeta({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
   return (
-    <div className="min-w-0">
-      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-0.5">{label}</div>
-      <div className="text-zinc-600 dark:text-zinc-300 truncate">{value}</div>
+    <div className={cn("min-w-0 text-right", className)}>
+      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{label}</div>
+      <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">{value}</div>
     </div>
   );
 }
 
-function PlaceholderPage({ title, desc }: { title: string; desc: string }) {
+function PlaceholderPage({
+  title,
+  desc,
+  credentialBadges = [],
+}: {
+  title: string;
+  desc: string;
+  credentialBadges?: ("github" | "asc")[];
+}) {
   const { projects, currentProjectId } = useProject();
+  const project = projects.find((p) => p.id === currentProjectId) || null;
   if (!projects.some((p) => p.id === currentProjectId)) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示数据。" />;
   }
@@ -3176,6 +3301,22 @@ function PlaceholderPage({ title, desc }: { title: string; desc: string }) {
     <div className="p-10 max-w-6xl mx-auto">
       <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">{title}</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-8">{desc}</p>
+      {project && credentialBadges.length > 0 && (
+        <div className="flex items-center gap-1.5 -mt-4 mb-8">
+          {credentialBadges.map((kind) => (
+            <CredentialBadge
+              key={kind}
+              kind={kind}
+              enabled={
+                kind === "github"
+                  ? Boolean(project.hasGithubToken)
+                  : Boolean(project.hasAscKey)
+              }
+              projectId={project.id}
+            />
+          ))}
+        </div>
+      )}
       <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
         该界面将在 Phase A 后续步骤实现
       </div>
@@ -3467,6 +3608,7 @@ function KeywordsPage() {
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
+  const [runningDue, setRunningDue] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const urlKeyword = searchParams.get("keyword") || "";
   const urlLang = searchParams.get("lang") || "";
@@ -3494,6 +3636,24 @@ function KeywordsPage() {
       window.clearInterval(timer);
     };
   }, []);
+
+  const handleRunDue = async () => {
+    if (runningDue) return;
+    setRunningDue(true);
+    try {
+      await (window as any).appilot?.scheduler?.runDue();
+    } catch {
+      // The periodic status refresh will still surface the scheduler state.
+    } finally {
+      setRunningDue(false);
+      try {
+        const status = await (window as any).appilot?.scheduler?.status();
+        setSchedulerStatus(status || null);
+      } catch {
+        // Keep the last known status.
+      }
+    }
+  };
 
   useEffect(() => {
     const off = (window as any).appilot?.projects?.onKeywordProgress?.((progress: any) => {
@@ -4410,16 +4570,22 @@ function KeywordsPage() {
                       {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
                       {schedulerStatus.nextDueAt
                         ? new Date(schedulerStatus.nextDueAt).getTime() <= Date.now()
-                          ? " · 已到期"
+                          ? " · 待执行"
                           : ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
                         : ""}
                     </span>
                     <button
-                      onClick={() => (window as any).appilot?.scheduler?.runDue()}
-                      className="text-amber-600 dark:text-amber-400 hover:underline"
-                      title="立即执行已到期的采集任务"
+                      onClick={() => void handleRunDue()}
+                      disabled={runningDue}
+                      className={cn(
+                        "transition-colors",
+                        runningDue
+                          ? "text-zinc-400 dark:text-zinc-500 cursor-wait"
+                          : "text-amber-600 dark:text-amber-400 hover:underline",
+                      )}
+                      title={runningDue ? "正在执行待处理任务…" : "立即执行待处理任务"}
                     >
-                      立即执行
+                      {runningDue ? "执行中…" : "立即执行"}
                     </button>
                   </span>
                 )}
@@ -4926,8 +5092,8 @@ function ProjectSettingsPage() {
           <div className="p-5 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                全局凭据自动适用于本项目；这里填写的内容仅覆盖本项目，未填写的项继续使用全局。
-                清除本项目凭据后回退全局。
+                全局凭据自动适用于本项目；这里仅编辑本项目自己的凭据，未配置时显示空表单，
+                不会展示或改动全局值。清除本项目凭据后回退全局。
               </p>
               <button
                 type="button"
@@ -4949,14 +5115,14 @@ function ProjectSettingsPage() {
   );
 }
 
-function GithubIcon() {
+function GithubIcon({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 16 16"
       width="16"
       height="16"
       fill="currentColor"
-      className="text-zinc-700 dark:text-zinc-300 shrink-0"
+      className={cn("text-zinc-700 dark:text-zinc-300 shrink-0", className)}
       aria-hidden="true"
     >
       <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
@@ -4964,14 +5130,14 @@ function GithubIcon() {
   );
 }
 
-function AppleIcon() {
+function AppleIcon({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
       width="16"
       height="16"
       fill="currentColor"
-      className="text-zinc-700 dark:text-zinc-300 shrink-0"
+      className={cn("text-zinc-700 dark:text-zinc-300 shrink-0", className)}
       aria-hidden="true"
     >
       <path d="M17.05 12.53c-.02-2.36 1.93-3.49 2.02-3.55-1.1-1.61-2.81-1.83-3.42-1.85-1.45-.15-2.83.86-3.57.86-.74 0-1.88-.84-3.09-.82-1.59.02-3.06.92-3.88 2.35-1.65 2.87-.42 7.12 1.19 9.45.79 1.14 1.73 2.42 2.96 2.37 1.19-.05 1.64-.77 3.08-.77s1.84.77 3.11.74c1.28-.02 2.1-1.16 2.88-2.3.91-1.33 1.28-2.62 1.3-2.68-.03-.01-2.5-.96-2.52-3.84zM14.45 5.41c.65-.79 1.09-1.89.97-2.99-.94.04-2.08.63-2.75 1.42-.6.7-1.13 1.83-.99 2.91 1.05.08 2.12-.54 2.77-1.34z" />
@@ -4981,6 +5147,50 @@ function AppleIcon() {
 
 const GITHUB_CAPABILITIES = ["私有/草案 release 公告", "真实 PR 素材", "远程仓库数据"];
 const ASC_CAPABILITIES = ["版本/审核状态回读", "审核意见", "评论洞察", "销量/下载分析"];
+
+const CREDENTIAL_BADGE_DETAIL: Record<"github" | "asc", string> = {
+  github: "私有/草案 release 公告、真实 PR 素材、远程仓库数据",
+  asc: "版本/审核状态回读、审核意见、评论洞察、销量/下载分析",
+};
+
+/** Small chip marking a feature that is enhanced by a saved credential.
+ *  Configured → solid; missing → dashed, clickable to jump to project settings. */
+function CredentialBadge({
+  kind,
+  enabled,
+  projectId,
+}: {
+  kind: "github" | "asc";
+  enabled: boolean;
+  projectId: string;
+}) {
+  const navigate = useNavigate();
+  const Icon = kind === "github" ? GithubIcon : AppleIcon;
+  const label = kind === "github" ? "GitHub" : "ASC";
+  const detail = CREDENTIAL_BADGE_DETAIL[kind];
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (!enabled) navigate(`/projects/${projectId}/settings`);
+      }}
+      title={
+        enabled
+          ? `已配置，用于：${detail}`
+          : `未配置，可解锁：${detail}（点击前往项目设置）`
+      }
+      className={cn(
+        "inline-flex items-center gap-1 px-2 h-6 rounded-full text-[11px] transition-colors",
+        enabled
+          ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200 dark:ring-zinc-700"
+          : "border border-dashed border-zinc-300 dark:border-zinc-700 text-zinc-400 dark:text-zinc-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400",
+      )}
+    >
+      <Icon className="w-3.5 h-3.5 text-current" />
+      {label}
+    </button>
+  );
+}
 
 function CredentialsForm({
   projectId,
@@ -5017,6 +5227,11 @@ function CredentialsForm({
     asc: false,
   });
 
+  // Project scope edits only the project's own override credentials. It must
+  // NOT show effective (global ?? override) values, otherwise the override
+  // form looks like it is replacing the global credentials.
+  const isProject = scope === "project";
+
   useEffect(() => {
     refreshCreds().catch(() => setCreds(null));
   }, [projectId]);
@@ -5024,31 +5239,69 @@ function CredentialsForm({
   // Re-enter mode always shows the saved values: fill empty fields whenever
   // credentials arrive/refresh, preserving anything the user typed.
   useEffect(() => {
-    if (!editing.github || !creds?.githubTokenMasked) return;
-    setGithubToken((current) => current || creds.githubTokenMasked || "");
-    setGithubExpiresAt((current) => current || creds.githubExpiresAt || "");
-  }, [editing.github, creds?.githubTokenMasked]);
+    if (!editing.github || !creds) return;
+    const masked = isProject ? creds.projectGithubTokenMasked : creds.githubTokenMasked;
+    if (!masked) return;
+    setGithubToken((current) => current || masked || "");
+    setGithubExpiresAt(
+      (current) =>
+        current ||
+        (isProject ? creds.projectGithubExpiresAt : creds.githubExpiresAt) ||
+        "",
+    );
+  }, [editing.github, creds?.githubTokenMasked, creds?.projectGithubTokenMasked, isProject]);
 
   useEffect(() => {
     if (!editing.asc || !creds) return;
-    setAscIssuerId((current) => current || creds.ascIssuerId || "");
-    setAscKeyId((current) => current || creds.ascKeyId || "");
-    setAscKeyPath((current) => current || creds.ascPrivateKeyPath || "");
-  }, [editing.asc, creds]);
+    setAscIssuerId(
+      (current) => current || (isProject ? creds.projectAscIssuerId : creds.ascIssuerId) || "",
+    );
+    setAscKeyId(
+      (current) => current || (isProject ? creds.projectAscKeyId : creds.ascKeyId) || "",
+    );
+    setAscKeyPath(
+      (current) =>
+        current || (isProject ? creds.projectAscPrivateKeyPath : creds.ascPrivateKeyPath) || "",
+    );
+  }, [editing.asc, creds, isProject]);
 
   const refreshCreds = async () => {
     const next = await (window as any).appilot.projects.getCredentials(projectId);
     setCreds(next);
   };
 
-  const githubUnlocked = Boolean(creds?.hasGithubToken);
-  const ascUnlocked = Boolean(creds?.hasAscKey);
-  const githubSource =
-    creds?.githubSource === "project" ? "项目覆盖" : creds?.githubSource === "global" ? "全局" : null;
-  const ascSource =
-    creds?.ascSource === "project" ? "项目覆盖" : creds?.ascSource === "global" ? "全局" : null;
+  const githubUnlocked = isProject
+    ? Boolean(creds?.projectHasGithubToken)
+    : Boolean(creds?.hasGithubToken);
+  const ascUnlocked = isProject
+    ? Boolean(creds?.projectHasAscKey)
+    : Boolean(creds?.hasAscKey);
+  const githubSource = isProject
+    ? creds?.projectHasGithubToken
+      ? "项目覆盖"
+      : null
+    : creds?.githubSource === "project"
+      ? "项目覆盖"
+      : creds?.githubSource === "global"
+        ? "全局"
+        : null;
+  const ascSource = isProject
+    ? creds?.projectHasAscKey
+      ? "项目覆盖"
+      : null
+    : creds?.ascSource === "project"
+      ? "项目覆盖"
+      : creds?.ascSource === "global"
+        ? "全局"
+        : null;
+  const savedAscKeyPath = isProject
+    ? creds?.projectAscPrivateKeyPath
+    : creds?.ascPrivateKeyPath;
   const githubExpiryWarning = (() => {
-    const date = githubExpiresAt || creds?.githubExpiresAt || "";
+    const date =
+      githubExpiresAt ||
+      (isProject ? creds?.projectGithubExpiresAt : creds?.githubExpiresAt) ||
+      "";
     if (!date) return null;
     const days = Math.ceil(
       (new Date(`${date}T00:00:00`).getTime() - Date.now()) / 86_400_000,
@@ -5068,7 +5321,9 @@ function CredentialsForm({
     setSaveError(null);
     try {
       const githubValue =
-        kind === "github" && githubToken === creds?.githubTokenMasked
+        kind === "github" &&
+        githubToken ===
+          (isProject ? creds?.projectGithubTokenMasked : creds?.githubTokenMasked)
           ? undefined
           : githubToken;
       const r =
@@ -5437,8 +5692,12 @@ function CredentialsForm({
               type="button"
               onClick={() => {
                 setEditing((prev) => ({ ...prev, github: true }));
-                setGithubToken(creds?.githubTokenMasked || "");
-                setGithubExpiresAt(creds?.githubExpiresAt || "");
+                setGithubToken(
+                  (isProject ? creds?.projectGithubTokenMasked : creds?.githubTokenMasked) || "",
+                );
+                setGithubExpiresAt(
+                  (isProject ? creds?.projectGithubExpiresAt : creds?.githubExpiresAt) || "",
+                );
                 setConfirmClear((prev) => ({ ...prev, github: false }));
               }}
               className={btnSmSecondary}
@@ -5518,12 +5777,12 @@ function CredentialsForm({
             </button>
           </div>
           <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-            {(ascKeyPath || creds?.ascPrivateKeyPath) && (
+            {(ascKeyPath || savedAscKeyPath) && (
               <button
                 type="button"
                 onClick={() =>
                   (window as any).appilot?.revealInFolder?.(
-                    ascKeyPath || creds?.ascPrivateKeyPath,
+                    ascKeyPath || savedAscKeyPath,
                   )
                 }
                 className="text-amber-600 dark:text-amber-400 hover:underline"
@@ -5531,7 +5790,7 @@ function CredentialsForm({
                 在访达中显示
               </button>
             )}
-            {!ascKeyPath && !creds?.ascPrivateKeyPath && "仅支持文件选择，不提供粘贴"}
+            {!ascKeyPath && !savedAscKeyPath && "仅支持文件选择，不提供粘贴"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -5709,9 +5968,15 @@ function CredentialsForm({
               type="button"
               onClick={() => {
                 setEditing((prev) => ({ ...prev, asc: true }));
-                setAscIssuerId(creds?.ascIssuerId || "");
-                setAscKeyId(creds?.ascKeyId || "");
-                setAscKeyPath(creds?.ascPrivateKeyPath || "");
+                setAscIssuerId(
+                  (isProject ? creds?.projectAscIssuerId : creds?.ascIssuerId) || "",
+                );
+                setAscKeyId(
+                  (isProject ? creds?.projectAscKeyId : creds?.ascKeyId) || "",
+                );
+                setAscKeyPath(
+                  (isProject ? creds?.projectAscPrivateKeyPath : creds?.ascPrivateKeyPath) || "",
+                );
                 setConfirmClear((prev) => ({ ...prev, asc: false }));
               }}
               className={btnSmSecondary}
@@ -6057,7 +6322,16 @@ export function App() {
         <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/tasks" element={<TaskCenterPage />} />
         <Route path="/release" element={<ReleasePage />} />
-        <Route path="/reviews" element={<PlaceholderPage title="评论洞察" desc="用户评论聚类与洞察。" />} />
+        <Route
+          path="/reviews"
+          element={
+            <PlaceholderPage
+              title="评论洞察"
+              desc="用户评论聚类与洞察。"
+              credentialBadges={["asc"]}
+            />
+          }
+        />
         <Route path="/trend" element={<PlaceholderPage title="长期效果" desc="增长时间线与你采纳的动作。" />} />
         <Route path="/projects" element={<ManageProjectsPage />} />
         <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />
