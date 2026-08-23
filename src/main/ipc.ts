@@ -989,7 +989,6 @@ export function registerIpcHandlers() {
   );
 
   ipcMain.handle("projects:getCredentials", async (_event, projectId: string) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
     const eff = resolveEffectiveCredentials(s, projectId);
     const global = s.get("globalCredentials") || {};
@@ -1028,9 +1027,9 @@ export function registerIpcHandlers() {
         ascPrivateKeyPath?: string;
       },
     ) => {
-      projectId = assertNonEmptyString(projectId, "projectId");
       const s = await getStore();
       const scope = creds.scope === "project" ? "project" : "global";
+      if (scope === "project") projectId = assertNonEmptyString(projectId, "projectId");
       const setField = (entry: Record<string, string>, key: string, value?: string) => {
         if (value === undefined) return;
         if (value.trim() === "") delete entry[key];
@@ -1062,11 +1061,11 @@ export function registerIpcHandlers() {
   ipcMain.handle(
     "projects:clearCredentials",
     async (_event, projectId: string, scope: "global" | "project") => {
-      projectId = assertNonEmptyString(projectId, "projectId");
       const s = await getStore();
       if (scope === "global") {
         s.set("globalCredentials", {});
       } else {
+        projectId = assertNonEmptyString(projectId, "projectId");
         const all = s.get("projectCredentials") || {};
         delete all[projectId];
         s.set("projectCredentials", all);
