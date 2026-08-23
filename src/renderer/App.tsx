@@ -5326,13 +5326,24 @@ function CredentialsForm({
         {feedback.github && !feedback.github.ok && (
           <p className="text-[11px] text-red-500 dark:text-red-400">{feedback.github.msg}</p>
         )}
-        <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1">
+        <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1.5">
           <p>
-            获取：GitHub → Settings → Developer settings → Personal access tokens 创建；
-            建议 fine-grained（细粒度），权限选择 Contents: Read（release 与仓库内容，GitHub
-            没有独立的 Release 权限，release 归 Contents 管）+ Pull requests: Read（PR 信息，
-            Metadata 自动包含）；读取已发布的 release 只需 Contents: Read；草案 release
-            与一键发布需要对该仓库有写权限（push access），即 Contents: Write。
+            获取：GitHub → Settings → Developer settings → Personal access tokens，
+            建议使用 fine-grained（细粒度）Token。
+          </p>
+          <div>
+            <p>推荐权限：</p>
+            <ul className="list-disc pl-4 space-y-0.5">
+              <li>
+                Contents: Read —— release 与仓库内容（GitHub 没有独立的 Release 权限，
+                release 归 Contents 管）；
+              </li>
+              <li>Pull requests: Read —— PR 信息（Metadata 自动包含）。</li>
+            </ul>
+          </div>
+          <p>
+            读取已发布的 release 只需 Contents: Read；草案 release 与一键发布需要对该仓库有
+            写权限（push access），即 Contents: Write。
           </p>
           <p>
             有效期：GitHub 不提供读取 Token 到期时间的接口；创建时可选择「不过期（No
@@ -5569,12 +5580,21 @@ function CredentialsForm({
         {feedback.asc && !feedback.asc.ok && (
           <p className="text-[11px] text-red-500 dark:text-red-400">{feedback.asc.msg}</p>
         )}
-        <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1">
+        <div className="text-[11px] text-zinc-400 dark:text-zinc-500 space-y-1.5">
+          <p>获取：App Store Connect → 用户和访问 → 集成 → App Store Connect API。</p>
+          <div>
+            <p>字段来源：</p>
+            <ul className="list-disc pl-4 space-y-0.5">
+              <li>Issuer ID —— 该页顶部；</li>
+              <li>Key ID 与 .p8 文件 —— 创建密钥时下载。</li>
+            </ul>
+          </div>
           <p>
-            获取：App Store Connect → 用户和访问 → 集成 → App Store Connect API；
-            Issuer ID 在该页顶部，Key ID 与 .p8 文件在创建密钥时下载。一把 Key 适用于同一账户（Team）
-            下的所有应用；不同账户的应用需单独一把 Key（可在项目设置中覆盖）。
-            创建密钥时**权限请选择 App Manager（App 管理）**，否则无法读取/更新应用元数据。
+            一把 Key 适用于同一账户（Team）下的所有应用；不同账户的应用需单独一把 Key
+            （可在项目设置中覆盖）。
+          </p>
+          <p className="text-amber-600 dark:text-amber-400">
+            创建密钥时权限请选择 App Manager（App 管理），否则无法读取/更新应用元数据。
           </p>
           <p>
             保存时会把 .p8 复制到应用数据目录（副本随凭据保存，原文件移动/删除不影响）；
