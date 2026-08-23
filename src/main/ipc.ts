@@ -197,10 +197,57 @@ function migrateLegacyStoreProducts(project: any): any {
   return { ...project, storeProducts };
 }
 
+/**
+ * Plan A — shared keyword pool: a product's keywords are one set queried
+ * across language × platform × storefront. The pool lives at the project
+ * level; per-platform keyword copies from older data are merged once here.
+ */
+function ensureProjectKeywordPool(project: any): any {
+  if (!project) return project;
+  if (!Array.isArray(project.trackedKeywords)) {
+    const byKey = new Map<string, any>();
+    const order: string[] = [];
+    for (const product of project.storeProducts || []) {
+      for (const keyword of product.trackedKeywords || []) {
+        if (!keyword || !keyword.keyword) continue;
+        const key = `${keyword.language}\u0000${keyword.keyword}`;
+        if (!byKey.has(key)) {
+          byKey.set(key, normalizeTrackedKeyword(keyword));
+          order.push(key);
+        }
+      }
+    }
+    project.trackedKeywords = order.map((key) => byKey.get(key));
+  }
+  if (!Array.isArray(project.submissionKeywords)) {
+    const byLang = new Map<string, string>();
+    for (const product of project.storeProducts || []) {
+      for (const item of product.submissionKeywords || []) {
+        if (item?.language && item.text && !byLang.has(item.language)) {
+          byLang.set(item.language, item.text);
+        }
+      }
+    }
+    project.submissionKeywords = [...byLang].map(([language, text]) => ({ language, text }));
+  }
+  if (!Array.isArray(project.removedKeywords)) {
+    const byKey = new Map<string, any>();
+    for (const product of project.storeProducts || []) {
+      for (const item of product.removedKeywords || []) {
+        if (!item || !item.keyword) continue;
+        const key = `${item.language}\u0000${item.keyword}`;
+        if (!byKey.has(key)) byKey.set(key, item);
+      }
+    }
+    project.removedKeywords = [...byKey.values()];
+  }
+  return project;
+}
+
 function findProductContext(projects: any[], productId: string): { project: any; product: any } | null {
   for (const project of projects) {
     const product = (project.storeProducts || []).find((item: any) => item.id === productId);
-    if (product) return { project, product };
+    if (product) return { project: ensureProjectKeywordPool(project), product };
   }
   return null;
 }
@@ -213,6 +260,12 @@ function updateProductInProjects(projects: any[], productId: string, updater: (p
     storeProducts[index] = updater(storeProducts[index]);
     return { ...project, storeProducts };
   });
+}
+
+function updateProjectInProjects(projects: any[], projectId: string, updater: (project: any) => any): any[] {
+  return projects.map((project) =>
+    project.id === projectId ? { ...project, ...updater(project) } : project,
+  );
 }
 
 function getStoreSubmissionDrafts(project: any): StoreSubmissionDraft[] {
@@ -267,7 +320,7 @@ async function buildProjectProfileFor(
     description: description ?? readRepoDescription(project.localPath),
     readme: readFullReadme(project.localPath),
     storeLinks: product.storeLinks || [],
-    trackedKeywords: product.trackedKeywords || [],
+    trackedKeywords: ensureProjectKeywordPool(project).trackedKeywords || [],
     releaseHistory,
   });
 }
@@ -290,13 +343,14 @@ function synthesizeReleaseFromDraft(draft: any): any {
 }
 
 function submissionReferenceFor(product: any, project: any, language: string) {
+  ensureProjectKeywordPool(project);
   const drafts = getStoreSubmissionDrafts(project)
     .filter((draft) => draft.productId === product.id)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const latest = drafts[0];
   const loc = latest?.localizations?.find((item: any) => item.language === language)
     || latest?.localizations?.[0];
-  const fallbackSubmission = (product.submissionKeywords || []).find(
+  const fallbackSubmission = (project.submissionKeywords || []).find(
     (item: any) => item.language === language,
   );
   return {
@@ -338,9 +392,10 @@ async function generateStoreSubmissionDraft(
 
   const provider = await createAiProvider(store);
 
+  ensureProjectKeywordPool(project);
   const trackedKeywords: string[] = Array.from(
     new Set<string>(
-      (product.trackedKeywords || []).map((keyword: any) => String(keyword?.keyword || "").trim()),
+      (project.trackedKeywords || []).map((keyword: any) => String(keyword?.keyword || "").trim()),
     ),
   ).filter(Boolean);
   const recentRankings = (product.rankSnapshots || []).slice(-20).map((snapshot: any) => ({
@@ -395,7 +450,7 @@ async function generateStoreSubmissionDraft(
       description,
       language,
       trackedKeywords,
-      currentSubmissionKeywords: product.submissionKeywords || [],
+      currentSubmissionKeywords: project.submissionKeywords || [],
       recentRankings,
       release,
       reviewFeedback: existingDraft?.reviewFeedback || "",
@@ -519,55 +574,72 @@ async function resolveRankEntity(product: any): Promise<"software" | "macSoftwar
 
 async function reconcileRankTasks(store: any): Promise<void> {
   const projects: any[] = (store.get("projects") || []).map(migrateLegacyStoreProducts);
+  for (const project of projects) ensureProjectKeywordPool(project);
   store.set("projects", projects);
   const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
   const activeKeys = new Set<string>();
   const desiredTasks = new Map<string, ScheduledTask>();
 
   for (const project of projects) {
+    const pool: any[] = (project.trackedKeywords || []).map((item: any) =>
+      normalizeTrackedKeyword(item),
+    );
+    const poolBefore = JSON.stringify(pool);
     const storeProducts: any[] = project.storeProducts || [];
     for (const product of storeProducts) {
-    if (!product.trackId) continue;
-    if (!isProductPostRelease(project, product)) continue;
-    let tracked: any[] = (product.trackedKeywords || []).map((item: any) => normalizeTrackedKeyword(item));
-    const snapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
-    tracked = tracked.map((keyword) => evaluatePause(enrichKeywordFromSnapshots(keyword, snapshots), snapshots));
-    if (JSON.stringify(tracked) !== JSON.stringify(product.trackedKeywords)) {
-      product.trackedKeywords = tracked;
-    }
-    const supportedLanguages: { code: string }[] = product.supportedLanguages || [];
+      if (!product.trackId) continue;
+      if (!isProductPostRelease(project, product)) continue;
+      const snapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
+      const platformKey = product.platform || "unknown";
 
-    for (const localization of supportedLanguages) {
-      const localizationCode = localization.code;
-      const storefronts = storefrontsForLanguage(localizationCode);
-      const queryLanguages = localizationCode === "en" ? ["en"] : [localizationCode, "en"];
-
-      for (const keyword of tracked) {
-        if (keyword.status === "paused") continue;
-        if (!queryLanguages.includes(keyword.language)) continue;
-        for (const storefront of storefronts) {
-          const id = rankTaskId(product.id, keyword.keyword, keyword.language, storefront);
-          activeKeys.add(id);
-          const previous = existing.find((task) => task.id === id);
-          desiredTasks.set(id, {
-            id,
-            kind: "rank",
-            productId: product.id,
-            keyword: keyword.keyword,
-            queryLanguage: keyword.language,
-            storefront,
-            intervalMinutes: previous?.intervalMinutes || 24 * 60,
-            nextRunAt: previous?.nextRunAt || nextRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), 24 * 60),
-            lastRunAt: previous?.lastRunAt ?? null,
-            firstRunAt: previous?.firstRunAt ?? null,
-            executionCount: previous?.executionCount || 0,
-            lastStatus: previous?.lastStatus,
-            enabled: previous?.enabled ?? true,
-            consecutiveFailures: previous?.consecutiveFailures || 0,
-          });
+      // The shared pool is queried per platform; auto-pause is evaluated per
+      // platform (stored in pausedPlatforms) while a manual pause is global.
+      for (const localization of product.supportedLanguages || []) {
+        const localizationCode = localization.code;
+        const queryLanguages = localizationCode === "en" ? ["en"] : [localizationCode, "en"];
+        for (const keyword of pool) {
+          if (keyword.status === "paused") continue;
+          const evaluated = evaluatePause(
+            enrichKeywordFromSnapshots(keyword, snapshots),
+            snapshots,
+          );
+          const platforms = Array.isArray(keyword.pausedPlatforms)
+            ? keyword.pausedPlatforms
+            : [];
+          if (evaluated.status === "paused" && !platforms.includes(platformKey)) {
+            keyword.pausedPlatforms = [...platforms, platformKey];
+            keyword.pausedReason = evaluated.pausedReason || null;
+          } else if (evaluated.status !== "paused" && platforms.includes(platformKey)) {
+            keyword.pausedPlatforms = platforms.filter((item: string) => item !== platformKey);
+          }
+          if ((keyword.pausedPlatforms || []).includes(platformKey)) continue;
+          if (!queryLanguages.includes(keyword.language)) continue;
+          for (const storefront of storefrontsForLanguage(localizationCode)) {
+            const id = rankTaskId(product.id, keyword.keyword, keyword.language, storefront);
+            activeKeys.add(id);
+            const previous = existing.find((task) => task.id === id);
+            desiredTasks.set(id, {
+              id,
+              kind: "rank",
+              productId: product.id,
+              keyword: keyword.keyword,
+              queryLanguage: keyword.language,
+              storefront,
+              intervalMinutes: previous?.intervalMinutes || 24 * 60,
+              nextRunAt: previous?.nextRunAt || nextRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), 24 * 60),
+              lastRunAt: previous?.lastRunAt ?? null,
+              firstRunAt: previous?.firstRunAt ?? null,
+              executionCount: previous?.executionCount || 0,
+              lastStatus: previous?.lastStatus,
+              enabled: previous?.enabled ?? true,
+              consecutiveFailures: previous?.consecutiveFailures || 0,
+            });
+          }
         }
       }
     }
+    if (JSON.stringify(pool) !== poolBefore) {
+      project.trackedKeywords = pool;
     }
   }
 
@@ -583,6 +655,7 @@ async function reconcileRankTasks(store: any): Promise<void> {
   }
 
   store.set("scheduledTasks", next);
+  store.set("projects", projects);
 }
 
 async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
@@ -601,11 +674,13 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
   }
   if (!project || !product?.trackId) return;
 
-  const isActive = (product.trackedKeywords || []).some(
+  const pool = ensureProjectKeywordPool(project).trackedKeywords || [];
+  const isActive = pool.some(
     (keyword: any) =>
       keyword.keyword === task.keyword &&
       keyword.language === task.queryLanguage &&
-      keyword.status !== "paused",
+      keyword.status !== "paused" &&
+      !(keyword.pausedPlatforms || []).includes(product.platform || "unknown"),
   );
   if (!isActive) {
     task.enabled = false;
@@ -648,9 +723,6 @@ async function runRankTask(store: any, task: RankScheduledTask): Promise<void> {
     };
     const previous = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
     product.rankSnapshots = appendRankSnapshots(previous, [snapshot]);
-    product.trackedKeywords = (product.trackedKeywords || []).map((keyword: any) =>
-      enrichKeywordFromSnapshots(keyword, product.rankSnapshots),
-    );
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
@@ -1058,12 +1130,12 @@ export function registerIpcHandlers() {
     const latest = drafts[0];
     const loc = latest?.localizations?.find((item: any) => item.language === language)
       || latest?.localizations?.[0];
-    const submission = (product.submissionKeywords || []).find((item: any) => item.language === language);
+    const submission = (project.submissionKeywords || []).find((item: any) => item.language === language);
     const submissionKeywords = (submission?.text || "")
       .split(",")
       .map((item: string) => item.trim())
       .filter(Boolean);
-    const existingKeywords = (product.trackedKeywords || [])
+    const existingKeywords = (project.trackedKeywords || [])
       .filter((item: any) => item.language === language)
       .map((item: any) => ({
         keyword: item.keyword,
@@ -1072,7 +1144,7 @@ export function registerIpcHandlers() {
         lastSeenAt: item.lastSeenAt ?? null,
         status: item.status || "active",
       }));
-    const removedKeywords = (product.removedKeywords || [])
+    const removedKeywords = (project.removedKeywords || [])
       .filter((item: any) => item.language === language)
       .map((item: any) => item.keyword);
     const profile = await buildProjectProfileFor(project, product, loc?.subtitle || "");
@@ -1153,8 +1225,7 @@ export function registerIpcHandlers() {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProductInProjects(projects, productId, (product) => ({
-      ...product,
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (_project) => ({
       trackedKeywords: trackedKeywords.map((item: any) => normalizeTrackedKeyword(item)),
     }));
     s.set("projects", nextProjects);
@@ -1167,8 +1238,7 @@ export function registerIpcHandlers() {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProductInProjects(projects, productId, (product) => ({
-      ...product,
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (_project) => ({
       submissionKeywords,
     }));
     s.set("projects", nextProjects);
@@ -1181,14 +1251,14 @@ export function registerIpcHandlers() {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProductInProjects(projects, productId, (product) => {
-      const removedKeyword = (product.trackedKeywords || []).find(
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
+      const removedKeyword = (project.trackedKeywords || []).find(
         (item: any) => item.language === language && item.keyword === keyword,
       );
-      const trackedKeywords = (product.trackedKeywords || []).filter(
+      const trackedKeywords = (project.trackedKeywords || []).filter(
         (item: any) => !(item.language === language && item.keyword === keyword),
       );
-      const removedKeywords = Array.isArray(product.removedKeywords) ? [...product.removedKeywords] : [];
+      const removedKeywords = Array.isArray(project.removedKeywords) ? [...project.removedKeywords] : [];
       if (!removedKeywords.some((item: any) => item.language === language && item.keyword === keyword)) {
         removedKeywords.push({
           language,
@@ -1198,7 +1268,7 @@ export function registerIpcHandlers() {
           removedAt: new Date().toISOString(),
         });
       }
-      return { ...product, trackedKeywords, removedKeywords };
+      return { trackedKeywords, removedKeywords };
     });
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -1210,12 +1280,12 @@ export function registerIpcHandlers() {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProductInProjects(projects, productId, (product) => {
-      const removedItem = (product.removedKeywords || []).find(
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
+      const removedItem = (project.removedKeywords || []).find(
         (item: any) => item.language === language && item.keyword === keyword,
       );
       if (!removedItem) throw new Error("Keyword is not in removed list");
-      const trackedKeywords = [...(product.trackedKeywords || [])];
+      const trackedKeywords = [...(project.trackedKeywords || [])];
       if (!trackedKeywords.some((item: any) => item.language === language && item.keyword === keyword)) {
         trackedKeywords.push({
           language,
@@ -1224,10 +1294,10 @@ export function registerIpcHandlers() {
           translation: removedItem.translation || "",
         });
       }
-      const removedKeywords = (product.removedKeywords || []).filter(
+      const removedKeywords = (project.removedKeywords || []).filter(
         (item: any) => !(item.language === language && item.keyword === keyword),
       );
-      return { ...product, trackedKeywords, removedKeywords };
+      return { trackedKeywords, removedKeywords };
     });
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -1239,16 +1309,26 @@ export function registerIpcHandlers() {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProductInProjects(projects, productId, (product) => {
-      const paused = (product.trackedKeywords || []).find(
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
+      const paused = (project.trackedKeywords || []).find(
         (item: any) => item.language === language && item.keyword === keyword,
       );
-      if (!paused || paused.status !== "paused") throw new Error("Keyword is not paused");
+      if (!paused) throw new Error("Keyword is not paused");
+      const platformKey = context.product.platform || "unknown";
+      const pausedPlatforms = Array.isArray(paused.pausedPlatforms)
+        ? paused.pausedPlatforms.filter((item: string) => item !== platformKey)
+        : [];
+      const manualPause = paused.status === "paused";
       return {
-        ...product,
-        trackedKeywords: (product.trackedKeywords || []).map((item: any) =>
+        trackedKeywords: (project.trackedKeywords || []).map((item: any) =>
           item.language === language && item.keyword === keyword
-            ? { ...item, status: "active", pausedAt: null, pausedReason: null }
+            ? {
+                ...item,
+                status: manualPause ? "active" : item.status,
+                pausedAt: manualPause ? null : item.pausedAt,
+                pausedReason: manualPause || pausedPlatforms.length === 0 ? null : item.pausedReason,
+                pausedPlatforms,
+              }
             : item,
         ),
       };
@@ -1264,9 +1344,8 @@ export function registerIpcHandlers() {
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
     const languageSet = new Set(Array.isArray(languages) ? languages : []);
-    const nextProjects = updateProductInProjects(projects, productId, (product) => ({
-      ...product,
-      removedKeywords: (product.removedKeywords || []).filter(
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => ({
+      removedKeywords: (project.removedKeywords || []).filter(
         (item: any) => !languageSet.has(item.language),
       ),
     }));
@@ -1304,13 +1383,13 @@ export function registerIpcHandlers() {
       description,
       platform: product.platform || "unknown",
       supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
-      trackedKeywords: product.trackedKeywords || [],
+      trackedKeywords: ensureProjectKeywordPool(project).trackedKeywords || [],
       rankSnapshots: product.rankSnapshots || [],
       releaseDraft: releaseResult.latest
         ? { name: releaseResult.latest.name, tag: releaseResult.latest.tag }
         : null,
       submissionDraft,
-      submissionKeywords: product.submissionKeywords || [],
+      submissionKeywords: project.submissionKeywords || [],
       profile,
     });
 
@@ -1358,7 +1437,7 @@ export function registerIpcHandlers() {
     const { project, product } = context;
     if (!product.trackId) throw new Error("缺少 App Store Track ID，请先确认 README 中的商店链接。");
 
-    let keywords: any[] = product.trackedKeywords || [];
+    let keywords: any[] = ensureProjectKeywordPool(project).trackedKeywords || [];
     if (typeof language === "string" && language) {
       const queryLanguages = language === "en" ? ["en"] : [language, "en"];
       keywords = keywords.filter((keyword: any) => queryLanguages.includes(keyword.language));
@@ -1836,7 +1915,7 @@ export function registerIpcHandlers() {
     upsertStoreSubmissionDraft(project, draft);
     const context = findProductContext(projects, draft.productId);
     if (context) {
-      context.product.submissionKeywords = (draft.localizations || []).map((item) => ({
+      ensureProjectKeywordPool(context.project).submissionKeywords = (draft.localizations || []).map((item) => ({
         language: item.language,
         text: item.keywords,
       }));
