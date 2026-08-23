@@ -117,7 +117,7 @@ function importAscKeyFile(
  *  (pure base64 of non-printable bytes) are treated as encrypted. */
 function looksLikeEncryptedBlob(value: string): boolean {
   if (!value || !safeStorage.isEncryptionAvailable()) return false;
-  if (value.length < 32) return false;
+  if (value.length < 16) return false;
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
   let buf: Buffer;
   try {
@@ -125,7 +125,7 @@ function looksLikeEncryptedBlob(value: string): boolean {
   } catch {
     return false;
   }
-  if (buf.length < 24) return false;
+  if (buf.length < 12) return false;
   if (buf.toString("base64") !== value) return false;
   let printable = 0;
   for (const byte of buf) {
@@ -1084,7 +1084,17 @@ export function registerIpcHandlers() {
       const setField = (entry: Record<string, string>, key: string, value?: string) => {
         if (value === undefined) return;
         if (value.trim() === "") delete entry[key];
-        else if (key === "ascPrivateKeyPath") entry[key] = value.trim();
+        // Issuer/Key ID and the .p8 path are identifiers, not secrets; only the
+        // GitHub token needs encryption. (Encrypting a 10-char Key ID produced
+        // base64 under 32 chars, which the legacy decryption heuristic treated
+        // as plaintext and leaked into the JWT `kid`.)
+        else if (
+          key === "ascPrivateKeyPath" ||
+          key === "ascIssuerId" ||
+          key === "ascKeyId"
+        ) {
+          entry[key] = value.trim();
+        }
         else entry[key] = encryptApiKey(value);
       };
       if (scope === "global") {
