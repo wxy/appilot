@@ -1034,6 +1034,10 @@ export function registerIpcHandlers() {
     const eff = resolveEffectiveCredentials(s, projectId);
     const global = s.get("globalCredentials") || {};
     const override = (s.get("projectCredentials") || {})[projectId] || {};
+    const maskSecret = (value: string) => {
+      if (!value) return "";
+      return value.length <= 8 ? "••••••••" : `${value.slice(0, 4)}••••${value.slice(-4)}`;
+    };
     return {
       hasGithubToken: Boolean(eff.githubToken),
       hasAscKey: Boolean(eff.ascIssuerId && eff.ascKeyId && eff.ascPrivateKeyPath),
@@ -1051,6 +1055,9 @@ export function registerIpcHandlers() {
       ascIssuerIdSet: Boolean(eff.ascIssuerId),
       ascKeyIdSet: Boolean(eff.ascKeyId),
       ascPrivateKeyPathSet: Boolean(eff.ascPrivateKeyPath),
+      githubTokenMasked: maskSecret(eff.githubToken),
+      ascIssuerId: eff.ascIssuerId,
+      ascKeyId: eff.ascKeyId,
       ascPrivateKeyPath: eff.ascPrivateKeyPath || "",
     };
   });
