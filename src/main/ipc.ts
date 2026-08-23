@@ -53,10 +53,31 @@ function resolveEffectiveCredentials(s: any, projectId: string) {
   };
   return {
     githubToken: pick("githubToken"),
+    githubExpiresAt: pick("githubExpiresAt"),
     ascIssuerId: pick("ascIssuerId"),
     ascKeyId: pick("ascKeyId"),
     ascPrivateKeyPath: pick("ascPrivateKeyPath"),
   };
+}
+
+/** Convert a DER-encoded ECDSA signature to the raw r||s form JWT ES256 needs. */
+function derToRawJwtSignature(der: Buffer): string {
+  if (der[0] !== 0x30) throw new Error("invalid ECDSA signature");
+  let offset = 2;
+  if (der[offset] !== 0x02) throw new Error("invalid R marker");
+  const rLen = der[offset + 1];
+  const r = der.subarray(offset + 2, offset + 2 + rLen);
+  offset += 2 + rLen;
+  if (der[offset] !== 0x02) throw new Error("invalid S marker");
+  const sLen = der[offset + 1];
+  const s = der.subarray(offset + 2, offset + 2 + sLen);
+  const padded = (buf: Buffer): Buffer => {
+    const slice = buf.length > 32 ? buf.subarray(buf.length - 32) : buf;
+    const out = Buffer.alloc(32);
+    slice.copy(out, 32 - slice.length);
+    return out;
+  };
+  return Buffer.concat([padded(r), padded(s)]).toString("base64url");
 }
 
 function ascJwt(issuerId: string, keyId: string, privateKeyPem: string): string {
@@ -67,7 +88,61 @@ function ascJwt(issuerId: string, keyId: string, privateKeyPem: string): string 
   const unsigned = `${b64(header)}.${b64(payload)}`;
   const signer = crypto.createSign("sha256");
   signer.update(unsigned);
-  return `${unsigned}.${signer.sign(privateKeyPem, "base64url")}`;
+  return `${unsigned}.${derToRawJwtSignature(signer.sign(privateKeyPem))}`;
+}
+
+/** Copy the selected .p8 into app-managed storage so credentials survive the
+ *  original file being moved/deleted. Returns the stored copy path. */
+function importAscKeyFile(
+  sourcePath: string,
+  scope: "global" | "project",
+  projectId: string,
+): string {
+  const src = sourcePath.trim();
+  if (!src) return "";
+  if (!fs.existsSync(src)) throw new Error("无法读取 .p8 私钥文件");
+  const dir = path.join(app.getPath("userData"), "keys");
+  // Already managed by the app (e.g. a stored copy picked during re-enter):
+  // keep that path as-is instead of copying it again.
+  if (path.dirname(src) === dir) return src;
+  fs.mkdirSync(dir, { recursive: true });
+  const tag = scope === "global" ? "global" : projectId || "project";
+  const base = path
+    .basename(src, path.extname(src))
+    .replace(/[^A-Za-z0-9_-]/g, "_");
+  const dest = path.join(dir, `asc-${tag}-${base}.p8`);
+  if (fs.existsSync(dest)) return dest;
+  fs.copyFileSync(src, dest);
+  return dest;
+}
+
+/** Remove app-managed .p8 files that no credential references. */
+function garbageCollectKeys(s: any): void {
+  try {
+    const dir = path.join(app.getPath("userData"), "keys");
+    if (!fs.existsSync(dir)) return;
+    const referenced = new Set<string>();
+    const global: any = s.get("globalCredentials") || {};
+    if (global.ascPrivateKeyPath) referenced.add(path.resolve(global.ascPrivateKeyPath));
+    const overrides: any = s.get("projectCredentials") || {};
+    for (const entry of Object.values(overrides) as any[]) {
+      const keyPath = entry?.ascPrivateKeyPath;
+      if (keyPath) referenced.add(path.resolve(keyPath));
+    }
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.toLowerCase().endsWith(".p8")) continue;
+      const full = path.join(dir, file);
+      if (!referenced.has(path.resolve(full))) {
+        try {
+          fs.unlinkSync(full);
+        } catch {
+          // best effort
+        }
+      }
+    }
+  } catch {
+    // best effort
+  }
 }
 
 /** True when the value looks like an encrypted blob rather than a real key
@@ -76,7 +151,7 @@ function ascJwt(issuerId: string, keyId: string, privateKeyPem: string): string 
  *  (pure base64 of non-printable bytes) are treated as encrypted. */
 function looksLikeEncryptedBlob(value: string): boolean {
   if (!value || !safeStorage.isEncryptionAvailable()) return false;
-  if (value.length < 32) return false;
+  if (value.length < 16) return false;
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
   let buf: Buffer;
   try {
@@ -84,7 +159,7 @@ function looksLikeEncryptedBlob(value: string): boolean {
   } catch {
     return false;
   }
-  if (buf.length < 24) return false;
+  if (buf.length < 12) return false;
   if (buf.toString("base64") !== value) return false;
   let printable = 0;
   for (const byte of buf) {
@@ -993,8 +1068,13 @@ export function registerIpcHandlers() {
     const eff = resolveEffectiveCredentials(s, projectId);
     const global = s.get("globalCredentials") || {};
     const override = (s.get("projectCredentials") || {})[projectId] || {};
+    const maskSecret = (value: string) => {
+      if (!value) return "";
+      return value.length <= 8 ? "••••••••" : `${value.slice(0, 4)}••••${value.slice(-4)}`;
+    };
     return {
       hasGithubToken: Boolean(eff.githubToken),
+      githubExpiresAt: eff.githubExpiresAt || "",
       hasAscKey: Boolean(eff.ascIssuerId && eff.ascKeyId && eff.ascPrivateKeyPath),
       globalGithubTokenSet: Boolean(global.githubToken),
       globalAscKeySet: Boolean(
@@ -1010,6 +1090,9 @@ export function registerIpcHandlers() {
       ascIssuerIdSet: Boolean(eff.ascIssuerId),
       ascKeyIdSet: Boolean(eff.ascKeyId),
       ascPrivateKeyPathSet: Boolean(eff.ascPrivateKeyPath),
+      githubTokenMasked: maskSecret(eff.githubToken),
+      ascIssuerId: eff.ascIssuerId,
+      ascKeyId: eff.ascKeyId,
       ascPrivateKeyPath: eff.ascPrivateKeyPath || "",
     };
   });
@@ -1022,6 +1105,7 @@ export function registerIpcHandlers() {
       creds: {
         scope?: "global" | "project";
         githubToken?: string;
+        githubExpiresAt?: string;
         ascIssuerId?: string;
         ascKeyId?: string;
         ascPrivateKeyPath?: string;
@@ -1030,30 +1114,47 @@ export function registerIpcHandlers() {
       const s = await getStore();
       const scope = creds.scope === "project" ? "project" : "global";
       if (scope === "project") projectId = assertNonEmptyString(projectId, "projectId");
+      const ascCopy = creds.ascPrivateKeyPath
+        ? importAscKeyFile(creds.ascPrivateKeyPath, scope, projectId)
+        : undefined;
       const setField = (entry: Record<string, string>, key: string, value?: string) => {
         if (value === undefined) return;
         if (value.trim() === "") delete entry[key];
-        else if (key === "ascPrivateKeyPath") entry[key] = value.trim();
+        // Issuer/Key ID and the .p8 path are identifiers, not secrets; only the
+        // GitHub token needs encryption. (Encrypting a 10-char Key ID produced
+        // base64 under 32 chars, which the legacy decryption heuristic treated
+        // as plaintext and leaked into the JWT `kid`.)
+        else if (
+          key === "ascPrivateKeyPath" ||
+          key === "ascIssuerId" ||
+          key === "ascKeyId" ||
+          key === "githubExpiresAt"
+        ) {
+          entry[key] = value.trim();
+        }
         else entry[key] = encryptApiKey(value);
       };
       if (scope === "global") {
         const entry: Record<string, string> = { ...(s.get("globalCredentials") || {}) };
         setField(entry, "githubToken", creds.githubToken);
+        setField(entry, "githubExpiresAt", creds.githubExpiresAt);
         setField(entry, "ascIssuerId", creds.ascIssuerId);
         setField(entry, "ascKeyId", creds.ascKeyId);
-        setField(entry, "ascPrivateKeyPath", creds.ascPrivateKeyPath);
+        setField(entry, "ascPrivateKeyPath", ascCopy);
         s.set("globalCredentials", entry);
       } else {
         const all: Record<string, Record<string, string>> = s.get("projectCredentials") || {};
         const entry: Record<string, string> = { ...(all[projectId] || {}) };
         setField(entry, "githubToken", creds.githubToken);
+        setField(entry, "githubExpiresAt", creds.githubExpiresAt);
         setField(entry, "ascIssuerId", creds.ascIssuerId);
         setField(entry, "ascKeyId", creds.ascKeyId);
-        setField(entry, "ascPrivateKeyPath", creds.ascPrivateKeyPath);
+        setField(entry, "ascPrivateKeyPath", ascCopy);
         if (Object.keys(entry).length === 0) delete all[projectId];
         else all[projectId] = entry;
         s.set("projectCredentials", all);
       }
+      garbageCollectKeys(s);
       return true;
     },
   );
@@ -1070,6 +1171,7 @@ export function registerIpcHandlers() {
         delete all[projectId];
         s.set("projectCredentials", all);
       }
+      garbageCollectKeys(s);
       return true;
     },
   );
@@ -1311,6 +1413,13 @@ export function registerIpcHandlers() {
     const removed = all.find((p: any) => p.id === id);
     const projects: any[] = (s.get("projects") || []).filter((p: any) => p.id !== id);
     s.set("projects", projects);
+    // Drop the removed project's credential overrides and reclaim its .p8 copy.
+    const creds = s.get("projectCredentials") || {};
+    if (creds[id]) {
+      delete creds[id];
+      s.set("projectCredentials", creds);
+    }
+    garbageCollectKeys(s);
     // Remove scheduled tasks that belonged to the deleted project's products.
     if (removed) {
       const removedProductIds = new Set(

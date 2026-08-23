@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:getCredentials", projectId),
     saveCredentials: (
       projectId: string,
-      creds: { scope?: "global" | "project"; githubToken?: string; ascIssuerId?: string; ascKeyId?: string; ascPrivateKeyPath?: string },
+      creds: { scope?: "global" | "project"; githubToken?: string; githubExpiresAt?: string; ascIssuerId?: string; ascKeyId?: string; ascPrivateKeyPath?: string },
     ): Promise<boolean> => ipcRenderer.invoke("projects:saveCredentials", projectId, creds),
     clearCredentials: (projectId: string, scope: "global" | "project"): Promise<boolean> =>
       ipcRenderer.invoke("projects:clearCredentials", projectId, scope),
