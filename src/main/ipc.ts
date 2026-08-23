@@ -1,4 +1,4 @@
-import { app, ipcMain, shell, dialog } from "electron";
+import { app, ipcMain, dialog } from "electron";
 import fs from "fs";
 import path from "path";
 import { log } from "../engine/logger";
@@ -15,11 +15,11 @@ import {
   decryptApiKey,
   encryptApiKey,
   garbageCollectKeys,
-  looksLikeEncryptedBlob,
   resolveEffectiveCredentials,
 } from "./credentials";
 import {
   ensureProjectKeywordPool,
+  findProductContext,
   findStoreSubmissionDraft,
   getStoreSubmissionDrafts,
   migrateLegacyStoreProducts,
@@ -27,77 +27,18 @@ import {
 } from "./project-state";
 import {
   githubSyncCacheEntry,
-  isSchedulerTimerActive,
-  schedulerStatusSnapshot,
   schedulerTick,
-  type ScheduledTask,
 } from "./scheduler";
-
-function normalizeLocalPath(localPath: unknown): string {
-  if (typeof localPath !== "string" || !localPath.trim()) return "";
-  try {
-    return path.resolve(localPath);
-  } catch {
-    return localPath.trim();
-  }
-}
-
-/**
- * Single factory for real AI providers (not testConnection): persists every
- * completed request's token usage (incl. cached input) into the aiUsage store
- * so the UI can show total tokens + cache hits instead of billing amounts.
- */
-async function createAiProvider(s: any) {
-  const { AIProvider } = await import("../engine/ai/ai-provider");
-  return new AIProvider({
-    baseURL: s.get("aiProviderUrl"),
-    apiKey: decryptApiKey(s.get("aiApiKey")),
-    model: s.get("aiModel"),
-    onUsage: (usage) => {
-      const prev = s.get("aiUsage") || {};
-      s.set("aiUsage", {
-        calls: (prev.calls || 0) + 1,
-        promptTokens: (prev.promptTokens || 0) + usage.promptTokens,
-        completionTokens: (prev.completionTokens || 0) + usage.completionTokens,
-        cachedTokens: (prev.cachedTokens || 0) + usage.cachedTokens,
-        totalTokens: (prev.totalTokens || 0) + usage.totalTokens,
-        estimatedCost: (prev.estimatedCost || 0) + usage.estimatedCost,
-      });
-    },
-  });
-}
-
-function assertNonEmptyString(value: unknown, name: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${name} is required`);
-  }
-  return value.trim();
-}
-
-function assertStringArray(value: unknown, name: string): string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw new Error(`${name} must be an array of strings`);
-  }
-  return [...new Set(value as string[])];
-}
-
-/** Keep only the most recent project for each local path. */
-function dedupeProjects(projects: any[]): any[] {
-  const byPath = new Map<string, any>();
-  for (const project of projects) {
-    const key = normalizeLocalPath(project?.localPath) || `id:${project?.id ?? Math.random()}`;
-    byPath.set(key, project);
-  }
-  return [...byPath.values()];
-}
-
-function findProductContext(projects: any[], productId: string): { project: any; product: any } | null {
-  for (const project of projects) {
-    const product = (project.storeProducts || []).find((item: any) => item.id === productId);
-    if (product) return { project: ensureProjectKeywordPool(project), product };
-  }
-  return null;
-}
+import { createAiProvider } from "./ai-service";
+import {
+  assertNonEmptyString,
+  assertStringArray,
+  dedupeProjects,
+  normalizeLocalPath,
+} from "./util";
+import { registerAiHandlers } from "./handlers/ai";
+import { registerSchedulerHandlers } from "./handlers/scheduler";
+import { registerShellHandlers } from "./handlers/shell";
 
 function updateProjectInProjects(projects: any[], projectId: string, updater: (project: any) => any): any[] {
   return projects.map((project) =>
@@ -298,32 +239,9 @@ function sanitizeRankSnapshots(project: any): any {
 }
 
 export function registerIpcHandlers() {
-  ipcMain.handle("app:getVersion", () => app.getVersion());
-
-  // ── Shell ──
-  ipcMain.handle("shell:openExternal", (_event, url: string) => {
-    if (!/^https?:\/\//i.test(url)) {
-      throw new Error("Only http/https URLs can be opened");
-    }
-    return shell.openExternal(url);
-  });
-
-  ipcMain.handle("shell:revealInFolder", (_event, localPath: string) => {
-    const normalized = normalizeLocalPath(localPath);
-    if (!normalized || !fs.existsSync(normalized)) return false;
-    shell.showItemInFolder(normalized);
-    return true;
-  });
-
-  // ── Project selector + local repo folder picker (Phase A) ──
-  ipcMain.handle("dialog:selectFolder", async () => {
-    const result = await dialog.showOpenDialog({
-      title: "选择应用源码目录",
-      properties: ["openDirectory"],
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
-  });
+  registerShellHandlers();
+  registerSchedulerHandlers();
+  registerAiHandlers();
 
   ipcMain.handle("projects:list", async () => {
     const s = await getStore();
@@ -1266,133 +1184,6 @@ export function registerIpcHandlers() {
     return latestProjects.find((item: any) => item.id === project.id) || project;
   });
 
-  ipcMain.handle("scheduler:status", async () => {
-    const s = await getStore();
-    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
-    const now = Date.now();
-    const { computeRankSchedulerStatus } = await import("./scheduler-status");
-    return {
-      enabled: isSchedulerTimerActive(),
-      ...computeRankSchedulerStatus(tasks, now),
-    };
-  });
-
-  ipcMain.handle("scheduler:list", async () => {
-    const s = await getStore();
-    const projects: any[] = (s.get("projects") || []).map(migrateLegacyStoreProducts);
-    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
-    const now = Date.now();
-    const executions: any[] = s.get("rankExecutions") || [];
-    const dayMs = 24 * 60 * 60 * 1000;
-    const recent = executions.filter(
-      (entry) => new Date(entry.ts).getTime() >= now - dayMs,
-    );
-    const success = recent.filter((entry) => entry.status === "success");
-    const enabled = tasks.filter((task) => task.enabled);
-    const overdue = enabled.filter(
-      (task) => new Date(task.nextRunAt).getTime() <= now,
-    ).length;
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const executedToday = executions.filter(
-      (entry) => new Date(entry.ts).getTime() >= todayStart.getTime(),
-    ).length;
-    const totalExecuted = tasks.reduce(
-      (sum, task) => sum + (task.executionCount || 0),
-      0,
-    );
-    const avgDurationMs = recent.length
-      ? Math.round(
-          recent.reduce((sum, entry) => sum + (entry.durationMs || 0), 0) /
-            recent.length,
-        )
-      : 0;
-    const successRate = recent.length
-      ? Math.round((success.length / recent.length) * 100)
-      : null;
-    const hitRate = success.length
-      ? Math.round(
-          (success.filter((entry) => entry.rank != null).length / success.length) *
-            100,
-        )
-      : null;
-    const nextDue = enabled
-      .map((task) => new Date(task.nextRunAt).getTime())
-      .sort((a, b) => a - b)[0];
-
-    // 24 hourly buckets of past executions + 24 hourly buckets of scheduled runs.
-    const hourStart = (ts: number) => {
-      const d = new Date(ts);
-      d.setMinutes(0, 0, 0);
-      return d.getTime();
-    };
-    const recentTimeline: { hour: number; success: number; failed: number }[] = [];
-    for (let i = 23; i >= 0; i--) {
-      const start = hourStart(now) - i * 60 * 60 * 1000;
-      const end = start + 60 * 60 * 1000;
-      const inHour = recent.filter((entry) => {
-        const ts = new Date(entry.ts).getTime();
-        return ts >= start && ts < end;
-      });
-      recentTimeline.push({
-        hour: start,
-        success: inHour.filter((entry) => entry.status === "success").length,
-        failed: inHour.filter((entry) => entry.status === "failed").length,
-      });
-    }
-    const upcomingTimeline: { hour: number; count: number }[] = [];
-    for (let i = 0; i < 24; i++) {
-      const start = hourStart(now) + i * 60 * 60 * 1000;
-      const end = start + 60 * 60 * 1000;
-      upcomingTimeline.push({
-        hour: start,
-        count: enabled.filter((task) => {
-          const ts = new Date(task.nextRunAt).getTime();
-          return ts >= start && ts < end;
-        }).length,
-      });
-    }
-
-    return {
-      ...schedulerStatusSnapshot(),
-      overview: {
-        total: tasks.length,
-        pending: enabled.length,
-        overdue,
-        executedToday,
-        totalExecuted,
-        avgDurationMs,
-        densityPerHour: Math.round((recent.length / 24) * 10) / 10,
-        successRate,
-        hitRate,
-        requestBytes: recent.reduce((sum, entry) => sum + (entry.requestBytes || 0), 0),
-        responseBytes: recent.reduce((sum, entry) => sum + (entry.responseBytes || 0), 0),
-        nextDueAt: nextDue ? new Date(nextDue).toISOString() : null,
-      },
-      timeline: { recent: recentTimeline, upcoming: upcomingTimeline },
-      tasks: tasks.map((task) => {
-        const isSync = task.kind === "github-sync";
-        const context: { project: any; product?: any } | null = isSync
-          ? { project: projects.find((item: any) => item.id === task.projectId) || null }
-          : findProductContext(projects, task.productId);
-        const project = context?.project || null;
-        return {
-          ...task,
-          projectName: project?.name || "已删除项目",
-          productName: isSync
-            ? project?.name || ""
-            : context?.product.trackName || context?.project.name || "未知产品",
-          platform: isSync ? null : context?.product.platform || "unknown",
-        };
-      }),
-    };
-  });
-
-  ipcMain.handle("scheduler:runDue", async () => {
-    await schedulerTick();
-    return true;
-  });
-
   ipcMain.handle("release:list", async (_event, projectId: string, force?: boolean) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
@@ -1710,87 +1501,6 @@ export function registerIpcHandlers() {
     }
     s.set("projects", projects);
     return draft;
-  });
-
-  // ── AI Config ──
-  ipcMain.handle("ai:getConfig", async () => {
-    const s = await getStore();
-    const stored = s.get("aiApiKey") || "";
-    const apiKey = decryptApiKey(stored);
-    return {
-      providerUrl: s.get("aiProviderUrl"),
-      apiKey,
-      apiKeyBroken: Boolean(
-        stored &&
-        apiKey &&
-        looksLikeEncryptedBlob(stored) &&
-        looksLikeEncryptedBlob(apiKey),
-      ),
-      model: s.get("aiModel"),
-    };
-  });
-
-  ipcMain.handle("ai:saveConfig", async (_event, config: { providerUrl: string; apiKey: string; model: string }) => {
-    const s = await getStore();
-    s.set("aiProviderUrl", config.providerUrl);
-    s.set("aiModel", config.model);
-    const currentStored = s.get("aiApiKey") || "";
-    const apiKey = config.apiKey || "";
-    if (apiKey && apiKey !== currentStored) {
-      s.set("aiApiKey", encryptApiKey(apiKey));
-    }
-    return true;
-  });
-
-  ipcMain.handle("ai:testConnection", async (_event, config: { providerUrl: string; apiKey: string; model: string }) => {
-    const { AIProvider } = await import("../engine/ai/ai-provider");
-    const provider = new AIProvider({
-      baseURL: config.providerUrl,
-      apiKey: config.apiKey,
-      model: config.model,
-    });
-    return provider.validateConnection();
-  });
-
-  ipcMain.handle("ai:listModels", async (_event, config: { providerUrl: string; apiKey: string }) => {
-    const providerUrl = String(config?.providerUrl || "").trim().replace(/\/+$/, "");
-    if (!providerUrl) return { models: [], error: "缺少供应商 URL" };
-    const apiKey = String(config?.apiKey || "").trim();
-    try {
-      const res = await fetch(`${providerUrl}/models`, {
-        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-      });
-      if (!res.ok) {
-        const detail = await res.text().catch(() => "");
-        return {
-          models: [],
-          error: `模型列表请求失败（${res.status}）：${detail.slice(0, 200) || res.statusText}`,
-        };
-      }
-      const data: any = await res.json();
-      const models = (Array.isArray(data?.data) ? data.data : [])
-        .map((item: any) => String(item?.id || "").trim())
-        .filter(Boolean)
-        .sort((a: string, b: string) => a.localeCompare(b));
-      return { models, error: "" };
-    } catch (err: any) {
-      return { models: [], error: err?.message || String(err) };
-    }
-  });
-
-  // ── Analytics / Stats (Task 0.13/0.14) ──
-  ipcMain.handle("stats:aiUsage", async () => {
-    const s = await getStore();
-    return (
-      s.get("aiUsage") || {
-        calls: 0,
-        promptTokens: 0,
-        completionTokens: 0,
-        cachedTokens: 0,
-        totalTokens: 0,
-        estimatedCost: 0,
-      }
-    );
   });
 
 }

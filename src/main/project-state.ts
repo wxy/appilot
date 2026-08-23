@@ -100,6 +100,19 @@ export function ensureProjectKeywordPool(project: any): any {
   return project;
 }
 
+export function findProductContext(
+  projects: any[],
+  productId: string,
+): { project: any; product: any } | null {
+  for (const project of projects) {
+    const product = (project.storeProducts || []).find(
+      (item: any) => item.id === productId,
+    );
+    if (product) return { project: ensureProjectKeywordPool(project), product };
+  }
+  return null;
+}
+
 export function getStoreSubmissionDrafts(project: any): StoreSubmissionDraft[] {
   return Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [];
 }
