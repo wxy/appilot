@@ -83,6 +83,13 @@ export interface GitHubReleaseInfo {
   viaToken?: boolean;
 }
 
+/** Pre-warmed GitHub API data produced by the background sync task. */
+export interface GithubApiCache {
+  tag: string | null;
+  release: GitHubReleaseInfo | null;
+  pullRequests: ReleasePullRequest[];
+}
+
 const RELEASE_DRAFT_FILENAME = "RELEASE_DRAFT.md";
 const MAX_MATERIAL_COMMITS = 60;
 
@@ -479,7 +486,7 @@ export async function checkForRelease(
   localPath: string,
   lastSeenSha?: string | null,
   githubToken?: string | null,
-  options: { sync?: boolean; force?: boolean } = {},
+  options: { sync?: boolean; force?: boolean; githubCache?: GithubApiCache } = {},
 ): Promise<ReleaseCheckResult> {
   const cacheKey = `${localPath}::${lastSeenSha || ""}`;
   const cacheEnabled = options.sync === true;
@@ -524,12 +531,18 @@ export async function checkForRelease(
   const onMain = await mainLineTags(localPath, allTags, endRefs);
   const releaseTag: GitTagInfo | null = onMain[0] || null;
 
+  const cacheMatches =
+    Boolean(releaseTag) && options.githubCache?.tag === releaseTag?.name;
   const enrichedMaterial = {
     ...material,
-    pullRequests: await fetchPullRequests(localPath, material.pullRequests, githubToken),
-    githubRelease: releaseTag
-      ? await fetchGitHubRelease(localPath, releaseTag.name, githubToken)
-      : material.githubRelease,
+    pullRequests: cacheMatches
+      ? (options.githubCache?.pullRequests ?? material.pullRequests)
+      : await fetchPullRequests(localPath, material.pullRequests, githubToken),
+    githubRelease: cacheMatches
+      ? (options.githubCache?.release ?? material.githubRelease)
+      : releaseTag
+        ? await fetchGitHubRelease(localPath, releaseTag.name, githubToken)
+        : material.githubRelease,
   };
   const release: ReleaseInfo = {
     id: releaseTag ? `tag-${releaseTag.sha}` : `head-${head}`,

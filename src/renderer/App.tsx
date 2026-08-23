@@ -2709,14 +2709,15 @@ function TaskCenterPage() {
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            后台排名采集的调度健康度、执行负载与时间线。
+            后台采集与 GitHub 同步的调度健康度、执行负载与时间线。
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {nowRunning && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              正在执行 {nowRunning.keyword}
+              正在执行{" "}
+              {nowRunning.kind === "github-sync" ? "GitHub 同步" : nowRunning.keyword}
             </span>
           )}
           <span
@@ -3096,12 +3097,15 @@ function TaskTimelineChart({
 function groupTasks(tasks: any[]): any[] {
   const map = new Map<string, any>();
   for (const task of tasks) {
-    const key = `${task.projectName}\u0000${task.platform}\u0000${task.queryLanguage || ""}\u0000${task.storefront || ""}`;
+    const isSync = task.kind === "github-sync";
+    const key = isSync
+      ? `sync\u0000${task.projectName}`
+      : `${task.projectName}\u0000${task.platform}\u0000${task.queryLanguage || ""}\u0000${task.storefront || ""}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, {
         key,
-        kind: "rank",
+        kind: isSync ? "github-sync" : "rank",
         projectName: task.projectName,
         productName: task.productName,
         platform: task.platform,
@@ -3151,21 +3155,28 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-2 min-w-0">
                 <span
-                  className="mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                  className={cn(
+                    "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
+                    group.kind === "github-sync"
+                      ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                      : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+                  )}
                 >
-                  排名
+                  {group.kind === "github-sync" ? "GitHub 同步" : "排名"}
                 </span>
                 <div className="min-w-0">
                   <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                    {`${group.projectName} · ${
-                      group.platform === "ios"
-                        ? "iOS"
-                        : group.platform === "macos"
-                          ? "macOS"
-                          : "未识别"
-                    } · ${languageLabel(group.queryLanguage || "")} · ${
-                      storefrontDisplayName(group.storefront || "")
-                    } · ${group.tasks.length} 个关键词`}
+                    {group.kind === "github-sync"
+                      ? `${group.projectName} · GitHub 同步`
+                      : `${group.projectName} · ${
+                          group.platform === "ios"
+                            ? "iOS"
+                            : group.platform === "macos"
+                              ? "macOS"
+                              : "未识别"
+                        } · ${languageLabel(group.queryLanguage || "")} · ${
+                          storefrontDisplayName(group.storefront || "")
+                        } · ${group.tasks.length} 个关键词`}
                   </div>
                 </div>
               </div>
