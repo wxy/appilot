@@ -5331,7 +5331,8 @@ function CredentialsForm({
             获取：GitHub → Settings → Developer settings → Personal access tokens 创建；
             建议 fine-grained（细粒度），权限选择 Contents: Read（release 与仓库内容，GitHub
             没有独立的 Release 权限，release 归 Contents 管）+ Pull requests: Read（PR 信息，
-            Metadata 自动包含）；如需一键发布再升级 Contents: Read/Write。
+            Metadata 自动包含）；读取已发布的 release 只需 Contents: Read；草案 release
+            与一键发布需要对该仓库有写权限（push access），即 Contents: Write。
           </p>
           <p>
             有效期：GitHub 不提供读取 Token 到期时间的接口；创建时可选择「不过期（No
