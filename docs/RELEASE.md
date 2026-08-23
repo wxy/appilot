@@ -10,15 +10,19 @@
 2. appleid.apple.com → 登录与安全 → App 专用密码，生成一个专用密码。
 3. 记下 Team ID（developer.apple.com → Membership）。
 
+## 凭据存放（安全约定）
+
+- 复制 `.release.env.example` 为 `.release.env`（已在 `.gitignore` 中，切勿提交），
+  填入真实值。`CSC_LINK` 填 `.p12` 的**文件路径**，不要把私钥 base64 写进文件。
+- `.p12` 建议放在项目内 `secrets/` 目录（已被忽略）或项目外的私有目录，
+  并 `chmod 600`。**不要放进 `resources/`**，否则会被打进安装包。
+- `.release.env` 与 `secrets/` 权限也收紧为 `chmod 600`；密码同时在密码管理器留底。
+
 ## 本机打包
 
 ```bash
 npm ci
-export CSC_LINK="$(base64 -i /path/to/DevID.p12)"
-export CSC_KEY_PASSWORD='...'
-export APPLE_ID='you@apple.com'
-export APPLE_APP_SPECIFIC_PASSWORD='xxxx-xxxx-xxxx-xxxx'
-export APPLE_TEAM_ID='ABCDE12345'
+source .release.env
 npm run dist:mac -- -c.mac.notarize=true
 ```
 
