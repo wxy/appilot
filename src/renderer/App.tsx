@@ -868,11 +868,10 @@ function OverviewPage() {
             })}
             <button
               onClick={() => navigate(`/projects/${project.id}/settings`)}
-              title="项目设置"
-              aria-label="项目设置"
-              className="w-7 h-7 inline-flex items-center justify-center rounded-full text-sm text-zinc-400 dark:text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              className="inline-flex items-center px-2.5 h-7 rounded-full border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+              title="仓库路径、GitHub 链接与 API 凭据"
             >
-              ⚙
+              项目设置
             </button>
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
@@ -4750,16 +4749,7 @@ function ProjectSettingsPage() {
   const [infoMsg, setInfoMsg] = useState("");
   const [error, setError] = useState("");
 
-  const [scope, setScope] = useState<"global" | "project">("global");
-  const [githubToken, setGithubToken] = useState("");
-  const [showToken, setShowToken] = useState(false);
-  const [ascIssuerId, setAscIssuerId] = useState("");
-  const [ascKeyId, setAscKeyId] = useState("");
-  const [ascKeyPath, setAscKeyPath] = useState("");
   const [creds, setCreds] = useState<any>(null);
-  const [testing, setTesting] = useState<"github" | "asc" | null>(null);
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [credentialsSaved, setCredentialsSaved] = useState(false);
 
   useEffect(() => {
     if (!project) return;
@@ -4803,85 +4793,6 @@ function ProjectSettingsPage() {
     const next = await (window as any).appilot.projects.getCredentials(project.id);
     setCreds(next);
     return next;
-  };
-
-  const handleSaveCredentials = async () => {
-    setError("");
-    setTestResult(null);
-    setCredentialsSaved(false);
-    try {
-      await (window as any).appilot.projects.saveCredentials(project.id, {
-        scope,
-        githubToken: githubToken || undefined,
-        ascIssuerId: ascIssuerId || undefined,
-        ascKeyId: ascKeyId || undefined,
-        ascPrivateKeyPath: ascKeyPath || undefined,
-      });
-      setCredentialsSaved(true);
-      setGithubToken("");
-      setAscIssuerId("");
-      setAscKeyId("");
-      setAscKeyPath("");
-      await refreshCreds();
-    } catch (e: any) {
-      setError(e.message || "保存凭据失败");
-    }
-  };
-
-  const handleClearCredentials = async () => {
-    setError("");
-    setTestResult(null);
-    try {
-      await (window as any).appilot.projects.clearCredentials(project.id, scope);
-      setGithubToken("");
-      setAscIssuerId("");
-      setAscKeyId("");
-      setAscKeyPath("");
-      await refreshCreds();
-    } catch (e: any) {
-      setError(e.message || "清除失败");
-    }
-  };
-
-  const handleTestGithub = async () => {
-    setTesting("github");
-    setTestResult(null);
-    try {
-      const r = await (window as any).appilot.projects.testGithubToken(
-        project.id,
-        githubToken || undefined,
-      );
-      setTestResult(
-        r.ok
-          ? { ok: true, msg: `连接成功${r.user ? `：${r.user}` : ""}` }
-          : { ok: false, msg: r.error || "连接失败" },
-      );
-    } catch (e: any) {
-      setTestResult({ ok: false, msg: e.message || "连接失败" });
-    } finally {
-      setTesting(null);
-    }
-  };
-
-  const handleTestAsc = async () => {
-    setTesting("asc");
-    setTestResult(null);
-    try {
-      const r = await (window as any).appilot.projects.testAscKey(project.id, {
-        issuerId: ascIssuerId || undefined,
-        keyId: ascKeyId || undefined,
-        privateKeyPath: ascKeyPath || undefined,
-      });
-      setTestResult(
-        r.ok
-          ? { ok: true, msg: "连接成功" }
-          : { ok: false, msg: r.error || "连接失败" },
-      );
-    } catch (e: any) {
-      setTestResult({ ok: false, msg: e.message || "连接失败" });
-    } finally {
-      setTesting(null);
-    }
   };
 
   const githubUnlocked = Boolean(creds?.hasGithubToken);
@@ -4979,189 +4890,44 @@ function ProjectSettingsPage() {
         </div>
       </section>
 
-      {/* 凭据 */}
+      {/* 凭据（本项目覆盖） */}
       <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden mb-6">
-        <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">API 凭据</h3>
-          <div className="inline-flex rounded-lg bg-zinc-100 dark:bg-zinc-800 p-0.5 text-xs">
-            {(["global", "project"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                onClick={() => {
-                  setScope(option);
-                  setTestResult(null);
-                }}
-                className={cn(
-                  "px-2.5 py-1 rounded-md transition-colors",
-                  scope === option
-                    ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
-                    : "text-zinc-500 dark:text-zinc-400",
-                )}
-              >
-                {option === "global" ? "全局" : "本项目"}
-              </button>
-            ))}
-          </div>
+        <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            API 凭据（本项目覆盖）
+          </h3>
         </div>
-        <div className="p-5 space-y-5">
-          <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-            全局凭据适用于所有项目；「本项目」只覆盖当前项目。凭据加密存储，仅用于本地读取增强，不进入 AI 提示词。
-          </p>
-
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🔗</span>
-                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">GitHub Token</span>
-                <CredentialStatus unlocked={githubUnlocked} source={githubSource} />
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <input
-                className={inputLineClass + " font-mono"}
-                type={showToken ? "text" : "password"}
-                value={githubToken}
-                onChange={(e) => setGithubToken(e.target.value)}
-                placeholder={githubUnlocked ? "已配置（输入新值可覆盖）" : "ghp_… 或 github_pat_…"}
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken((value) => !value)}
-                className={btnSmSecondary + " shrink-0"}
-                title={showToken ? "隐藏" : "显示"}
-              >
-                {showToken ? "隐藏" : "显示"}
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void handleTestGithub()}
-                disabled={testing === "asc"}
-                className={btnSmSecondary}
-              >
-                {testing === "github" ? "测试中…" : "测试连接"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveCredentials()}
-                disabled={testing !== null}
-                className={btnSmPrimary}
-              >
-                保存
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleClearCredentials()}
-                className="text-xs text-zinc-400 hover:text-red-500 transition-colors"
-              >
-                清除{scope === "global" ? "全局" : "本项目"}凭据
-              </button>
-            </div>
-            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-              解锁：私有/草案 release 公告、真实 PR 素材、远程仓库数据。
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🛒</span>
-              <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">App Store Connect API Key</span>
-              <CredentialStatus unlocked={ascUnlocked} source={ascSource} />
-            </div>
-            <div>
-              <label className="block text-[11px] text-zinc-400 mb-1">Issuer ID</label>
-              <input
-                className={inputLineClass + " font-mono"}
-                value={ascIssuerId}
-                onChange={(e) => setAscIssuerId(e.target.value)}
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] text-zinc-400 mb-1">Key ID</label>
-              <input
-                className={inputLineClass + " font-mono"}
-                value={ascKeyId}
-                onChange={(e) => setAscKeyId(e.target.value)}
-                placeholder="XXXXXXXXXX"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] text-zinc-400 mb-1">私钥（.p8 文件）</label>
-              <div className="flex gap-2">
-                <input
-                  className={inputLineClass + " font-mono text-xs"}
-                  value={ascKeyPath}
-                  onChange={(e) => setAscKeyPath(e.target.value)}
-                  placeholder="仅通过文件选择"
-                  readOnly
-                />
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const file = await (window as any).appilot?.projects?.selectAscKeyFile();
-                    if (file) setAscKeyPath(file);
-                  }}
-                  className={btnSmSecondary + " shrink-0"}
-                >
-                  选择文件…
-                </button>
-              </div>
-              <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-                {creds?.ascPrivateKeyPath && !ascKeyPath
-                  ? `当前已选：${creds.ascPrivateKeyPath}`
-                  : "仅支持文件选择，不提供粘贴"}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void handleTestAsc()}
-                disabled={testing === "github"}
-                className={btnSmSecondary}
-              >
-                {testing === "asc" ? "测试中…" : "测试连接"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveCredentials()}
-                disabled={testing !== null}
-                className={btnSmPrimary}
-              >
-                保存
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleClearCredentials()}
-                className="text-xs text-zinc-400 hover:text-red-500 transition-colors"
-              >
-                清除{scope === "global" ? "全局" : "本项目"}凭据
-              </button>
-            </div>
-            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-              解锁：版本/审核状态回读、审核意见、评论洞察、销量/下载分析。
-            </p>
-          </div>
-
-          {testResult && (
-            <div
+        <div className="p-5 space-y-4">
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            <span
               className={cn(
-                "p-3 rounded-xl border text-sm",
-                testResult.ok
-                  ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-400"
-                  : "bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-400",
+                "inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium",
+                creds?.globalGithubTokenSet
+                  ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500",
               )}
             >
-              {testResult.msg}
-            </div>
-          )}
-          {credentialsSaved && (
-            <div className="p-3 rounded-xl border text-sm bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-400">
-              凭据已保存
-            </div>
-          )}
+              {creds?.globalGithubTokenSet ? "✓" : "✕"} 全局 GitHub Token
+            </span>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium",
+                creds?.globalAscKeySet
+                  ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500",
+              )}
+            >
+              {creds?.globalAscKeySet ? "✓" : "✕"} 全局 App Store Connect Key
+            </span>
+          </div>
+          <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+            全局凭据在「设置」页配置，自动适用于本项目；如需为本项目指定不同凭据，在下方填写并保存，未填写的项继续使用全局。
+          </p>
+          <CredentialsForm
+            projectId={project.id}
+            scope="project"
+            onChanged={() => void refreshCreds()}
+          />
         </div>
       </section>
 
@@ -5191,6 +4957,288 @@ function ProjectSettingsPage() {
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function CredentialsForm({
+  projectId,
+  scope,
+  onChanged,
+}: {
+  projectId: string;
+  scope: "global" | "project";
+  onChanged?: () => void;
+}) {
+  const [githubToken, setGithubToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [ascIssuerId, setAscIssuerId] = useState("");
+  const [ascKeyId, setAscKeyId] = useState("");
+  const [ascKeyPath, setAscKeyPath] = useState("");
+  const [creds, setCreds] = useState<any>(null);
+  const [testing, setTesting] = useState<"github" | "asc" | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [credentialsSaved, setCredentialsSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (window as any).appilot?.projects
+      ?.getCredentials(projectId)
+      .then(setCreds)
+      .catch(() => setCreds(null));
+  }, [projectId]);
+
+  const githubUnlocked = Boolean(creds?.hasGithubToken);
+  const ascUnlocked = Boolean(creds?.hasAscKey);
+  const githubSource =
+    creds?.githubSource === "project" ? "项目覆盖" : creds?.githubSource === "global" ? "全局" : null;
+  const ascSource =
+    creds?.ascSource === "project" ? "项目覆盖" : creds?.ascSource === "global" ? "全局" : null;
+
+  const handleSave = async () => {
+    setError("");
+    setTestResult(null);
+    setCredentialsSaved(false);
+    try {
+      await (window as any).appilot.projects.saveCredentials(projectId, {
+        scope,
+        githubToken: githubToken || undefined,
+        ascIssuerId: ascIssuerId || undefined,
+        ascKeyId: ascKeyId || undefined,
+        ascPrivateKeyPath: ascKeyPath || undefined,
+      });
+      setCredentialsSaved(true);
+      setGithubToken("");
+      setAscIssuerId("");
+      setAscKeyId("");
+      setAscKeyPath("");
+      const next = await (window as any).appilot.projects.getCredentials(projectId);
+      setCreds(next);
+      onChanged?.();
+    } catch (e: any) {
+      setError(e.message || "保存凭据失败");
+    }
+  };
+
+  const handleClear = async () => {
+    setError("");
+    setTestResult(null);
+    try {
+      await (window as any).appilot.projects.clearCredentials(projectId, scope);
+      setGithubToken("");
+      setAscIssuerId("");
+      setAscKeyId("");
+      setAscKeyPath("");
+      const next = await (window as any).appilot.projects.getCredentials(projectId);
+      setCreds(next);
+      onChanged?.();
+    } catch (e: any) {
+      setError(e.message || "清除失败");
+    }
+  };
+
+  const handleTestGithub = async () => {
+    setTesting("github");
+    setTestResult(null);
+    try {
+      const r = await (window as any).appilot.projects.testGithubToken(
+        projectId,
+        githubToken || undefined,
+      );
+      setTestResult(
+        r.ok
+          ? { ok: true, msg: `连接成功${r.user ? `：${r.user}` : ""}` }
+          : { ok: false, msg: r.error || "连接失败" },
+      );
+    } catch (e: any) {
+      setTestResult({ ok: false, msg: e.message || "连接失败" });
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  const handleTestAsc = async () => {
+    setTesting("asc");
+    setTestResult(null);
+    try {
+      const r = await (window as any).appilot.projects.testAscKey(projectId, {
+        issuerId: ascIssuerId || undefined,
+        keyId: ascKeyId || undefined,
+        privateKeyPath: ascKeyPath || undefined,
+      });
+      setTestResult(
+        r.ok
+          ? { ok: true, msg: "连接成功" }
+          : { ok: false, msg: r.error || "连接失败" },
+      );
+    } catch (e: any) {
+      setTestResult({ ok: false, msg: e.message || "连接失败" });
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      {error && (
+        <div className="p-3 rounded-xl border text-sm bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-400">
+          {error}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🔗</span>
+          <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">GitHub Token</span>
+          <CredentialStatus unlocked={githubUnlocked} source={githubSource} />
+        </div>
+        <div className="flex gap-2">
+          <input
+            className={inputLineClass + " font-mono"}
+            type={showToken ? "text" : "password"}
+            value={githubToken}
+            onChange={(e) => setGithubToken(e.target.value)}
+            placeholder={githubUnlocked ? "已配置（输入新值可覆盖）" : "ghp_… 或 github_pat_…"}
+          />
+          <button
+            type="button"
+            onClick={() => setShowToken((value) => !value)}
+            className={btnSmSecondary + " shrink-0"}
+            title={showToken ? "隐藏" : "显示"}
+          >
+            {showToken ? "隐藏" : "显示"}
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleTestGithub()}
+            disabled={testing === "asc"}
+            className={btnSmSecondary}
+          >
+            {testing === "github" ? "测试中…" : "测试连接"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={testing !== null}
+            className={btnSmPrimary}
+          >
+            保存
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleClear()}
+            className="text-xs text-zinc-400 hover:text-red-500 transition-colors"
+          >
+            清除{scope === "global" ? "全局" : "本项目"}凭据
+          </button>
+        </div>
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          解锁：私有/草案 release 公告、真实 PR 素材、远程仓库数据。
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🛒</span>
+          <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            App Store Connect API Key
+          </span>
+          <CredentialStatus unlocked={ascUnlocked} source={ascSource} />
+        </div>
+        <div>
+          <label className="block text-[11px] text-zinc-400 mb-1">Issuer ID</label>
+          <input
+            className={inputLineClass + " font-mono"}
+            value={ascIssuerId}
+            onChange={(e) => setAscIssuerId(e.target.value)}
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+          />
+        </div>
+        <div>
+          <label className="block text-[11px] text-zinc-400 mb-1">Key ID</label>
+          <input
+            className={inputLineClass + " font-mono"}
+            value={ascKeyId}
+            onChange={(e) => setAscKeyId(e.target.value)}
+            placeholder="XXXXXXXXXX"
+          />
+        </div>
+        <div>
+          <label className="block text-[11px] text-zinc-400 mb-1">私钥（.p8 文件）</label>
+          <div className="flex gap-2">
+            <input
+              className={inputLineClass + " font-mono text-xs"}
+              value={ascKeyPath}
+              onChange={(e) => setAscKeyPath(e.target.value)}
+              placeholder="仅通过文件选择"
+              readOnly
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const file = await (window as any).appilot?.projects?.selectAscKeyFile();
+                if (file) setAscKeyPath(file);
+              }}
+              className={btnSmSecondary + " shrink-0"}
+            >
+              选择文件…
+            </button>
+          </div>
+          <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+            {creds?.ascPrivateKeyPath && !ascKeyPath
+              ? `当前已选：${creds.ascPrivateKeyPath}`
+              : "仅支持文件选择，不提供粘贴"}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleTestAsc()}
+            disabled={testing === "github"}
+            className={btnSmSecondary}
+          >
+            {testing === "asc" ? "测试中…" : "测试连接"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={testing !== null}
+            className={btnSmPrimary}
+          >
+            保存
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleClear()}
+            className="text-xs text-zinc-400 hover:text-red-500 transition-colors"
+          >
+            清除{scope === "global" ? "全局" : "本项目"}凭据
+          </button>
+        </div>
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          解锁：版本/审核状态回读、审核意见、评论洞察、销量/下载分析。
+        </p>
+      </div>
+
+      {testResult && (
+        <div
+          className={cn(
+            "p-3 rounded-xl border text-sm",
+            testResult.ok
+              ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-400"
+              : "bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-400",
+          )}
+        >
+          {testResult.msg}
+        </div>
+      )}
+      {credentialsSaved && (
+        <div className="p-3 rounded-xl border text-sm bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-400">
+          凭据已保存
+        </div>
+      )}
     </div>
   );
 }
@@ -5456,6 +5504,18 @@ function SettingsPage() {
               </span>
             )}
           </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-8">
+        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">全局项目凭据</h3>
+        </div>
+        <div className="p-6">
+          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mb-4">
+            适用于所有项目的 GitHub / App Store Connect 凭据；单个项目可在「项目设置」中用本项目凭据覆盖。凭据加密存储，仅用于本地读取增强，不进入 AI 提示词。
+          </p>
+          <CredentialsForm projectId="" scope="global" />
         </div>
       </div>
 

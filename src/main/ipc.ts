@@ -997,6 +997,10 @@ export function registerIpcHandlers() {
     return {
       hasGithubToken: Boolean(eff.githubToken),
       hasAscKey: Boolean(eff.ascIssuerId && eff.ascKeyId && eff.ascPrivateKeyPath),
+      globalGithubTokenSet: Boolean(global.githubToken),
+      globalAscKeySet: Boolean(
+        global.ascIssuerId && global.ascKeyId && global.ascPrivateKeyPath,
+      ),
       githubSource: override.githubToken ? "project" : global.githubToken ? "global" : null,
       ascSource:
         override.ascIssuerId || override.ascKeyId || override.ascPrivateKeyPath
