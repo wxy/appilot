@@ -1576,9 +1576,11 @@ export function registerIpcHandlers() {
       const s = await getStore();
       const projects: any[] = s.get("projects") || [];
       const project = projects.find((item: any) => item.id === projectId);
-      if (!project) throw new Error("Project not found");
+      if (!project) return null;
       const product = (project.storeProducts || []).find((item: any) => item.id === productId);
-      if (!product) throw new Error("Store product not found");
+      // Navigation can race project/product switches; a missing product is a
+      // transient state, not an error worth surfacing in the handler.
+      if (!product) return null;
 
       const { checkForRelease } = await import("../engine/release-watcher");
       const { readFullReadme, readRepoDescription } = await import("../engine/app-store-discovery");
@@ -1590,7 +1592,7 @@ export function registerIpcHandlers() {
         const saved = findStoreSubmissionDraft(project, productId, releaseTag);
         if (saved) release = synthesizeReleaseFromDraft(saved);
       }
-      if (!release) throw new Error("Release not found");
+      if (!release) return null;
 
       const draftSummaries = getStoreSubmissionDrafts(project)
         .filter((item) => item.productId === productId)

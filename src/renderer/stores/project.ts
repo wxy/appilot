@@ -319,7 +319,7 @@ export const useProject = create<ProjectState>((set, get) => ({
   projects: [],
   currentProjectId: null,
   currentProductId: null,
-  loading: false,
+  loading: true,
 
   load: async () => {
     set({ loading: true });
