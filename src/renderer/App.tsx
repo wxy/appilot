@@ -671,7 +671,7 @@ function OverviewPage() {
 
   const languages = product.supportedLanguages || [];
   const storeLinks = product.storeLinks || [];
-  const trackedKeywords = product.trackedKeywords || [];
+  const trackedKeywords = project.trackedKeywords || [];
   const trackedActive = trackedKeywords.filter((k) => k.status !== "paused");
   const pausedCount = trackedKeywords.length - trackedActive.length;
   const rankSnapshots = product.rankSnapshots || [];
@@ -3515,10 +3515,12 @@ function KeywordsPage() {
 
   const currentLang = activeViewLang;
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
-  const tracked = (product.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
+  const tracked = (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
   const trackedActive = tracked.filter((k) => k.status !== "paused");
-  const pausedForCurrent = tracked.filter((k) => k.status === "paused");
-  const removedForCurrent = (product.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
+  const pausedForCurrent = tracked.filter(
+    (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
+  );
+  const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
   const storefronts = storefrontsForLanguage(currentLang);
   const rankSnapshots = product.rankSnapshots || [];
   const matrixRows = matrixFilterKeywords(trackedActive, currentLang);
@@ -3597,7 +3599,7 @@ function KeywordsPage() {
   );
   const activeProgress = keywordProgress[currentLang];
   const trackedCandidateKeywords = new Set(
-    (product.trackedKeywords || [])
+    (project.trackedKeywords || [])
       .filter((k) => k.language === currentLang)
       .map((k) => k.keyword),
   );
@@ -3730,14 +3732,14 @@ function KeywordsPage() {
 
   const applyGenerations = async (results: { lang: string; gen: KeywordGeneration | null }[]) => {
     const latestProject = useProject.getState().projects.find((p) => p.id === currentProjectId);
-    const latest = latestProject?.storeProducts?.find((item) => item.id === product.id) || product;
+    const latest = latestProject || project;
     let trackedNext = [...(latest.trackedKeywords || [])];
 
     for (const r of results) {
       if (!r.gen) continue;
       const existingKeys = new Set(trackedNext.map((k) => `${k.language}\u0000${k.keyword}`));
       const removedKeys = new Set(
-        (latest.removedKeywords || []).map((item) => `${item.language}\u0000${item.keyword}`),
+        (latestProject?.removedKeywords || []).map((item) => `${item.language}\u0000${item.keyword}`),
       );
       const additions = r.gen.tracking
         .filter((s) => {
@@ -3769,7 +3771,7 @@ function KeywordsPage() {
     const nextCuration: Record<string, any> = {};
     setLoadingLangs(new Set(litLangs));
     for (const lang of litLangs) {
-    const tracked = product.trackedKeywords || [];
+    const tracked = project.trackedKeywords || [];
     const hasKeywords = tracked.some((k) => k.language === lang);
     if (!hasKeywords) {
       const result = await generateOne(lang);
@@ -3833,7 +3835,7 @@ function KeywordsPage() {
       for (const item of data.adds) {
         if (item.choice !== "accept") continue;
         const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
-        const current = latest?.storeProducts?.find((p) => p.id === product.id) || product;
+        const current = latest || project;
         const existingKeys = new Set(
           (current.trackedKeywords || []).map((k) => `${k.language}\u0000${k.keyword}`),
         );
@@ -3909,7 +3911,7 @@ function KeywordsPage() {
   const addAllCandidates = async () => {
     if (candidatesAdding) return;
     const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
-    const current = latest?.storeProducts?.find((p) => p.id === product.id) || product;
+    const current = latest || project;
     const existingKeys = new Set(
       (current.trackedKeywords || []).map((k) => `${k.language}\u0000${k.keyword}`),
     );

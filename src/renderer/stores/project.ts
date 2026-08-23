@@ -13,6 +13,8 @@ export interface KeywordEntry {
   lastSeenAt?: string | null;
   pausedAt?: string | null;
   pausedReason?: string | null;
+  /** Platforms where auto-pause applies (per-platform; manual pause is global). */
+  pausedPlatforms?: string[];
 }
 
 export interface SubmissionKeywordsEntry {
@@ -126,6 +128,7 @@ function normalizeKeyword(item: any): KeywordEntry {
     lastSeenAt: item.lastSeenAt || null,
     pausedAt: item.pausedAt || null,
     pausedReason: item.pausedReason || null,
+    pausedPlatforms: Array.isArray(item.pausedPlatforms) ? item.pausedPlatforms : [],
   };
 }
 
@@ -270,14 +273,57 @@ function summarizeLegacyProject(products: StoreProduct[]): Partial<Project> {
   };
 }
 
+/**
+ * Plan A — shared keyword pool at the project level. Prefer the persisted
+ * project pool; older data only has per-platform copies, merge them once.
+ */
+function ensureRendererKeywordPool(p: any, products: StoreProduct[]): Partial<Project> {
+  if (Array.isArray(p.trackedKeywords)) {
+    return {
+      trackedKeywords: p.trackedKeywords.map(normalizeKeyword),
+      submissionKeywords: Array.isArray(p.submissionKeywords) ? p.submissionKeywords : [],
+      removedKeywords: (p.removedKeywords || []).map(normalizeRemovedKeyword),
+    };
+  }
+  const byKey = new Map<string, KeywordEntry>();
+  for (const product of products) {
+    for (const keyword of product.trackedKeywords || []) {
+      const key = `${keyword.language}\u0000${keyword.keyword}`;
+      if (!byKey.has(key)) byKey.set(key, keyword);
+    }
+  }
+  const subByLang = new Map<string, string>();
+  for (const product of products) {
+    for (const item of product.submissionKeywords || []) {
+      if (item?.language && item.text && !subByLang.has(item.language)) {
+        subByLang.set(item.language, item.text);
+      }
+    }
+  }
+  const removedByKey = new Map<string, RemovedKeywordEntry>();
+  for (const product of products) {
+    for (const item of product.removedKeywords || []) {
+      const key = `${item.language}\u0000${item.keyword}`;
+      if (!removedByKey.has(key)) removedByKey.set(key, item);
+    }
+  }
+  return {
+    trackedKeywords: [...byKey.values()],
+    submissionKeywords: [...subByLang].map(([language, text]) => ({ language, text })),
+    removedKeywords: [...removedByKey.values()],
+  };
+}
+
 function normalizeProject(p: any): Project {
   const products = migrateLegacyProject(p);
+  const pool = ensureRendererKeywordPool(p, products);
   return {
     ...p,
     repo: normalizeRepo(p.repo),
     briefActions: normalizeBriefActions(p.briefActions),
     storeProducts: products,
     ...summarizeLegacyProject(products),
+    ...pool,
   };
 }
 
@@ -379,13 +425,21 @@ export const useProject = create<ProjectState>((set, get) => ({
 
   updateTrackedKeywords: (productId, keywords) => {
     set((s) => ({
-      projects: updateProduct(s.projects, productId, (product) => ({ ...product, trackedKeywords: keywords })),
+      projects: s.projects.map((project) =>
+        project.storeProducts.some((product) => product.id === productId)
+          ? { ...project, trackedKeywords: keywords }
+          : project,
+      ),
     }));
   },
 
   updateSubmissionKeywords: (productId, submission) => {
     set((s) => ({
-      projects: updateProduct(s.projects, productId, (product) => ({ ...product, submissionKeywords: submission })),
+      projects: s.projects.map((project) =>
+        project.storeProducts.some((product) => product.id === productId)
+          ? { ...project, submissionKeywords: submission }
+          : project,
+      ),
     }));
   },
 

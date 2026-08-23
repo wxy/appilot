@@ -20,6 +20,8 @@ export interface TrackedKeywordLike {
   lastSeenAt?: string | null;
   pausedAt?: string | null;
   pausedReason?: string | null;
+  /** Platforms where auto-pause applies (per-platform; manual pause is global). */
+  pausedPlatforms?: string[];
 }
 
 export const PAUSE_CONSECUTIVE_MISSES = 10;
@@ -39,6 +41,7 @@ export function normalizeTrackedKeyword(item: any, now = new Date().toISOString(
     lastSeenAt: item.lastSeenAt || null,
     pausedAt: item.pausedAt || null,
     pausedReason: item.pausedReason || null,
+    pausedPlatforms: Array.isArray(item.pausedPlatforms) ? item.pausedPlatforms : [],
   };
 }
 
