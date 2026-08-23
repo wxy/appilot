@@ -2943,7 +2943,9 @@ function TaskTimelineChart({
   const y = (v: number) => padT + plotH - (v / topTick) * plotH;
   const hourLabel = (ts: number) =>
     `${String(new Date(ts).getHours()).padStart(2, "0")}:00`;
-  const xTickIndexes = [0, 6, 12, 18, 23, 29, 35, 41, 46];
+  // The far-right +23h tick crowds the +24h end label; -23h already marks the
+  // symmetric left edge, so the last future tick is dropped.
+  const xTickIndexes = [0, 6, 12, 18, 23, 29, 35, 41];
   const relLabel = (i: number) =>
     i === 23 ? "现在" : `${i < 23 ? "-" : "+"}${Math.abs(i - 23)}h`;
 
@@ -3161,7 +3163,7 @@ function groupTasks(tasks: any[]): any[] {
 
 function TaskSection({ title, groups }: { title: string; groups: any[] }) {
   const [page, setPage] = useState(0);
-  const pageSize = 8;
+  const pageSize = 20;
   useEffect(() => {
     setPage(0);
   }, [title, groups.length]);
@@ -3176,58 +3178,50 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
       </div>
       <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
         {visible.map((group) => (
-          <div key={group.key} className="px-5 py-3">
-            <div className="flex items-center gap-4">
-              <div className="flex items-start gap-2 min-w-0 flex-1">
-                <span
-                  className={cn(
-                    "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
-                    group.kind === "github-sync"
-                      ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
-                      : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-                  )}
-                >
-                  {group.kind === "github-sync" ? "GitHub 同步" : "排名"}
-                </span>
-                <div className="min-w-0">
-                  <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                    {group.kind === "github-sync"
-                      ? `${group.projectName} · GitHub 同步`
-                      : `${group.projectName} · ${
-                          group.platform === "ios"
-                            ? "iOS"
-                            : group.platform === "macos"
-                              ? "macOS"
-                              : "未识别"
-                        } · ${languageLabel(group.queryLanguage || "")} · ${
-                          storefrontDisplayName(group.storefront || "")
-                        } · ${group.tasks.length} 个关键词`}
-                  </div>
+          <div
+            key={group.key}
+            className="grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,8.5rem))] items-center gap-4 px-5 py-3"
+          >
+            <div className="flex items-start gap-2 min-w-0">
+              <span
+                className={cn(
+                  "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
+                  group.kind === "github-sync"
+                    ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                    : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+                )}
+              >
+                {group.kind === "github-sync" ? "GitHub 同步" : "排名"}
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                  {group.kind === "github-sync"
+                    ? `${group.projectName} · GitHub 同步`
+                    : `${group.projectName} · ${
+                        group.platform === "ios"
+                          ? "iOS"
+                          : group.platform === "macos"
+                            ? "macOS"
+                            : "未识别"
+                      } · ${languageLabel(group.queryLanguage || "")} · ${
+                        storefrontDisplayName(group.storefront || "")
+                      } · ${group.tasks.length} 个关键词`}
                 </div>
               </div>
-              <div className="shrink-0 flex items-center gap-2">
-                <TaskMeta
-                  label="首次执行"
-                  value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
-                  className="w-24"
-                />
-                <TaskMeta
-                  label="执行时间"
-                  value={formatDurationMs(group.lastDurationMs)}
-                  className="w-20"
-                />
-                <TaskMeta
-                  label="上次执行"
-                  value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
-                  className="w-24"
-                />
-                <TaskMeta
-                  label="下次执行"
-                  value={formatHumanTime(group.nextRunAt)}
-                  className="w-24"
-                />
-              </div>
             </div>
+            <TaskMeta
+              label="首次执行"
+              value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
+            />
+            <TaskMeta
+              label="执行时间"
+              value={formatDurationMs(group.lastDurationMs)}
+            />
+            <TaskMeta
+              label="上次执行"
+              value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+            />
+            <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
           </div>
         ))}
       </div>
@@ -3282,15 +3276,10 @@ function TaskMeta({
   className?: string;
 }) {
   return (
-    <span
-      className={cn(
-        "inline-flex items-baseline justify-end gap-1 whitespace-nowrap",
-        className,
-      )}
-    >
-      <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{label}</span>
-      <span className="text-xs text-zinc-600 dark:text-zinc-300">{value}</span>
-    </span>
+    <div className={cn("min-w-0 text-right", className)}>
+      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{label}</div>
+      <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">{value}</div>
+    </div>
   );
 }
 
