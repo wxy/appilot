@@ -11,6 +11,11 @@ export interface ChangeSummaryItem {
   title: string;
   type: ChangeType;
   refs: string[];
+  /** True when this item maps to a GitHub pull request (not a standalone commit). */
+  github?: boolean;
+  prNumber?: number;
+  /** PR page URL when the PR info was fetched from GitHub. */
+  prUrl?: string | null;
   /** Underlying commits (sha / date / body) for on-demand detail inspection. */
   commits: { sha: string; date: string; body: string }[];
 }
@@ -41,12 +46,22 @@ function parseType(subject: string): { type: ChangeType; title: string } {
 
 /** Group commits into a coverage list: PRs aggregate their commits; sort feature→chore. */
 export function summarizeChanges(
-  material: { commits: { sha: string; subject: string; body: string; date: string }[] } | null | undefined,
+  material: {
+    commits: { sha: string; subject: string; body: string; date: string }[];
+    pullRequests?: { number: number; title: string | null; url?: string | null }[];
+  } | null | undefined,
 ): ChangeSummaryItem[] {
   const commits = material?.commits || [];
+  const pullRequests = material?.pullRequests || [];
   const prGroups = new Map<
     number,
-    { title: string; type: ChangeType; refs: string[]; commits: ChangeSummaryItem["commits"] }
+    {
+      title: string;
+      type: ChangeType;
+      refs: string[];
+      prUrl?: string | null;
+      commits: ChangeSummaryItem["commits"];
+    }
   >();
   const standalone: { sha: string; subject: string; date: string; body: string }[] = [];
 
@@ -56,18 +71,20 @@ export function summarizeChanges(
       const number = Number(prMatch[1]);
       const cleaned = commit.subject.replace(/\s*\(?#\d+\)?\s*$/, "").trim();
       const parsed = parseType(cleaned);
+      const fetched = pullRequests.find((pr) => pr.number === number);
       const existing = prGroups.get(number);
       if (existing) {
         if (existing.type === "chore" && parsed.type !== "chore") {
           existing.type = parsed.type;
-          existing.title = parsed.title;
+          existing.title = fetched?.title || parsed.title;
         }
         existing.refs.push(commit.sha);
         existing.commits.push({ sha: commit.sha, date: commit.date, body: commit.body });
       } else {
         prGroups.set(number, {
-          title: parsed.title || `PR #${number}`,
+          title: fetched?.title || parsed.title || `PR #${number}`,
           type: parsed.type,
+          prUrl: fetched?.url ?? null,
           refs: [commit.sha],
           commits: [{ sha: commit.sha, date: commit.date, body: commit.body }],
         });
@@ -89,6 +106,9 @@ export function summarizeChanges(
       title: group.title,
       type: group.type,
       refs: [`#${number}`, ...group.refs],
+      github: true,
+      prNumber: number,
+      prUrl: group.prUrl,
       commits: group.commits,
     });
   }

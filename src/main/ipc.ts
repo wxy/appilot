@@ -1999,7 +1999,7 @@ export function registerIpcHandlers() {
     return true;
   });
 
-  ipcMain.handle("release:list", async (_event, projectId: string) => {
+  ipcMain.handle("release:list", async (_event, projectId: string, force?: boolean) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
@@ -2011,7 +2011,7 @@ export function registerIpcHandlers() {
       project.localPath,
       project.lastReleaseSha || null,
       resolveEffectiveCredentials(s, project.id).githubToken,
-      { sync: true },
+      { sync: true, force: Boolean(force) },
     );
     return {
       releases: result.releases.map((release) => ({

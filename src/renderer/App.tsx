@@ -1566,12 +1566,12 @@ function ReleasePage() {
     return () => off?.();
   }, []);
 
-  const loadReleases = async () => {
+  const loadReleases = async (force = false) => {
     if (!project?.id) return;
     setChecking(true);
     setError("");
     try {
-      const next = await (window as any).appilot.release.list(project.id);
+      const next = await (window as any).appilot.release.list(project.id, force);
       setReleases(next.releases || []);
       setActive((prev: any) => {
         if (prev?.draft?.releaseTag && next.releases?.some((item: any) => item.tag === prev.draft.releaseTag)) {
@@ -2024,7 +2024,7 @@ function ReleasePage() {
               ))}
             </div>
           )}
-          <button onClick={loadReleases} disabled={checking} className={btnPrimary}>
+          <button onClick={() => void loadReleases(true)} disabled={checking} className={btnPrimary}>
             {checking ? "检查中..." : "检查发布"}
           </button>
         </div>
@@ -2151,6 +2151,27 @@ function ReleasePage() {
                                     {subLine}
                                   </span>
                                 </span>
+                                {item.github && (
+                                  item.prUrl ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        (window as any).appilot?.openExternal?.(item.prUrl)
+                                      }
+                                      className="shrink-0 inline-flex items-center text-zinc-400 dark:text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                                      title={`打开 GitHub PR #${item.prNumber || ""}`}
+                                    >
+                                      <GithubIcon className="w-3 h-3 text-current" />
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className="shrink-0 inline-flex items-center text-zinc-400 dark:text-zinc-500"
+                                      title={`GitHub PR #${item.prNumber || ""}`}
+                                    >
+                                      <GithubIcon className="w-3 h-3 text-current" />
+                                    </span>
+                                  )
+                                )}
                                 <span
                                   className={cn(
                                     "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
@@ -2197,11 +2218,10 @@ function ReleasePage() {
                                 </span>
                                 {row.badge === "github" && (
                                   <span
-                                    className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400"
+                                    className="shrink-0 inline-flex items-center text-zinc-400 dark:text-zinc-500"
                                     title={row.badgeTitle || "发布公告来自 GitHub"}
                                   >
                                     <GithubIcon className="w-3 h-3 text-current" />
-                                    GitHub
                                   </span>
                                 )}
                                 <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">

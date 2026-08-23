@@ -53,12 +53,21 @@ export interface ReleaseMaterialCommit {
   date: string;
 }
 
+export interface ReleasePullRequest {
+  number: number;
+  title: string | null;
+  /** Filled when the PR was fetched from GitHub (token or public repo). */
+  body?: string;
+  url?: string | null;
+  viaToken?: boolean;
+}
+
 export interface ReleaseMaterial {
   since: string | null;
   sinceDate: string | null;
   end: string;
   commits: ReleaseMaterialCommit[];
-  pullRequests: { number: number; title: string | null }[];
+  pullRequests: ReleasePullRequest[];
   diffStat: string;
   /** Official GitHub release announcement, when publicly fetchable. */
   githubRelease: GitHubReleaseInfo | null;
@@ -186,6 +195,72 @@ export async function fetchGitHubRelease(
     log.warn(`fetchPublicGitHubRelease failed for ${tag}: ${err.message}`);
     return null;
   }
+}
+
+const prInfoCache = new Map<
+  string,
+  {
+    at: number;
+    info: { title: string | null; body: string; url: string | null; viaToken: boolean };
+  }
+>();
+const PR_INFO_TTL_MS = 30 * 60_000;
+
+/**
+ * Enrich PR references with titles/URLs fetched from the GitHub API.
+ * Works anonymously for public repos; with a token private repos work too.
+ * Falls back to the locally derived reference on any failure, so this never
+ * blocks release detection.
+ */
+export async function fetchPullRequests(
+  localPath: string,
+  refs: ReleasePullRequest[],
+  token?: string | null,
+): Promise<ReleasePullRequest[]> {
+  if (refs.length === 0) return [];
+  const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
+  const repoUrl = normalizeGitHubUrl(remote);
+  if (!repoUrl) return refs.map((ref) => ({ ...ref }));
+  const ownerRepo = repoUrl.replace("https://github.com/", "");
+  const results = await Promise.all(
+    refs.map(async (ref) => {
+      const cacheKey = `${ownerRepo}#${ref.number}`;
+      const cached = prInfoCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < PR_INFO_TTL_MS) {
+        return { number: ref.number, ...cached.info };
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      try {
+        const response = await fetch(
+          `https://api.github.com/repos/${ownerRepo}/pulls/${ref.number}`,
+          {
+            headers: {
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              Accept: "application/vnd.github+json",
+              "User-Agent": "appilot",
+            },
+            signal: controller.signal,
+          },
+        );
+        if (!response.ok) return { number: ref.number, title: ref.title };
+        const data: any = await response.json();
+        const info = {
+          title: typeof data.title === "string" ? data.title : ref.title,
+          body: typeof data.body === "string" ? data.body : "",
+          url: typeof data.html_url === "string" ? data.html_url : null,
+          viaToken: Boolean(token),
+        };
+        prInfoCache.set(cacheKey, { at: Date.now(), info });
+        return { number: ref.number, ...info };
+      } catch {
+        return { number: ref.number, title: ref.title };
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+  return results;
 }
 
 /** Latest tags first; date is the tag's creatordate. */
@@ -328,6 +403,9 @@ export function filterMaterial(
   if (!includeShas) return material;
   const set = new Set(includeShas);
   const commits = material.commits.filter((commit) => set.has(commit.sha));
+  const prByNumber = new Map(
+    (material.pullRequests || []).map((pr) => [pr.number, pr] as const),
+  );
   const prNumbers = Array.from(
     new Set(
       commits.flatMap((commit) =>
@@ -338,7 +416,9 @@ export function filterMaterial(
   return {
     ...material,
     commits,
-    pullRequests: prNumbers.map((number) => ({ number, title: null })),
+    pullRequests: prNumbers.map(
+      (number) => prByNumber.get(number) || { number, title: null },
+    ),
   };
 }
 
@@ -389,12 +469,25 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
  * - no changes since the boundary → no candidate;
  * - git unavailable → RELEASE_DRAFT.md fallback.
  */
+const releaseCheckCache = new Map<
+  string,
+  { at: number; result: ReleaseCheckResult }
+>();
+const RELEASE_CHECK_TTL_MS = 30_000;
+
 export async function checkForRelease(
   localPath: string,
   lastSeenSha?: string | null,
   githubToken?: string | null,
-  options: { sync?: boolean } = {},
+  options: { sync?: boolean; force?: boolean } = {},
 ): Promise<ReleaseCheckResult> {
+  const cacheKey = `${localPath}::${lastSeenSha || ""}`;
+  const cacheEnabled = options.sync === true;
+  const cached = cacheEnabled ? releaseCheckCache.get(cacheKey) : undefined;
+  if (!options.force && cached && Date.now() - cached.at < RELEASE_CHECK_TTL_MS) {
+    return cached.result;
+  }
+
   if (options.sync) {
     await syncLocalRepo(localPath);
   }
@@ -431,12 +524,13 @@ export async function checkForRelease(
   const onMain = await mainLineTags(localPath, allTags, endRefs);
   const releaseTag: GitTagInfo | null = onMain[0] || null;
 
-  const enrichedMaterial = releaseTag
-    ? {
-        ...material,
-        githubRelease: await fetchGitHubRelease(localPath, releaseTag.name, githubToken),
-      }
-    : material;
+  const enrichedMaterial = {
+    ...material,
+    pullRequests: await fetchPullRequests(localPath, material.pullRequests, githubToken),
+    githubRelease: releaseTag
+      ? await fetchGitHubRelease(localPath, releaseTag.name, githubToken)
+      : material.githubRelease,
+  };
   const release: ReleaseInfo = {
     id: releaseTag ? `tag-${releaseTag.sha}` : `head-${head}`,
     tag: releaseTag?.name || `head-${head}`,
@@ -449,9 +543,11 @@ export async function checkForRelease(
     draft: true,
     commitSha: tip,
   };
-  return {
+  const result: ReleaseCheckResult = {
     latest: release,
     lastSeenTag: lastSeenSha || null,
     releases: [release],
   };
+  if (cacheEnabled) releaseCheckCache.set(cacheKey, { at: Date.now(), result });
+  return result;
 }
