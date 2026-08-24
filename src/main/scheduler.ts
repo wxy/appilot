@@ -650,6 +650,28 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
       all[task.projectId] = byId;
       store.set("competitorSnapshots", all);
     }
+
+    const { fetchIssues, mergeFeedbackItems, normalizeIssue, reviewsToFeedbackItems } =
+      await import("../engine/feedback-inbox");
+    const issues = await fetchIssues(project.localPath, token, 30);
+    const reviewItems: any[] = [];
+    const reviewsStore: Record<string, any> = store.get("reviews") || {};
+    for (const product of project.storeProducts || []) {
+      const perProduct = reviewsStore[product.id] || {};
+      for (const country of Object.keys(perProduct)) {
+        for (const review of perProduct[country]?.items || []) {
+          reviewItems.push(...reviewsToFeedbackItems([review], product.id));
+        }
+      }
+    }
+    const feedbackStore: Record<string, any> = store.get("feedback") || {};
+    const entry = feedbackStore[task.projectId] || { items: [], lastSyncedAt: null };
+    feedbackStore[task.projectId] = {
+      items: mergeFeedbackItems(entry.items, [...issues.map(normalizeIssue), ...reviewItems]),
+      lastSyncedAt: new Date().toISOString(),
+    };
+    store.set("feedback", feedbackStore);
+
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {

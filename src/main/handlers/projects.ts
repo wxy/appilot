@@ -875,6 +875,7 @@ export function registerProjectsHandlers(): void {
     const { buildBriefInput } = await import("../../engine/overview-summary");
     const { readRepoDescription } = await import("../../engine/app-store-discovery");
     const { checkForRelease } = await import("../../engine/release-watcher");
+    const { competitorDeltaSummary } = await import("../../engine/competitor-radar");
 
     const releaseResult = await checkForRelease(
       project.localPath,
@@ -902,6 +903,21 @@ export function registerProjectsHandlers(): void {
         : null,
       submissionDraft,
       submissionKeywords: project.submissionKeywords || [],
+      feedbackThemes: ((s.get("feedback") || {})[projectId]?.themes || []).map((theme: any) => ({
+        title: theme.title,
+        evidenceCount: theme.evidenceCount,
+        topQuotes: (theme.sampleQuotes || []).slice(0, 2),
+      })),
+      competitorDeltas: (() => {
+        const competitors = (s.get("competitors") || {})[projectId] || [];
+        const snapshots = (s.get("competitorSnapshots") || {})[projectId] || {};
+        const deltas: { name: string; change: string }[] = [];
+        for (const competitor of competitors) {
+          const delta = competitorDeltaSummary(competitor, snapshots[competitor.id] || []);
+          if (delta) deltas.push(delta);
+        }
+        return deltas;
+      })(),
       profile,
     });
 

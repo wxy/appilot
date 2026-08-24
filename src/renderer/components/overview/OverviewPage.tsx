@@ -23,6 +23,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { StatusChip } from "../ui/StatusChip";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { CompetitorRadarCard } from "./CompetitorRadarCard";
+import { FeedbackThemesCard } from "./FeedbackThemesCard";
 import { TrafficCard } from "./TrafficCard";
 import {
   MetricBlock,
@@ -412,9 +413,10 @@ export function OverviewPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <TrafficCard project={project} />
         <CompetitorRadarCard project={project} />
+        <FeedbackThemesCard project={project} />
       </div>
 
       {/* Rank trend chart + top keywords */}

@@ -53,6 +53,16 @@ export function normalizeBriefSuggestions(data: any): BriefSuggestion[] {
 
 export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
   const { profile, ...taskData } = input;
+  const contextLines: string[] = [];
+  if (input.feedbackThemes?.length) {
+    contextLines.push(`用户反馈主题（${input.feedbackThemes.length} 个）：${JSON.stringify(input.feedbackThemes)}`);
+  }
+  if (input.competitorDeltas?.length) {
+    contextLines.push(`竞品动态：${JSON.stringify(input.competitorDeltas)}`);
+  }
+  const instruction = contextLines.length > 0
+    ? "可在建议中引用用户反馈主题或竞品动态作为依据。"
+    : "";
   return buildArchiveMessages(
     profile,
     [
@@ -60,7 +70,9 @@ export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
       "你只能基于下面给定的真实数据输出建议，reason 必须引用数据，不得编造。",
       "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\"}]}",
       "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",
-    ].join("\n"),
+      instruction,
+      ...contextLines,
+    ].filter(Boolean).join("\n"),
     [JSON.stringify(taskData, null, 2)],
   );
 }
