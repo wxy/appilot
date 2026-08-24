@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { storefrontDisplayName } from "../../../engine/storefronts";
+import { taskGroupKey } from "../../lib/task-grouping";
 import {
   formatBytes,
   formatDuration,
@@ -494,15 +495,12 @@ function TaskTimelineChart({
 function groupTasks(tasks: any[]): any[] {
   const map = new Map<string, any>();
   for (const task of tasks) {
-    const isProjectTask = task.kind === "github-sync" || task.kind === "ops-sync";
-    const key = isProjectTask
-      ? `sync\u0000${task.projectName}`
-      : `${task.projectName}\u0000${task.productName}\u0000${task.kind}`;
+    const key = taskGroupKey(task);
     const existing = map.get(key);
     if (!existing) {
       map.set(key, {
         key,
-        kind: isProjectTask ? task.kind : task.kind === "rank" ? "rank" : task.kind,
+        kind: task.kind === "rank" ? "rank" : task.kind,
         projectName: task.projectName,
         productName: task.productName,
         platform: task.platform,
