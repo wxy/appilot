@@ -126,8 +126,8 @@ export function registerSchedulerHandlers(): void {
       },
       timeline: { recent: recentTimeline, upcoming: upcomingTimeline },
       tasks: tasks.map((task) => {
-        const isSync = task.kind === "github-sync";
-        const context: { project: any; product?: any } | null = isSync
+        const isProjectTask = task.kind === "github-sync" || task.kind === "ops-sync";
+        const context: { project: any; product?: any } | null = isProjectTask
           ? { project: projects.find((item: any) => item.id === task.projectId) || null }
           : findProductContext(projects, task.productId);
         const project = context?.project || null;
@@ -138,10 +138,10 @@ export function registerSchedulerHandlers(): void {
         return {
           ...task,
           projectName: project?.name || "已删除项目",
-          productName: isSync
+          productName: isProjectTask
             ? project?.name || ""
             : context?.product.trackName || context?.project.name || "未知产品",
-          platform: isSync ? null : context?.product.platform || "unknown",
+          platform: isProjectTask ? null : context?.product.platform || "unknown",
           round: round
             ? {
                 done: Array.isArray(round.done) ? round.done.length : 0,

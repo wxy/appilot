@@ -12,6 +12,14 @@ import { cn } from "../../lib/utils";
 import { GithubIcon } from "../ui/Icons";
 import { inputLineClass } from "../ui/styles";
 
+const KIND_LABELS: Record<string, string> = {
+  "github-sync": "GitHub 同步",
+  "ops-sync": "数据同步",
+  "reviews-sync": "评论采集",
+  "build-status": "构建状态",
+  rank: "排名",
+};
+
 export function TaskCenterPage() {
   const [data, setData] = useState<{
     running: boolean;
@@ -486,15 +494,15 @@ function TaskTimelineChart({
 function groupTasks(tasks: any[]): any[] {
   const map = new Map<string, any>();
   for (const task of tasks) {
-    const isSync = task.kind === "github-sync";
-    const key = isSync
+    const isProjectTask = task.kind === "github-sync" || task.kind === "ops-sync";
+    const key = isProjectTask
       ? `sync\u0000${task.projectName}`
-      : `${task.projectName}\u0000${task.platform}\u0000${task.queryLanguage || ""}\u0000${task.storefront || ""}`;
+      : `${task.projectName}\u0000${task.productName}\u0000${task.kind}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, {
         key,
-        kind: isSync ? "github-sync" : "rank",
+        kind: isProjectTask ? task.kind : task.kind === "rank" ? "rank" : task.kind,
         projectName: task.projectName,
         productName: task.productName,
         platform: task.platform,
@@ -618,19 +626,18 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             <span
               className={cn(
                 "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
-                group.kind === "github-sync"
-                  ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
-                  : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+                group.kind === "rank"
+                  ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
               )}
             >
-              {group.kind === "github-sync" ? "GitHub 同步" : "排名"}
+              {KIND_LABELS[group.kind] || group.kind}
             </span>
             <div className="min-w-0">
               <div className="flex items-center gap-1 min-w-0">
                 <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                  {group.kind === "github-sync"
-                    ? `${group.projectName} · GitHub 同步`
-                    : `${group.projectName} · ${
+                  {group.kind === "rank"
+                    ? `${group.projectName} · ${group.productName} · ${
                         group.platform === "ios"
                           ? "iOS"
                           : group.platform === "macos"
@@ -638,7 +645,8 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
                             : "未识别"
                       } · ${languageLabel(group.queryLanguage || "")} · ${
                         storefrontDisplayName(group.storefront || "")
-                      } · ${group.tasks.length} 个关键词`}
+                      } · ${group.tasks.length} 个关键词`
+                    : `${group.projectName} · ${KIND_LABELS[group.kind] || group.kind}`}
                 </div>
                 {group.kind === "github-sync" && (
                   <span title="依赖 GitHub 凭证" className="shrink-0">
@@ -669,7 +677,7 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             </div>
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
-            {group.kind === "github-sync" ? (
+            {group.kind !== "rank" ? (
               <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate">—</div>
             ) : (
               <>

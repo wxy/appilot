@@ -9,18 +9,25 @@ import { storefrontsForLanguage } from "../engine/storefronts";
 import { resolveEffectiveCredentials } from "./credentials";
 import {
   ensureProjectKeywordPool,
+  findProductContext,
+  getStoreSubmissionDrafts,
   isProductPostRelease,
   migrateLegacyStoreProducts,
 } from "./project-state";
 import {
+  buildStatusTaskId,
   bootstrapRoundState,
+  IN_FLIGHT_STORE_STATUSES,
   markRoundTaskDone,
   nextRunAt,
   nextRankRunAt,
   nextRunWithinMinutes,
+  opsSyncTaskId,
   prioritizeGroupCompletion,
   pruneRoundMembers,
   rankGroupKey,
+  reviewsSyncTaskId,
+  seedScheduledTask,
   type SchedulerRoundState,
 } from "./schedule";
 import { getStore } from "./store";
@@ -54,10 +61,33 @@ interface GithubSyncTask extends ScheduledTaskBase {
   lastDurationMs?: number;
 }
 
-export type ScheduledTask = RankScheduledTask | GithubSyncTask;
+interface OpsSyncTask extends ScheduledTaskBase {
+  kind: "ops-sync";
+  projectId: string;
+  lastDurationMs?: number;
+}
+
+interface ReviewsSyncTask extends ScheduledTaskBase {
+  kind: "reviews-sync";
+  productId: string;
+  lastDurationMs?: number;
+}
+
+interface BuildStatusTask extends ScheduledTaskBase {
+  kind: "build-status";
+  productId: string;
+  lastDurationMs?: number;
+}
+
+export type ScheduledTask =
+  | RankScheduledTask
+  | GithubSyncTask
+  | OpsSyncTask
+  | ReviewsSyncTask
+  | BuildStatusTask;
 
 export interface RunningTaskInfo {
-  kind?: "rank" | "github-sync";
+  kind?: "rank" | "github-sync" | "ops-sync" | "reviews-sync" | "build-status";
   keyword: string;
   language: string;
   storefront: string;
@@ -211,9 +241,14 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
 
   const next = existing
     // Rank tasks are re-derived below; github-sync tasks are reconciled
-    // separately and must survive this pass. Drop any other stale task kind.
+    // separately and ops/reviews/build-status tasks are reconciled by
+    // reconcileOpsTasks. All of them must survive this pass; drop only stale
+    // rank kinds.
     .filter((task) =>
       task.kind === "github-sync" ||
+      task.kind === "ops-sync" ||
+      task.kind === "reviews-sync" ||
+      task.kind === "build-status" ||
       (task.kind === "rank" && activeKeys.has(task.id)),
     )
     .map((task) => desiredTasks.get(task.id) || task);
@@ -287,7 +322,65 @@ async function reconcileGithubSyncTasks(store: AppStore): Promise<void> {
     });
   }
   const next: ScheduledTask[] = [
-    ...existing.filter((task) => task.kind === "rank"),
+    ...existing.filter((task) =>
+      task.kind === "rank" ||
+      task.kind === "ops-sync" ||
+      task.kind === "reviews-sync" ||
+      task.kind === "build-status",
+    ),
+    ...Array.from(desired.values()),
+  ];
+  store.set("scheduledTasks", next);
+}
+
+async function reconcileOpsTasks(store: AppStore): Promise<void> {
+  const projects: any[] = (store.get("projects") || []).map(migrateLegacyStoreProducts);
+  const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const desired = new Map<string, ScheduledTask>();
+
+  for (const project of projects) {
+    if (!project?.localPath) continue;
+    desired.set(
+      opsSyncTaskId(project.id),
+      seedScheduledTask(existing, {
+        id: opsSyncTaskId(project.id),
+        kind: "ops-sync",
+        projectId: project.id,
+        intervalMinutes: 24 * 60,
+      }),
+    );
+    for (const product of project.storeProducts || []) {
+      if (!product?.trackId || !isProductPostRelease(project, product)) continue;
+      desired.set(
+        reviewsSyncTaskId(product.id),
+        seedScheduledTask(existing, {
+          id: reviewsSyncTaskId(product.id),
+          kind: "reviews-sync",
+          productId: product.id,
+          intervalMinutes: 24 * 60,
+        }),
+      );
+      const hasInFlightDraft = getStoreSubmissionDrafts(project).some(
+        (draft: any) =>
+          draft.productId === product.id &&
+          IN_FLIGHT_STORE_STATUSES.includes(draft.storeStatus),
+      );
+      if (hasInFlightDraft) {
+        desired.set(
+          buildStatusTaskId(product.id),
+          seedScheduledTask(existing, {
+            id: buildStatusTaskId(product.id),
+            kind: "build-status",
+            productId: product.id,
+            intervalMinutes: 60,
+          }),
+        );
+      }
+    }
+  }
+
+  const next: ScheduledTask[] = [
+    ...existing.filter((task) => !desired.has(task.id)),
     ...Array.from(desired.values()),
   ];
   store.set("scheduledTasks", next);
@@ -506,6 +599,149 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       : nextRunAt(task.id, task.intervalMinutes || 60);
 }
 
+async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void> {
+  const projects: any[] = store.get("projects") || [];
+  const project = projects.find((item: any) => item.id === task.projectId) || null;
+  const startedAt = Date.now();
+  nowRunningTask = {
+    kind: "ops-sync",
+    keyword: "数据同步",
+    language: "",
+    storefront: "",
+    startedAt: new Date().toISOString(),
+  };
+  let durationMs = 0;
+  let status: "success" | "failed" = "success";
+  try {
+    if (!project?.localPath) throw new Error("Project not found");
+    const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
+    const { fetchTrafficSnapshot } = await import("../engine/gh-traffic");
+    const snapshot = await fetchTrafficSnapshot(project.localPath, token);
+    if (snapshot) {
+      const all: Record<string, any[]> = store.get("trafficSnapshots") || {};
+      const list = all[task.projectId] || [];
+      if (list[list.length - 1]?.date !== snapshot.date) {
+        all[task.projectId] = [...list, snapshot].slice(-90);
+        store.set("trafficSnapshots", all);
+      }
+    }
+
+    const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
+    if (competitors.length > 0) {
+      const { fetchCompetitorSnapshot } = await import("../engine/competitor-radar");
+      const all: Record<string, Record<string, any[]>> = store.get("competitorSnapshots") || {};
+      const byId: Record<string, any[]> = all[task.projectId] || {};
+      for (const competitor of competitors) {
+        const snap = await fetchCompetitorSnapshot(competitor, token);
+        const list = byId[competitor.id] || [];
+        if (list[list.length - 1]?.date !== snap.date) {
+          byId[competitor.id] = [...list, snap].slice(-90);
+        }
+      }
+      all[task.projectId] = byId;
+      store.set("competitorSnapshots", all);
+    }
+    task.consecutiveFailures = 0;
+    task.lastStatus = "success";
+  } catch (err: any) {
+    status = "failed";
+    durationMs = Date.now() - startedAt;
+    log.warn(`Scheduled ops sync failed for ${task.projectId}: ${err.message}`);
+    task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
+    task.lastStatus = "failed";
+    if (task.consecutiveFailures >= 5) task.enabled = false;
+  } finally {
+    nowRunningTask = null;
+  }
+
+  task.lastRunAt = new Date().toISOString();
+  task.executionCount += 1;
+  task.lastDurationMs = durationMs;
+  const executions: any[] = Array.isArray(store.get("rankExecutions")) ? store.get("rankExecutions") : [];
+  executions.push({ ts: new Date().toISOString(), productId: task.projectId, kind: "ops-sync", status, durationMs });
+  store.set("rankExecutions", executions.slice(-5000));
+  task.firstRunAt = task.firstRunAt || task.lastRunAt;
+  task.nextRunAt =
+    task.lastStatus === "failed"
+      ? nextRunWithinMinutes(task.id, 30)
+      : nextRunAt(task.id, task.intervalMinutes);
+}
+
+async function runReviewsSyncTask(store: AppStore, task: ReviewsSyncTask): Promise<void> {
+  const context = findProductContext(store.get("projects") || [], task.productId);
+  const product = context?.product;
+  const project = context?.project;
+  if (!project || !product?.trackId) return;
+  const { storefrontsForLanguage } = await import("../engine/storefronts");
+  const countries: string[] = [];
+  for (const loc of product.supportedLanguages || []) {
+    for (const country of storefrontsForLanguage(loc.code)) {
+      if (!countries.includes(country)) countries.push(country);
+    }
+  }
+  const all: Record<string, any> = store.get("reviews") || {};
+  const perProduct: Record<string, any> = all[task.productId] || {};
+  const existingIds = new Set<string>();
+  for (const country of Object.keys(perProduct)) {
+    for (const review of perProduct[country]?.items || []) existingIds.add(review.id);
+  }
+  const { fetchAllStorefrontReviews } = await import("../engine/review-collector");
+  const { reviews, fetchedAt } = await fetchAllStorefrontReviews(product.trackId, countries, [...existingIds]);
+  for (const review of reviews) {
+    const list = perProduct[review.country]?.items || [];
+    perProduct[review.country] = { items: [...list, review].slice(-500), lastFetchedAt: fetchedAt };
+  }
+  all[task.productId] = perProduct;
+  store.set("reviews", all);
+  task.lastRunAt = new Date().toISOString();
+  task.executionCount += 1;
+  task.lastStatus = "success";
+  task.firstRunAt = task.firstRunAt || task.lastRunAt;
+  task.nextRunAt = nextRunAt(task.id, task.intervalMinutes);
+}
+
+async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promise<void> {
+  const context = findProductContext(store.get("projects") || [], task.productId);
+  const project = context?.project;
+  const product = context?.product;
+  if (!project || !product?.trackId) return;
+  const creds = resolveEffectiveCredentials(store, project.id);
+  if (!creds.ascIssuerId || !creds.ascKeyId || !creds.ascPrivateKeyPath) return;
+  const fs = await import("fs");
+  const { createAscClient } = await import("../engine/asc-api");
+  const client = createAscClient({
+    issuerId: creds.ascIssuerId,
+    keyId: creds.ascKeyId,
+    privateKeyPem: fs.readFileSync(creds.ascPrivateKeyPath, "utf8"),
+  });
+  const appId = await client.getAppIdByBundleId(product.bundleId);
+  if (!appId) return;
+  const versions = await client.listAppStoreVersions(appId);
+  const sorted = [...versions].sort((a, b) =>
+    (b.createdDate || "").localeCompare(a.createdDate || ""),
+  );
+  const latest = sorted[0] || null;
+  const localizations: Record<string, any[]> = {};
+  if (latest) {
+    localizations[latest.id] = await client.listVersionLocalizations(latest.id);
+  }
+  const builds = await client.listBuilds(appId);
+  const all: Record<string, any> = store.get("ascCache") || {};
+  all[task.productId] = {
+    appId,
+    versions: sorted,
+    localizations,
+    builds,
+    fetchedAt: new Date().toISOString(),
+  };
+  store.set("ascCache", all);
+  task.lastRunAt = new Date().toISOString();
+  task.executionCount += 1;
+  task.lastStatus = "success";
+  task.firstRunAt = task.firstRunAt || task.lastRunAt;
+  task.nextRunAt = nextRunAt(task.id, task.intervalMinutes);
+}
+
 export async function schedulerTick(): Promise<void> {
   if (schedulerRunning) return;
   schedulerRunning = true;
@@ -513,6 +749,7 @@ export async function schedulerTick(): Promise<void> {
     const store = await getStore();
     await reconcileRankTasks(store);
     await reconcileGithubSyncTasks(store);
+    await reconcileOpsTasks(store);
 
     const now = Date.now();
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
@@ -533,6 +770,12 @@ export async function schedulerTick(): Promise<void> {
     for (const task of selected) {
       if (task.kind === "github-sync") {
         await runGithubSyncTask(store, task);
+      } else if (task.kind === "ops-sync") {
+        await runOpsSyncTask(store, task);
+      } else if (task.kind === "reviews-sync") {
+        await runReviewsSyncTask(store, task);
+      } else if (task.kind === "build-status") {
+        await runBuildStatusTask(store, task);
       } else {
         await runRankTask(store, task);
       }
@@ -583,4 +826,31 @@ export function startTaskScheduler(): void {
     }, 60_000);
     await schedulerTick();
   })();
+}
+
+export async function runOpsSyncNow(projectId: string): Promise<boolean> {
+  const store = await getStore();
+  const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const task = tasks.find((item) => item.id === opsSyncTaskId(projectId)) as OpsSyncTask | undefined;
+  if (!task) return false;
+  await runOpsSyncTask(store, task);
+  return true;
+}
+
+export async function runReviewsSyncNow(productId: string): Promise<boolean> {
+  const store = await getStore();
+  const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const task = tasks.find((item) => item.id === reviewsSyncTaskId(productId)) as ReviewsSyncTask | undefined;
+  if (!task) return false;
+  await runReviewsSyncTask(store, task);
+  return true;
+}
+
+export async function runBuildStatusNow(productId: string): Promise<boolean> {
+  const store = await getStore();
+  const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const task = tasks.find((item) => item.id === buildStatusTaskId(productId)) as BuildStatusTask | undefined;
+  if (!task) return false;
+  await runBuildStatusTask(store, task);
+  return true;
 }
