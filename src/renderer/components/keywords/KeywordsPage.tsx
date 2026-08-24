@@ -668,7 +668,7 @@ export function KeywordsPage() {
   };
 
   return (
-    <div className="p-8 max-w-6xl mx-auto h-full flex flex-col">
+    <div className="p-8 max-w-6xl mx-auto">
       {error && (
         <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
           {error}
@@ -679,7 +679,7 @@ export function KeywordsPage() {
         <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
       ) : (
         <>
-          <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+          <div className="flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
             <div className="px-5 pt-4 pb-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
@@ -1100,7 +1100,7 @@ export function KeywordsPage() {
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
+            <div className="overflow-auto [scrollbar-gutter:stable]">
                 {matrixRows.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
