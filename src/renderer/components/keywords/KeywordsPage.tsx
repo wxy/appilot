@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
@@ -71,6 +71,26 @@ export function KeywordsPage() {
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
   const [showUnranked, setShowUnranked] = useState(false);
+  const pausedPopoverRef = useRef<HTMLSpanElement>(null);
+  const deletedPopoverRef = useRef<HTMLSpanElement>(null);
+  const unrankedPopoverRef = useRef<HTMLSpanElement>(null);
+
+  // Close keyword popovers when clicking anywhere outside them.
+  useEffect(() => {
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const inside = [pausedPopoverRef, deletedPopoverRef, unrankedPopoverRef].some(
+        (ref) => ref.current?.contains(target),
+      );
+      if (!inside) {
+        setShowPaused(false);
+        setShowDeleted(false);
+        setShowUnranked(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, []);
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
@@ -896,7 +916,7 @@ export function KeywordsPage() {
                   {(pausedForCurrent.length > 0 || removedForCurrent.length > 0 || unranked.length > 0) && (
                     <span className="flex items-center gap-1.5">
                       {pausedForCurrent.length > 0 && (
-                        <span className="relative">
+                        <span className="relative" ref={pausedPopoverRef}>
                           <button
                             type="button"
                             onClick={() => setShowPaused((v) => !v)}
@@ -944,7 +964,7 @@ export function KeywordsPage() {
                         </span>
                       )}
                       {removedForCurrent.length > 0 && (
-                        <span className="relative">
+                        <span className="relative" ref={deletedPopoverRef}>
                           <button
                             type="button"
                             onClick={() => setShowDeleted((v) => !v)}
@@ -989,7 +1009,7 @@ export function KeywordsPage() {
                         </span>
                       )}
                       {unranked.length > 0 && (
-                        <span className="relative">
+                        <span className="relative" ref={unrankedPopoverRef}>
                           <button
                             type="button"
                             onClick={() => setShowUnranked((v) => !v)}
@@ -1092,7 +1112,7 @@ export function KeywordsPage() {
                 ) : (
                   <>
                     {scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))}
-                    {!urlScope &&
+                    {scopeFilteredRanked.length === 0 &&
                       unranked.map((row) => renderMatrixRow(row, true))}
                   </>
                 )}
