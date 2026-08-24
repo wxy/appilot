@@ -214,3 +214,41 @@ export function markRoundTaskDone(
   }
   return { state: { ...base, done }, completed: false };
 }
+
+/** In-flight App Store statuses that keep the build-status poll alive. */
+export const IN_FLIGHT_STORE_STATUSES = ["prepared", "copied", "submitted", "in_review"] as const;
+
+export function opsSyncTaskId(projectId: string): string {
+  return `ops-sync:${projectId}`;
+}
+
+export function reviewsSyncTaskId(productId: string): string {
+  return `reviews-sync:${productId}`;
+}
+
+export function buildStatusTaskId(productId: string): string {
+  return `build-status:${productId}`;
+}
+
+/**
+ * Re-seed a periodic task from the previous persisted entry: new kinds keep
+ * their run history across app restarts, while a first-run task gets a stable
+ * phase inside its interval (anchored to midnight, see nextRunAt).
+ */
+export function seedScheduledTask(
+  existing: any[],
+  base: { id: string; intervalMinutes: number } & Record<string, any>,
+): any {
+  const previous = existing.find((task) => task.id === base.id) as any;
+  return {
+    ...base,
+    nextRunAt: previous?.nextRunAt || nextRunAt(base.id, base.intervalMinutes),
+    lastRunAt: previous?.lastRunAt ?? null,
+    firstRunAt: previous?.firstRunAt ?? null,
+    executionCount: previous?.executionCount || 0,
+    lastStatus: previous?.lastStatus,
+    enabled: previous?.enabled ?? true,
+    consecutiveFailures: previous?.consecutiveFailures || 0,
+    lastDurationMs: previous?.lastDurationMs,
+  };
+}
