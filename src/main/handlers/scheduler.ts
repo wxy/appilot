@@ -24,6 +24,18 @@ export function registerSchedulerHandlers(): void {
     const s = await getStore();
     const projects: any[] = (s.get("projects") || []).map(migrateLegacyStoreProducts);
     const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
+    const rounds: Record<string, any> = s.get("schedulerRounds") || {};
+    // Fallback round info for task lists that have not been reconciled yet
+    // (e.g. right after an upgrade): members = group tasks, done = tasks that
+    // have a lastRunAt, so the progress column is never empty.
+    const roundByGroup: Record<string, { members: string[]; done: string[] }> = {};
+    for (const task of tasks) {
+      if (task.kind !== "rank" || !task.groupKey) continue;
+      const entry = roundByGroup[task.groupKey] || { members: [], done: [] };
+      entry.members.push(task.id);
+      if (task.lastRunAt) entry.done.push(task.id);
+      roundByGroup[task.groupKey] = entry;
+    }
     const now = Date.now();
     const executions: any[] = s.get("rankExecutions") || [];
     const dayMs = 24 * 60 * 60 * 1000;
@@ -114,18 +126,30 @@ export function registerSchedulerHandlers(): void {
       },
       timeline: { recent: recentTimeline, upcoming: upcomingTimeline },
       tasks: tasks.map((task) => {
-        const isSync = task.kind === "github-sync";
-        const context: { project: any; product?: any } | null = isSync
+        const isProjectTask = task.kind === "github-sync" || task.kind === "ops-sync";
+        const context: { project: any; product?: any } | null = isProjectTask
           ? { project: projects.find((item: any) => item.id === task.projectId) || null }
           : findProductContext(projects, task.productId);
         const project = context?.project || null;
+        const round =
+          task.kind === "rank" && task.groupKey
+            ? rounds[task.groupKey] || roundByGroup[task.groupKey] || null
+            : null;
         return {
           ...task,
           projectName: project?.name || "已删除项目",
-          productName: isSync
+          productName: isProjectTask
             ? project?.name || ""
             : context?.product.trackName || context?.project.name || "未知产品",
-          platform: isSync ? null : context?.product.platform || "unknown",
+          platform: isProjectTask ? null : context?.product.platform || "unknown",
+          round: round
+            ? {
+                done: Array.isArray(round.done) ? round.done.length : 0,
+                total: Array.isArray(round.members) ? round.members.length : 0,
+                roundStartedAt: round.roundStartedAt || null,
+                lastCompletedAt: round.lastCompletedAt || null,
+              }
+            : null,
         };
       }),
     };

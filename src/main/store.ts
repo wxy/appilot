@@ -18,6 +18,7 @@ export async function getStore(): Promise<AppStore> {
           aiProviderUrl: "https://api.openai.com/v1",
           aiApiKey: "",
           aiModel: "gpt-4o",
+          rankRunsPerDay: 1,
         },
       }) as unknown as AppStore;
     } catch (err: any) {

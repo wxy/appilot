@@ -1,5 +1,4 @@
 import { app, safeStorage } from "electron";
-import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { log } from "../engine/logger";
@@ -80,36 +79,7 @@ export function resolveEffectiveCredentials(s: any, projectId: string) {
   };
 }
 
-/** Convert a DER-encoded ECDSA signature to the raw r||s form JWT ES256 needs. */
-function derToRawJwtSignature(der: Buffer): string {
-  if (der[0] !== 0x30) throw new Error("invalid ECDSA signature");
-  let offset = 2;
-  if (der[offset] !== 0x02) throw new Error("invalid R marker");
-  const rLen = der[offset + 1];
-  const r = der.subarray(offset + 2, offset + 2 + rLen);
-  offset += 2 + rLen;
-  if (der[offset] !== 0x02) throw new Error("invalid S marker");
-  const sLen = der[offset + 1];
-  const s = der.subarray(offset + 2, offset + 2 + sLen);
-  const padded = (buf: Buffer): Buffer => {
-    const slice = buf.length > 32 ? buf.subarray(buf.length - 32) : buf;
-    const out = Buffer.alloc(32);
-    slice.copy(out, 32 - slice.length);
-    return out;
-  };
-  return Buffer.concat([padded(r), padded(s)]).toString("base64url");
-}
-
-export function ascJwt(issuerId: string, keyId: string, privateKeyPem: string): string {
-  const header = { alg: "ES256", kid: keyId, typ: "JWT" };
-  const now = Math.floor(Date.now() / 1000);
-  const payload = { iss: issuerId, exp: now + 1200, aud: "appstoreconnect-v1" };
-  const b64 = (value: any) => Buffer.from(JSON.stringify(value)).toString("base64url");
-  const unsigned = `${b64(header)}.${b64(payload)}`;
-  const signer = crypto.createSign("sha256");
-  signer.update(unsigned);
-  return `${unsigned}.${derToRawJwtSignature(signer.sign(privateKeyPem))}`;
-}
+export { ascJwt, derToRawJwtSignature } from "../engine/asc-api";
 
 /** Remove app-managed .p8 files that no credential references. */
 export function garbageCollectKeys(s: any): void {
