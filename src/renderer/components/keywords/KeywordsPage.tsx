@@ -1092,7 +1092,7 @@ export function KeywordsPage() {
                 ) : (
                   <>
                     {scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))}
-                    {scopeFilteredRanked.length === 0 &&
+                    {!urlScope &&
                       unranked.map((row) => renderMatrixRow(row, true))}
                   </>
                 )}

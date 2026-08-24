@@ -184,8 +184,11 @@ export function TaskCenterPage() {
           className={inputLineClass + " max-w-36"}
         >
           <option value="all">全部类型</option>
-          <option value="rank">排名</option>
-          <option value="github-sync">GitHub 同步</option>
+          {["rank", "github-sync", "ops-sync", "reviews-sync", "build-status"].map((kind) => (
+            <option key={kind} value={kind}>
+              {KIND_LABELS[kind] || kind}
+            </option>
+          ))}
         </select>
         <select
           value={projectFilter}
@@ -592,7 +595,7 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
       </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,6.5rem))] items-stretch border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50/30 dark:bg-zinc-900/40">
+      <div className="grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,6.5rem))_minmax(0,9.5rem)] items-stretch border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50/30 dark:bg-zinc-900/40">
         <span className="px-5 py-2 text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
           任务
         </span>
@@ -616,7 +619,7 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
         <div
           key={group.key}
           className={cn(
-            "grid grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,6.5rem))] items-stretch border-b border-zinc-100 dark:border-zinc-800 last:border-b-0",
+            "grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,6.5rem))_minmax(0,9.5rem)] items-stretch border-b border-zinc-100 dark:border-zinc-800 last:border-b-0",
             rowIndex % 2 === 1 && "bg-zinc-50/60 dark:bg-zinc-800/20",
           )}
         >
@@ -683,7 +686,9 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
                   {group.round ? `${group.round.done}/${group.round.total}` : "—"}
                 </div>
                 <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                  {group.round?.lastCompletedAt
+                  {group.round && group.round.total > 0 && group.round.done >= group.round.total
+                    ? "本轮已完成"
+                    : group.round?.lastCompletedAt
                     ? `上轮完成 ${formatHumanTime(group.round.lastCompletedAt)}`
                     : group.round && group.round.total > 0
                       ? "尚未完整完成一轮"
