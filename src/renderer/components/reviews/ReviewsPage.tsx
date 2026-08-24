@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName } from "../../../engine/storefronts";
 import type { Review } from "../../../engine/review-collector";
+import type { FeedbackTheme } from "../../../engine/feedback-inbox";
 import { useProject } from "../../stores/project";
 import { reviewStats } from "../../lib/review-stats";
 import { formatHumanTime } from "../../lib/format";
@@ -22,6 +23,9 @@ export function ReviewsPage() {
   const [version, setVersion] = useState("all");
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
+  const [themes, setThemes] = useState<FeedbackTheme[]>([]);
+  const [clustering, setClustering] = useState(false);
+  const [adopting, setAdopting] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!product) return;
@@ -31,6 +35,15 @@ export function ReviewsPage() {
   }, [product?.id]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadThemes = useCallback(() => {
+    if (!project) return;
+    (window as any).appilot?.feedback?.themes(project.id)
+      .then(setThemes)
+      .catch(() => setThemes([]));
+  }, [project?.id]);
+
+  useEffect(() => { loadThemes(); }, [loadThemes]);
 
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示评论洞察。" />;
@@ -60,6 +73,36 @@ export function ReviewsPage() {
       setError(err?.message || "同步失败");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleCluster = async () => {
+    if (!project || !product || clustering) return;
+    setClustering(true);
+    setError("");
+    try {
+      const next = await (window as any).appilot?.feedback?.cluster(project.id, product.id);
+      setThemes(next || []);
+    } catch (err: any) {
+      setError(err?.message || "聚类失败");
+    } finally {
+      setClustering(false);
+    }
+  };
+
+  const handleAdopt = async (keyword: string) => {
+    if (!project || !product || adopting) return;
+    setAdopting(keyword);
+    try {
+      const language = product.supportedLanguages?.[0]?.code || "en";
+      const pool = [...(project.trackedKeywords || [])];
+      if (!pool.some((item) => item.keyword === keyword && item.language === language)) {
+        pool.push({ language, keyword, rationale: "来自反馈主题洞察", translation: "", source: "ai" });
+      }
+      await (window as any).appilot?.projects?.saveTrackedKeywords(product.id, pool);
+      await useProject.getState().load();
+    } finally {
+      setAdopting(null);
     }
   };
 
@@ -111,6 +154,62 @@ export function ReviewsPage() {
             })}
           </div>
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-5">
+        <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">AI 洞察</h3>
+          <button type="button" onClick={() => void handleCluster()} disabled={clustering} className={btnPrimary}>
+            {clustering ? "聚类中…" : themes.length > 0 ? "重新聚类" : "生成洞察"}
+          </button>
+        </div>
+        {themes.length === 0 ? (
+          <div className="px-5 py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            把评论与 GitHub Issues 聚成「用户一直要什么」的主题，反哺关键词与描述角度。
+          </div>
+        ) : (
+          <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {themes.map((theme) => (
+              <div key={theme.title} className="px-5 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{theme.title}</div>
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
+                    {theme.evidenceCount} 条证据 · 评论 {theme.sourceBreakdown.reviews} / Issues {theme.sourceBreakdown.issues}
+                  </span>
+                </div>
+                {theme.sampleQuotes.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {theme.sampleQuotes.slice(0, 2).map((quote, index) => (
+                      <li key={index} className="text-xs text-zinc-500 dark:text-zinc-400">「{quote}」</li>
+                    ))}
+                  </ul>
+                )}
+                {theme.suggestedKeywords.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {theme.suggestedKeywords.map((keyword) => (
+                      <span key={keyword} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-[11px] text-amber-700 dark:text-amber-400">
+                        {keyword}
+                        <button
+                          type="button"
+                          onClick={() => void handleAdopt(keyword)}
+                          disabled={adopting === keyword}
+                          className="hover:underline"
+                        >
+                          {adopting === keyword ? "…" : "采纳"}
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {theme.suggestedDescriptionAngles.length > 0 && (
+                  <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                    描述角度：{theme.suggestedDescriptionAngles.join("、")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
