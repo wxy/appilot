@@ -7,31 +7,43 @@ export function CompetitorPanel({
   projectId,
   product,
   defaultTerm,
+  viewLang,
 }: {
   projectId: string;
   product: { platform?: string; supportedLanguages?: { code: string }[] };
   defaultTerm: string;
+  viewLang: string;
 }) {
   const [competitors, setCompetitors] = useState<any[]>([]);
   const [term, setTerm] = useState(defaultTerm);
-  const [country, setCountry] = useState("us");
+  const [country, setCountry] = useState("");
   const [candidates, setCandidates] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState("");
 
   const load = useCallback(() => {
     (window as any).appilot?.competitors?.list(projectId).then(setCompetitors).catch(() => setCompetitors([]));
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
 
-  const supportedLanguages = product?.supportedLanguages || [];
-  const countryOptions = supportedLanguages.length > 0
-    ? storefrontsForLanguage(supportedLanguages[0].code)
-    : ["us"];
+  // Follow the current view language: search in that language's storefronts.
+  const countryOptions = viewLang ? storefrontsForLanguage(viewLang) : ["us"];
+  useEffect(() => {
+    const options = viewLang ? storefrontsForLanguage(viewLang) : ["us"];
+    setCountry((current) => (options.includes(current) ? current : options[0] || "us"));
+  }, [viewLang]);
+
+  // Keep the search box in sync with the keyword selected in the matrix.
+  useEffect(() => {
+    setTerm(defaultTerm);
+  }, [defaultTerm]);
 
   const handleSearch = async () => {
     if (!term.trim()) return;
     setSearching(true);
+    setSearchError("");
+    setCandidates([]);
     try {
       const results = await (window as any).appilot?.competitors?.search({
         term: term.trim(),
@@ -39,6 +51,8 @@ export function CompetitorPanel({
         platform: product?.platform,
       });
       setCandidates(results || []);
+    } catch (err: any) {
+      setSearchError(err?.message || "搜索失败，请稍后重试。");
     } finally {
       setSearching(false);
     }
@@ -86,6 +100,10 @@ export function CompetitorPanel({
           {searching ? "搜索中…" : "搜索候选"}
         </button>
       </div>
+
+      {searchError && (
+        <p className="mb-4 text-xs text-red-600 dark:text-red-400">{searchError}</p>
+      )}
 
       {candidates.length > 0 && (
         <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">

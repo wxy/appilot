@@ -1209,6 +1209,7 @@ export function KeywordsPage() {
           projectId={project.id}
           product={{ platform: product.platform, supportedLanguages: product.supportedLanguages }}
           defaultTerm={selectedKeyword || ""}
+          viewLang={currentLang}
         />
       )}
     </div>
