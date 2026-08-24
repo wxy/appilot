@@ -20,8 +20,8 @@ const snapshots = [
 
 const delta = competitorDeltaSummary(competitor, snapshots, 7);
 check(delta?.name === "Comp", "delta 返回竞品名");
-check(delta?.change.includes("v1.0 → v1.1"), "delta 含版本变化");
-check(delta?.change.includes("★+5"), "delta 含 star 增量");
+check(delta?.change?.includes("v1.0 → v1.1") === true, "delta 含版本变化");
+check(delta?.change?.includes("★+5") === true, "delta 含 star 增量");
 check(competitorDeltaSummary(competitor, [], 7) === null, "无快照返回 null");
 const unchanged = competitorDeltaSummary(competitor, [base("2026-08-20"), base("2026-08-21")], 7);
 check(unchanged === null, "无变化返回 null");
