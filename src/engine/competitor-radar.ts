@@ -16,6 +16,7 @@ export interface CompetitorCandidate {
   trackName: string;
   genre: string;
   averageUserRating: number | null;
+  trackViewUrl: string | null;
 }
 
 export interface CompetitorSnapshot {
@@ -65,6 +66,7 @@ export async function searchCompetitorCandidates(opts: {
       trackName: String(r.trackName || ""),
       genre: String(r.primaryGenreName || ""),
       averageUserRating: typeof r.averageUserRating === "number" ? r.averageUserRating : null,
+      trackViewUrl: typeof r.trackViewUrl === "string" ? r.trackViewUrl : null,
     }))
     .filter((c: CompetitorCandidate) => c.trackId);
 }

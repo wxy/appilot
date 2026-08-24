@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
 import { formatHumanTime } from "../../lib/format";
+import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 
 export function CompetitorPanel({
@@ -111,7 +112,22 @@ export function CompetitorPanel({
             {candidates.slice(0, 10).map((candidate) => (
               <div key={candidate.trackId} className="flex items-center justify-between gap-2 px-4 py-2.5">
                 <div className="min-w-0">
-                  <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">{candidate.trackName}</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (candidate.trackViewUrl) (window as any).appilot?.openExternal(candidate.trackViewUrl);
+                    }}
+                    disabled={!candidate.trackViewUrl}
+                    className={cn(
+                      "text-sm truncate text-left max-w-full",
+                      candidate.trackViewUrl
+                        ? "text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
+                        : "text-zinc-800 dark:text-zinc-200 cursor-default",
+                    )}
+                    title={candidate.trackViewUrl ? "打开 App Store 页面" : "无商店链接"}
+                  >
+                    {candidate.trackName}
+                  </button>
                   <div className="text-[11px] text-zinc-400 dark:text-zinc-500">
                     {candidate.genre || "未知分类"}{candidate.averageUserRating ? ` · ★${candidate.averageUserRating}` : ""}
                   </div>
@@ -138,7 +154,24 @@ export function CompetitorPanel({
             {competitors.map((competitor) => (
               <div key={competitor.id} className="flex items-center justify-between gap-2 px-4 py-2.5">
                 <div className="min-w-0">
-                  <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">{competitor.name}</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (competitor.trackId) {
+                        (window as any).appilot?.openExternal(`https://apps.apple.com/app/id${competitor.trackId}`);
+                      }
+                    }}
+                    disabled={!competitor.trackId}
+                    className={cn(
+                      "text-sm truncate text-left max-w-full",
+                      competitor.trackId
+                        ? "text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
+                        : "text-zinc-800 dark:text-zinc-200 cursor-default",
+                    )}
+                    title={competitor.trackId ? "打开 App Store 页面" : "无商店链接"}
+                  >
+                    {competitor.name}
+                  </button>
                   <div className="text-[11px] text-zinc-400 dark:text-zinc-500">
                     {competitor.trackId ? `trackId ${competitor.trackId}` : "无商店链接"}
                     {competitor.githubUrl ? ` · ${competitor.githubUrl}` : ""}
