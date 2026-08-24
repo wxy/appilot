@@ -34,6 +34,28 @@ contextBridge.exposeInMainWorld("appilot", {
     sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("competitors:sync", projectId),
   },
 
+  reviews: {
+    list: (productId: string): Promise<any> => ipcRenderer.invoke("reviews:list", productId),
+    sync: (productId: string): Promise<boolean> => ipcRenderer.invoke("reviews:sync", productId),
+  },
+
+  traffic: {
+    snapshots: (projectId: string): Promise<any[]> => ipcRenderer.invoke("traffic:snapshots", projectId),
+    sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("traffic:sync", projectId),
+  },
+
+  asc: {
+    sync: (productId: string): Promise<boolean> => ipcRenderer.invoke("asc:sync", productId),
+    status: (productId: string): Promise<any> => ipcRenderer.invoke("asc:status", productId),
+  },
+
+  readiness: {
+    get: (projectId: string, draftId: string): Promise<any> =>
+      ipcRenderer.invoke("readiness:get", projectId, draftId),
+    check: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("readiness:check", projectId, productId, releaseTag),
+  },
+
   dialog: {
     selectFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:selectFolder"),
   },
