@@ -12,6 +12,17 @@ import {
   isProductPostRelease,
   migrateLegacyStoreProducts,
 } from "./project-state";
+import {
+  bootstrapRoundState,
+  markRoundTaskDone,
+  nextRunAt,
+  nextRankRunAt,
+  nextRunWithinMinutes,
+  prioritizeGroupCompletion,
+  pruneRoundMembers,
+  rankGroupKey,
+  type SchedulerRoundState,
+} from "./schedule";
 import { getStore } from "./store";
 import type { AppStore } from "./store";
 
@@ -33,6 +44,7 @@ interface RankScheduledTask extends ScheduledTaskBase {
   keyword: string;
   queryLanguage: string;
   storefront: string;
+  groupKey: string;
   lastDurationMs?: number;
 }
 
@@ -72,12 +84,16 @@ export function schedulerStatusSnapshot(): {
   return { running: schedulerRunning, nowRunning: nowRunningTask };
 }
 
-function hashString(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index++) {
-    hash = (hash * 31 + value.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash);
+/**
+ * Runs per day for rank tasks. Currently fixed at 1 (one unique
+ * keyword × language × platform × storefront combo per day); the knob is
+ * read from the store so a future settings UI can raise it without touching
+ * the scheduler core.
+ */
+function rankRunsPerDay(store: AppStore): number {
+  const value = store.get("rankRunsPerDay");
+  if (typeof value !== "number" || !Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(48, Math.floor(value)));
 }
 
 function rankTaskId(productId: string, keyword: string, queryLanguage: string, storefront: string): string {
@@ -109,14 +125,6 @@ export function githubSyncCacheEntry(
   };
 }
 
-function nextRunAt(seed: string, intervalMinutes: number, now = new Date()): string {
-  const slot = hashString(seed) % intervalMinutes;
-  const candidate = new Date(now);
-  candidate.setSeconds(0, 0);
-  candidate.setMinutes(candidate.getMinutes() + slot + 1);
-  return candidate.toISOString();
-}
-
 async function resolveRankEntity(product: any): Promise<"software" | "macSoftware"> {
   const cached = rankEntityCache.get(product.trackId);
   if (cached) return cached;
@@ -134,6 +142,7 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
   const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
   const activeKeys = new Set<string>();
   const desiredTasks = new Map<string, ScheduledTask>();
+  const runsPerDay = rankRunsPerDay(store);
 
   for (const project of projects) {
     const pool: any[] = (project.trackedKeywords || []).map((item: any) =>
@@ -180,14 +189,16 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
               keyword: keyword.keyword,
               queryLanguage: keyword.language,
               storefront,
-              intervalMinutes: previous?.intervalMinutes || 24 * 60,
-              nextRunAt: previous?.nextRunAt || nextRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), 24 * 60),
+              groupKey: rankGroupKey(product.id, product.platform, keyword.language, storefront),
+              intervalMinutes: Math.floor((24 * 60) / runsPerDay),
+              nextRunAt: previous?.nextRunAt || nextRankRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), runsPerDay),
               lastRunAt: previous?.lastRunAt ?? null,
               firstRunAt: previous?.firstRunAt ?? null,
               executionCount: previous?.executionCount || 0,
               lastStatus: previous?.lastStatus,
               enabled: previous?.enabled ?? true,
               consecutiveFailures: previous?.consecutiveFailures || 0,
+              lastDurationMs: previous?.lastDurationMs,
             });
           }
         }
@@ -214,6 +225,34 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
 
   store.set("scheduledTasks", next);
   store.set("projects", projects);
+  reconcileSchedulerRounds(store, next);
+}
+
+/**
+ * Keep the per-group round state in sync with the current task membership.
+ * Round progress is per product × platform × language × storefront: a round
+ * completes when every keyword task in that group has run successfully.
+ */
+function reconcileSchedulerRounds(store: AppStore, tasks: ScheduledTask[]): void {
+  const groups = new Map<string, ScheduledTask[]>();
+  for (const task of tasks) {
+    if (task.kind !== "rank" || !task.groupKey) continue;
+    const list = groups.get(task.groupKey) || [];
+    list.push(task);
+    groups.set(task.groupKey, list);
+  }
+  const rounds: Record<string, SchedulerRoundState> = store.get("schedulerRounds") || {};
+  const nextRounds: Record<string, SchedulerRoundState> = {};
+  for (const [groupKey, groupTasks] of groups) {
+    const memberIds = groupTasks.map((task) => task.id);
+    const previous = rounds[groupKey];
+    if (previous) {
+      nextRounds[groupKey] = pruneRoundMembers(previous, memberIds);
+    } else {
+      nextRounds[groupKey] = bootstrapRoundState(groupTasks);
+    }
+  }
+  store.set("schedulerRounds", nextRounds);
 }
 
 /**
@@ -353,10 +392,19 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
   });
   store.set("rankExecutions", executions.slice(-5000));
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
-  task.nextRunAt = nextRunAt(
-    taskSeed(task),
-    task.lastStatus === "failed" ? 30 : task.intervalMinutes,
-  );
+  task.nextRunAt =
+    task.lastStatus === "failed"
+      ? nextRunWithinMinutes(taskSeed(task), 30)
+      : nextRankRunAt(taskSeed(task), rankRunsPerDay(store));
+
+  if (task.lastStatus === "success") {
+    const rounds: Record<string, SchedulerRoundState> = store.get("schedulerRounds") || {};
+    const state = rounds[task.groupKey];
+    if (state) {
+      rounds[task.groupKey] = markRoundTaskDone(state, task.id).state;
+      store.set("schedulerRounds", rounds);
+    }
+  }
 
   // Re-read the latest projects before writing: the product object captured at
   // task start may be stale after the network call (concurrent IPC handlers
@@ -452,10 +500,10 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   });
   store.set("rankExecutions", executions.slice(-5000));
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
-  task.nextRunAt = nextRunAt(
-    task.id,
-    task.lastStatus === "failed" ? 30 : task.intervalMinutes,
-  );
+  task.nextRunAt =
+    task.lastStatus === "failed"
+      ? nextRunWithinMinutes(task.id, 30)
+      : nextRunAt(task.id, task.intervalMinutes || 60);
 }
 
 export async function schedulerTick(): Promise<void> {
@@ -477,10 +525,12 @@ export async function schedulerTick(): Promise<void> {
           task.enabled &&
           new Date(task.nextRunAt).getTime() <= now,
       )
-      .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime())
-      .slice(0, MAX_RANK_TASKS_PER_TICK);
+      .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime());
+    // Run whole keyword groups back-to-back so a group's round completes as
+    // early as possible, then take the tick's throughput cap.
+    const selected = prioritizeGroupCompletion(due).slice(0, MAX_RANK_TASKS_PER_TICK);
 
-    for (const task of due) {
+    for (const task of selected) {
       if (task.kind === "github-sync") {
         await runGithubSyncTask(store, task);
       } else {
@@ -511,7 +561,7 @@ async function scatterOverdueTasks(store: AppStore): Promise<void> {
   let changed = false;
   for (const task of tasks) {
     if (task.enabled && new Date(task.nextRunAt).getTime() <= now) {
-      task.nextRunAt = nextRunAt(task.id, 120);
+      task.nextRunAt = nextRunWithinMinutes(task.id, 120);
       changed = true;
     }
   }

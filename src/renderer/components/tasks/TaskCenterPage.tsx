@@ -9,6 +9,7 @@ import {
   platformLabel,
 } from "../../lib/format";
 import { cn } from "../../lib/utils";
+import { GithubIcon } from "../ui/Icons";
 import { inputLineClass } from "../ui/styles";
 
 export function TaskCenterPage() {
@@ -499,6 +500,8 @@ function groupTasks(tasks: any[]): any[] {
         platform: task.platform,
         queryLanguage: task.queryLanguage,
         storefront: task.storefront,
+        groupKey: task.groupKey,
+        round: task.round || null,
         tasks: [task],
         lastRunAt: task.lastRunAt,
         nextRunAt: task.nextRunAt,
@@ -519,44 +522,111 @@ function groupTasks(tasks: any[]): any[] {
       if (task.firstRunAt && (!existing.firstRunAt || new Date(task.firstRunAt) < new Date(existing.firstRunAt))) {
         existing.firstRunAt = task.firstRunAt;
       }
+      if (!existing.groupKey && task.groupKey) existing.groupKey = task.groupKey;
+      if (!existing.round && task.round) existing.round = task.round;
     }
   }
   return [...map.values()];
 }
 
+type SortKey = "firstRunAt" | "lastDurationMs" | "lastRunAt" | "nextRunAt" | "roundProgress";
+interface SortState {
+  key: SortKey;
+  dir: "asc" | "desc";
+}
+
+function compareGroups(sort: SortState) {
+  return (a: any, b: any) => {
+    if (sort.key === "roundProgress") {
+      const av = a.round && a.round.total > 0 ? a.round.done / a.round.total : null;
+      const bv = b.round && b.round.total > 0 ? b.round.done / b.round.total : null;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return sort.dir === "asc" ? av - bv : bv - av;
+    }
+    const av = a[sort.key] ?? null;
+    const bv = b[sort.key] ?? null;
+    // Tasks without a timestamp sort last regardless of direction.
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    const cmp =
+      sort.key === "lastDurationMs"
+        ? av - bv
+        : new Date(av).getTime() - new Date(bv).getTime();
+    return sort.dir === "asc" ? cmp : -cmp;
+  };
+}
+
 function TaskSection({ title, groups }: { title: string; groups: any[] }) {
   const [page, setPage] = useState(0);
+  const [sort, setSort] = useState<SortState>({ key: "lastRunAt", dir: "desc" });
   const pageSize = 20;
   useEffect(() => {
     setPage(0);
-  }, [title, groups.length]);
+  }, [title, groups.length, sort.key, sort.dir]);
   if (groups.length === 0) return null;
   const totalPages = Math.max(1, Math.ceil(groups.length / pageSize));
-  const visible = groups.slice(page * pageSize, page * pageSize + pageSize);
+  const sorted = [...groups].sort(compareGroups(sort));
+  const visible = sorted.slice(page * pageSize, page * pageSize + pageSize);
+
+  const toggleSort = (key: SortKey) => {
+    setSort((prev) => {
+      if (prev.key === key) {
+        return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      // Timestamps read best newest-first; next runs read best soonest-first.
+      return { key, dir: key === "nextRunAt" ? "asc" : "desc" };
+    });
+  };
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
       </div>
-      <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-        {visible.map((group) => (
-          <div
-            key={group.key}
-            className="grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,8.5rem))] items-center gap-4 px-5 py-3"
-          >
-            <div className="flex items-start gap-2 min-w-0">
-              <span
-                className={cn(
-                  "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
-                  group.kind === "github-sync"
-                    ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
-                    : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-                )}
-              >
-                {group.kind === "github-sync" ? "GitHub 同步" : "排名"}
-              </span>
-              <div className="min-w-0">
+      <div className="grid grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,6.5rem))] items-stretch border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50/30 dark:bg-zinc-900/40">
+        <span className="px-5 py-2 text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+          任务
+        </span>
+        <div className="px-3 py-2 border-l border-zinc-200/70 dark:border-zinc-700/70">
+          <SortHeader label="首次执行" sortKey="firstRunAt" sort={sort} onSort={toggleSort} />
+        </div>
+        <div className="px-3 py-2 border-l border-zinc-200/70 dark:border-zinc-700/70">
+          <SortHeader label="执行时间" sortKey="lastDurationMs" sort={sort} onSort={toggleSort} />
+        </div>
+        <div className="px-3 py-2 border-l border-zinc-200/70 dark:border-zinc-700/70">
+          <SortHeader label="上次执行" sortKey="lastRunAt" sort={sort} onSort={toggleSort} />
+        </div>
+        <div className="px-3 py-2 border-l border-zinc-200/70 dark:border-zinc-700/70">
+          <SortHeader label="下次执行" sortKey="nextRunAt" sort={sort} onSort={toggleSort} />
+        </div>
+        <div className="px-3 py-2 border-l border-zinc-200/70 dark:border-zinc-700/70">
+          <SortHeader label="本轮进度" sortKey="roundProgress" sort={sort} onSort={toggleSort} />
+        </div>
+      </div>
+      {visible.map((group, rowIndex) => (
+        <div
+          key={group.key}
+          className={cn(
+            "grid grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,6.5rem))] items-stretch border-b border-zinc-100 dark:border-zinc-800 last:border-b-0",
+            rowIndex % 2 === 1 && "bg-zinc-50/60 dark:bg-zinc-800/20",
+          )}
+        >
+          <div className="flex items-start gap-2 min-w-0 px-5 py-3">
+            <span
+              className={cn(
+                "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
+                group.kind === "github-sync"
+                  ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                  : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+              )}
+            >
+              {group.kind === "github-sync" ? "GitHub 同步" : "排名"}
+            </span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1 min-w-0">
                 <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
                   {group.kind === "github-sync"
                     ? `${group.projectName} · GitHub 同步`
@@ -570,24 +640,54 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
                         storefrontDisplayName(group.storefront || "")
                       } · ${group.tasks.length} 个关键词`}
                 </div>
+                {group.kind === "github-sync" && (
+                  <span title="依赖 GitHub 凭证" className="shrink-0">
+                    <GithubIcon className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />
+                  </span>
+                )}
               </div>
             </div>
-            <TaskMeta
-              label="首次执行"
-              value={group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
-            />
-            <TaskMeta
-              label="执行时间"
-              value={formatDurationMs(group.lastDurationMs)}
-            />
-            <TaskMeta
-              label="上次执行"
-              value={group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
-            />
-            <TaskMeta label="下次执行" value={formatHumanTime(group.nextRunAt)} />
           </div>
-        ))}
-      </div>
+          <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
+            <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
+              {group.firstRunAt ? formatHumanTime(group.firstRunAt) : "—"}
+            </div>
+          </div>
+          <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
+            <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
+              {formatDurationMs(group.lastDurationMs)}
+            </div>
+          </div>
+          <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
+            <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
+              {group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+            </div>
+          </div>
+          <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
+            <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
+              {formatHumanTime(group.nextRunAt)}
+            </div>
+          </div>
+          <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
+            {group.kind === "github-sync" ? (
+              <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate">—</div>
+            ) : (
+              <>
+                <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
+                  {group.round ? `${group.round.done}/${group.round.total}` : "—"}
+                </div>
+                <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                  {group.round?.lastCompletedAt
+                    ? `上轮完成 ${formatHumanTime(group.round.lastCompletedAt)}`
+                    : group.round && group.round.total > 0
+                      ? "尚未完整完成一轮"
+                      : ""}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ))}
       {totalPages > 1 && (
         <div className="px-6 py-3 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between text-xs text-zinc-400 dark:text-zinc-500">
           <span>
@@ -629,19 +729,31 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
   );
 }
 
-function TaskMeta({
+function SortHeader({
   label,
-  value,
-  className,
+  sortKey,
+  sort,
+  onSort,
 }: {
   label: string;
-  value: string;
-  className?: string;
+  sortKey: SortKey;
+  sort: SortState;
+  onSort: (key: SortKey) => void;
 }) {
+  const active = sort.key === sortKey;
   return (
-    <div className={cn("min-w-0 text-right", className)}>
-      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{label}</div>
-      <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">{value}</div>
-    </div>
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={cn(
+        "text-right text-[10px] font-medium uppercase tracking-wide transition-colors",
+        active
+          ? "text-zinc-700 dark:text-zinc-200"
+          : "text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300",
+      )}
+      title={`按${label}排序`}
+    >
+      {label} <span className="text-[9px]">{active ? (sort.dir === "desc" ? "▼" : "▲") : "⇅"}</span>
+    </button>
   );
 }
