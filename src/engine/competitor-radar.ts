@@ -124,3 +124,28 @@ export async function fetchCompetitorSnapshot(
 
   return snapshot;
 }
+
+export function competitorDeltaSummary(
+  competitor: Competitor,
+  snapshots: CompetitorSnapshot[],
+  days = 7,
+): { name: string; change: string } | null {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const recent = snapshots.filter((snapshot) => snapshot.date >= cutoff);
+  if (recent.length < 2) return null;
+  const latest = recent[recent.length - 1];
+  const previous = recent[recent.length - 2];
+  const parts: string[] = [];
+  if (latest.version && previous.version && latest.version !== previous.version) {
+    parts.push(`v${previous.version} → v${latest.version}`);
+  }
+  if (latest.stars != null && previous.stars != null && latest.stars !== previous.stars) {
+    const starsDelta = latest.stars - previous.stars;
+    parts.push(`★${starsDelta > 0 ? "+" : ""}${starsDelta}`);
+  }
+  const newReleases = (latest.recentReleases || []).filter(
+    (release) => release.publishedAt && release.publishedAt.slice(0, 10) >= cutoff,
+  ).length;
+  if (newReleases > 0) parts.push(`${newReleases} 个新 release`);
+  return parts.length > 0 ? { name: competitor.name, change: parts.join("，") } : null;
+}
