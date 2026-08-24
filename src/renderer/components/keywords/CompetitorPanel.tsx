@@ -40,6 +40,13 @@ export function CompetitorPanel({
     setTerm(defaultTerm);
   }, [defaultTerm]);
 
+  // A changed search context (language / storefront / keyword) invalidates
+  // the previous results.
+  useEffect(() => {
+    setCandidates([]);
+    setSearchError("");
+  }, [viewLang, country, defaultTerm]);
+
   const handleSearch = async () => {
     if (!term.trim()) return;
     setSearching(true);
