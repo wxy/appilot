@@ -74,6 +74,10 @@ export interface OverviewBriefInput {
   } | null;
   submissionKeywordCount: number;
   uiLanguage: string;
+  /** 用户反馈主题（来自 feedback-inbox 聚类），供周报引用。 */
+  feedbackThemes?: { title: string; evidenceCount: number; topQuotes: string[] }[];
+  /** 竞品近 7 天动态摘要。 */
+  competitorDeltas?: { name: string; change: string }[];
   /** Shared stable archive; the brief uses it as the cache-friendly prefix. */
   profile?: ProjectProfile;
 }
@@ -98,6 +102,8 @@ export function buildBriefInput(args: {
     storeStatus?: string;
   } | null;
   submissionKeywords: { language?: string; text?: string }[];
+  feedbackThemes?: { title: string; evidenceCount: number; topQuotes: string[] }[];
+  competitorDeltas?: { name: string; change: string }[];
   profile?: ProjectProfile;
 }): OverviewBriefInput {
   const days = args.days ?? 14;
@@ -151,6 +157,8 @@ export function buildBriefInput(args: {
       : null,
     submissionKeywordCount,
     uiLanguage: "zh-Hans",
+    feedbackThemes: args.feedbackThemes || [],
+    competitorDeltas: args.competitorDeltas || [],
     profile: args.profile,
   };
 }

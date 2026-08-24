@@ -53,5 +53,14 @@ assert(input.keywordStats.ranked === 1 && input.keywordStats.top10 === 1, "build
 assert(input.release?.tag === "v1.2.0", "buildBriefInput: release tag");
 assert(input.submissionKeywordCount === 2, "buildBriefInput: submission keyword count");
 
+const themed = buildBriefInput({
+  projectName: "P", productName: "GloWalk", description: "d", platform: "ios",
+  supportedLanguages: ["en"], trackedKeywords: [], rankSnapshots: [],
+  releaseDraft: null, submissionDraft: null, submissionKeywords: [],
+  feedbackThemes: [{ title: "夜间模式", evidenceCount: 3, topQuotes: ["太亮了"] }],
+  competitorDeltas: [{ name: "Comp", change: "v1.0 → v1.1" }],
+});
+assert(themed.feedbackThemes?.length === 1 && themed.competitorDeltas?.[0]?.name === "Comp", "buildBriefInput: 反馈主题与竞品动态透传");
+
 if (errors === 0) console.log("\nAll overview-summary tests passed ✅");
 else { console.error(`\n${errors} test(s) failed ❌`); process.exit(1); }
