@@ -11,7 +11,7 @@ import {
 } from "../ui/styles";
 
 const GITHUB_CAPABILITIES = ["私有/草案 release 公告", "真实 PR 素材", "远程仓库数据"];
-const ASC_CAPABILITIES = ["版本/审核状态回读", "审核意见", "评论洞察", "销量/下载分析"];
+const ASC_CAPABILITIES = ["版本/审核状态回读", "审核意见（待实测）", "评论洞察（免费 RSS）", "销量/下载分析（待实测）"];
 
 export function CredentialsForm({
   projectId,

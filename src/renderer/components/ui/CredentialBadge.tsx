@@ -3,8 +3,8 @@ import { cn } from "../../lib/utils";
 import { AppleIcon, GithubIcon } from "./Icons";
 
 const CREDENTIAL_BADGE_DETAIL: Record<"github" | "asc", string> = {
-  github: "私有/草案 release 公告、真实 PR 素材、远程仓库数据",
-  asc: "版本/审核状态回读、审核意见、评论洞察、销量/下载分析",
+  github: "私有/草案 release 公告、真实 PR 素材、仓库流量与资产下载量",
+  asc: "版本/审核状态回读、审核意见（待实测）、评论洞察、销量/下载分析（待实测）",
 };
 
 /** Small chip marking a feature that is enhanced by a saved credential.
