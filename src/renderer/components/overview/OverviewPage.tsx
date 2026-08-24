@@ -22,6 +22,8 @@ import { CredentialBadge } from "../ui/CredentialBadge";
 import { EmptyState } from "../ui/EmptyState";
 import { StatusChip } from "../ui/StatusChip";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
+import { CompetitorRadarCard } from "./CompetitorRadarCard";
+import { TrafficCard } from "./TrafficCard";
 import {
   MetricBlock,
   OVERVIEW_CHART_COLORS,
@@ -408,6 +410,11 @@ export function OverviewPage() {
           warn={dataStale}
           sub={dataStale ? "数据已过期" : "排名页详情"}
         />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <TrafficCard project={project} />
+        <CompetitorRadarCard project={project} />
       </div>
 
       {/* Rank trend chart + top keywords */}
