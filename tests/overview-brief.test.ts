@@ -57,6 +57,16 @@ const joined = messages.map((m) => m.content).join("\n");
 assert(joined.includes("GloWalk") && joined.includes("night walk") && joined.includes("v1.2.0"), "buildBriefMessages: context embedded");
 assert(messages[0].role === "system", "buildBriefMessages: system prompt first");
 
+// 4. buildBriefMessages with feedback themes + competitor deltas
+const themedInput: any = {
+  ...input,
+  feedbackThemes: [{ title: "夜间模式", evidenceCount: 3, topQuotes: ["太亮了"] }],
+  competitorDeltas: [{ name: "Comp", change: "v1.0 → v1.1" }],
+};
+const themedMessages = buildBriefMessages(themedInput);
+const themedJoined = themedMessages.map((m) => m.content).join("\n");
+assert(themedJoined.includes("夜间模式") && themedJoined.includes("Comp"), "buildBriefMessages: 反馈主题与竞品动态嵌入上下文");
+
 // 3. Renderer rule signals
 const signals = briefRuleSignals({
   rankRows: [
