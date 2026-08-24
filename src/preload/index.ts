@@ -21,6 +21,19 @@ contextBridge.exposeInMainWorld("appilot", {
     },
   },
 
+  competitors: {
+    list: (projectId: string): Promise<any[]> => ipcRenderer.invoke("competitors:list", projectId),
+    save: (projectId: string, competitor: any): Promise<any[]> =>
+      ipcRenderer.invoke("competitors:save", projectId, competitor),
+    remove: (projectId: string, competitorId: string): Promise<boolean> =>
+      ipcRenderer.invoke("competitors:remove", projectId, competitorId),
+    search: (opts: { term: string; country: string; platform?: string }): Promise<any[]> =>
+      ipcRenderer.invoke("competitors:search", opts),
+    snapshots: (projectId: string, competitorId: string): Promise<any[]> =>
+      ipcRenderer.invoke("competitors:snapshots", projectId, competitorId),
+    sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("competitors:sync", projectId),
+  },
+
   dialog: {
     selectFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:selectFolder"),
   },
