@@ -27,6 +27,7 @@ import { btnPrimary, btnSecondary } from "../ui/styles";
 import { CurationDialog } from "./CurationDialog";
 import type { KeywordGeneration, KeywordSuggestion } from "./keywordTypes";
 import { ChartTick, MatrixCellView, RankTooltip } from "./matrix";
+import { CompetitorPanel } from "./CompetitorPanel";
 
 export function KeywordsPage() {
   const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, resumePausedKeyword, clearRemovedKeywords } = useProject();
@@ -1182,6 +1183,14 @@ export function KeywordsPage() {
         onSelectAll={(choice) => selectAllCuration(choice)}
         onSetConfirm={setCurationConfirm}
       />
+
+      {project && product && (
+        <CompetitorPanel
+          projectId={project.id}
+          product={{ platform: product.platform, supportedLanguages: product.supportedLanguages }}
+          defaultTerm={selectedKeyword || ""}
+        />
+      )}
     </div>
   );
 }

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
+import { buildStatusForVersion } from "../../../engine/build-status";
+import { ascStateMeta } from "../../lib/asc-status";
 import {
   formatHumanTime,
   formatKilo,
@@ -22,6 +24,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { FieldBlock, FieldHeader } from "../ui/Fields";
 import { GithubIcon } from "../ui/Icons";
 import { StatusChip } from "../ui/StatusChip";
+import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import {
   btnPrimary,
   btnSmSecondary,
@@ -62,6 +65,8 @@ export function ReleasePage() {
   const translatingRef = useRef<Set<string>>(new Set());
   const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
   const [pendingVersion, setPendingVersion] = useState("");
+  const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
+  const [ascRefreshing, setAscRefreshing] = useState(false);
 
   useEffect(() => {
     const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
@@ -74,6 +79,27 @@ export function ReleasePage() {
     });
     return () => off?.();
   }, []);
+
+  useEffect(() => {
+    if (!productId) return;
+    let cancelled = false;
+    (window as any).appilot?.asc?.status(productId)
+      .then((info: any) => { if (!cancelled) setAscInfo(info); })
+      .catch(() => { if (!cancelled) setAscInfo(null); });
+    return () => { cancelled = true; };
+  }, [productId]);
+
+  const handleAscRefresh = async () => {
+    if (!productId || ascRefreshing) return;
+    setAscRefreshing(true);
+    try {
+      await (window as any).appilot?.asc?.sync(productId);
+      const info = await (window as any).appilot?.asc?.status(productId);
+      setAscInfo(info || null);
+    } finally {
+      setAscRefreshing(false);
+    }
+  };
 
   const loadReleases = async (force = false) => {
     if (!project?.id) return;
@@ -165,6 +191,18 @@ export function ReleasePage() {
 
   const draft = active?.draft || null;
   const release = active?.release || null;
+  const ascVersion = draft?.appVersion
+    ? (ascInfo?.versions || []).find((v: any) => v.versionString === draft.appVersion) || null
+    : null;
+  const ascMeta = ascStateMeta(ascVersion?.appStoreState);
+  const buildInfo = ascVersion ? buildStatusForVersion(ascVersion, ascInfo?.builds || []) : null;
+  const buildTone: "muted" | "emerald" | "amber" | "red" = buildInfo?.state === "available"
+    ? "emerald"
+    : buildInfo?.state === "processing" || buildInfo?.state === "inBetaReview"
+      ? "amber"
+      : buildInfo?.state === "rejected"
+        ? "red"
+        : "muted";
   const localizations = draft ? localizationList(draft) : [];
   const activeLocalization =
     localizations.find((item: any) => item.language === activeLanguage) || localizations[0] || null;
@@ -778,6 +816,20 @@ export function ReleasePage() {
                           tone={STORE_STATUS_META[draft.storeStatus].tone}
                         />
                       )}
+                      {ascMeta && (
+                        <StatusChip label={`ASC：${ascMeta.label}`} tone={ascMeta.tone} />
+                      )}
+                      {buildInfo && (
+                        <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void handleAscRefresh()}
+                        disabled={ascRefreshing}
+                        className="text-[11px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
+                      >
+                        {ascRefreshing ? "刷新中…" : ascInfo ? `ASC 刷新 ${ascInfo.fetchedAt ? formatHumanTime(ascInfo.fetchedAt) : ""}` : "刷新 ASC 状态"}
+                      </button>
                       {draft && localizations.length > 0 && (
                         <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
                           {localizations.length}/{availableLanguages.length} 语言
@@ -797,6 +849,13 @@ export function ReleasePage() {
               <HistoryViewer draft={historyDraft} />
             ) : (
               <>
+            {selectedRelease && draft && (
+              <ReleaseReadinessPanel
+                projectId={project.id}
+                productId={productId}
+                draft={{ id: draft.id, releaseTag: draft.releaseTag }}
+              />
+            )}
             {selectedRelease && step === 1 && (
               <>
                 <div className="flex items-center gap-2">

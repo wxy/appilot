@@ -48,6 +48,8 @@ async function runTests() {
     check(snapshot?.referrers[0]?.url === "google.com", "traffic 解析 referrers");
     check(calls[0].auth === "Bearer token-1", "traffic 请求带 Bearer token");
     check(snapshot?.date === new Date().toISOString().slice(0, 10), "快照 date 为当天");
+    const snapshotWithoutAssets = await fetchTrafficSnapshot(dir, "token-1");
+    check(snapshotWithoutAssets?.assetDownloads === undefined, "无资产信息时 assetDownloads 为 undefined（可选字段）");
     const noToken = await fetchTrafficSnapshot(dir, null);
     check(noToken === null, "无 token 时 traffic 返回 null");
     const assets = await fetchReleaseAssetDownloads(dir, "v1.0.0", "token-1");
