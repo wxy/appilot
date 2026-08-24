@@ -24,6 +24,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { FieldBlock, FieldHeader } from "../ui/Fields";
 import { GithubIcon } from "../ui/Icons";
 import { StatusChip } from "../ui/StatusChip";
+import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import {
   btnPrimary,
   btnSmSecondary,
@@ -848,6 +849,13 @@ export function ReleasePage() {
               <HistoryViewer draft={historyDraft} />
             ) : (
               <>
+            {selectedRelease && draft && (
+              <ReleaseReadinessPanel
+                projectId={project.id}
+                productId={productId}
+                draft={{ id: draft.id, releaseTag: draft.releaseTag }}
+              />
+            )}
             {selectedRelease && step === 1 && (
               <>
                 <div className="flex items-center gap-2">
