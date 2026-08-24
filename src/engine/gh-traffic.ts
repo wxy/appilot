@@ -7,6 +7,10 @@ export interface TrafficSnapshot {
   clones: number;
   uniqueClones: number;
   referrers: { url: string; views: number }[];
+  /** Latest release tag whose assets were captured this day (null = none). */
+  assetTag?: string | null;
+  /** Per-asset download counts for the latest release, captured daily. */
+  assetDownloads?: { name: string; downloadCount: number }[];
   source: "github-api";
 }
 

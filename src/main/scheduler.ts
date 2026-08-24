@@ -618,6 +618,15 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
     const { fetchTrafficSnapshot } = await import("../engine/gh-traffic");
     const snapshot = await fetchTrafficSnapshot(project.localPath, token);
     if (snapshot) {
+      const syncEntry = githubSyncCacheEntry(store, project);
+      if (syncEntry?.tag) {
+        const { fetchReleaseAssetDownloads } = await import("../engine/gh-traffic");
+        const assets = await fetchReleaseAssetDownloads(project.localPath, syncEntry.tag, token);
+        if (assets) {
+          snapshot.assetTag = assets.tag;
+          snapshot.assetDownloads = assets.assets;
+        }
+      }
       const all: Record<string, any[]> = store.get("trafficSnapshots") || {};
       const list = all[task.projectId] || [];
       if (list[list.length - 1]?.date !== snapshot.date) {
