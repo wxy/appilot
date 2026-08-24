@@ -26,13 +26,35 @@ source .release.env
 npm run dist:mac -- -c.mac.notarize=true
 ```
 
-产出 `dist/Appilot-0.3.0.dmg`（已 Developer ID 签名 + 公证 + staple）。
+产出两个分架构 DMG（Developer ID 签名；`.app` 内部已公证 + staple）：
+
+- `dist/Appilot-0.3.0-arm64.dmg`（Apple Silicon）
+- `dist/Appilot-0.3.0-x64.dmg`（Intel）
+
+### DMG 级公证 + 贴票（推荐）
+
+electron-builder 只公证了 `.app`，DMG 本身没有票。为了让用户打开 DMG 时也没有
+「来自互联网」提示，把 DMG 再提交一次公证并贴票（两个架构各一次）：
+
+```bash
+source .release.env
+for dmg in dist/Appilot-0.3.0-arm64.dmg dist/Appilot-0.3.0-x64.dmg; do
+  xcrun notarytool submit "$dmg" \
+    --apple-id "$APPLE_ID" \
+    --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+    --team-id "$APPLE_TEAM_ID" \
+    --wait
+  xcrun stapler staple "$dmg"
+done
+```
 
 ## 验证
 
 ```bash
 codesign --verify --deep --strict --verbose=2 "dist/mac-arm64/Appilot.app"
 xcrun stapler validate "dist/mac-arm64/Appilot.app"
+xcrun stapler validate "dist/Appilot-0.3.0-arm64.dmg"
+xcrun stapler validate "dist/Appilot-0.3.0-x64.dmg"
 ```
 
 ## 冒烟清单
