@@ -7,10 +7,11 @@ import { platformLabel, formatTokens } from "./lib/format";
 import { HomePage } from "./components/home/HomePage";
 import { TaskCenterPage } from "./components/tasks/TaskCenterPage";
 import { ManageProjectsPage } from "./components/projects/ManageProjectsPage";
-import { PlaceholderPage } from "./components/ui/PlaceholderPage";
 import { OverviewPage } from "./components/overview/OverviewPage";
 import { ReleasePage } from "./components/release/ReleasePage";
+import { ReviewsPage } from "./components/reviews/ReviewsPage";
 import { KeywordsPage } from "./components/keywords/KeywordsPage";
+import { TrendPage } from "./components/trend/TrendPage";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { ProjectSettingsPage } from "./components/settings/ProjectSettingsPage";
 
@@ -307,17 +308,8 @@ export function App() {
         <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/tasks" element={<TaskCenterPage />} />
         <Route path="/release" element={<ReleasePage />} />
-        <Route
-          path="/reviews"
-          element={
-            <PlaceholderPage
-              title="评论洞察"
-              desc="用户评论聚类与洞察。"
-              credentialBadges={["asc"]}
-            />
-          }
-        />
-        <Route path="/trend" element={<PlaceholderPage title="长期效果" desc="增长时间线与你采纳的动作。" />} />
+        <Route path="/reviews" element={<ReviewsPage />} />
+        <Route path="/trend" element={<TrendPage />} />
         <Route path="/projects" element={<ManageProjectsPage />} />
         <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
