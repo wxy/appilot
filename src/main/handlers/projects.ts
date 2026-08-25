@@ -130,6 +130,7 @@ export function registerProjectsHandlers(): void {
             : creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath
               ? "global"
               : null,
+        trafficError: (s.get("opsStatus") || {})[project.id]?.trafficError ?? null,
       };
     });
   });

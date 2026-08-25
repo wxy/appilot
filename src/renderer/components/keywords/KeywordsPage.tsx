@@ -70,22 +70,20 @@ export function KeywordsPage() {
   >({});
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
-  const [showUnranked, setShowUnranked] = useState(false);
+  const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
-  const unrankedPopoverRef = useRef<HTMLSpanElement>(null);
 
   // Close keyword popovers when clicking anywhere outside them.
   useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      const inside = [pausedPopoverRef, deletedPopoverRef, unrankedPopoverRef].some(
+      const inside = [pausedPopoverRef, deletedPopoverRef].some(
         (ref) => ref.current?.contains(target),
       );
       if (!inside) {
         setShowPaused(false);
         setShowDeleted(false);
-        setShowUnranked(false);
       }
     };
     document.addEventListener("mousedown", onMouseDown);
@@ -230,6 +228,10 @@ export function KeywordsPage() {
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
+  const showUnrankedRows =
+    matrixTab === "unranked" ||
+    (matrixTab === "ranked" && !urlScope && scopeFilteredRanked.length === 0);
+  const activeMatrixTab = showUnrankedRows ? "unranked" : matrixTab;
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
     : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
@@ -558,7 +560,6 @@ export function KeywordsPage() {
         }
       }
     }
-    setShowUnranked(true);
     setCuration({});
     setCurationOpen(false);
   };
@@ -884,9 +885,37 @@ export function KeywordsPage() {
             >
               <div className="py-2.5 pl-5 pr-4 sticky left-0 z-30 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                    关键词（{trackedActive.length}）
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                      关键词（{trackedActive.length}）
+                    </span>
+                    <div className="flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setMatrixTab("ranked")}
+                        className={cn(
+                          "px-2 py-0.5 text-[10px] font-medium transition-colors",
+                          activeMatrixTab === "ranked"
+                            ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                        )}
+                      >
+                        在榜 {ranked.length}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMatrixTab("unranked")}
+                        className={cn(
+                          "px-2 py-0.5 text-[10px] font-medium transition-colors border-l border-zinc-200 dark:border-zinc-700",
+                          activeMatrixTab === "unranked"
+                            ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                        )}
+                      >
+                        未在榜 {unranked.length}
+                      </button>
+                    </div>
+                  </div>
                   {urlScope === "top10" && (
                     <button
                       type="button"
@@ -1009,45 +1038,6 @@ export function KeywordsPage() {
                           )}
                         </span>
                       )}
-                      {unranked.length > 0 && (
-                        <span className="relative" ref={unrankedPopoverRef}>
-                          <button
-                            type="button"
-                            onClick={() => setShowUnranked((v) => !v)}
-                            className={cn(
-                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
-                              showUnranked
-                                ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
-                                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700",
-                            )}
-                          >
-                            未在榜 {unranked.length}
-                          </button>
-                          {showUnranked && (
-                            <div className="absolute right-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3">
-                              <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5">
-                                未在榜（尚未采集到排名）
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                {unranked.map((row) => (
-                                  <span
-                                    key={`${row.language}:${row.keyword}`}
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
-                                  >
-                                    {row.keyword}
-                                    <span className="text-[10px] text-zinc-400">
-                                      {row.language === "en" ? "全局" : languageLabel(row.language)}
-                                    </span>
-                                  </span>
-                                ))}
-                              </div>
-                              <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-                                这些关键词已排入自动采集任务，获得排名数据后会自动进入入榜列表。
-                              </p>
-                            </div>
-                          )}
-                        </span>
-                      )}
                     </span>
                   )}
                 </div>
@@ -1105,16 +1095,20 @@ export function KeywordsPage() {
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
                   </p>
-                ) : scopeFilteredRanked.length === 0 && unranked.length === 0 ? (
+                ) : showUnrankedRows ? (
+                  unranked.length > 0 ? (
+                    unranked.map((row) => renderMatrixRow(row, true))
+                  ) : (
+                    <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
+                      该筛选范围内暂无关键词。
+                    </p>
+                  )
+                ) : scopeFilteredRanked.length > 0 ? (
+                  scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))
+                ) : (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     该筛选范围内暂无关键词。
                   </p>
-                ) : (
-                  <>
-                    {scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))}
-                    {scopeFilteredRanked.length === 0 &&
-                      unranked.map((row) => renderMatrixRow(row, true))}
-                  </>
                 )}
             </div>
 

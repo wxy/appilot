@@ -11,9 +11,12 @@ export function formatVersionDate(iso?: string | null): string {
 }
 
 export function draftVersionLabel(item: any): string {
-  const tag = String(item.releaseTag || item.appVersion || "");
-  if (/^v?\d+(\.\d+)*$/.test(tag)) return tag.startsWith("v") ? tag : `v${tag}`;
-  return formatVersionDate(item.updatedAt) || tag || "未知版本";
+  // The user-confirmed App Store version wins over the git tag identity:
+  // a draft may be keyed to the tag it was generated from while its content
+  // targets a later store version.
+  const version = String(item.appVersion || item.releaseTag || "");
+  if (/^v?\d+(\.\d+)*$/.test(version)) return version.startsWith("v") ? version : `v${version}`;
+  return formatVersionDate(item.updatedAt) || version || "未知版本";
 }
 
 /** Merge draft records that belong to the same release version (same releaseTag),

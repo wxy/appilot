@@ -619,6 +619,8 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
     const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
     const { fetchTrafficSnapshot } = await import("../engine/gh-traffic");
     const snapshot = await fetchTrafficSnapshot(project.localPath, token);
+    const opsStatusStore: Record<string, any> = store.get("opsStatus") || {};
+    const opsSyncedAt = new Date().toISOString();
     if (snapshot) {
       const syncEntry = githubSyncCacheEntry(store, project);
       if (syncEntry?.tag) {
@@ -635,7 +637,16 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
         all[task.projectId] = [...list, snapshot].slice(-90);
         store.set("trafficSnapshots", all);
       }
+      opsStatusStore[task.projectId] = { trafficError: null, lastSyncedAt: opsSyncedAt };
+    } else {
+      opsStatusStore[task.projectId] = {
+        trafficError: token
+          ? "GitHub 流量接口无数据（Token 可能缺少 Metrics 权限，或仓库不可访问）"
+          : "未配置 GitHub Token",
+        lastSyncedAt: opsSyncedAt,
+      };
     }
+    store.set("opsStatus", opsStatusStore);
 
     const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
     if (competitors.length > 0) {
