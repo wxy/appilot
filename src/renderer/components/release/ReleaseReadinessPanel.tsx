@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { ReadinessCheckItem, ReadinessStatus } from "../../../engine/readiness-check";
 import { cn } from "../../lib/utils";
 import { formatHumanTime } from "../../lib/format";
-import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { AppleIcon, GithubIcon } from "../ui/Icons";
 
 const STATUS_STYLES: Record<ReadinessStatus, { dot: string; text: string }> = {
@@ -23,6 +22,8 @@ export function ReleaseReadinessPanel({
   onAscRefresh,
   ascRefreshing,
   ascInfo,
+  onCheckGithub,
+  checkingGithub,
 }: {
   projectId: string;
   productId: string;
@@ -38,6 +39,8 @@ export function ReleaseReadinessPanel({
   onAscRefresh?: () => Promise<void>;
   ascRefreshing?: boolean;
   ascInfo?: { fetchedAt?: string } | null;
+  onCheckGithub?: () => void;
+  checkingGithub?: boolean;
 }) {
   const [result, setResult] = useState<{ checkedAt: string; items: ReadinessCheckItem[] } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -87,39 +90,22 @@ export function ReleaseReadinessPanel({
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm">
-      <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布 → 文案 → 商店</h3>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void handleCheck()}
-            disabled={!draft || checking || ascRefreshing}
-            className={cn("inline-flex items-center gap-1.5", result ? btnSmSecondary : btnSmPrimary)}
-            title={draft ? undefined : "生成或重建文案后可检查就绪"}
-          >
-            <AppleIcon className="w-3 h-3" />
-            {checking ? "检查中…" : "检查 App Store 发布"}
-          </button>
-          {onAscRefresh && (
-            <button
-              type="button"
-              onClick={() => void onAscRefresh()}
-              disabled={ascRefreshing}
-              className="text-[11px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
-            >
-              {ascRefreshing
-                ? "刷新中…"
-                : ascInfo?.fetchedAt
-                  ? `ASC ${formatHumanTime(ascInfo.fetchedAt)}`
-                  : "刷新 App Store"}
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="px-5 py-4">
+      <div className="p-4">
         <div className="flex items-stretch gap-2">
           <FlowNode title="GitHub 发布" icon={<GithubIcon className="w-3 h-3" />}>
             {githubNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+            {onCheckGithub && (
+              <button
+                type="button"
+                onClick={onCheckGithub}
+                disabled={checkingGithub}
+                className="inline-flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 disabled:opacity-60"
+                title="从 GitHub 检测新的发布草案、已发布或提交变化"
+              >
+                <GithubIcon className="w-3 h-3" />
+                {checkingGithub ? "检查中…" : "检查 GitHub 发布"}
+              </button>
+            )}
           </FlowNode>
           <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
             →
@@ -132,6 +118,30 @@ export function ReleaseReadinessPanel({
           </div>
           <FlowNode title="商店版本" icon={<AppleIcon className="w-3 h-3" />}>
             {storeNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+            <button
+              type="button"
+              onClick={() => void handleCheck()}
+              disabled={!draft || checking || ascRefreshing}
+              className="inline-flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 disabled:opacity-60"
+              title={draft ? undefined : "生成或重建文案后可检查就绪"}
+            >
+              <AppleIcon className="w-3 h-3" />
+              {checking ? "检查中…" : "检查 App Store 版本"}
+            </button>
+            {onAscRefresh && (
+              <button
+                type="button"
+                onClick={() => void onAscRefresh()}
+                disabled={ascRefreshing}
+                className="text-[11px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
+              >
+                {ascRefreshing
+                  ? "刷新中…"
+                  : ascInfo?.fetchedAt
+                    ? `App Store ${formatHumanTime(ascInfo.fetchedAt)}`
+                    : "刷新 App Store"}
+              </button>
+            )}
           </FlowNode>
         </div>
         {alerts && (

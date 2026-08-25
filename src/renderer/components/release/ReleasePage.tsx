@@ -854,16 +854,6 @@ export function ReleasePage() {
               ))}
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => void loadReleases(true)}
-            disabled={checking}
-            className={cn("inline-flex items-center gap-1.5", btnPrimary)}
-            title="从 GitHub 检测新的发布草案、已发布或提交变化"
-          >
-            <GithubIcon className="w-3 h-3" />
-            {checking ? "检查中..." : "检查 GitHub 发布"}
-          </button>
         </div>
       </div>
 
@@ -885,6 +875,21 @@ export function ReleasePage() {
           />
         )
       ) : (
+        <>
+        <ReleaseReadinessPanel
+          projectId={project.id}
+          productId={productId}
+          draft={draft ? { id: draft.id, releaseTag: draft.releaseTag } : null}
+          githubNode={githubNode}
+          copyNode={copyNode}
+          storeNode={storeNode}
+          alerts={alerts}
+          onAscRefresh={handleAscRefresh}
+          ascRefreshing={ascRefreshing}
+          ascInfo={ascInfo}
+          onCheckGithub={() => void loadReleases(true)}
+          checkingGithub={checking}
+        />
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0 space-y-4">
             {step <= 2 && releaseContext && (
@@ -1186,20 +1191,6 @@ export function ReleasePage() {
               <HistoryViewer draft={historyDraft} productTrackName={selectedProduct?.trackName} />
             ) : (
               <>
-            {selectedRelease && (
-              <ReleaseReadinessPanel
-                projectId={project.id}
-                productId={productId}
-                draft={draft ? { id: draft.id, releaseTag: draft.releaseTag } : null}
-                githubNode={githubNode}
-                copyNode={copyNode}
-                storeNode={storeNode}
-                alerts={alerts}
-                onAscRefresh={handleAscRefresh}
-                ascRefreshing={ascRefreshing}
-                ascInfo={ascInfo}
-              />
-            )}
             {selectedRelease && step === 1 && (
               <>
                 <div className="flex items-center gap-2">
@@ -1514,6 +1505,7 @@ export function ReleasePage() {
             )}
           </div>
         </div>
+        </>
       )}
     </div>
   );
