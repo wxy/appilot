@@ -4,7 +4,6 @@ import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
 import { buildStatusForVersion } from "../../../engine/build-status";
 import { deriveVersionStatus } from "../../../engine/version-status";
-import { ascStateMeta } from "../../lib/asc-status";
 import {
   formatHumanTime,
   formatKilo,
@@ -27,6 +26,7 @@ import { StatusChip } from "../ui/StatusChip";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import {
   btnPrimary,
+  btnSmPrimary,
   btnSmSecondary,
   inputClass,
   inputLineClass,
@@ -131,7 +131,39 @@ export function ReleasePage() {
         }
         return null;
       });
-      const draft = next.releases?.find((item: any) => item.draft) || next.releases?.[0];
+      const candidates: any[] = next.releases || [];
+      const latest = candidates[0] || null;
+      // 当前文案 = 最新一批已确定的文案；没有新工作时默认回到它。
+      const confirmed = candidates
+        .flatMap((r: any) =>
+          (r.submissionDrafts || []).filter(
+            (d: any) => d?.productId === productId && d?.batchConfirmedAt,
+          ),
+        )
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.batchConfirmedAt).getTime() -
+            new Date(a.batchConfirmedAt).getTime(),
+        )[0] || null;
+      const currentCopyTag = confirmed
+        ? candidates.find((r: any) =>
+            (r.submissionDrafts || []).some(
+              (d: any) => d?.productId === productId && d?.id === confirmed.id,
+            ),
+          )?.tag || null
+        : null;
+      // 有新提交/PR 或发布草案 → 指向最新文案草案；否则回到当前文案。
+      const hasNewWork = Boolean(
+        latest &&
+        (latest.githubDraft === true ||
+          (latest.material?.commits || []).some(
+            (c: any) =>
+              !/^Merge\s+(pull\s+request|branch)/i.test(String(c?.subject || "")),
+          )),
+      );
+      const defaultTag = hasNewWork
+        ? latest?.tag
+        : currentCopyTag || latest?.tag || "";
       setSelectedTag((current) => {
         if (urlTag && next.releases?.some((item: any) => item.tag === urlTag)) {
           return urlTag;
@@ -139,7 +171,7 @@ export function ReleasePage() {
         if (current && next.releases?.some((item: any) => item.tag === current)) {
           return current;
         }
-        return draft?.tag || "";
+        return defaultTag;
       });
     } catch (e: any) {
       setError(e.message || "发布列表加载失败。");
@@ -209,15 +241,22 @@ export function ReleasePage() {
   const draft = active?.draft || null;
   const release = active?.release || null;
   const released = Boolean(release && release.githubDraft === false);
+  const ascConfigured = Boolean(project?.hasAscKey);
   const ascVersion = draft?.appVersion
     ? (ascInfo?.versions || []).find((v: any) => v.versionString === draft.appVersion) || null
     : null;
-  const ascMeta = ascStateMeta(ascVersion?.appStoreState);
   const versionStatus = deriveVersionStatus({
     appVersion: draft?.appVersion || "",
     ascVersions: ascInfo?.versions ?? null,
     storeCurrentVersion,
   });
+  // ASC configured but not synced yet → "待同步", never "未配置".
+  const ascPending = ascConfigured && !ascInfo && draft?.appVersion;
+  const effectiveVersionStatus = ascPending
+    ? { key: "asc-pending" as const, label: "待同步", tone: "muted" as const, source: "asc" as const }
+    : draft?.appVersion
+      ? versionStatus
+      : null;
   const githubStatus = release?.githubDraft === true
     ? { label: "发布草案", tone: "blue" as const, source: "GitHub" as const }
     : release?.githubDraft === false
@@ -287,6 +326,10 @@ export function ReleasePage() {
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
   const currentCopy =
     (releaseContext?.drafts || []).find((item: any) => Boolean(item.batchConfirmedAt)) || null;
+  const viewingCurrent = Boolean(
+    historyDraft && currentCopy && historyDraft.releaseTag === currentCopy.releaseTag,
+  );
+  const viewingHistory = Boolean(historyDraft && !viewingCurrent);
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
     const rows: {
@@ -305,7 +348,7 @@ export function ReleasePage() {
     });
     const historyDrafts = releaseContext?.drafts || [];
     rows.push({
-      label: "文案列表（含历次发布公告）",
+      label: "历次发布公告与文案",
       meta:
         historyDrafts.length > 0
           ? `最近 ${historyDrafts.length} 份${historyDrafts[0]?.appVersion ? `（最新 v${String(historyDrafts[0].appVersion).replace(/^v/i, "")}）` : ""}`
@@ -633,54 +676,60 @@ export function ReleasePage() {
           <aside className="min-w-0 space-y-4">
             {step <= 2 && releaseContext && (
               <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">当前文案</h3>
-                </div>
-                <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                <div className="p-4">
                   <button
                     type="button"
                     onClick={() => setHistoryDraft(currentCopy)}
                     className={cn(
-                      "w-full flex items-center justify-between gap-2 px-5 py-3 text-left transition-colors",
+                      "w-full text-left rounded-xl px-5 py-4 shadow-sm transition-colors",
                       currentCopy && historyDraft?.releaseTag === currentCopy.releaseTag
-                        ? "bg-amber-50 dark:bg-amber-500/10"
-                        : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
+                        ? "bg-amber-100 dark:bg-amber-500/20 ring-2 ring-amber-500/40"
+                        : "bg-amber-500 hover:bg-amber-600",
                     )}
                   >
-                    <span className="min-w-0">
-                      <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">当前文案</span>
-                      <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                        {currentCopy
-                          ? `${draftVersionLabel(currentCopy)} · ${formatHumanTime(currentCopy.updatedAt)}`
-                          : "暂无已确定的文案"}
-                      </span>
+                    <span
+                      className={cn(
+                        "block text-sm font-semibold",
+                        currentCopy && historyDraft?.releaseTag === currentCopy.releaseTag
+                          ? "text-amber-800 dark:text-amber-300"
+                          : "text-white",
+                      )}
+                    >
+                      当前文案
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryDraft(null)}
-                    className={cn(
-                      "w-full flex items-center justify-between gap-2 px-5 py-3 text-left transition-colors",
-                      !historyDraft
-                        ? "bg-amber-50 dark:bg-amber-500/10"
-                        : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
-                    )}
-                  >
-                    <span className="min-w-0">
-                      <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">最新文案草案</span>
-                      <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                        {draft
-                          ? `${draftVersionLabel(draft)} · ${formatHumanTime(draft.updatedAt)}`
-                          : "尚未生成文案草案，新文案从这里开始"}
-                      </span>
+                    <span
+                      className={cn(
+                        "block text-[11px] mt-0.5 truncate",
+                        currentCopy && historyDraft?.releaseTag === currentCopy.releaseTag
+                          ? "text-amber-700/80 dark:text-amber-400/80"
+                          : "text-white/80",
+                      )}
+                    >
+                      {currentCopy
+                        ? `${draftVersionLabel(currentCopy)} · ${formatHumanTime(currentCopy.updatedAt)}`
+                        : "暂无已确定的文案"}
                     </span>
                   </button>
                 </div>
               </div>
             )}
             <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">参考</h3>
+              <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">最新文案草案</h3>
+                  <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                    {draft
+                      ? `${draftVersionLabel(draft)} · ${formatHumanTime(draft.updatedAt)}`
+                      : "尚未生成文案草案，新文案从这里开始"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHistoryDraft(null)}
+                  className={btnSmPrimary}
+                >
+                  打开
+                </button>
               </div>
               {selectedRelease && (
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -692,7 +741,7 @@ export function ReleasePage() {
                         : "无变更"
                     }
                     checked={step > 1}
-                    defaultOpen
+                    defaultOpen={false}
                     action={
                       summaryItems.length > 0 ? (
                         <button
@@ -868,7 +917,7 @@ export function ReleasePage() {
               )}
             </div>
             {step <= 2 && releaseContext && (
-              <div>
+              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
                 <HistoryPanel
                   drafts={(releaseContext.drafts || []).filter(
                     (item: any) => item.releaseTag !== currentCopy?.releaseTag,
@@ -887,9 +936,11 @@ export function ReleasePage() {
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">文档</span>
                   <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                    {historyDraft
-                      ? `文案列表 · ${draftVersionLabel(historyDraft)}`
-                      : `当前文案 · ${draft?.appVersion || "版本待定"}`}
+                    {viewingCurrent
+                      ? `当前文案 · ${draftVersionLabel(historyDraft)}`
+                      : viewingHistory
+                        ? `文案历史 · ${draftVersionLabel(historyDraft)}`
+                        : `当前文案 · ${draft?.appVersion || "版本待定"}`}
                   </span>
                   {!historyDraft && (
                     <span className="flex items-center gap-1.5 shrink-0 flex-wrap">
@@ -897,26 +948,26 @@ export function ReleasePage() {
                         <StatusChip label="母本已确定" tone="amber" />
                       )}
                       {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
-                      {versionStatus && (
+                      {effectiveVersionStatus && (
                         <StatusChip
-                          label={versionStatus.label}
-                          tone={versionStatus.tone}
+                          label={effectiveVersionStatus.label}
+                          tone={effectiveVersionStatus.tone}
                         />
                       )}
-                      {versionStatus && (
+                      {effectiveVersionStatus && (
                         <span
                           className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400"
                           title={
-                            versionStatus.source === "asc"
+                            effectiveVersionStatus.source === "asc"
                               ? "来自 ASC 凭证查询"
-                              : versionStatus.source === "store-lookup"
+                              : effectiveVersionStatus.source === "store-lookup"
                                 ? "来自 App Store 公开查询（未配置 ASC 凭证）"
                                 : "未配置 ASC 凭证，无法确认"
                           }
                         >
-                          {versionStatus.source === "asc"
+                          {effectiveVersionStatus.source === "asc"
                             ? "ASC"
-                            : versionStatus.source === "store-lookup"
+                            : effectiveVersionStatus.source === "store-lookup"
                               ? "商店"
                               : "未配置"}
                         </span>
@@ -924,18 +975,15 @@ export function ReleasePage() {
                       {githubStatus && (
                         <StatusChip label={`${githubStatus.source}：${githubStatus.label}`} tone={githubStatus.tone} />
                       )}
-                      {ascMeta && !versionStatus && (
-                        <StatusChip label={`ASC：${ascMeta.label}`} tone={ascMeta.tone} />
-                      )}
                       {buildInfo && (
                         <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
                       )}
-                      {versionStatus?.key === "not-in-asc" && (
+                      {effectiveVersionStatus?.key === "not-in-asc" && (
                         <span className="text-[11px] text-amber-600 dark:text-amber-500">
                           ASC 中未找到版本 {draft?.appVersion}，提交前请确认已在 App Store Connect 创建该版本。
                         </span>
                       )}
-                      {versionStatus?.key === "unknown" && versionStatus.source === "none" && (
+                      {effectiveVersionStatus?.key === "unknown" && effectiveVersionStatus.source === "none" && (
                         <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
                           配置 ASC 凭证后可自动校验版本是否提交/审核/上架。
                         </span>
@@ -956,7 +1004,7 @@ export function ReleasePage() {
                     </span>
                   )}
                 </div>
-                {historyDraft && (
+                {viewingHistory && (
                   <button type="button" onClick={() => setHistoryDraft(null)} className={btnSmSecondary}>
                     ← 返回当前文案
                   </button>
@@ -991,7 +1039,7 @@ export function ReleasePage() {
                     className={inputLineClass + " max-w-32"}
                   />
                   <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {draft ? "文案列表将按此版本标识" : "生成文案时将写入此版本"}
+                    {draft ? "文案将按此版本标识" : "生成文案时将写入此版本"}
                   </span>
                 </div>
                 <div>
@@ -1033,7 +1081,7 @@ export function ReleasePage() {
                   <div>
                     {selectedExistingDraft ? (
                       <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
-                        {loadingDraft ? "加载中..." : "查看文案列表"}
+                        {loadingDraft ? "加载中..." : "查看文案"}
                       </button>
                     ) : (
                       <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有文案</span>

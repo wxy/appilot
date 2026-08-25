@@ -16,7 +16,7 @@ export function HistoryPanel({
 }) {
   const merged = mergeHistoryDrafts(drafts);
   return (
-    <ReferenceSection title="文案列表" meta={merged.length > 0 ? `${merged.length} 个版本` : "暂无文案"} defaultOpen>
+    <ReferenceSection title="文案历史列表" meta={merged.length > 0 ? `${merged.length} 个版本` : "暂无文案"} defaultOpen>
       {merged.length === 0 ? (
         <p className="text-sm text-zinc-400 dark:text-zinc-500 py-1">还没有文案。</p>
       ) : (

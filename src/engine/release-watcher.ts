@@ -84,6 +84,16 @@ export interface GithubApiCache {
 const RELEASE_DRAFT_FILENAME = "RELEASE_DRAFT.md";
 const MAX_MATERIAL_COMMITS = 60;
 
+/**
+ * A merge commit ("Merge pull request #N ..." / "Merge branch ...") carries
+ * no content of its own — its changes live in the branch commits, which are
+ * already part of the range. Excluding it keeps the change summary free of
+ * phantom "new PR" entries after a release is merged.
+ */
+export function isMergeCommit(subject: string): boolean {
+  return /^Merge\s+(pull\s+request|branch)/i.test(String(subject || "").trim());
+}
+
 async function git(
   localPath: string,
   args: string[],
@@ -229,7 +239,7 @@ export async function collectReleaseMaterial(
         date: date || "",
       };
     })
-    .filter((commit) => commit.sha);
+    .filter((commit) => commit.sha && !isMergeCommit(commit.subject));
 
   const prNumbers = Array.from(
     new Set(

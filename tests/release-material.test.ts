@@ -14,6 +14,7 @@ import {
   checkForRelease,
   fetchRemoteTags,
   filterMaterial,
+  isMergeCommit,
   materialToBody,
   syncLocalRepo,
 } from "../src/engine/release-watcher";
@@ -34,6 +35,14 @@ function commit(dir: string, file: string, message: string) {
   run(dir, ["commit", "-q", "-m", message]);
 }
 
+function mergeCommit(dir: string, file: string, branch: string, prNumber: string) {
+  run(dir, ["checkout", "-qb", branch]);
+  commit(dir, file, `feat: pr content ${prNumber} (#${prNumber})`);
+  run(dir, ["checkout", "-q", "-"]);
+  run(dir, ["merge", "--no-ff", "-q", "-m", `Merge pull request #${prNumber} from wxy/${branch}`, branch]);
+  run(dir, ["branch", "-qD", branch]);
+}
+
 function setupRepo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "appilot-release-"));
   run(dir, ["init", "-q"]);
@@ -52,6 +61,12 @@ function setupRepo(): string {
 async function runTests() {
   const dir = setupRepo();
   try {
+    // Pure helper: merge commits carry no content and must not surface as
+    // phantom "new PR" entries.
+    assert(isMergeCommit("Merge pull request #24 from wxy/branch") === true, "merge pull request detected");
+    assert(isMergeCommit("Merge branch 'master' into feature") === true, "merge branch detected");
+    assert(isMergeCommit("feat: walk (#1)") === false, "normal commit not detected");
+
     // First run (no boundary): material = recent history, named by newest main-line tag.
     const first = await checkForRelease(dir, null);
     const firstBody = first.latest?.body || "";
@@ -110,9 +125,24 @@ async function runTests() {
       "moved tag: material includes post-move commits",
     );
 
+    // A merge commit inside the range is excluded from material while its
+    // branch content commit stays.
+    mergeCommit(dir, "g.txt", "feature-x", "7");
+    const afterMerge = await collectReleaseMaterial(dir, boundary);
+    assert(
+      afterMerge.commits.every((c) => !String(c.subject).startsWith("Merge pull request #7")),
+      "merge commit excluded from material",
+    );
+    assert(
+      afterMerge.commits.some((c) => String(c.subject).includes("#7")),
+      "branch content commit kept in material",
+    );
+
     // collectReleaseMaterial honors an explicit since-boundary.
     const material = await collectReleaseMaterial(dir, boundary);
-    assert(material.commits.length === 2, "collectReleaseMaterial: commits since boundary");
+    // dark mode (#4) + review feedback (#10) + pr content (#7); the #7 merge
+    // commit itself is excluded.
+    assert(material.commits.length === 3, "collectReleaseMaterial: commits since boundary");
     assert(material.pullRequests.some((pr) => pr.number === 10), "collectReleaseMaterial: PR ref extracted");
     assert(typeof material.sinceDate === "string" && material.sinceDate.length > 0, "collectReleaseMaterial: sinceDate populated");
 

@@ -18,7 +18,7 @@ export function HistoryViewer({ draft }: { draft: any }) {
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案列表</h3>
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案</h3>
           <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">
             {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
           </span>

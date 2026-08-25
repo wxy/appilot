@@ -154,6 +154,15 @@ export function OverviewPage() {
         storeCurrentVersion,
       })
     : null;
+  // ASC configured but not synced → "待同步", never "未配置"; no version yet
+  // → show no status chip at all ("版本待定" is the honest label).
+  const ascConfigured = Boolean(project?.hasAscKey);
+  const ascPending = ascConfigured && !ascInfo && submissionDraft?.appVersion;
+  const effectiveVersionStatus = ascPending
+    ? { key: "asc-pending" as const, label: "待同步", tone: "muted" as const, source: "asc" as const }
+    : submissionDraft?.appVersion
+      ? versionStatus
+      : null;
   const handledBriefIds = new Set(
     (project.briefActions || []).map((item) => item.id),
   );
@@ -646,21 +655,21 @@ export function OverviewPage() {
                   />
                 )}
                 {confirmChip && <StatusChip label={confirmChip.label} tone={confirmChip.tone} />}
-                {versionStatus && <StatusChip label={versionStatus.label} tone={versionStatus.tone} />}
-                {versionStatus && (
+                {effectiveVersionStatus && <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />}
+                {effectiveVersionStatus && (
                   <span
                     className="inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400"
                     title={
-                      versionStatus.source === "asc"
+                      effectiveVersionStatus.source === "asc"
                         ? "来自 ASC 凭证查询"
-                        : versionStatus.source === "store-lookup"
+                        : effectiveVersionStatus.source === "store-lookup"
                           ? "来自 App Store 公开查询（未配置 ASC 凭证）"
                           : "未配置 ASC 凭证，无法确认"
                     }
                   >
-                    {versionStatus.source === "asc"
+                    {effectiveVersionStatus.source === "asc"
                       ? "ASC"
-                      : versionStatus.source === "store-lookup"
+                      : effectiveVersionStatus.source === "store-lookup"
                         ? "商店"
                         : "未配置"}
                   </span>
