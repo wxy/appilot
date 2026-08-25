@@ -52,6 +52,8 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   batchConfirmedAt?: string;
   /** 上架后按商店实际文案回读覆盖本地快照的时间（冻结依据）。 */
   ascSyncedAt?: string;
+  /** 无 ASC 凭证时，按商店公开信息（iTunes description/releaseNotes）部分冻结的时间。 */
+  storeSyncedAt?: string;
   /** 变更摘要中已由用户确认为覆盖的条目 id（用于 what's-new 覆盖核对）。 */
   summaryChecklist?: string[];
   createdAt: string;
@@ -115,6 +117,48 @@ export function applyAscSnapshotToDraft(
   }
   if (changed) {
     draft.ascSyncedAt = now;
+    draft.updatedAt = now;
+  }
+  return changed;
+}
+
+export interface StorePublicCopyUpdate {
+  language: string;
+  description?: string;
+  whatsNew?: string;
+}
+
+/**
+ * Partial freeze without ASC credentials: align description and whats-new per
+ * language using the public storefront copy (iTunes lookup). Name/subtitle/
+ * keywords/promotional text are not confirmable this way and stay untouched.
+ */
+export function applyStorePublicSnapshotToDraft(
+  draft: StoreSubmissionDraft,
+  updates: StorePublicCopyUpdate[],
+  now = new Date().toISOString(),
+): boolean {
+  let changed = false;
+  for (const update of updates) {
+    const language = String(update.language || "").trim();
+    if (!language) continue;
+    const match = (draft.localizations || []).find(
+      (loc) =>
+        localeMatchesLocale(language, loc.language || "") ||
+        ((loc as any).locale && localeMatchesLocale(language, (loc as any).locale)),
+    );
+    if (!match) continue;
+    if (update.description !== undefined && match.description !== update.description) {
+      match.description = update.description;
+      changed = true;
+    }
+    if (update.whatsNew !== undefined && match.whatsNew !== update.whatsNew) {
+      match.whatsNew = update.whatsNew;
+      changed = true;
+    }
+  }
+  if (changed) {
+    draft.storeSyncedAt = now;
     draft.updatedAt = now;
   }
   return changed;

@@ -304,12 +304,15 @@ export function ReleasePage() {
         ...availableLanguages.filter((language) => language !== UI_SOURCE_LANGUAGE),
       ]
     : availableLanguages;
-  const statusChips = (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {masterConfirmed && !batchConfirmed && (
-        <StatusChip label="母本已确定" tone="amber" />
-      )}
-      {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
+  // 文案状态栏按性质分组：发布（GitHub）/ 版本（ASC）/ 确认（本地）/ 提醒（动态）。
+  const releaseStatus = githubStatus ? (
+    <span className="inline-flex items-center gap-1">
+      <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
+      <GithubIcon className="w-3 h-3" />
+    </span>
+  ) : null;
+  const versionStatusNodes = effectiveVersionStatus || buildInfo || (draft?.appVersion && storeLiveVersion) ? (
+    <>
       {effectiveVersionStatus && (
         <span className="inline-flex items-center gap-1">
           <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
@@ -319,6 +322,9 @@ export function ReleasePage() {
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">未配置</span>
           )}
         </span>
+      )}
+      {buildInfo && (
+        <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
       )}
       {draft?.appVersion && storeLiveVersion && (
         storeLiveVersion === draft.appVersion ? (
@@ -331,15 +337,27 @@ export function ReleasePage() {
           </span>
         )
       )}
-      {githubStatus && (
-        <span className="inline-flex items-center gap-1">
-          <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
-          <GithubIcon className="w-3 h-3" />
+    </>
+  ) : null;
+  const confirmStatus =
+    masterConfirmed || batchConfirmed || (draft && localizations.length > 0) ? (
+    <>
+      {masterConfirmed && !batchConfirmed && (
+        <StatusChip label="母本已确定" tone="amber" />
+      )}
+      {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
+      {draft && localizations.length > 0 && (
+        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          {localizations.length}/{availableLanguages.length} 语言
         </span>
       )}
-      {buildInfo && (
-        <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
-      )}
+    </>
+  ) : null;
+  const alerts =
+    effectiveVersionStatus?.key === "not-in-asc" ||
+    (effectiveVersionStatus?.key === "unknown" && effectiveVersionStatus.source === "none") ||
+    effectiveVersionStatus?.key === "ready-for-sale" ? (
+    <>
       {effectiveVersionStatus?.key === "not-in-asc" && (
         <span className="text-[11px] text-amber-600 dark:text-amber-500">
           ASC 中未找到版本 {draft?.appVersion}，提交前请确认已在 App Store Connect 创建该版本。
@@ -371,18 +389,18 @@ export function ReleasePage() {
               已按商店实际文案冻结 · {formatHumanTime(draft.ascSyncedAt)}
             </span>
           )}
+          {draft?.storeSyncedAt && !draft?.ascSyncedAt && (
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-500">
+              已按商店公开信息部分冻结（描述/新增内容）· {formatHumanTime(draft.storeSyncedAt)}
+            </span>
+          )}
           <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
             README 或需同步更新
           </span>
         </>
       )}
-      {draft && localizations.length > 0 && (
-        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-          {localizations.length}/{availableLanguages.length} 语言
-        </span>
-      )}
-    </div>
-  );
+    </>
+  ) : null;
   const remainingTranslationCount = orderedLanguages.filter(
     (language) =>
       language !== primaryLanguage &&
@@ -1079,7 +1097,10 @@ export function ReleasePage() {
                 projectId={project.id}
                 productId={productId}
                 draft={{ id: draft.id, releaseTag: draft.releaseTag }}
-                chips={statusChips}
+                releaseStatus={releaseStatus}
+                versionStatus={versionStatusNodes}
+                confirmStatus={confirmStatus}
+                alerts={alerts}
                 onAscRefresh={handleAscRefresh}
                 ascRefreshing={ascRefreshing}
                 ascInfo={ascInfo}

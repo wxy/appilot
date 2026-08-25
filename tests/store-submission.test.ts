@@ -1,5 +1,6 @@
 import {
   applyAscSnapshotToDraft,
+  applyStorePublicSnapshotToDraft,
   inferAppVersion,
 } from "../src/engine/store-submission";
 import {
@@ -131,6 +132,39 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
     { locale: "en-US", name: "New Name" },
   ]);
   check(d.localizations[0].name === "New Name" && d.localizations[0].description === "old", "仅覆盖提供的字段");
+}
+
+// Partial freeze without ASC: per-language description/whats-new alignment.
+{
+  const d = {
+    productId: "prod",
+    appVersion: "1.1.1",
+    localizations: [
+      { language: "en", locale: "en-US", name: "GloWalk", subtitle: "Path", description: "local en", whatsNew: "local news", keywords: "k" },
+      { language: "de", locale: "de-DE", name: "GloWalk", subtitle: "Weg", description: "lokal", whatsNew: "lokale news", keywords: "g" },
+      { language: "zh-Hans", locale: "zh-Hans", name: "GloWalk", subtitle: "光之路", description: "本地", whatsNew: "本地新闻", keywords: "走" },
+    ],
+  } as any;
+  const changed = applyStorePublicSnapshotToDraft(d, [
+    { language: "en", description: "store en", whatsNew: "store news" },
+    { language: "de", description: "store de" },
+    { language: "ja", description: "不应写入" },
+  ], "2026-08-25T00:00:00Z");
+  check(changed === true, "部分冻结返回 changed");
+  check(d.localizations[0].description === "store en" && d.localizations[0].whatsNew === "store news", "en 描述与新增内容对齐");
+  check(d.localizations[1].description === "store de" && d.localizations[1].whatsNew === "lokale news", "de 仅覆盖提供的字段");
+  check(d.localizations[2].description === "本地", "无对应语言更新时保持不变");
+  check(d.localizations[0].name === "GloWalk" && d.localizations[0].keywords === "k", "名称/关键词不参与部分冻结");
+  check(d.storeSyncedAt === "2026-08-25T00:00:00Z", "部分冻结时间戳写入");
+}
+{
+  const d = {
+    localizations: [{ language: "en", description: "same", whatsNew: "same" }],
+  } as any;
+  const changed = applyStorePublicSnapshotToDraft(d, [
+    { language: "en", description: "same", whatsNew: "same" },
+  ]);
+  check(changed === false && d.storeSyncedAt === undefined, "内容一致时不写部分冻结时间戳");
 }
 
 if (errors) process.exit(1);

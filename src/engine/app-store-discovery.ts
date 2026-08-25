@@ -444,6 +444,34 @@ export async function fetchStoreCurrentVersion(
   }
 }
 
+/**
+ * Per-storefront public copy via iTunes lookup (no credentials needed):
+ * localized description + release notes for the given country. Used for the
+ * partial freeze when ASC credentials are absent.
+ */
+export async function fetchStoreLocalizedCopy(
+  trackId: string,
+  country = "us",
+): Promise<{ version: string; description: string; releaseNotes: string } | null> {
+  try {
+    const res = await fetch(
+      `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
+    );
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const r = Array.isArray(data?.results) ? data.results[0] : null;
+    if (!r) return null;
+    return {
+      version: typeof r.version === "string" ? r.version : "",
+      description: typeof r.description === "string" ? r.description : "",
+      releaseNotes: typeof r.releaseNotes === "string" ? r.releaseNotes : "",
+    };
+  } catch (err: any) {
+    log.warn(`Store localized copy lookup failed for ${trackId}/${country}: ${err.message}`);
+    return null;
+  }
+}
+
 /** Extract a rough one-paragraph description from the repo README. */
 export function readRepoDescription(localPath: string): string {
   const content = readReadme(localPath);

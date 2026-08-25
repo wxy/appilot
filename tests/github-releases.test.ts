@@ -43,6 +43,8 @@ async function runTests() {
               trackId: 123,
               version: "1.1.1",
               currentVersionReleaseDate: "2026-08-20T07:00:00Z",
+              description: "German store description",
+              releaseNotes: "German what's new",
             },
           ],
         }),
@@ -110,9 +112,17 @@ async function runTests() {
     assert(store?.currentVersionReleaseDate === "2026-08-20T07:00:00Z", "release date parsed");
     assert(calls.some((c) => c.url.includes("lookup?id=123") && c.url.includes("country=de")), "country param passed");
 
+    const { fetchStoreLocalizedCopy } = await import("../src/engine/app-store-discovery");
+    const localized = await fetchStoreLocalizedCopy("123", "de");
+    assert(localized?.description === "German store description", "per-storefront description parsed");
+    assert(localized?.releaseNotes === "German what's new", "per-storefront release notes parsed");
+    assert(localized?.version === "1.1.1", "per-storefront version parsed");
+
     status = 500;
     const storeFail = await fetchStoreCurrentVersion("123");
     assert(storeFail === null, "store lookup failure → null");
+    const localizedFail = await fetchStoreLocalizedCopy("123", "de");
+    assert(localizedFail === null, "localized copy failure → null");
     status = 200;
   } finally {
     globalThis.fetch = origFetch;
