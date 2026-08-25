@@ -22,7 +22,9 @@ function readinessInputFrom(draft: any, product: any, asc: any) {
   return {
     localizations,
     supportedLanguages: (product?.supportedLanguages || []).map((l: any) => l.code),
-    versionTag: draft.releaseTag || "",
+    // Target version is the ASC matching key; releaseTag is only the content
+    // source and may legitimately differ (user can override the version).
+    versionTag: draft.appVersion || draft.releaseTag || "",
     ascVersion: ascVersion?.versionString ?? null,
     buildAttached: Boolean(ascVersion?.buildId),
   };

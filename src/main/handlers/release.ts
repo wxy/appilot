@@ -63,7 +63,8 @@ export function registerReleaseHandlers(): void {
       releases: result.releases.map((release) => ({
         ...release,
         submissionDrafts: (project.storeProducts || []).map((product: any) =>
-          findStoreSubmissionDraft(project, product.id, release.tag),
+          findStoreSubmissionDraft(project, product.id, release.tag) ||
+          findDraftByVersion(project, product.id, inferAppVersion(release)),
         ),
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,

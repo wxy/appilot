@@ -88,13 +88,13 @@ export function runReadinessChecks(input: ReadinessInput): ReadinessCheckItem[] 
 
   const tagVersion = String(input.versionTag || "").trim().replace(/^v/i, "");
   if (!tagVersion) {
-    items.push({ id: "version", label: "版本号匹配", status: "unknown", detail: "git tag 不是版本号格式" });
+    items.push({ id: "version", label: "版本号匹配", status: "unknown", detail: "尚未填写目标版本，无法比对" });
   } else if (!input.ascVersion) {
     items.push({ id: "version", label: "版本号匹配", status: "unknown", detail: "未回读到 ASC 版本，无法比对" });
   } else if (input.ascVersion === tagVersion) {
-    items.push({ id: "version", label: "版本号匹配", status: "pass", detail: `git tag v${tagVersion} = ASC ${input.ascVersion}` });
+    items.push({ id: "version", label: "版本号匹配", status: "pass", detail: `目标版本 v${tagVersion} = ASC ${input.ascVersion}` });
   } else {
-    items.push({ id: "version", label: "版本号匹配", status: "fail", detail: `git tag v${tagVersion} ≠ ASC ${input.ascVersion}` });
+    items.push({ id: "version", label: "版本号匹配", status: "fail", detail: `目标版本 v${tagVersion} ≠ ASC ${input.ascVersion}` });
   }
 
   if (!input.ascVersion) {

@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { ReadinessCheckItem, ReadinessStatus } from "../../../engine/readiness-check";
 import { cn } from "../../lib/utils";
+import { formatHumanTime } from "../../lib/format";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
+import { AppleIcon } from "../ui/Icons";
 
 const STATUS_STYLES: Record<ReadinessStatus, { dot: string; text: string }> = {
   pass: { dot: "bg-emerald-500", text: "text-emerald-700 dark:text-emerald-400" },
@@ -14,10 +16,18 @@ export function ReleaseReadinessPanel({
   projectId,
   productId,
   draft,
+  chips,
+  onAscRefresh,
+  ascRefreshing,
+  ascInfo,
 }: {
   projectId: string;
   productId: string;
   draft: { id: string; releaseTag: string };
+  chips?: ReactNode;
+  onAscRefresh?: () => Promise<void>;
+  ascRefreshing?: boolean;
+  ascInfo?: { fetchedAt?: string } | null;
 }) {
   const [result, setResult] = useState<{ checkedAt: string; items: ReadinessCheckItem[] } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -33,6 +43,8 @@ export function ReleaseReadinessPanel({
   const handleCheck = async () => {
     setChecking(true);
     try {
+      // 检查 ASC 发布前先刷新 ASC 缓存，保证基于最新外部状态。
+      if (onAscRefresh) await onAscRefresh();
       const next = await (window as any).appilot?.readiness?.check(projectId, productId, draft.releaseTag);
       setResult(next || null);
     } finally {
@@ -43,11 +55,34 @@ export function ReleaseReadinessPanel({
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm">
       <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布就绪体检</h3>
-        <button type="button" onClick={() => void handleCheck()} disabled={checking} className={result ? btnSmSecondary : btnSmPrimary}>
-          {checking ? "检查中…" : result ? "重新检查" : "检查就绪"}
-        </button>
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案状态栏</h3>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleCheck()}
+            disabled={checking || ascRefreshing}
+            className={cn("inline-flex items-center gap-1.5", result ? btnSmSecondary : btnSmPrimary)}
+          >
+            <AppleIcon className="w-3 h-3" />
+            {checking ? "检查中…" : "检查 ASC 发布"}
+          </button>
+          {onAscRefresh && (
+            <button
+              type="button"
+              onClick={() => void onAscRefresh()}
+              disabled={ascRefreshing}
+              className="text-[11px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
+            >
+              {ascRefreshing
+                ? "刷新中…"
+                : ascInfo?.fetchedAt
+                  ? `ASC ${formatHumanTime(ascInfo.fetchedAt)}`
+                  : "刷新 ASC"}
+            </button>
+          )}
+        </div>
       </div>
+      {chips && <div className="px-5 pt-3">{chips}</div>}
       {result ? (
         <div className="px-5 py-4 space-y-2">
           {result.items.map((item) => {
