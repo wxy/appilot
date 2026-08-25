@@ -244,20 +244,27 @@ export function ReleasePage() {
   const release = active?.release || null;
   const released = Boolean(release && release.githubDraft === false);
   const ascConfigured = Boolean(project?.hasAscKey);
+  const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
+  // 目标版本默认从发布公告推断（tag 语义版本优先，名称兜底）。没有草稿时也
+  // 用它查询商店状态——否则"无文案 + 已上架"时无法判断可重建。
+  const inferredVersion = selectedRelease ? inferAppVersion(selectedRelease) : "";
+  const versionQuery = String(
+    draft?.appVersion || inferredVersion || pendingVersion || "",
+  ).trim();
   const ascVersion = draft?.appVersion
     ? (ascInfo?.versions || []).find((v: any) => v.versionString === draft.appVersion) || null
     : null;
   const versionStatus = deriveVersionStatus({
-    appVersion: draft?.appVersion || "",
+    appVersion: versionQuery,
     ascVersions: ascInfo?.versions ?? null,
     storeCurrentVersion,
   });
   const storeLiveVersion = ascStoreLiveVersion(ascInfo?.versions);
   // ASC configured but not synced yet → "待同步", never "未配置".
-  const ascPending = ascConfigured && !ascInfo && draft?.appVersion;
+  const ascPending = ascConfigured && !ascInfo && versionQuery;
   const effectiveVersionStatus = ascPending
     ? { key: "asc-pending" as const, label: "待同步", tone: "muted" as const, source: "asc" as const }
-    : draft?.appVersion
+    : versionQuery
       ? versionStatus
       : null;
   // 上架（ASC ready-for-sale）后文案完全只读。GitHub 已发布本身不锁定：
@@ -285,9 +292,6 @@ export function ReleasePage() {
   const primaryLanguage = localizations[0]?.language || "";
   const masterConfirmed = Boolean(draft?.masterConfirmedAt);
   const batchConfirmed = Boolean(draft?.batchConfirmedAt);
-  const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
-  // 目标版本默认从发布公告推断（tag 语义版本优先，名称兜底），生成前即预填。
-  const inferredVersion = selectedRelease ? inferAppVersion(selectedRelease) : "";
   const draftVersionHint = draft?.appVersion || pendingVersion || inferredVersion;
   const latestRelease = releases[0] || null;
   const latestHasChanges = Boolean(
