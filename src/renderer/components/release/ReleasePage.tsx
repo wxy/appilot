@@ -37,7 +37,7 @@ import { ReferenceSection } from "./ReferenceSection";
 import { draftVersionLabel } from "./releaseFormat";
 
 export function ReleasePage() {
-  const { projects, currentProjectId, currentProductId } = useProject();
+  const { projects, currentProjectId, currentProductId, selectProduct } = useProject();
   const [searchParams, setSearchParams] = useSearchParams();
   const urlTag = searchParams.get("tag") || "";
   const project = projects.find((item) => item.id === currentProjectId);
@@ -121,6 +121,8 @@ export function ReleasePage() {
 
   const loadReleases = async (force = false) => {
     if (!project?.id) return;
+    // 切换项目/平台或刷新时先清空旧数据，统一走载入态，避免显示部分更新。
+    setReleases([]);
     setChecking(true);
     setError("");
     try {
@@ -184,7 +186,7 @@ export function ReleasePage() {
 
   useEffect(() => {
     void loadReleases();
-  }, [project?.id, searchParams]);
+  }, [project?.id, currentProductId, searchParams]);
 
   // Keep the selected product valid when the project or its products change
   // (e.g. switching project, or products arriving after the initial load).
@@ -702,6 +704,7 @@ export function ReleasePage() {
 
   const handleProductChange = async (value: string) => {
     setProductId(value);
+    selectProduct(value);
     setActive(null);
     setActiveLanguage("");
     setReleaseContext(null);
