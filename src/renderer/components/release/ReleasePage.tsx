@@ -255,6 +255,10 @@ export function ReleasePage() {
   const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
   const previousDraft =
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
+  const currentCopy =
+    (releaseContext?.drafts || []).find((item: any) =>
+      ["submitted", "in_review", "released"].includes(item.storeStatus),
+    ) || null;
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
     const rows: {
@@ -783,17 +787,65 @@ export function ReleasePage() {
                             这些素材无需逐项查看；如需调整素材范围，可在上方变更摘要中取消对应条目。
                           </p>
                         </ReferenceSection>
-                        <HistoryPanel
-                          drafts={releaseContext.drafts || []}
-                          selectedDraft={historyDraft}
-                          onSelect={(draft: any) => setHistoryDraft(draft)}
-                          currentTag={selectedTag}
-                        />
+                        <ReferenceSection title="文案" meta="当前文案 / 最新文案草案" defaultOpen>
+                          <div className="space-y-1">
+                            <button
+                              type="button"
+                              onClick={() => setHistoryDraft(currentCopy)}
+                              className={cn(
+                                "w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left transition-colors",
+                                currentCopy && historyDraft?.releaseTag === currentCopy.releaseTag
+                                  ? "bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                                  : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                              )}
+                            >
+                              <span className="min-w-0">
+                                <span className="block text-xs font-medium">当前文案</span>
+                                <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                                  {currentCopy
+                                    ? `${draftVersionLabel(currentCopy)} · ${formatHumanTime(currentCopy.updatedAt)}`
+                                    : "暂无已提交文案"}
+                                </span>
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setHistoryDraft(null)}
+                              className={cn(
+                                "w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left transition-colors",
+                                !historyDraft
+                                  ? "bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                                  : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                              )}
+                            >
+                              <span className="min-w-0">
+                                <span className="block text-xs font-medium">最新文案草案</span>
+                                <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                                  {draft
+                                    ? `${draftVersionLabel(draft)} · ${formatHumanTime(draft.updatedAt)}`
+                                    : "尚未生成草案，新文案从这里开始"}
+                                </span>
+                              </span>
+                            </button>
+                          </div>
+                        </ReferenceSection>
                       </>
                     ) : null)}
                 </div>
               )}
             </div>
+            {step <= 2 && releaseContext && (
+              <div className="mt-4">
+                <HistoryPanel
+                  drafts={(releaseContext.drafts || []).filter(
+                    (item: any) => item.releaseTag !== currentCopy?.releaseTag,
+                  )}
+                  selectedDraft={historyDraft}
+                  onSelect={(history: any) => setHistoryDraft(history)}
+                  currentTag={selectedTag}
+                />
+              </div>
+            )}
           </aside>
 
           <div className="min-w-0 space-y-6">

@@ -71,6 +71,7 @@ export function KeywordsPage() {
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
+  const [enScope, setEnScope] = useState<"en" | "global">("en");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
 
@@ -217,7 +218,16 @@ export function KeywordsPage() {
     (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
   );
   const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
-  const storefronts = storefrontsForLanguage(currentLang);
+  const storefronts =
+    currentLang === "en" && enScope === "global"
+      ? Array.from(
+          new Set(
+            (product?.supportedLanguages || []).flatMap((lang) =>
+              storefrontsForLanguage(lang.code),
+            ),
+          ),
+        )
+      : storefrontsForLanguage(currentLang);
   const rankSnapshots = product.rankSnapshots || [];
   const matrixRows = matrixFilterKeywords(trackedActive, currentLang);
   const matrixColumns = storefronts.map((storefront) => ({
@@ -915,6 +925,34 @@ export function KeywordsPage() {
                         未在榜 {unranked.length}
                       </button>
                     </div>
+                    {currentLang === "en" && (
+                      <div className="flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setEnScope("en")}
+                          className={cn(
+                            "px-2 py-0.5 text-[10px] font-medium transition-colors",
+                            enScope === "en"
+                              ? "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                              : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                          )}
+                        >
+                          英文商店
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEnScope("global")}
+                          className={cn(
+                            "px-2 py-0.5 text-[10px] font-medium transition-colors border-l border-zinc-200 dark:border-zinc-700",
+                            enScope === "global"
+                              ? "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                              : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                          )}
+                        >
+                          全局商店
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {urlScope === "top10" && (
                     <button
