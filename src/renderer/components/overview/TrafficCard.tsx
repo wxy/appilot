@@ -57,6 +57,13 @@ export function TrafficCard({ project }: { project: any }) {
             {project.trafficError?.includes("Metrics") && (
               <span className="block mt-2 text-[10px] text-zinc-500 dark:text-zinc-400">
                 需要在 GitHub Token 权限中勾选「Metrics」只读权限。
+                <button
+                  type="button"
+                  onClick={() => (window as any).appilot?.openExternal("https://github.com/settings/personal-access-tokens")}
+                  className="block mx-auto mt-1 text-sky-600 dark:text-sky-400 hover:underline"
+                >
+                  前往 GitHub Token 设置
+                </button>
               </span>
             )}
           </div>

@@ -71,7 +71,6 @@ export function KeywordsPage() {
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
-  const [enScope, setEnScope] = useState<"en" | "global">("en");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
 
@@ -101,7 +100,12 @@ export function KeywordsPage() {
 
   const languages = product?.supportedLanguages || [];
   const languageOptions = trackingLanguageOptions(languages);
-  const activeViewLang = litLangs.includes(viewLang) ? viewLang : litLangs[0] || "";
+  const isGlobalView = viewLang === "global";
+  const activeViewLang = isGlobalView
+    ? "global"
+    : litLangs.includes(viewLang)
+      ? viewLang
+      : litLangs[0] || "";
 
   useEffect(() => {
     let cancelled = false;
@@ -178,7 +182,7 @@ export function KeywordsPage() {
   };
 
   useEffect(() => {
-    if (litLangs.length > 0 && !litLangs.includes(viewLang)) {
+    if (litLangs.length > 0 && viewLang !== "global" && !litLangs.includes(viewLang)) {
       setViewLang(litLangs[0] || "");
     }
   }, [litLangs, viewLang]);
@@ -210,7 +214,7 @@ export function KeywordsPage() {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
   }
 
-  const currentLang = activeViewLang;
+  const currentLang = isGlobalView ? "en" : activeViewLang;
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
   const trackedActive = tracked.filter((k) => k.status !== "paused");
@@ -218,23 +222,22 @@ export function KeywordsPage() {
     (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
   );
   const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
-  const storefronts =
-    currentLang === "en" && enScope === "global"
-      ? Array.from(
-          new Set(
-            (product?.supportedLanguages || []).flatMap((lang) =>
-              storefrontsForLanguage(lang.code),
-            ),
+  const storefronts = isGlobalView
+    ? Array.from(
+        new Set(
+          (product?.supportedLanguages || []).flatMap((lang) =>
+            storefrontsForLanguage(lang.code),
           ),
-        )
-      : storefrontsForLanguage(currentLang);
+        ),
+      )
+    : storefrontsForLanguage(currentLang);
   const rankSnapshots = product.rankSnapshots || [];
   const matrixRows = matrixFilterKeywords(trackedActive, currentLang);
   const matrixColumns = storefronts.map((storefront) => ({
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
-  const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(68px, 0.9fr)) 44px`;
+  const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(80px, 0.9fr)) 44px`;
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
@@ -841,6 +844,19 @@ export function KeywordsPage() {
                 语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
               </p>
               <div className="mt-1.5 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setViewLang("global")}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+                    isGlobalView
+                      ? "border-sky-500 ring-2 ring-sky-500/20 bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-sky-500/50 hover:text-sky-600 dark:hover:text-sky-400",
+                  )}
+                  title="全局关键词（英文）在全部商店中的排名"
+                >
+                  全局
+                </button>
                 {languageOptions.map((option) => {
                   const lit = litLangs.includes(option.code);
                   const active = option.code === currentLang;
@@ -925,34 +941,6 @@ export function KeywordsPage() {
                         未在榜 {unranked.length}
                       </button>
                     </div>
-                    {currentLang === "en" && (
-                      <div className="flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
-                        <button
-                          type="button"
-                          onClick={() => setEnScope("en")}
-                          className={cn(
-                            "px-2 py-0.5 text-[10px] font-medium transition-colors",
-                            enScope === "en"
-                              ? "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
-                              : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
-                          )}
-                        >
-                          英文商店
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEnScope("global")}
-                          className={cn(
-                            "px-2 py-0.5 text-[10px] font-medium transition-colors border-l border-zinc-200 dark:border-zinc-700",
-                            enScope === "global"
-                              ? "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
-                              : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
-                          )}
-                        >
-                          全局商店
-                        </button>
-                      </div>
-                    )}
                   </div>
                   {urlScope === "top10" && (
                     <button

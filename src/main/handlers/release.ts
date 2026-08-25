@@ -95,6 +95,8 @@ export function registerReleaseHandlers(): void {
           submissionKeywords: draft.submissionKeywords || [],
           githubDraftStatus: draft.githubDraftStatus || "",
           storeStatus: draft.storeStatus || "",
+          masterConfirmedAt: draft.masterConfirmedAt || "",
+          batchConfirmedAt: draft.batchConfirmedAt || "",
         }));
       const previous = draftSummaries.find((item) => item.releaseTag !== releaseTag) || null;
       const readme = readFullReadme(project.localPath);
