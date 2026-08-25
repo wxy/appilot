@@ -412,7 +412,7 @@ export function ReleasePage() {
               title="从 App Store 回读完整文案，重建本地丢失的文案"
             >
               <AppleIcon className="w-3 h-3" />
-              {rebuilding ? "重建中…" : "从商店重建本地文案"}
+              {rebuilding ? "重建中…" : "根据此版本重建文案"}
             </button>
           )}
           <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
@@ -1153,11 +1153,11 @@ export function ReleasePage() {
               <HistoryViewer draft={historyDraft} productTrackName={selectedProduct?.trackName} />
             ) : (
               <>
-            {selectedRelease && draft && (
+            {selectedRelease && (
               <ReleaseReadinessPanel
                 projectId={project.id}
                 productId={productId}
-                draft={{ id: draft.id, releaseTag: draft.releaseTag }}
+                draft={draft ? { id: draft.id, releaseTag: draft.releaseTag } : null}
                 githubNode={githubNode}
                 copyNode={copyNode}
                 storeNode={storeNode}

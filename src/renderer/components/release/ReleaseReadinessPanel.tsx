@@ -26,7 +26,7 @@ export function ReleaseReadinessPanel({
 }: {
   projectId: string;
   productId: string;
-  draft: { id: string; releaseTag: string };
+  draft: { id: string; releaseTag: string } | null;
   /** GitHub 发布节点内容。 */
   githubNode?: ReactNode;
   /** 本地文案草案节点内容。 */
@@ -43,14 +43,19 @@ export function ReleaseReadinessPanel({
   const [checking, setChecking] = useState(false);
 
   const loadCached = useCallback(() => {
+    if (!draft) {
+      setResult(null);
+      return;
+    }
     (window as any).appilot?.readiness?.get(projectId, draft.id)
       .then(setResult)
       .catch(() => setResult(null));
-  }, [projectId, draft.id]);
+  }, [projectId, draft]);
 
   useEffect(() => { loadCached(); }, [loadCached]);
 
   const handleCheck = async () => {
+    if (!draft) return;
     setChecking(true);
     try {
       // 检查 App Store 发布前先刷新缓存，保证基于最新外部状态。
@@ -88,8 +93,9 @@ export function ReleaseReadinessPanel({
           <button
             type="button"
             onClick={() => void handleCheck()}
-            disabled={checking || ascRefreshing}
+            disabled={!draft || checking || ascRefreshing}
             className={cn("inline-flex items-center gap-1.5", result ? btnSmSecondary : btnSmPrimary)}
+            title={draft ? undefined : "生成或重建文案后可检查就绪"}
           >
             <AppleIcon className="w-3 h-3" />
             {checking ? "检查中…" : "检查 App Store 发布"}
