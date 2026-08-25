@@ -37,8 +37,10 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   id: string;
   projectId: string;
   productId: string;
+  /** 内容来源：生成该文案素材所用的 release（tag 或 gh-{id}）。不是身份。 */
   releaseTag: string;
   sourceHash: string;
+  /** 目标版本：文案身份与 ASC 匹配键（一个版本一份文案，可手动修改）。 */
   appVersion: string;
   buildNumber: string;
   githubDraftStatus: GitHubReleaseStatus;

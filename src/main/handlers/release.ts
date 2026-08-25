@@ -7,10 +7,12 @@ import { resolveEffectiveCredentials } from "../credentials";
 import {
   ensureProjectKeywordPool,
   findProductContext,
+  findDraftByVersion,
   findStoreSubmissionDraft,
   getStoreSubmissionDrafts,
   upsertStoreSubmissionDraft,
 } from "../project-state";
+import { inferAppVersion } from "../../engine/store-submission";
 import { githubSyncCacheEntry } from "../scheduler";
 import { getStore } from "../store";
 import {
@@ -125,7 +127,18 @@ export function registerReleaseHandlers(): void {
           storeStatus: draft.storeStatus || "",
           masterConfirmedAt: draft.masterConfirmedAt || "",
           batchConfirmedAt: draft.batchConfirmedAt || "",
-        }));
+        }))
+        // Identity by appVersion: one entry per target version, newest first.
+        .filter((draft, index, all) => {
+          if (!draft.appVersion) return true;
+          const version = String(draft.appVersion).replace(/^v/i, "");
+          return all.findIndex((item) => {
+            if (!item.appVersion) return false;
+            return (
+              String(item.appVersion).replace(/^v/i, "") === version
+            );
+          }) === index;
+        });
       const previous = draftSummaries.find((item) => item.releaseTag !== releaseTag) || null;
       const readme = readFullReadme(project.localPath);
       let readmeModifiedAt = "";
@@ -208,7 +221,15 @@ export function registerReleaseHandlers(): void {
     });
     if (!release) return { release: null, draft: null, actionable: false };
 
-    const existing = findStoreSubmissionDraft(project, productId, releaseTag);
+    let existing = findStoreSubmissionDraft(project, productId, releaseTag);
+    if (!existing) {
+      // Identity by appVersion: a copy prepared under an older release for the
+      // same target version belongs to this release's workbench too.
+      const targetVersion = String(
+        appVersion || inferAppVersion(release) || "",
+      ).trim();
+      existing = findDraftByVersion(project, productId, targetVersion);
+    }
     if (release.draft) {
       if (force) {
         // Respect the user's include/exclude checklist: only the checked

@@ -14,6 +14,7 @@ import {
   getStoreSubmissionDrafts,
   isProductPostRelease,
   migrateLegacyStoreProducts,
+  normalizeDraftIdentity,
 } from "./project-state";
 import {
   buildStatusTaskId,
@@ -808,6 +809,14 @@ export async function schedulerTick(): Promise<void> {
     await reconcileRankTasks(store);
     await reconcileGithubSyncTasks(store);
     await reconcileOpsTasks(store);
+    // Migrate existing drafts to the appVersion identity (one copy per
+    // target version) when legacy duplicates exist.
+    const projectsForMigration = store.get("projects") || [];
+    let draftsChanged = false;
+    for (const project of projectsForMigration) {
+      if (normalizeDraftIdentity(project)) draftsChanged = true;
+    }
+    if (draftsChanged) store.set("projects", projectsForMigration);
 
     const now = Date.now();
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
