@@ -19,6 +19,8 @@ export function ReleaseReadinessPanel({
   copyNode,
   storeNode,
   alerts,
+  githubActions,
+  storeActions,
   onAscRefresh,
   ascRefreshing,
   ascInfo,
@@ -34,6 +36,10 @@ export function ReleaseReadinessPanel({
   copyNode?: ReactNode;
   /** 商店版本节点内容。 */
   storeNode?: ReactNode;
+  /** GitHub 节点动作按钮（根据发布公告新建等）。 */
+  githubActions?: ReactNode;
+  /** 商店节点动作按钮（根据此版本重建等）。 */
+  storeActions?: ReactNode;
   /** 动态提醒与警告（未创建版本、上架提醒等）。 */
   alerts?: ReactNode;
   onAscRefresh?: () => Promise<void>;
@@ -74,10 +80,12 @@ export function ReleaseReadinessPanel({
     title,
     icon,
     children,
+    actions,
   }: {
     title: string;
     icon?: ReactNode;
     children: ReactNode;
+    actions?: ReactNode;
   }) => (
     <div className="flex-1 min-w-0 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 p-3">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
@@ -85,27 +93,43 @@ export function ReleaseReadinessPanel({
         {title}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">{children}</div>
+      {actions && (
+        <div className="mt-2.5 pt-2.5 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap gap-1.5">
+          {actions}
+        </div>
+      )}
     </div>
   );
+
+  const actionBtnClass =
+    "inline-flex items-center gap-1 px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors disabled:opacity-50";
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm">
       <div className="p-4">
         <div className="flex items-stretch gap-2">
-          <FlowNode title="GitHub 发布" icon={<GithubIcon className="w-3 h-3" />}>
+          <FlowNode
+            title="GitHub 发布"
+            icon={<GithubIcon className="w-3 h-3" />}
+            actions={
+              <>
+                {onCheckGithub && (
+                  <button
+                    type="button"
+                    onClick={onCheckGithub}
+                    disabled={checkingGithub}
+                    className={actionBtnClass}
+                    title="从 GitHub 检测新的发布草案、已发布或提交变化"
+                  >
+                    <GithubIcon className="w-3 h-3" />
+                    {checkingGithub ? "检查中…" : "检查 GitHub 发布"}
+                  </button>
+                )}
+                {githubActions}
+              </>
+            }
+          >
             {githubNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
-            {onCheckGithub && (
-              <button
-                type="button"
-                onClick={onCheckGithub}
-                disabled={checkingGithub}
-                className="inline-flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 disabled:opacity-60"
-                title="从 GitHub 检测新的发布草案、已发布或提交变化"
-              >
-                <GithubIcon className="w-3 h-3" />
-                {checkingGithub ? "检查中…" : "检查 GitHub 发布"}
-              </button>
-            )}
           </FlowNode>
           <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
             →
@@ -116,32 +140,40 @@ export function ReleaseReadinessPanel({
           <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
             →
           </div>
-          <FlowNode title="商店版本" icon={<AppleIcon className="w-3 h-3" />}>
+          <FlowNode
+            title="商店版本"
+            icon={<AppleIcon className="w-3 h-3" />}
+            actions={
+              <>
+                <button
+                  type="button"
+                  onClick={() => void handleCheck()}
+                  disabled={!draft || checking || ascRefreshing}
+                  className={actionBtnClass}
+                  title={draft ? undefined : "生成或重建文案后可检查就绪"}
+                >
+                  <AppleIcon className="w-3 h-3" />
+                  {checking ? "检查中…" : "检查 App Store 版本"}
+                </button>
+                {onAscRefresh && (
+                  <button
+                    type="button"
+                    onClick={() => void onAscRefresh()}
+                    disabled={ascRefreshing}
+                    className={actionBtnClass}
+                  >
+                    {ascRefreshing
+                      ? "刷新中…"
+                      : ascInfo?.fetchedAt
+                        ? `App Store ${formatHumanTime(ascInfo.fetchedAt)}`
+                        : "刷新 App Store"}
+                  </button>
+                )}
+                {storeActions}
+              </>
+            }
+          >
             {storeNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
-            <button
-              type="button"
-              onClick={() => void handleCheck()}
-              disabled={!draft || checking || ascRefreshing}
-              className="inline-flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 disabled:opacity-60"
-              title={draft ? undefined : "生成或重建文案后可检查就绪"}
-            >
-              <AppleIcon className="w-3 h-3" />
-              {checking ? "检查中…" : "检查 App Store 版本"}
-            </button>
-            {onAscRefresh && (
-              <button
-                type="button"
-                onClick={() => void onAscRefresh()}
-                disabled={ascRefreshing}
-                className="text-[11px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
-              >
-                {ascRefreshing
-                  ? "刷新中…"
-                  : ascInfo?.fetchedAt
-                    ? `App Store ${formatHumanTime(ascInfo.fetchedAt)}`
-                    : "刷新 App Store"}
-              </button>
-            )}
           </FlowNode>
         </div>
         {alerts && (

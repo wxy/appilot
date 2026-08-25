@@ -9,9 +9,11 @@ import { draftVersionLabel } from "./releaseFormat";
 export function HistoryViewer({
   draft,
   productTrackName,
+  onBack,
 }: {
   draft: any;
   productTrackName?: string | null;
+  onBack?: () => void;
 }) {
   const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
@@ -29,6 +31,15 @@ export function HistoryViewer({
             {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
           </span>
         </div>
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="shrink-0 px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+          >
+            ← 返回当前文案
+          </button>
+        )}
       </div>
       <div className="p-6 space-y-6">
         {localizations.length > 1 && (
