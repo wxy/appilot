@@ -397,7 +397,9 @@ export function ReleasePage() {
               已按商店公开信息部分冻结（描述/新增内容）· {formatHumanTime(draft.storeSyncedAt)}
             </span>
           )}
-          {(!draft || localizations.length < availableLanguages.length) && (
+          {(!draft ||
+            localizations.length < availableLanguages.length ||
+            localizations.some((loc: any) => !String(loc.name || "").trim())) && (
             <button
               type="button"
               onClick={() => void handleRebuildFromStore()}
@@ -485,6 +487,7 @@ export function ReleasePage() {
 
   const handleRebuildFromStore = async () => {
     if (!project?.id || !productId || !selectedTag || rebuilding) return;
+    if (!window.confirm("将用商店实际文案替换本地该版本文案（按版本覆盖），是否继续？")) return;
     setRebuilding(true);
     setError("");
     try {
