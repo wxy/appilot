@@ -1,5 +1,5 @@
 import { cn } from "../../lib/utils";
-import { formatHumanTime, languageLabel } from "../../lib/format";
+import { formatHumanTime } from "../../lib/format";
 import { draftVersionLabel, mergeHistoryDrafts } from "./releaseFormat";
 import { ReferenceSection } from "./ReferenceSection";
 
@@ -53,15 +53,8 @@ export function HistoryPanel({
                   </span>
                 </span>
                 {languages.length > 0 && (
-                  <span className="mt-1 flex flex-wrap gap-1">
-                    {languages.map((lang: string) => (
-                      <span
-                        key={lang}
-                        className="px-1.5 py-0.5 text-[10px] rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
-                      >
-                        {languageLabel(lang)}
-                      </span>
-                    ))}
+                  <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 shrink-0">
+                    {languages.length} 语言
                   </span>
                 )}
               </button>

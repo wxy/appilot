@@ -879,7 +879,7 @@ export function KeywordsPage() {
 
             <div className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
             <div
-              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 pr-1.5 sticky top-0 z-20"
+              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-20"
               style={{ gridTemplateColumns: matrixGridTemplate }}
             >
               <div className="py-2.5 pl-5 pr-4 sticky left-0 z-30 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
@@ -1118,7 +1118,9 @@ export function KeywordsPage() {
                 )}
             </div>
 
-            <div className="shrink-0 px-5 pb-5 space-y-5 border-t border-zinc-100 dark:border-zinc-800">
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5 space-y-5">
                 {chartKeyword && chartData.length > 0 && (
                   <div>
                     <div className="h-56">
@@ -1184,7 +1186,6 @@ export function KeywordsPage() {
 
             </div>
 
-          </div>
         </>
       )}
 

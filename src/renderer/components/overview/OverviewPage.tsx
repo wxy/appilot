@@ -290,6 +290,12 @@ export function OverviewPage() {
               projectId={project.id}
               source={project.githubSource}
             />
+            <CredentialBadge
+              kind="asc"
+              enabled={Boolean(project.hasAscKey)}
+              projectId={project.id}
+              source={project.ascSource}
+            />
             <button
               onClick={() => navigate(`/projects/${project.id}/settings`)}
               className="inline-flex items-center px-2.5 h-7 rounded-full border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
