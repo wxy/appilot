@@ -115,6 +115,7 @@ export function registerReleaseHandlers(): void {
         .filter((item) => item.productId === productId)
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .map((draft) => ({
+          id: draft.id,
           releaseTag: draft.releaseTag,
           updatedAt: draft.updatedAt,
           appVersion: draft.appVersion || "",
