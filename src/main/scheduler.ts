@@ -536,16 +536,29 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   try {
     if (!project?.localPath) throw new Error("Project not found");
     const { fetchRemoteTags, checkForRelease } = await import("../engine/release-watcher");
+    const { listGitHubReleases } = await import("../engine/github-api");
     // Background sync must never touch the worktree or local branches: fetch
     // only updates remote-tracking refs and tags.
     await fetchRemoteTags(project.localPath);
     const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
+    // Best-effort GitHub releases listing (drafts included with token). Empty
+    // on private repos without a token / offline — checkForRelease degrades to
+    // local git tags.
+    const githubReleases = await listGitHubReleases(
+      project.localPath,
+      token,
+      (rb, pb) => {
+        requestBytes += rb;
+        responseBytes += pb;
+      },
+    );
     const result = await checkForRelease(
       project.localPath,
       project.lastReleaseSha || null,
       token,
       {
         sync: false,
+        githubReleases,
         onApiStats: (rb, pb) => {
           requestBytes += rb;
           responseBytes += pb;
@@ -559,6 +572,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       tag: release?.tag || null,
       release: material?.githubRelease ?? null,
       pullRequests: material?.pullRequests || [],
+      releases: githubReleases,
       lastSeenSha: project.lastReleaseSha || null,
       syncedAt: new Date().toISOString(),
     };

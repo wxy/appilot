@@ -68,6 +68,7 @@ export function synthesizeReleaseFromDraft(draft: any): any {
     body: draft.summary || "",
     material: null,
     source: "git-tag",
+    githubDraft: null,
     draft: true,
     commitSha: null,
   };

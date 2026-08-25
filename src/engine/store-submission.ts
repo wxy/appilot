@@ -64,7 +64,15 @@ export function submissionDraftId(projectId: string, productId: string, releaseT
 
 export function inferAppVersion(release: ReleaseInfo): string {
   const tag = String(release.tag || "").trim();
-  return /^v?\d+(\.\d+)*$/.test(tag) ? tag.replace(/^v/i, "") : "";
+  if (/^v?\d+(\.\d+)*$/.test(tag)) return tag.replace(/^v/i, "");
+  // GitHub release drafts may have no tag yet (tag = `gh-{id}` fallback).
+  // Fall back to the release name when it carries a semantic version, e.g.
+  // "v1.1.1" or "GloWalk 1.1.1 WIP".
+  const name = String(release.name || "").trim();
+  // Require a dotted version to avoid matching years/PR numbers ("2026", "v2").
+  const match = name.match(/(?:^|\s)v?(\d+\.\d+(?:\.\d+)*)/);
+  if (match) return match[1];
+  return "";
 }
 
 export function releaseFingerprint(release: ReleaseInfo): string {

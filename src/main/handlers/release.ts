@@ -21,6 +21,17 @@ import {
 import { assertNonEmptyString, assertStringArray } from "../util";
 
 export function registerReleaseHandlers(): void {
+  async function githubReleaseCandidates(
+    project: any,
+    token: string | null | undefined,
+    cached?: any,
+  ): Promise<any[]> {
+    const { listGitHubReleases } = await import("../../engine/github-api");
+    const fresh = await listGitHubReleases(project.localPath, token);
+    if (fresh.length > 0) return fresh;
+    return Array.isArray(cached?.releases) ? cached.releases : [];
+  }
+
   ipcMain.handle("release:list", async (_event, projectId: string, force?: boolean) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
@@ -29,13 +40,20 @@ export function registerReleaseHandlers(): void {
     if (!project) throw new Error("Project not found");
 
     const { checkForRelease } = await import("../../engine/release-watcher");
+    const token = resolveEffectiveCredentials(s, project.id).githubToken;
+    const githubReleases = await githubReleaseCandidates(
+      project,
+      token,
+      githubSyncCacheEntry(s, project),
+    );
     const result = await checkForRelease(
       project.localPath,
       project.lastReleaseSha || null,
-      resolveEffectiveCredentials(s, project.id).githubToken,
+      token,
       {
         sync: true,
         force: Boolean(force),
+        githubReleases,
         githubCache: githubSyncCacheEntry(s, project) ?? undefined,
       },
     );
@@ -67,11 +85,21 @@ export function registerReleaseHandlers(): void {
 
       const { checkForRelease } = await import("../../engine/release-watcher");
       const { readFullReadme, readRepoDescription } = await import("../../engine/app-store-discovery");
+      const token = resolveEffectiveCredentials(s, project.id).githubToken;
+      const githubReleases = await githubReleaseCandidates(
+        project,
+        token,
+        githubSyncCacheEntry(s, project),
+      );
       const result = await checkForRelease(
         project.localPath,
         project.lastReleaseSha || null,
-        resolveEffectiveCredentials(s, project.id).githubToken,
-        { sync: true, githubCache: githubSyncCacheEntry(s, project) ?? undefined },
+        token,
+        {
+          sync: true,
+          githubReleases,
+          githubCache: githubSyncCacheEntry(s, project) ?? undefined,
+        },
       );
       let release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) {
@@ -146,6 +174,12 @@ export function registerReleaseHandlers(): void {
     if (!product) throw new Error("Store product not found");
 
     const { checkForRelease } = await import("../../engine/release-watcher");
+    const token = resolveEffectiveCredentials(s, project.id).githubToken;
+    const githubReleases = await githubReleaseCandidates(
+      project,
+      token,
+      githubSyncCacheEntry(s, project),
+    );
     _event.sender.send("release:generateProgress", {
       kind: "phase",
       phase: "read_draft",
@@ -154,8 +188,12 @@ export function registerReleaseHandlers(): void {
     const result = await checkForRelease(
       project.localPath,
       project.lastReleaseSha || null,
-      resolveEffectiveCredentials(s, project.id).githubToken,
-      { sync: true, githubCache: githubSyncCacheEntry(s, project) ?? undefined },
+      token,
+      {
+        sync: true,
+        githubReleases,
+        githubCache: githubSyncCacheEntry(s, project) ?? undefined,
+      },
     );
     let release = result.releases.find((item) => item.tag === releaseTag) || null;
     if (!release) {

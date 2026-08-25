@@ -20,6 +20,7 @@ import {
   fetchGitHubRelease,
   fetchPullRequests,
   type GitHubReleaseInfo,
+  type GitHubReleaseItem,
   type ReleasePullRequest,
 } from "./github-api";
 
@@ -33,7 +34,9 @@ export interface ReleaseInfo {
   url: string;
   body: string;
   material: ReleaseMaterial | null;
-  source: "git-tag" | "git-commits" | "release-draft-file";
+  source: "git-tag" | "git-commits" | "release-draft-file" | "github-release";
+  /** Real GitHub release state; null when the release came from local git. */
+  githubDraft: boolean | null;
   draft: boolean;
   commitSha: string | null;
 }
@@ -74,6 +77,8 @@ export interface GithubApiCache {
   tag: string | null;
   release: GitHubReleaseInfo | null;
   pullRequests: ReleasePullRequest[];
+  /** Pre-warmed GitHub releases listing (drafts included). */
+  releases?: GitHubReleaseItem[];
 }
 
 const RELEASE_DRAFT_FILENAME = "RELEASE_DRAFT.md";
@@ -335,6 +340,7 @@ function readReleaseDraft(localPath: string): ReleaseInfo | null {
       body: content,
       material: null,
       source: "release-draft-file",
+      githubDraft: null,
       draft: true,
       commitSha: null,
     };
@@ -367,6 +373,7 @@ export async function checkForRelease(
     sync?: boolean;
     force?: boolean;
     githubCache?: GithubApiCache;
+    githubReleases?: GitHubReleaseItem[] | null;
     onApiStats?: (requestBytes: number, responseBytes: number) => void;
   } = {},
 ): Promise<ReleaseCheckResult> {
@@ -424,6 +431,88 @@ export async function checkForRelease(
 
   const cacheMatches =
     Boolean(releaseTag) && options.githubCache?.tag === releaseTag?.name;
+  const githubReleases =
+    options.githubReleases ?? options.githubCache?.releases ?? null;
+  const githubItems =
+    githubReleases && githubReleases.length > 0 ? githubReleases : null;
+
+  if (githubItems) {
+    const coveredTags = new Set(
+      githubItems.map((item) => item.tag).filter((tag): tag is string => Boolean(tag)),
+    );
+    const extraTags = onMain.filter((tag) => !coveredTags.has(tag.name));
+    const sorted = [...githubItems].sort((a, b) => {
+      if (a.draft !== b.draft) return a.draft ? -1 : 1;
+      return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+    });
+    const githubReleasesBuilt = sorted.map((item) => {
+      const tag = item.tag || `gh-${item.id}`;
+      const materialWithRelease: ReleaseMaterial = {
+        ...material,
+        githubRelease: {
+          name: item.name,
+          body: item.body,
+          publishedAt: item.publishedAt,
+          url: item.url,
+          viaToken: item.viaToken,
+        },
+      };
+      return {
+        id: `gh-${item.id}`,
+        tag,
+        name: item.name || item.tag || tag,
+        publishedAt: item.publishedAt || item.createdAt || new Date().toISOString(),
+        url: item.url || "",
+        body: item.body || materialToBody(materialWithRelease),
+        material: materialWithRelease,
+        source: "github-release" as const,
+        githubDraft: item.draft,
+        draft: true,
+        commitSha: tip,
+      };
+    });
+    const extraReleases = await Promise.all(
+      extraTags.map(async (tag) => {
+        const enriched: ReleaseMaterial = {
+          ...material,
+          pullRequests: await fetchPullRequests(
+            localPath,
+            material.pullRequests,
+            githubToken,
+            options.onApiStats,
+          ),
+          githubRelease: await fetchGitHubRelease(
+            localPath,
+            tag.name,
+            githubToken,
+            options.onApiStats,
+          ),
+        };
+        return {
+          id: `tag-${tag.sha}`,
+          tag: tag.name,
+          name: tag.name,
+          publishedAt: tag.date,
+          url: "",
+          body: materialToBody(enriched),
+          material: enriched,
+          source: "git-tag" as const,
+          githubDraft: null,
+          draft: true,
+          commitSha: tip,
+        };
+      }),
+    );
+    const releases = [...githubReleasesBuilt, ...extraReleases];
+    const result: ReleaseCheckResult = {
+      latest: releases[0] || null,
+      lastSeenTag: lastSeenSha || null,
+      releases,
+    };
+    if (cacheEnabled) releaseCheckCache.set(cacheKey, { at: Date.now(), result });
+    return result;
+  }
+
   const enrichedMaterial = {
     ...material,
     pullRequests: cacheMatches
@@ -454,6 +543,7 @@ export async function checkForRelease(
     body: materialToBody(enrichedMaterial),
     material: enrichedMaterial,
     source: releaseTag ? "git-tag" : "git-commits",
+    githubDraft: null,
     draft: true,
     commitSha: tip,
   };
