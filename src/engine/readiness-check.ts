@@ -63,7 +63,7 @@ export function runReadinessChecks(input: ReadinessInput): ReadinessCheckItem[] 
     items.push(
       missing.length === 0
         ? { id: "localizations", label: "本地化覆盖率", status: "pass", detail: `已覆盖 ${input.supportedLanguages.length} 种语言` }
-        : { id: "localizations", label: "本地化覆盖率", status: "warning", detail: `ASC 缺少本地化：${missing.join("、")}` },
+        : { id: "localizations", label: "本地化覆盖率", status: "warning", detail: `App Store 缺少本地化：${missing.join("、")}` },
     );
   }
 
@@ -90,15 +90,15 @@ export function runReadinessChecks(input: ReadinessInput): ReadinessCheckItem[] 
   if (!tagVersion) {
     items.push({ id: "version", label: "版本号匹配", status: "unknown", detail: "尚未填写目标版本，无法比对" });
   } else if (!input.ascVersion) {
-    items.push({ id: "version", label: "版本号匹配", status: "unknown", detail: "未回读到 ASC 版本，无法比对" });
+    items.push({ id: "version", label: "版本号匹配", status: "unknown", detail: "未回读到 App Store 版本，无法比对" });
   } else if (input.ascVersion === tagVersion) {
-    items.push({ id: "version", label: "版本号匹配", status: "pass", detail: `目标版本 v${tagVersion} = ASC ${input.ascVersion}` });
+    items.push({ id: "version", label: "版本号匹配", status: "pass", detail: `目标版本 v${tagVersion} = App Store ${input.ascVersion}` });
   } else {
-    items.push({ id: "version", label: "版本号匹配", status: "fail", detail: `目标版本 v${tagVersion} ≠ ASC ${input.ascVersion}` });
+    items.push({ id: "version", label: "版本号匹配", status: "fail", detail: `目标版本 v${tagVersion} ≠ App Store ${input.ascVersion}` });
   }
 
   if (!input.ascVersion) {
-    items.push({ id: "build", label: "构建挂载", status: "unknown", detail: "未回读到 ASC 版本，无法检查构建" });
+    items.push({ id: "build", label: "构建挂载", status: "unknown", detail: "未回读到 App Store 版本，无法检查构建" });
   } else if (input.buildAttached) {
     items.push({ id: "build", label: "构建挂载", status: "pass", detail: `版本 ${input.ascVersion} 已挂载构建` });
   } else {

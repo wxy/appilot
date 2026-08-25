@@ -53,7 +53,7 @@ export function ReleaseReadinessPanel({
   const handleCheck = async () => {
     setChecking(true);
     try {
-      // 检查 ASC 发布前先刷新 ASC 缓存，保证基于最新外部状态。
+      // 检查 App Store 发布前先刷新缓存，保证基于最新外部状态。
       if (onAscRefresh) await onAscRefresh();
       const next = await (window as any).appilot?.readiness?.check(projectId, productId, draft.releaseTag);
       setResult(next || null);
@@ -92,7 +92,7 @@ export function ReleaseReadinessPanel({
             className={cn("inline-flex items-center gap-1.5", result ? btnSmSecondary : btnSmPrimary)}
           >
             <AppleIcon className="w-3 h-3" />
-            {checking ? "检查中…" : "检查 ASC 发布"}
+            {checking ? "检查中…" : "检查 App Store 发布"}
           </button>
           {onAscRefresh && (
             <button
@@ -105,7 +105,7 @@ export function ReleaseReadinessPanel({
                 ? "刷新中…"
                 : ascInfo?.fetchedAt
                   ? `ASC ${formatHumanTime(ascInfo.fetchedAt)}`
-                  : "刷新 ASC"}
+                  : "刷新 App Store"}
             </button>
           )}
         </div>

@@ -402,4 +402,19 @@ export function registerReleaseHandlers(): void {
     return draft;
   });
 
+  ipcMain.handle("release:deleteDraft", async (_event, projectId: string, draftId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    draftId = assertNonEmptyString(draftId, "draftId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const drafts = getStoreSubmissionDrafts(project);
+    const next = drafts.filter((item) => item.id !== draftId);
+    if (next.length === drafts.length) return false;
+    project.storeSubmissionDrafts = next;
+    s.set("projects", projects);
+    return true;
+  });
+
 }

@@ -172,7 +172,7 @@ export function ProjectSettingsPage() {
                 </div>
                 <div className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
                   全局 GitHub Token {creds?.globalGithubTokenSet ? "✓ 已配置" : "✕ 未配置"}
-                  {" · "}全局 ASC Key {creds?.globalAscKeySet ? "✓ 已配置" : "✕ 未配置"}
+                  {" · "}全局 App Store Key {creds?.globalAscKeySet ? "✓ 已配置" : "✕ 未配置"}
                   {hasOverride
                     ? "；本项目已覆盖，可点击右侧查看/修改。"
                     : "；未配置全局时相关能力不可用。"}

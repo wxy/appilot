@@ -358,12 +358,12 @@ export function ReleasePage() {
     <>
       {effectiveVersionStatus?.key === "not-in-asc" && (
         <span className="text-[11px] text-amber-600 dark:text-amber-500">
-          ASC 中未找到版本 {draft?.appVersion}，提交前请确认已在 App Store Connect 创建该版本。
+          App Store 中未找到版本 {draft?.appVersion}，提交前请确认已在 App Store Connect 创建该版本。
         </span>
       )}
       {effectiveVersionStatus?.key === "unknown" && effectiveVersionStatus.source === "none" && (
         <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-          配置 ASC 凭证后可自动校验版本是否提交/审核/上架。
+          配置 App Store 凭证后可自动校验版本是否提交/审核/上架。
         </span>
       )}
       {effectiveVersionStatus?.key === "ready-for-sale" && (
@@ -446,6 +446,23 @@ export function ReleasePage() {
     setHistoryDraft(null);
     if (currentCopy?.releaseTag && currentCopy.releaseTag !== selectedTag) {
       setSelectedTag(currentCopy.releaseTag);
+    }
+  };
+
+  const handleDeleteDraft = async (target: any) => {
+    if (!project?.id || !target?.id) return;
+    const label = target.appVersion
+      ? `v${String(target.appVersion).replace(/^v/i, "")}`
+      : target.releaseTag || "该文案";
+    if (!window.confirm(`删除文案 ${label}？该操作不可恢复。`)) return;
+    try {
+      const ok = await (window as any).appilot.release.deleteDraft(project.id, target.id);
+      if (!ok) return;
+      if (historyDraft?.id === target.id) setHistoryDraft(null);
+      if (active?.draft?.id === target.id) setActive(null);
+      await loadReleases(false);
+    } catch (e: any) {
+      setError(e.message || "删除文案失败。");
     }
   };
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
@@ -1061,6 +1078,7 @@ export function ReleasePage() {
                   selectedDraft={historyDraft}
                   onSelect={(history: any) => setHistoryDraft(history)}
                   currentTag={selectedTag}
+                  onDelete={(item: any) => void handleDeleteDraft(item)}
                 />
               </div>
             )}
@@ -1087,7 +1105,7 @@ export function ReleasePage() {
               </div>
             )}
             {historyDraft ? (
-              <HistoryViewer draft={historyDraft} />
+              <HistoryViewer draft={historyDraft} productTrackName={selectedProduct?.trackName} />
             ) : (
               <>
             {selectedRelease && draft && (
@@ -1217,7 +1235,13 @@ export function ReleasePage() {
                               onChange={(e) => updateLocalizationField("name", e.target.value)}
                               disabled={isReadOnly}
                               className={inputLineClass}
+                              placeholder={selectedProduct?.trackName || "未设置名称"}
                             />
+                            {!activeLocalization.name && (
+                              <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
+                                名称未设置，商店当前显示 App 级名称：{selectedProduct?.trackName || "—"}
+                              </p>
+                            )}
                             <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
                               建议：名称后加冒号和描述性短句（如 GloWalk: Path of Light）
                             </p>
@@ -1232,7 +1256,13 @@ export function ReleasePage() {
                               onChange={(e) => updateLocalizationField("subtitle", e.target.value)}
                               disabled={isReadOnly}
                               className={inputLineClass}
+                              placeholder={activeLocalization.name ? "未设置副标题" : "未设置副标题"}
                             />
+                            {!activeLocalization.subtitle && (
+                              <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
+                                副标题未设置
+                              </p>
+                            )}
                             <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
                               {(activeLocalization.subtitle || "").length}/30 字符
                             </p>

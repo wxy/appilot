@@ -6,7 +6,13 @@ import { FieldHeader } from "../ui/Fields";
 import { inputClass, inputLineClass } from "../ui/styles";
 import { draftVersionLabel } from "./releaseFormat";
 
-export function HistoryViewer({ draft }: { draft: any }) {
+export function HistoryViewer({
+  draft,
+  productTrackName,
+}: {
+  draft: any;
+  productTrackName?: string | null;
+}) {
   const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
   const activeLanguage = localizations.some((item: any) => item.language === language)
@@ -56,8 +62,12 @@ export function HistoryViewer({ draft }: { draft: any }) {
               </p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <FieldHeader label="软件名称" text={loc.name || ""} />
-                  <input value={loc.name || ""} readOnly className={inputLineClass} />
+                  <FieldHeader label="软件名称" text={loc.name || productTrackName || ""} />
+                  <input
+                    value={loc.name || productTrackName || ""}
+                    readOnly
+                    className={inputLineClass}
+                  />
                   <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
                     {(loc.name || "").length}/30 字符
                   </p>

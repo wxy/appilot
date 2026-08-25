@@ -662,14 +662,14 @@ export function OverviewPage() {
                     className="inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400"
                     title={
                       effectiveVersionStatus.source === "asc"
-                        ? "来自 ASC 凭证查询"
+                        ? "来自 App Store 凭证查询"
                         : effectiveVersionStatus.source === "store-lookup"
-                          ? "来自 App Store 公开查询（未配置 ASC 凭证）"
-                          : "未配置 ASC 凭证，无法确认"
+                          ? "来自 App Store 公开查询（未配置 App Store 凭证）"
+                          : "未配置 App Store 凭证，无法确认"
                     }
                   >
                     {effectiveVersionStatus.source === "asc"
-                      ? "ASC"
+                      ? "App Store"
                       : effectiveVersionStatus.source === "store-lookup"
                         ? "商店"
                         : "未配置"}

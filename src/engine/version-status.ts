@@ -64,7 +64,7 @@ export function deriveVersionStatus(input: {
       (item) => String(item.versionString || "").trim() === version,
     );
     if (!match) {
-      return { key: "not-in-asc", label: "ASC 未创建该版本", tone: "amber", source: "asc" };
+      return { key: "not-in-asc", label: "App Store 未创建该版本", tone: "amber", source: "asc" };
     }
     const meta = ASC_STATE_META[String(match.appStoreState || "")];
     if (meta) {
@@ -72,7 +72,7 @@ export function deriveVersionStatus(input: {
     }
     return {
       key: "unknown",
-      label: `ASC 状态未知（${String(match.appStoreState || "无")}）`,
+      label: `App Store 状态未知（${String(match.appStoreState || "无")}）`,
       tone: "muted",
       source: "asc",
     };
@@ -88,7 +88,7 @@ export function deriveVersionStatus(input: {
     };
   }
 
-  return { key: "unknown", label: "未确认（配置 ASC 后可查看）", tone: "muted", source: "none" };
+  return { key: "unknown", label: "未确认（配置 App Store 凭证后可查看）", tone: "muted", source: "none" };
 }
 
 /**

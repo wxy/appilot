@@ -22,7 +22,7 @@ export function CredentialBadge({
 }) {
   const navigate = useNavigate();
   const Icon = kind === "github" ? GithubIcon : AppleIcon;
-  const label = kind === "github" ? "GitHub" : "ASC";
+  const label = kind === "github" ? "GitHub" : "App Store";
   const detail = CREDENTIAL_BADGE_DETAIL[kind];
   const title = enabled
     ? source

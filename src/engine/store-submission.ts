@@ -109,6 +109,9 @@ export function applyAscSnapshotToDraft(
       const raw = ascLoc[field];
       if (raw === undefined) continue;
       const value = String(raw);
+      // ASC 返回的空字符串不代表商店实际为空：name/subtitle 等可选字段未在
+      // 版本级设置时接口返回空，但商店实际显示 App 级名称。空值不覆盖本地。
+      if (!value) continue;
       if (String((match as any)[field] || "") !== value) {
         (match as any)[field] = value;
         changed = true;

@@ -808,6 +808,8 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   const liveVersions = sorted.filter((v) => v.appStoreState === "READY_FOR_SALE");
   if (liveVersions.length > 0) {
     const { applyAscSnapshotToDraft } = await import("../engine/store-submission");
+    const { STOREFRONTS_BY_LANGUAGE } = await import("../engine/storefronts");
+    const { fetchStoreLocalizedCopy } = await import("../engine/app-store-discovery");
     const projects: any[] = store.get("projects") || [];
     let changed = false;
     for (const project of projects) {
@@ -821,6 +823,17 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
         if (wasLive && draft.ascSyncedAt) continue;
         const ascLocalizations = await client.listVersionLocalizations(live.id);
         if (applyAscSnapshotToDraft(draft, ascLocalizations)) changed = true;
+        // 自愈：ASC 版本级 name 为空时，用各语言商店的 App 级名称（iTunes
+        // trackName）回填，避免冻结把本地名称清空后无处恢复。
+        for (const loc of draft.localizations || []) {
+          if (String(loc.name || "").trim()) continue;
+          const country = STOREFRONTS_BY_LANGUAGE[String(loc.language || "")]?.[0];
+          if (!country) continue;
+          const copy = await fetchStoreLocalizedCopy(product.trackId, country);
+          if (!copy?.trackName) continue;
+          loc.name = copy.trackName;
+          changed = true;
+        }
       }
     }
     if (changed) store.set("projects", projects);

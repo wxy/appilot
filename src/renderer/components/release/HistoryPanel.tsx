@@ -8,11 +8,13 @@ export function HistoryPanel({
   selectedDraft,
   onSelect,
   currentTag,
+  onDelete,
 }: {
   drafts: any[];
   selectedDraft: any;
   onSelect: (draft: any) => void;
   currentTag?: string;
+  onDelete?: (draft: any) => void;
 }) {
   const merged = mergeHistoryDrafts(drafts);
   return (
@@ -55,6 +57,27 @@ export function HistoryPanel({
                 {languages.length > 0 && (
                   <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 shrink-0">
                     {languages.length} 语言
+                  </span>
+                )}
+                {onDelete && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(item);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onDelete(item);
+                      }
+                    }}
+                    title="删除该文案"
+                    className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-md text-zinc-400 dark:text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                  >
+                    ×
                   </span>
                 )}
               </button>

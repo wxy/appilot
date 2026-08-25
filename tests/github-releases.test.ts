@@ -42,6 +42,7 @@ async function runTests() {
             {
               trackId: 123,
               version: "1.1.1",
+              trackName: "AI Pulse: Coding Cost Tracker",
               currentVersionReleaseDate: "2026-08-20T07:00:00Z",
               description: "German store description",
               releaseNotes: "German what's new",
@@ -117,6 +118,7 @@ async function runTests() {
     assert(localized?.description === "German store description", "per-storefront description parsed");
     assert(localized?.releaseNotes === "German what's new", "per-storefront release notes parsed");
     assert(localized?.version === "1.1.1", "per-storefront version parsed");
+    assert(localized?.trackName === "AI Pulse: Coding Cost Tracker", "per-storefront trackName parsed");
 
     status = 500;
     const storeFail = await fetchStoreCurrentVersion("123");

@@ -452,7 +452,7 @@ export async function fetchStoreCurrentVersion(
 export async function fetchStoreLocalizedCopy(
   trackId: string,
   country = "us",
-): Promise<{ version: string; description: string; releaseNotes: string } | null> {
+): Promise<{ version: string; trackName: string; description: string; releaseNotes: string } | null> {
   try {
     const res = await fetch(
       `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
@@ -463,6 +463,7 @@ export async function fetchStoreLocalizedCopy(
     if (!r) return null;
     return {
       version: typeof r.version === "string" ? r.version : "",
+      trackName: typeof r.trackName === "string" ? r.trackName : "",
       description: typeof r.description === "string" ? r.description : "",
       releaseNotes: typeof r.releaseNotes === "string" ? r.releaseNotes : "",
     };

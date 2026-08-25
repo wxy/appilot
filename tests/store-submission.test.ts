@@ -133,6 +133,20 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
   ]);
   check(d.localizations[0].name === "New Name" && d.localizations[0].description === "old", "仅覆盖提供的字段");
 }
+{
+  // ASC 空字符串不代表商店实际为空（name/subtitle 未在版本级设置时返回空），
+  // 不得覆盖本地非空值——否则冻结会清空名称/副标题。
+  const d = {
+    localizations: [{ language: "en", locale: "en-US", name: "GloWalk", subtitle: "Path", description: "local", whatsNew: "n", keywords: "k" }],
+  } as any;
+  const changed = applyAscSnapshotToDraft(d, [
+    { locale: "en-US", name: "", subtitle: "", description: "store desc", whatsNew: "store news", keywords: "" },
+  ]);
+  check(changed === true, "空可选字段 + 非空描述 → 部分变更");
+  check(d.localizations[0].name === "GloWalk" && d.localizations[0].subtitle === "Path", "ASC 空名称/副标题不覆盖本地");
+  check(d.localizations[0].description === "store desc" && d.localizations[0].whatsNew === "store news", "ASC 非空描述/新增内容仍覆盖");
+  check(d.localizations[0].keywords === "k", "ASC 空关键词不覆盖本地");
+}
 
 // Partial freeze without ASC: per-language description/whats-new alignment.
 {

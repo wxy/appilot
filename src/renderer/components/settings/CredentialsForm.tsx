@@ -781,7 +781,7 @@ export function CredentialsForm({
             </p>
             <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
               <span>版本 / 审核状态回读</span>
-              <code className={credentialCodeChipClass}>ASC API Key</code>
+              <code className={credentialCodeChipClass}>App Store Connect API Key</code>
               <span>评论（App Store RSS）</span>
               <span className="text-zinc-400">无需凭证</span>
             </div>

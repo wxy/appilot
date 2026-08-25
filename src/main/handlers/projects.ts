@@ -360,7 +360,7 @@ export function registerProjectsHandlers(): void {
       const keyId = params?.keyId?.trim() || eff.ascKeyId || "";
       const keyPath = params?.privateKeyPath?.trim() || eff.ascPrivateKeyPath || "";
       if (!issuerId || !keyId || !keyPath) {
-        return { ok: false, error: "ASC Key 信息不完整（Issuer / Key ID / .p8 文件）" };
+        return { ok: false, error: "App Store Connect Key 信息不完整（Issuer / Key ID / .p8 文件）" };
       }
       let pem = "";
       try {
@@ -373,7 +373,7 @@ export function registerProjectsHandlers(): void {
         const res = await fetch("https://api.appstoreconnect.apple.com/v1/apps?limit=1", {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok) return { ok: false, error: `ASC API ${res.status}` };
+        if (!res.ok) return { ok: false, error: `App Store Connect API ${res.status}` };
         return { ok: true };
       } catch (err: any) {
         return { ok: false, error: err.message || "连接失败" };
