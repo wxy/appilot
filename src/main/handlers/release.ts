@@ -129,6 +129,7 @@ export function registerReleaseHandlers(): void {
           storeStatus: draft.storeStatus || "",
           masterConfirmedAt: draft.masterConfirmedAt || "",
           batchConfirmedAt: draft.batchConfirmedAt || "",
+          ascSyncedAt: draft.ascSyncedAt || "",
         }))
         // Identity by appVersion: one entry per target version, newest first.
         .filter((draft, index, all) => {

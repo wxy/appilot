@@ -303,6 +303,25 @@ export function ReleasePage() {
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
+  const currentCopy =
+    (releaseContext?.drafts || []).find((item: any) => Boolean(item.batchConfirmedAt)) || null;
+  // 与商店完全对齐：从商店重建/冻结的文案 ascSyncedAt 存在。手动发布后的
+  // 对齐校验后续补上。
+  const storeAligned = Boolean(currentCopy?.ascSyncedAt || draft?.ascSyncedAt);
+  // 当前选中的发布是否还需要一份文案（没有已确认的同版本文案）。
+  const selectedNeedsCopy = Boolean(
+    selectedRelease &&
+    !(currentCopy?.appVersion && inferredVersion && currentCopy.appVersion === inferredVersion),
+  );
+  // 最新发布是否还需要一份文案（决定「最新文案草案」入口是否出现）。
+  const latestNeedsCopy = Boolean(
+    latestRelease &&
+    !(
+      currentCopy?.appVersion &&
+      inferAppVersion(latestRelease) &&
+      currentCopy.appVersion === inferAppVersion(latestRelease)
+    ),
+  );
   const orderedLanguages = availableLanguages.includes(UI_SOURCE_LANGUAGE)
     ? [
         UI_SOURCE_LANGUAGE,
@@ -315,6 +334,21 @@ export function ReleasePage() {
       <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
       {release?.tag && (
         <span className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{release.tag}</span>
+      )}
+      {selectedNeedsCopy && !draft && !versionLocked && (
+        <button
+          type="button"
+          onClick={() => {
+            setHistoryDraft(null);
+            void handleLoad(true);
+          }}
+          disabled={generating || loadingDraft}
+          className="inline-flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-60"
+          title="根据发布公告素材调用 AI 新建文案"
+        >
+          <GithubIcon className="w-3 h-3" />
+          {generating ? "生成中…" : "根据发布公告新建"}
+        </button>
       )}
     </>
   ) : null;
@@ -353,6 +387,18 @@ export function ReleasePage() {
             商店 v{storeLiveVersion} ≠ 目标 v{draft.appVersion}
           </span>
         )
+      )}
+      {effectiveVersionStatus?.key === "ready-for-sale" && !storeAligned && (
+        <button
+          type="button"
+          onClick={() => void handleRebuildFromStore()}
+          disabled={rebuilding}
+          className="inline-flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-60"
+          title="从 App Store 回读完整文案，重建本地丢失的文案"
+        >
+          <AppleIcon className="w-3 h-3" />
+          {rebuilding ? "重建中…" : "根据此版本重建文案"}
+        </button>
       )}
     </>
   ) : null;
@@ -397,20 +443,6 @@ export function ReleasePage() {
               已按商店公开信息部分冻结（描述/新增内容）· {formatHumanTime(draft.storeSyncedAt)}
             </span>
           )}
-          {(!draft ||
-            localizations.length < availableLanguages.length ||
-            localizations.some((loc: any) => !String(loc.name || "").trim())) && (
-            <button
-              type="button"
-              onClick={() => void handleRebuildFromStore()}
-              disabled={rebuilding}
-              className="inline-flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-60"
-              title="从 App Store 回读完整文案，重建本地丢失的文案"
-            >
-              <AppleIcon className="w-3 h-3" />
-              {rebuilding ? "重建中…" : "根据此版本重建文案"}
-            </button>
-          )}
           <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
             README 或需同步更新
           </span>
@@ -454,8 +486,6 @@ export function ReleasePage() {
   const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
   const previousDraft =
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
-  const currentCopy =
-    (releaseContext?.drafts || []).find((item: any) => Boolean(item.batchConfirmedAt)) || null;
   const viewingCurrent = Boolean(
     historyDraft && currentCopy && historyDraft.releaseTag === currentCopy.releaseTag,
   );
@@ -878,7 +908,10 @@ export function ReleasePage() {
                           : "text-white",
                       )}
                     >
-                      当前文案
+                      <span className="inline-flex items-center gap-1.5">
+                        当前文案
+                        {currentCopy?.ascSyncedAt && <AppleIcon className="w-3 h-3" />}
+                      </span>
                     </span>
                     <span
                       className={cn(
@@ -903,24 +936,28 @@ export function ReleasePage() {
                   <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
                     {latestDraftForProduct
                       ? `${draftVersionLabel(latestDraftForProduct)} · ${formatHumanTime(latestDraftForProduct.updatedAt)}`
-                      : "可新建文案（发布草案或正式发布均可）"}
+                      : latestNeedsCopy
+                        ? "可新建文案（发布草案或正式发布均可）"
+                        : "该发布已有当前文案"}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHistoryDraft(null);
-                    if (latestRelease?.tag && latestRelease.tag !== selectedTag) {
-                      setSelectedTag(latestRelease.tag);
-                    }
-                  }}
-                  className={cn(
-                    "shrink-0",
-                    btnSmPrimary,
-                  )}
-                >
-                  {latestDraftForProduct ? "打开" : "新建"}
-                </button>
+                {latestNeedsCopy && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryDraft(null);
+                      if (latestRelease?.tag && latestRelease.tag !== selectedTag) {
+                        setSelectedTag(latestRelease.tag);
+                      }
+                    }}
+                    className={cn(
+                      "shrink-0",
+                      btnSmPrimary,
+                    )}
+                  >
+                    {latestDraftForProduct ? "打开" : "新建"}
+                  </button>
+                )}
               </div>
               {selectedRelease && (
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -1133,6 +1170,9 @@ export function ReleasePage() {
                       : viewingHistory
                         ? `文案历史 · ${draftVersionLabel(historyDraft)}`
                         : `当前文案 · ${draft?.appVersion || "版本待定"}`}
+                    {!viewingHistory && draft?.ascSyncedAt && (
+                      <AppleIcon className="w-3 h-3 text-emerald-500 inline-block ml-1.5" />
+                    )}
                   </span>
                 </div>
                 {viewingHistory && (

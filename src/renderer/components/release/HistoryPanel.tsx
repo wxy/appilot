@@ -2,6 +2,7 @@ import { cn } from "../../lib/utils";
 import { formatHumanTime } from "../../lib/format";
 import { draftVersionLabel, mergeHistoryDrafts } from "./releaseFormat";
 import { ReferenceSection } from "./ReferenceSection";
+import { AppleIcon } from "../ui/Icons";
 
 export function HistoryPanel({
   drafts,
@@ -44,7 +45,10 @@ export function HistoryPanel({
                 )}
               >
                 <span className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium truncate">{draftVersionLabel(item)}</span>
+                  <span className="inline-flex items-center gap-1 text-sm font-medium truncate">
+                    {draftVersionLabel(item)}
+                    {item.ascSyncedAt && <AppleIcon className="w-3 h-3 text-emerald-500" />}
+                  </span>
                   {isCurrent && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shrink-0">
                       当前
