@@ -62,6 +62,11 @@ contextBridge.exposeInMainWorld("appilot", {
     status: (productId: string): Promise<any> => ipcRenderer.invoke("asc:status", productId),
   },
 
+  store: {
+    currentVersion: (productId: string): Promise<{ version: string; currentVersionReleaseDate: string | null } | null> =>
+      ipcRenderer.invoke("store:currentVersion", productId),
+  },
+
   readiness: {
     get: (projectId: string, draftId: string): Promise<any> =>
       ipcRenderer.invoke("readiness:get", projectId, draftId),

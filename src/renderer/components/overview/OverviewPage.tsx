@@ -11,11 +11,11 @@ import {
   YAxis,
 } from "recharts";
 import type { BriefSuggestion } from "../../../engine/ai/overview-brief";
+import { deriveVersionStatus } from "../../../engine/version-status";
 import { briefRuleSignals } from "../../lib/overview-brief";
 import { STALE_MS } from "../../lib/matrix";
 import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
-import { STORE_STATUS_META } from "../../lib/store-status";
 import { cn } from "../../lib/utils";
 import { useProject, type RankSnapshot } from "../../stores/project";
 import { CredentialBadge } from "../ui/CredentialBadge";
@@ -43,6 +43,8 @@ export function OverviewPage() {
     submission: any | null;
   } | null>(null);
   const [chartDays, setChartDays] = useState(OVERVIEW_CHART_DAYS);
+  const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
+  const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
   const [briefState, setBriefState] = useState<{
     status: "idle" | "loading" | "ready" | "error";
     suggestions: BriefSuggestion[];
@@ -86,6 +88,20 @@ export function OverviewPage() {
       cancelled = true;
     };
   }, [project?.id, product?.id]);
+
+  // Version status derivation: ASC when available, public store lookup as
+  // the no-credential fallback (current live version only).
+  useEffect(() => {
+    if (!product?.id) return;
+    let cancelled = false;
+    (window as any).appilot?.asc?.status(product.id)
+      .then((info: any) => { if (!cancelled) setAscInfo(info); })
+      .catch(() => { if (!cancelled) setAscInfo(null); });
+    (window as any).appilot?.store?.currentVersion(product.id)
+      .then((info: any) => { if (!cancelled) setStoreCurrentVersion(info?.version || null); })
+      .catch(() => { if (!cancelled) setStoreCurrentVersion(null); });
+    return () => { cancelled = true; };
+  }, [product?.id]);
 
   if (!project || !product) {
     return (
@@ -131,8 +147,12 @@ export function OverviewPage() {
         ? ({ label: "母本已确定", tone: "amber" } as const)
         : null
     : null;
-  const storeChip = submissionDraft?.storeStatus
-    ? STORE_STATUS_META[submissionDraft.storeStatus] || null
+  const versionStatus = submissionDraft
+    ? deriveVersionStatus({
+        appVersion: submissionDraft.appVersion || "",
+        ascVersions: ascInfo?.versions ?? null,
+        storeCurrentVersion,
+      })
     : null;
   const handledBriefIds = new Set(
     (project.briefActions || []).map((item) => item.id),
@@ -626,7 +646,25 @@ export function OverviewPage() {
                   />
                 )}
                 {confirmChip && <StatusChip label={confirmChip.label} tone={confirmChip.tone} />}
-                {storeChip && <StatusChip label={storeChip.label} tone={storeChip.tone} />}
+                {versionStatus && <StatusChip label={versionStatus.label} tone={versionStatus.tone} />}
+                {versionStatus && (
+                  <span
+                    className="inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400"
+                    title={
+                      versionStatus.source === "asc"
+                        ? "来自 ASC 凭证查询"
+                        : versionStatus.source === "store-lookup"
+                          ? "来自 App Store 公开查询（未配置 ASC 凭证）"
+                          : "未配置 ASC 凭证，无法确认"
+                    }
+                  >
+                    {versionStatus.source === "asc"
+                      ? "ASC"
+                      : versionStatus.source === "store-lookup"
+                        ? "商店"
+                        : "未配置"}
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
                 {formatHumanTime(releaseDraft.publishedAt)} 更新 · 提交素材

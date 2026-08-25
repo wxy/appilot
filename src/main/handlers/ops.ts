@@ -62,6 +62,24 @@ export function registerOpsHandlers(): void {
     return (s.get("ascCache") || {})[productId] || null;
   });
 
+  // Public iTunes lookup — the no-ASC fallback: only confirms the current
+  // live version; never fabricates submitted/review state.
+  ipcMain.handle("store:currentVersion", async (_event, productId: string) => {
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    for (const project of projects) {
+      const product = (project.storeProducts || []).find(
+        (item: any) => item.id === productId,
+      );
+      if (product?.trackId) {
+        const { fetchStoreCurrentVersion } = await import("../../engine/app-store-discovery");
+        return fetchStoreCurrentVersion(product.trackId);
+      }
+    }
+    return null;
+  });
+
   ipcMain.handle("readiness:get", async (_event, projectId: string, draftId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     draftId = assertNonEmptyString(draftId, "draftId");

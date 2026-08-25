@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
 import { buildStatusForVersion } from "../../../engine/build-status";
+import { deriveVersionStatus } from "../../../engine/version-status";
 import { ascStateMeta } from "../../lib/asc-status";
 import {
   formatHumanTime,
@@ -12,7 +13,6 @@ import {
   UI_SOURCE_LANGUAGE,
 } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
-import { STORE_STATUS_META } from "../../lib/store-status";
 import {
   CHANGE_TYPE_META,
   summarizeChanges,
@@ -67,6 +67,7 @@ export function ReleasePage() {
   const [pendingVersion, setPendingVersion] = useState("");
   const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
   const [ascRefreshing, setAscRefreshing] = useState(false);
+  const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
 
   useEffect(() => {
     const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
@@ -89,6 +90,21 @@ export function ReleasePage() {
     return () => { cancelled = true; };
   }, [productId]);
 
+  // Public store lookup: the no-ASC fallback for version status. It can only
+  // confirm the *current* live version; everything else stays "未确认".
+  const loadStoreCurrentVersion = async () => {
+    if (!productId) return;
+    try {
+      const info = await (window as any).appilot?.store?.currentVersion(productId);
+      setStoreCurrentVersion(info?.version || null);
+    } catch {
+      setStoreCurrentVersion(null);
+    }
+  };
+  useEffect(() => {
+    void loadStoreCurrentVersion();
+  }, [productId]);
+
   const handleAscRefresh = async () => {
     if (!productId || ascRefreshing) return;
     setAscRefreshing(true);
@@ -96,6 +112,7 @@ export function ReleasePage() {
       await (window as any).appilot?.asc?.sync(productId);
       const info = await (window as any).appilot?.asc?.status(productId);
       setAscInfo(info || null);
+      void loadStoreCurrentVersion();
     } finally {
       setAscRefreshing(false);
     }
@@ -191,10 +208,23 @@ export function ReleasePage() {
 
   const draft = active?.draft || null;
   const release = active?.release || null;
+  const released = Boolean(release && release.githubDraft === false);
   const ascVersion = draft?.appVersion
     ? (ascInfo?.versions || []).find((v: any) => v.versionString === draft.appVersion) || null
     : null;
   const ascMeta = ascStateMeta(ascVersion?.appStoreState);
+  const versionStatus = deriveVersionStatus({
+    appVersion: draft?.appVersion || "",
+    ascVersions: ascInfo?.versions ?? null,
+    storeCurrentVersion,
+  });
+  const githubStatus = release?.githubDraft === true
+    ? { label: "发布草案", tone: "blue" as const, source: "GitHub" as const }
+    : release?.githubDraft === false
+      ? { label: "已发布", tone: "emerald" as const, source: "GitHub" as const }
+      : release
+        ? { label: "本地标签", tone: "muted" as const, source: "本地" as const }
+        : null;
   const buildInfo = ascVersion ? buildStatusForVersion(ascVersion, ascInfo?.builds || []) : null;
   const buildTone: "muted" | "emerald" | "amber" | "red" = buildInfo?.state === "available"
     ? "emerald"
@@ -231,7 +261,7 @@ export function ReleasePage() {
       : selectedRelease?.submissionDrafts?.find(
           (item: any) => item?.productId === productId,
         ) || null;
-  const feedbackReadOnly = Boolean(release && !release.draft);
+  const feedbackReadOnly = released;
   const isReadOnly =
     feedbackReadOnly ||
     batchConfirmed ||
@@ -295,7 +325,7 @@ export function ReleasePage() {
         meta: `${githubRelease.name || "发布正文"}${githubRelease.publishedAt ? ` · ${formatHumanTime(githubRelease.publishedAt)}` : ""}`,
         badge: "github",
         badgeTitle: githubRelease.viaToken
-          ? "发布公告来自 GitHub（通过 Token 获取，支持私有仓库与草案）"
+          ? "发布公告来自 GitHub（通过 Token 获取，支持私有仓库与发布草案）"
           : "发布公告来自 GitHub（公开仓库）",
       });
     }
@@ -595,7 +625,7 @@ export function ReleasePage() {
         ) : (
           <EmptyState
             title="尚未检测到新的发布"
-            desc="有新提交或创建新 tag（GitHub 发布会自动打 tag）后，这里会自动生成发布文案素材。"
+            desc="有新提交、GitHub 发布草案（需配置 GitHub Token，Contents 只读权限）或创建新 tag 后，这里会自动生成发布文案素材。"
           />
         )
       ) : (
@@ -637,11 +667,11 @@ export function ReleasePage() {
                     )}
                   >
                     <span className="min-w-0">
-                      <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">最新草案</span>
+                      <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">最新文案草案</span>
                       <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
                         {draft
                           ? `${draftVersionLabel(draft)} · ${formatHumanTime(draft.updatedAt)}`
-                          : "尚未生成草案，新文案从这里开始"}
+                          : "尚未生成文案草案，新文案从这里开始"}
                       </span>
                     </span>
                   </button>
@@ -867,17 +897,48 @@ export function ReleasePage() {
                         <StatusChip label="母本已确定" tone="amber" />
                       )}
                       {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
-                      {draft?.storeStatus && STORE_STATUS_META[draft.storeStatus] && (
+                      {versionStatus && (
                         <StatusChip
-                          label={STORE_STATUS_META[draft.storeStatus].label}
-                          tone={STORE_STATUS_META[draft.storeStatus].tone}
+                          label={versionStatus.label}
+                          tone={versionStatus.tone}
                         />
                       )}
-                      {ascMeta && (
+                      {versionStatus && (
+                        <span
+                          className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400"
+                          title={
+                            versionStatus.source === "asc"
+                              ? "来自 ASC 凭证查询"
+                              : versionStatus.source === "store-lookup"
+                                ? "来自 App Store 公开查询（未配置 ASC 凭证）"
+                                : "未配置 ASC 凭证，无法确认"
+                          }
+                        >
+                          {versionStatus.source === "asc"
+                            ? "ASC"
+                            : versionStatus.source === "store-lookup"
+                              ? "商店"
+                              : "未配置"}
+                        </span>
+                      )}
+                      {githubStatus && (
+                        <StatusChip label={`${githubStatus.source}：${githubStatus.label}`} tone={githubStatus.tone} />
+                      )}
+                      {ascMeta && !versionStatus && (
                         <StatusChip label={`ASC：${ascMeta.label}`} tone={ascMeta.tone} />
                       )}
                       {buildInfo && (
                         <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
+                      )}
+                      {versionStatus?.key === "not-in-asc" && (
+                        <span className="text-[11px] text-amber-600 dark:text-amber-500">
+                          ASC 中未找到版本 {draft?.appVersion}，提交前请确认已在 App Store Connect 创建该版本。
+                        </span>
+                      )}
+                      {versionStatus?.key === "unknown" && versionStatus.source === "none" && (
+                        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                          配置 ASC 凭证后可自动校验版本是否提交/审核/上架。
+                        </span>
                       )}
                       <button
                         type="button"
@@ -952,7 +1013,7 @@ export function ReleasePage() {
                   </div>
                 </div>
 
-                {selectedRelease.draft && !draft && (
+                {!released && !draft && (
                   summaryItems.length > 0 ? (
                     <AIProgressButton
                       onClick={() => handleLoad(true)}
@@ -968,7 +1029,7 @@ export function ReleasePage() {
                   )
                 )}
 
-                {!selectedRelease.draft && (
+                {released && (
                   <div>
                     {selectedExistingDraft ? (
                       <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
@@ -985,8 +1046,8 @@ export function ReleasePage() {
             {!draft ? (
               selectedRelease && step > 1 ? (
                 <EmptyState
-                  title={selectedRelease.draft ? "等待生成提交文案" : "该正式发布没有文案"}
-                  desc={selectedRelease.draft ? "确认后由 AI 生成名称、副标题、Promotional Text、描述、What's New 和关键词。" : "正式发布只作为完成信号，不再生成新的商店文案。"}
+                  title={released ? "该正式发布没有文案" : "等待生成提交文案"}
+                  desc={released ? "正式发布只作为完成信号，不再生成新的商店文案。" : "确认后由 AI 生成名称、副标题、Promotional Text、描述、What's New 和关键词。"}
                 />
               ) : null
             ) : (
