@@ -3,7 +3,7 @@ import type { ReadinessCheckItem, ReadinessStatus } from "../../../engine/readin
 import { cn } from "../../lib/utils";
 import { formatHumanTime } from "../../lib/format";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
-import { AppleIcon } from "../ui/Icons";
+import { AppleIcon, GithubIcon } from "../ui/Icons";
 
 const STATUS_STYLES: Record<ReadinessStatus, { dot: string; text: string }> = {
   pass: { dot: "bg-emerald-500", text: "text-emerald-700 dark:text-emerald-400" },
@@ -16,9 +16,9 @@ export function ReleaseReadinessPanel({
   projectId,
   productId,
   draft,
-  releaseStatus,
-  versionStatus,
-  confirmStatus,
+  githubNode,
+  copyNode,
+  storeNode,
   alerts,
   onAscRefresh,
   ascRefreshing,
@@ -27,12 +27,12 @@ export function ReleaseReadinessPanel({
   projectId: string;
   productId: string;
   draft: { id: string; releaseTag: string };
-  /** GitHub 发布状态（发布草案 / 已发布 / 本地标签）。 */
-  releaseStatus?: ReactNode;
-  /** 版本状态 + 商店核对 + 构建。 */
-  versionStatus?: ReactNode;
-  /** 母本 / 整批确认 + 语言覆盖。 */
-  confirmStatus?: ReactNode;
+  /** GitHub 发布节点内容。 */
+  githubNode?: ReactNode;
+  /** 本地文案草案节点内容。 */
+  copyNode?: ReactNode;
+  /** 商店版本节点内容。 */
+  storeNode?: ReactNode;
   /** 动态提醒与警告（未创建版本、上架提醒等）。 */
   alerts?: ReactNode;
   onAscRefresh?: () => Promise<void>;
@@ -62,20 +62,28 @@ export function ReleaseReadinessPanel({
     }
   };
 
-  const StatusRow = ({ label, children }: { label: string; children: ReactNode }) =>
-    children ? (
-      <div className="px-5 py-2 flex items-start gap-3 border-t border-zinc-100 dark:border-zinc-800 first:border-t-0">
-        <span className="w-9 shrink-0 text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 pt-0.5">
-          {label}
-        </span>
-        <div className="flex flex-wrap items-center gap-1.5 min-w-0">{children}</div>
+  const FlowNode = ({
+    title,
+    icon,
+    children,
+  }: {
+    title: string;
+    icon?: ReactNode;
+    children: ReactNode;
+  }) => (
+    <div className="flex-1 min-w-0 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 p-3">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
+        {icon}
+        {title}
       </div>
-    ) : null;
+      <div className="flex flex-wrap items-center gap-1.5">{children}</div>
+    </div>
+  );
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm">
       <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布 · 版本 · 文案状态</h3>
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布 → 文案 → 商店</h3>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -102,10 +110,30 @@ export function ReleaseReadinessPanel({
           )}
         </div>
       </div>
-      <StatusRow label="发布">{releaseStatus}</StatusRow>
-      <StatusRow label="版本">{versionStatus}</StatusRow>
-      <StatusRow label="确认">{confirmStatus}</StatusRow>
-      <StatusRow label="提醒">{alerts}</StatusRow>
+      <div className="px-5 py-4">
+        <div className="flex items-stretch gap-2">
+          <FlowNode title="GitHub 发布" icon={<GithubIcon className="w-3 h-3" />}>
+            {githubNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+          </FlowNode>
+          <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
+            →
+          </div>
+          <FlowNode title="文案草案">
+            {copyNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+          </FlowNode>
+          <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
+            →
+          </div>
+          <FlowNode title="商店版本" icon={<AppleIcon className="w-3 h-3" />}>
+            {storeNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+          </FlowNode>
+        </div>
+        {alerts && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 dark:border-zinc-800 pt-2.5">
+            {alerts}
+          </div>
+        )}
+      </div>
       <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800">
         <p className="text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
           就绪项

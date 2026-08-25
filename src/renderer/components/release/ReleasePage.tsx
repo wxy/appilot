@@ -21,7 +21,7 @@ import { AIProgressButton } from "../ui/AIProgressButton";
 import { CredentialBadge } from "../ui/CredentialBadge";
 import { EmptyState } from "../ui/EmptyState";
 import { FieldBlock, FieldHeader } from "../ui/Fields";
-import { AppleIcon, GithubIcon } from "../ui/Icons";
+import { GithubIcon } from "../ui/Icons";
 import { StatusChip } from "../ui/StatusChip";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import {
@@ -304,52 +304,50 @@ export function ReleasePage() {
         ...availableLanguages.filter((language) => language !== UI_SOURCE_LANGUAGE),
       ]
     : availableLanguages;
-  // 文案状态栏按性质分组：发布（GitHub）/ 版本（ASC）/ 确认（本地）/ 提醒（动态）。
-  const releaseStatus = githubStatus ? (
-    <span className="inline-flex items-center gap-1">
+  // 流程状态栏：GitHub 发布 → 本地文案草案 → 商店版本，每个节点标注自身状态。
+  const githubNode = githubStatus ? (
+    <>
       <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
-      <GithubIcon className="w-3 h-3" />
-    </span>
+      {release?.tag && (
+        <span className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{release.tag}</span>
+      )}
+    </>
   ) : null;
-  const versionStatusNodes = effectiveVersionStatus || buildInfo || (draft?.appVersion && storeLiveVersion) ? (
+  const copyNode =
+    masterConfirmed || batchConfirmed || draft?.appVersion || (draft && localizations.length > 0) ? (
+      <>
+        {masterConfirmed && !batchConfirmed && (
+          <StatusChip label="母本已确定" tone="amber" />
+        )}
+        {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
+        {draft?.appVersion && (
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">v{draft.appVersion}</span>
+        )}
+        {draft && localizations.length > 0 && (
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+            {localizations.length}/{availableLanguages.length} 语言
+          </span>
+        )}
+      </>
+    ) : null;
+  const storeNode = effectiveVersionStatus || buildInfo || (draft?.appVersion && storeLiveVersion) ? (
     <>
       {effectiveVersionStatus && (
-        <span className="inline-flex items-center gap-1">
-          <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
-          {effectiveVersionStatus.source === "asc" || effectiveVersionStatus.source === "store-lookup" ? (
-            <AppleIcon className="w-3 h-3" />
-          ) : (
-            <span className="text-[10px] text-zinc-400 dark:text-zinc-500">未配置</span>
-          )}
-        </span>
+        <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
       )}
       {buildInfo && (
         <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
       )}
       {draft?.appVersion && storeLiveVersion && (
         storeLiveVersion === draft.appVersion ? (
-          <span className="text-[11px] text-emerald-600 dark:text-emerald-500">
-            商店版本 v{storeLiveVersion}，与目标一致
+          <span className="text-[10px] text-emerald-600 dark:text-emerald-500">
+            商店版本一致
           </span>
         ) : (
-          <span className="text-[11px] text-amber-600 dark:text-amber-500">
-            商店当前版本 v{storeLiveVersion} ≠ 目标 v{draft.appVersion}（对应历史已上架版本）
+          <span className="text-[10px] text-amber-600 dark:text-amber-500">
+            商店 v{storeLiveVersion} ≠ 目标 v{draft.appVersion}
           </span>
         )
-      )}
-    </>
-  ) : null;
-  const confirmStatus =
-    masterConfirmed || batchConfirmed || (draft && localizations.length > 0) ? (
-    <>
-      {masterConfirmed && !batchConfirmed && (
-        <StatusChip label="母本已确定" tone="amber" />
-      )}
-      {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
-      {draft && localizations.length > 0 && (
-        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-          {localizations.length}/{availableLanguages.length} 语言
-        </span>
       )}
     </>
   ) : null;
@@ -1097,9 +1095,9 @@ export function ReleasePage() {
                 projectId={project.id}
                 productId={productId}
                 draft={{ id: draft.id, releaseTag: draft.releaseTag }}
-                releaseStatus={releaseStatus}
-                versionStatus={versionStatusNodes}
-                confirmStatus={confirmStatus}
+                githubNode={githubNode}
+                copyNode={copyNode}
+                storeNode={storeNode}
                 alerts={alerts}
                 onAscRefresh={handleAscRefresh}
                 ascRefreshing={ascRefreshing}
