@@ -288,6 +288,13 @@ export function OverviewPage() {
               kind="github"
               enabled={Boolean(project.hasGithubToken)}
               projectId={project.id}
+              source={project.githubSource}
+            />
+            <CredentialBadge
+              kind="asc"
+              enabled={Boolean(project.hasAscKey)}
+              projectId={project.id}
+              source={project.ascSource}
             />
             <button
               onClick={() => navigate(`/projects/${project.id}/settings`)}

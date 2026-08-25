@@ -112,12 +112,25 @@ export function registerProjectsHandlers(): void {
     if (repoChanged) s.set("projects", cleaned);
     return cleaned.map((project) => {
       const creds = resolveEffectiveCredentials(s, project.id);
+      const override = (s.get("projectCredentials") || {})[project.id] || {};
       return {
         ...project,
         hasGithubToken: Boolean(creds.githubToken),
         hasAscKey: Boolean(
           creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath,
         ),
+        githubSource: creds.githubToken
+          ? override.githubToken
+            ? "project"
+            : "global"
+          : null,
+        ascSource:
+          override.ascIssuerId || override.ascKeyId || override.ascPrivateKeyPath
+            ? "project"
+            : creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath
+              ? "global"
+              : null,
+        trafficError: (s.get("opsStatus") || {})[project.id]?.trafficError ?? null,
       };
     });
   });

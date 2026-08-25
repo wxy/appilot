@@ -6,11 +6,26 @@ import { CredentialBadge } from "../ui/CredentialBadge";
 
 export function TrafficCard({ project }: { project: any }) {
   const [snapshots, setSnapshots] = useState<any[]>([]);
-  useEffect(() => {
+  const [syncing, setSyncing] = useState(false);
+  const load = () => {
     (window as any).appilot?.traffic?.snapshots(project.id)
       .then(setSnapshots)
       .catch(() => setSnapshots([]));
+  };
+  useEffect(() => {
+    load();
   }, [project.id]);
+
+  const handleSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await (window as any).appilot?.traffic?.sync(project.id);
+      load();
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const recent14 = useMemo(() => snapshots.slice(-14), [snapshots]);
   const totalViews = recent14.reduce((sum, item) => sum + (item.views || 0), 0);
@@ -28,10 +43,36 @@ export function TrafficCard({ project }: { project: any }) {
         <CredentialBadge kind="github" enabled={Boolean(project.hasGithubToken)} projectId={project.id} />
       </div>
       {snapshots.length === 0 ? (
-        <div className="px-4 py-6 text-center text-xs text-zinc-400 dark:text-zinc-500">
-          暂无流量数据
-          <Link to={`/projects/${project.id}/settings`} className="block mt-1 text-amber-600 dark:text-amber-400">配置 GitHub Token</Link>
-        </div>
+        project.hasGithubToken ? (
+          <div className="px-4 py-6 text-center text-xs text-zinc-400 dark:text-zinc-500">
+            {project.trafficError || "暂无流量数据，等待每日同步"}
+            <button
+              type="button"
+              onClick={() => void handleSync()}
+              disabled={syncing}
+              className="block mx-auto mt-1 text-amber-600 dark:text-amber-400 hover:underline"
+            >
+              {syncing ? "同步中…" : "立即同步"}
+            </button>
+            {project.trafficError?.includes("Administration") && (
+              <span className="block mt-2 text-[10px] text-zinc-500 dark:text-zinc-400">
+                需要在 GitHub Token 权限中勾选「Administration」只读权限，或改用带 repo 权限的 classic token。
+                <button
+                  type="button"
+                  onClick={() => (window as any).appilot?.openExternal("https://github.com/settings/personal-access-tokens")}
+                  className="block mx-auto mt-1 text-sky-600 dark:text-sky-400 hover:underline"
+                >
+                  前往 GitHub Token 设置
+                </button>
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="px-4 py-6 text-center text-xs text-zinc-400 dark:text-zinc-500">
+            暂无流量数据
+            <Link to={`/projects/${project.id}/settings`} className="block mt-1 text-amber-600 dark:text-amber-400">配置 GitHub Token</Link>
+          </div>
+        )
       ) : (
         <>
           <div className="grid grid-cols-3 gap-2 px-4 pt-3">

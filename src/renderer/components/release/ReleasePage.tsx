@@ -255,6 +255,8 @@ export function ReleasePage() {
   const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
   const previousDraft =
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
+  const currentCopy =
+    (releaseContext?.drafts || []).find((item: any) => Boolean(item.batchConfirmedAt)) || null;
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
     const rows: {
@@ -545,11 +547,13 @@ export function ReleasePage() {
               kind="github"
               enabled={Boolean(project.hasGithubToken)}
               projectId={project.id}
+              source={project.githubSource}
             />
             <CredentialBadge
               kind="asc"
               enabled={Boolean(project.hasAscKey)}
               projectId={project.id}
+              source={project.ascSource}
             />
           </div>
           {products.length > 0 && (
@@ -596,7 +600,54 @@ export function ReleasePage() {
         )
       ) : (
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
-          <aside className="min-w-0">
+          <aside className="min-w-0 space-y-4">
+            {step <= 2 && releaseContext && (
+              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">当前文案</h3>
+                </div>
+                <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryDraft(currentCopy)}
+                    className={cn(
+                      "w-full flex items-center justify-between gap-2 px-5 py-3 text-left transition-colors",
+                      currentCopy && historyDraft?.releaseTag === currentCopy.releaseTag
+                        ? "bg-amber-50 dark:bg-amber-500/10"
+                        : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">当前文案</span>
+                      <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                        {currentCopy
+                          ? `${draftVersionLabel(currentCopy)} · ${formatHumanTime(currentCopy.updatedAt)}`
+                          : "暂无已确定的文案"}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryDraft(null)}
+                    className={cn(
+                      "w-full flex items-center justify-between gap-2 px-5 py-3 text-left transition-colors",
+                      !historyDraft
+                        ? "bg-amber-50 dark:bg-amber-500/10"
+                        : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">最新草案</span>
+                      <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                        {draft
+                          ? `${draftVersionLabel(draft)} · ${formatHumanTime(draft.updatedAt)}`
+                          : "尚未生成草案，新文案从这里开始"}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
                 <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">参考</h3>
@@ -781,17 +832,23 @@ export function ReleasePage() {
                             这些素材无需逐项查看；如需调整素材范围，可在上方变更摘要中取消对应条目。
                           </p>
                         </ReferenceSection>
-                        <HistoryPanel
-                          drafts={releaseContext.drafts || []}
-                          selectedDraft={historyDraft}
-                          onSelect={(draft: any) => setHistoryDraft(draft)}
-                          currentTag={selectedTag}
-                        />
                       </>
                     ) : null)}
                 </div>
               )}
             </div>
+            {step <= 2 && releaseContext && (
+              <div>
+                <HistoryPanel
+                  drafts={(releaseContext.drafts || []).filter(
+                    (item: any) => item.releaseTag !== currentCopy?.releaseTag,
+                  )}
+                  selectedDraft={historyDraft}
+                  onSelect={(history: any) => setHistoryDraft(history)}
+                  currentTag={selectedTag}
+                />
+              </div>
+            )}
           </aside>
 
           <div className="min-w-0 space-y-6">

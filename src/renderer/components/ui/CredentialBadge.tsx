@@ -13,26 +13,29 @@ export function CredentialBadge({
   kind,
   enabled,
   projectId,
+  source,
 }: {
   kind: "github" | "asc";
   enabled: boolean;
   projectId: string;
+  source?: "global" | "project" | null;
 }) {
   const navigate = useNavigate();
   const Icon = kind === "github" ? GithubIcon : AppleIcon;
   const label = kind === "github" ? "GitHub" : "ASC";
   const detail = CREDENTIAL_BADGE_DETAIL[kind];
+  const title = enabled
+    ? source
+      ? `已配置（${source === "global" ? "全局" : "项目覆盖"}），用于：${detail}`
+      : `已配置，用于：${detail}`
+    : `未配置，可解锁：${detail}（点击前往项目设置）`;
   return (
     <button
       type="button"
       onClick={() => {
         if (!enabled) navigate(`/projects/${projectId}/settings`);
       }}
-      title={
-        enabled
-          ? `已配置，用于：${detail}`
-          : `未配置，可解锁：${detail}（点击前往项目设置）`
-      }
+      title={title}
       className={cn(
         "inline-flex items-center gap-1 px-2 h-6 rounded-full text-[11px] transition-colors",
         enabled

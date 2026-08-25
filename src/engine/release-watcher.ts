@@ -193,18 +193,19 @@ async function mainLineTags(localPath: string, tags: GitTagInfo[], refs: string)
 export async function collectReleaseMaterial(
   localPath: string,
   since?: string | null,
-  end = "HEAD",
+  end: string | string[] = "HEAD",
 ): Promise<ReleaseMaterial> {
-  const range = since ? `${since}..${end}` : end;
+  const endRefs = Array.isArray(end) ? end : [end];
+  const rangeArgs = since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs;
   const [logOut, diffOut] = await Promise.all([
     git(localPath, [
       "log",
-      range,
+      ...rangeArgs,
       `--max-count=${MAX_MATERIAL_COMMITS}`,
       // \x1e record separator keeps multi-line bodies from corrupting records.
       "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
     ]).catch(() => ""),
-    git(localPath, ["diff", "--stat", range]).catch(() => ""),
+    git(localPath, ["diff", "--stat", ...rangeArgs]).catch(() => ""),
   ]);
   const sinceDate = since
     ? await git(localPath, ["log", "-1", "--format=%cI", since]).catch(() => "")
@@ -236,7 +237,7 @@ export async function collectReleaseMaterial(
   return {
     since: since || null,
     sinceDate: sinceDate || null,
-    end,
+    end: endRefs.join(" "),
     commits,
     pullRequests: prNumbers.map((number) => ({ number, title: null })),
     diffStat: diffOut.slice(0, 800),
@@ -389,20 +390,29 @@ export async function checkForRelease(
 
   // Include the remote tip too: with a dirty/stale local branch, material
   // still covers the freshest remote commits without touching the worktree.
-  let remoteTip: string | null = null;
+  // The main line is the checkout's remote branch plus the repository's
+  // default branch: GitHub releases are usually tagged on the default branch
+  // even when the local checkout sits on a feature branch.
+  const frontierShas: string[] = [head];
   if (options.sync) {
     const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(() => "");
     if (branch) {
-      remoteTip = await git(localPath, ["rev-parse", "--short", `origin/${branch}`]).catch(() => "");
+      const remoteSha = await git(localPath, ["rev-parse", "--short", `origin/${branch}`]).catch(() => "");
+      if (remoteSha && !frontierShas.includes(remoteSha)) frontierShas.push(remoteSha);
+    }
+    for (const ref of ["origin/master", "origin/main"]) {
+      const sha = await git(localPath, ["rev-parse", "--short", ref]).catch(() => "");
+      if (sha && !frontierShas.includes(sha)) frontierShas.push(sha);
     }
   }
   let tip = head;
-  if (remoteTip && remoteTip !== head && !(await isAncestor(localPath, remoteTip, head))) {
-    tip = remoteTip;
+  for (const candidate of frontierShas) {
+    if (candidate === tip) continue;
+    if (!(await isAncestor(localPath, candidate, tip))) tip = candidate;
   }
-  const endRefs = remoteTip && remoteTip !== tip ? `${tip} ${remoteTip}` : tip;
+  const endRefs = frontierShas.join(" ");
 
-  const material = await collectReleaseMaterial(localPath, lastSeenSha || null, endRefs);
+  const material = await collectReleaseMaterial(localPath, lastSeenSha || null, frontierShas);
 
   // The release identity is the newest main-line tag (or the head when there
   // are no tags). It stays stable across the generation boundary, so the

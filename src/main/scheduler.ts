@@ -1,4 +1,5 @@
 import { log } from "../engine/logger";
+import { powerMonitor } from "electron";
 import {
   enrichKeywordFromSnapshots,
   evaluatePause,
@@ -97,6 +98,7 @@ export interface RunningTaskInfo {
 let schedulerTimer: NodeJS.Timeout | null = null;
 let schedulerRunning = false;
 let overdueScattered = false;
+let powerListenersRegistered = false;
 /** How many rank tasks one scheduler tick may execute (throughput vs load). */
 const MAX_RANK_TASKS_PER_TICK = 8;
 /** What the scheduler is executing right now (for the timeline UI). */
@@ -617,6 +619,8 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
     const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
     const { fetchTrafficSnapshot } = await import("../engine/gh-traffic");
     const snapshot = await fetchTrafficSnapshot(project.localPath, token);
+    const opsStatusStore: Record<string, any> = store.get("opsStatus") || {};
+    const opsSyncedAt = new Date().toISOString();
     if (snapshot) {
       const syncEntry = githubSyncCacheEntry(store, project);
       if (syncEntry?.tag) {
@@ -633,7 +637,16 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
         all[task.projectId] = [...list, snapshot].slice(-90);
         store.set("trafficSnapshots", all);
       }
+      opsStatusStore[task.projectId] = { trafficError: null, lastSyncedAt: opsSyncedAt };
+    } else {
+      opsStatusStore[task.projectId] = {
+        trafficError: token
+          ? "GitHub 流量接口无数据（Token 需要仓库 Administration 只读权限，或仓库不可访问）"
+          : "未配置 GitHub Token",
+        lastSyncedAt: opsSyncedAt,
+      };
     }
+    store.set("opsStatus", opsStatusStore);
 
     const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
     if (competitors.length > 0) {
@@ -844,7 +857,7 @@ async function scatterOverdueTasks(store: AppStore): Promise<void> {
   }
 }
 
-export function startTaskScheduler(): void {
+function startSchedulerLoop(): void {
   if (schedulerTimer) return;
   void (async () => {
     const store = await getStore();
@@ -857,6 +870,29 @@ export function startTaskScheduler(): void {
     }, 60_000);
     await schedulerTick();
   })();
+}
+
+/** Stop the scheduler timer so sleep is not disturbed while the system suspends. */
+export function pauseTaskScheduler(): void {
+  if (schedulerTimer) {
+    clearInterval(schedulerTimer);
+    schedulerTimer = null;
+  }
+}
+
+/** Restart the scheduler after the system resumes, scattering the backlog. */
+export function resumeTaskScheduler(): void {
+  overdueScattered = false;
+  startSchedulerLoop();
+}
+
+export function startTaskScheduler(): void {
+  startSchedulerLoop();
+  if (!powerListenersRegistered) {
+    powerListenersRegistered = true;
+    powerMonitor.on("suspend", pauseTaskScheduler);
+    powerMonitor.on("resume", resumeTaskScheduler);
+  }
 }
 
 export async function runOpsSyncNow(projectId: string): Promise<boolean> {

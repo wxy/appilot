@@ -70,22 +70,20 @@ export function KeywordsPage() {
   >({});
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
-  const [showUnranked, setShowUnranked] = useState(false);
+  const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
-  const unrankedPopoverRef = useRef<HTMLSpanElement>(null);
 
   // Close keyword popovers when clicking anywhere outside them.
   useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      const inside = [pausedPopoverRef, deletedPopoverRef, unrankedPopoverRef].some(
+      const inside = [pausedPopoverRef, deletedPopoverRef].some(
         (ref) => ref.current?.contains(target),
       );
       if (!inside) {
         setShowPaused(false);
         setShowDeleted(false);
-        setShowUnranked(false);
       }
     };
     document.addEventListener("mousedown", onMouseDown);
@@ -102,7 +100,12 @@ export function KeywordsPage() {
 
   const languages = product?.supportedLanguages || [];
   const languageOptions = trackingLanguageOptions(languages);
-  const activeViewLang = litLangs.includes(viewLang) ? viewLang : litLangs[0] || "";
+  const isGlobalView = viewLang === "global";
+  const activeViewLang = isGlobalView
+    ? "global"
+    : litLangs.includes(viewLang)
+      ? viewLang
+      : litLangs[0] || "";
 
   useEffect(() => {
     let cancelled = false;
@@ -179,7 +182,7 @@ export function KeywordsPage() {
   };
 
   useEffect(() => {
-    if (litLangs.length > 0 && !litLangs.includes(viewLang)) {
+    if (litLangs.length > 0 && viewLang !== "global" && !litLangs.includes(viewLang)) {
       setViewLang(litLangs[0] || "");
     }
   }, [litLangs, viewLang]);
@@ -211,7 +214,7 @@ export function KeywordsPage() {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
   }
 
-  const currentLang = activeViewLang;
+  const currentLang = isGlobalView ? "en" : activeViewLang;
   const queryLanguages = currentLang === "en" ? ["en"] : [currentLang, "en"];
   const tracked = (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
   const trackedActive = tracked.filter((k) => k.status !== "paused");
@@ -219,17 +222,29 @@ export function KeywordsPage() {
     (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
   );
   const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
-  const storefronts = storefrontsForLanguage(currentLang);
+  const storefronts = isGlobalView
+    ? Array.from(
+        new Set(
+          (product?.supportedLanguages || []).flatMap((lang) =>
+            storefrontsForLanguage(lang.code),
+          ),
+        ),
+      )
+    : storefrontsForLanguage(currentLang);
   const rankSnapshots = product.rankSnapshots || [];
   const matrixRows = matrixFilterKeywords(trackedActive, currentLang);
   const matrixColumns = storefronts.map((storefront) => ({
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
-  const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(68px, 0.9fr)) 44px`;
+  const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(80px, 0.9fr)) 44px`;
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
+  const showUnrankedRows =
+    matrixTab === "unranked" ||
+    (matrixTab === "ranked" && !urlScope && scopeFilteredRanked.length === 0);
+  const activeMatrixTab = showUnrankedRows ? "unranked" : matrixTab;
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
     : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
@@ -338,7 +353,7 @@ export function KeywordsPage() {
       )}
       style={{ gridTemplateColumns: matrixGridTemplate }}
     >
-      <div className="py-1.5 pl-5 pr-4 min-w-0">
+      <div className="py-1.5 pl-5 pr-4 min-w-0 sticky left-0 z-10 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
         <div
           className={cn(
             "font-mono text-sm truncate",
@@ -558,7 +573,6 @@ export function KeywordsPage() {
         }
       }
     }
-    setShowUnranked(true);
     setCuration({});
     setCurationOpen(false);
   };
@@ -679,7 +693,7 @@ export function KeywordsPage() {
         <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
       ) : (
         <>
-          <div className="flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+          <div className="flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm max-h-[70vh]">
             <div className="px-5 pt-4 pb-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
@@ -830,6 +844,19 @@ export function KeywordsPage() {
                 语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
               </p>
               <div className="mt-1.5 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setViewLang("global")}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+                    isGlobalView
+                      ? "border-sky-500 ring-2 ring-sky-500/20 bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-sky-500/50 hover:text-sky-600 dark:hover:text-sky-400",
+                  )}
+                  title="全局关键词（英文）在全部商店中的排名"
+                >
+                  全局
+                </button>
                 {languageOptions.map((option) => {
                   const lit = litLangs.includes(option.code);
                   const active = option.code === currentLang;
@@ -877,15 +904,44 @@ export function KeywordsPage() {
 
             </div>
 
+            <div className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
             <div
-              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 pr-1.5"
+              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-20"
               style={{ gridTemplateColumns: matrixGridTemplate }}
             >
-              <div className="py-2.5 pl-5 pr-4">
+              <div className="py-2.5 pl-5 pr-4 sticky left-0 z-30 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                    关键词（{trackedActive.length}）
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                      关键词（{trackedActive.length}）
+                    </span>
+                    <div className="flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setMatrixTab("ranked")}
+                        className={cn(
+                          "px-2 py-0.5 text-[10px] font-medium transition-colors",
+                          activeMatrixTab === "ranked"
+                            ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                        )}
+                      >
+                        在榜 {ranked.length}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMatrixTab("unranked")}
+                        className={cn(
+                          "px-2 py-0.5 text-[10px] font-medium transition-colors border-l border-zinc-200 dark:border-zinc-700",
+                          activeMatrixTab === "unranked"
+                            ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                        )}
+                      >
+                        未在榜 {unranked.length}
+                      </button>
+                    </div>
+                  </div>
                   {urlScope === "top10" && (
                     <button
                       type="button"
@@ -1008,45 +1064,6 @@ export function KeywordsPage() {
                           )}
                         </span>
                       )}
-                      {unranked.length > 0 && (
-                        <span className="relative" ref={unrankedPopoverRef}>
-                          <button
-                            type="button"
-                            onClick={() => setShowUnranked((v) => !v)}
-                            className={cn(
-                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
-                              showUnranked
-                                ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
-                                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700",
-                            )}
-                          >
-                            未在榜 {unranked.length}
-                          </button>
-                          {showUnranked && (
-                            <div className="absolute right-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3">
-                              <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5">
-                                未在榜（尚未采集到排名）
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                {unranked.map((row) => (
-                                  <span
-                                    key={`${row.language}:${row.keyword}`}
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
-                                  >
-                                    {row.keyword}
-                                    <span className="text-[10px] text-zinc-400">
-                                      {row.language === "en" ? "全局" : languageLabel(row.language)}
-                                    </span>
-                                  </span>
-                                ))}
-                              </div>
-                              <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-                                这些关键词已排入自动采集任务，获得排名数据后会自动进入入榜列表。
-                              </p>
-                            </div>
-                          )}
-                        </span>
-                      )}
                     </span>
                   )}
                 </div>
@@ -1100,25 +1117,30 @@ export function KeywordsPage() {
               </div>
             </div>
 
-            <div className="overflow-auto [scrollbar-gutter:stable]">
                 {matrixRows.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
                   </p>
-                ) : scopeFilteredRanked.length === 0 && unranked.length === 0 ? (
+                ) : showUnrankedRows ? (
+                  unranked.length > 0 ? (
+                    unranked.map((row) => renderMatrixRow(row, true))
+                  ) : (
+                    <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
+                      该筛选范围内暂无关键词。
+                    </p>
+                  )
+                ) : scopeFilteredRanked.length > 0 ? (
+                  scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))
+                ) : (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     该筛选范围内暂无关键词。
                   </p>
-                ) : (
-                  <>
-                    {scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))}
-                    {scopeFilteredRanked.length === 0 &&
-                      unranked.map((row) => renderMatrixRow(row, true))}
-                  </>
                 )}
             </div>
 
-            <div className="shrink-0 px-5 pb-5 space-y-5 border-t border-zinc-100 dark:border-zinc-800">
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5 space-y-5">
                 {chartKeyword && chartData.length > 0 && (
                   <div>
                     <div className="h-56">
@@ -1184,7 +1206,6 @@ export function KeywordsPage() {
 
             </div>
 
-          </div>
         </>
       )}
 
