@@ -54,9 +54,9 @@ export function TrafficCard({ project }: { project: any }) {
             >
               {syncing ? "同步中…" : "立即同步"}
             </button>
-            {project.trafficError?.includes("Metrics") && (
+            {project.trafficError?.includes("Administration") && (
               <span className="block mt-2 text-[10px] text-zinc-500 dark:text-zinc-400">
-                需要在 GitHub Token 权限中勾选「Metrics」只读权限。
+                需要在 GitHub Token 权限中勾选「Administration」只读权限，或改用带 repo 权限的 classic token。
                 <button
                   type="button"
                   onClick={() => (window as any).appilot?.openExternal("https://github.com/settings/personal-access-tokens")}

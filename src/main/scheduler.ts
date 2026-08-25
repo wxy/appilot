@@ -641,7 +641,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
     } else {
       opsStatusStore[task.projectId] = {
         trafficError: token
-          ? "GitHub 流量接口无数据（Token 可能缺少 Metrics 权限，或仓库不可访问）"
+          ? "GitHub 流量接口无数据（Token 需要仓库 Administration 只读权限，或仓库不可访问）"
           : "未配置 GitHub Token",
         lastSyncedAt: opsSyncedAt,
       };
