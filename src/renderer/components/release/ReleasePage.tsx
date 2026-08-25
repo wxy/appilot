@@ -267,10 +267,11 @@ export function ReleasePage() {
     : versionQuery
       ? versionStatus
       : null;
-  // 上架（ASC ready-for-sale）后文案完全只读。GitHub 已发布本身不锁定：
-  // 先发布后提审的流程下，发布后未上架仍应允许生成/修改文案。
-  const ascLiveLocked = effectiveVersionStatus?.key === "ready-for-sale";
-  const versionLocked = ascLiveLocked;
+  // 已确认或已按商店冻结的文案只读；没有草稿（或未确认的新草稿）时允许
+  // 从头新建，即使版本已上架——发布状态只是信息，不阻断新建。
+  const versionLocked =
+    Boolean(draft?.batchConfirmedAt) ||
+    (Boolean(draft?.ascSyncedAt) && effectiveVersionStatus?.key === "ready-for-sale");
   const githubStatus = release?.githubDraft === true
     ? { label: "发布草案", tone: "blue" as const, source: "GitHub" as const }
     : release?.githubDraft === false
@@ -294,11 +295,6 @@ export function ReleasePage() {
   const batchConfirmed = Boolean(draft?.batchConfirmedAt);
   const draftVersionHint = draft?.appVersion || pendingVersion || inferredVersion;
   const latestRelease = releases[0] || null;
-  const latestHasChanges = Boolean(
-    latestRelease &&
-    (latestRelease.githubDraft === true ||
-      (latestRelease.material?.commits || []).length > 0),
-  );
   const latestDraftForProduct =
     latestRelease?.submissionDrafts?.find(
       (item: any) => item?.productId === productId,
@@ -433,7 +429,7 @@ export function ReleasePage() {
       : selectedRelease?.submissionDrafts?.find(
           (item: any) => item?.productId === productId,
         ) || null;
-  const feedbackReadOnly = ascLiveLocked;
+  const feedbackReadOnly = versionLocked;
   const isReadOnly =
     feedbackReadOnly ||
     versionLocked ||
@@ -534,7 +530,7 @@ export function ReleasePage() {
           ? `最近 ${historyDrafts.length} 份${historyDrafts[0]?.appVersion ? `（最新 v${String(historyDrafts[0].appVersion).replace(/^v/i, "")}）` : ""}`
           : "无",
     });
-    const activeKeywordCount = (selectedProduct?.trackedKeywords || []).filter(
+    const activeKeywordCount = ((project as any)?.trackedKeywords || []).filter(
       (keyword: any) => keyword.status !== "paused",
     ).length;
     rows.push({
@@ -907,9 +903,7 @@ export function ReleasePage() {
                   <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
                     {latestDraftForProduct
                       ? `${draftVersionLabel(latestDraftForProduct)} · ${formatHumanTime(latestDraftForProduct.updatedAt)}`
-                      : latestHasChanges
-                        ? "有新变更，可新建文案"
-                        : "尚无修改"}
+                      : "可新建文案（发布草案或正式发布均可）"}
                   </span>
                 </div>
                 <button
@@ -920,13 +914,12 @@ export function ReleasePage() {
                       setSelectedTag(latestRelease.tag);
                     }
                   }}
-                  disabled={!latestHasChanges}
                   className={cn(
                     "shrink-0",
-                    latestHasChanges ? btnSmPrimary : "text-xs text-zinc-400 dark:text-zinc-500 cursor-default",
+                    btnSmPrimary,
                   )}
                 >
-                  {latestDraftForProduct ? "打开" : latestHasChanges ? "新建" : "尚无修改"}
+                  {latestDraftForProduct ? "打开" : "新建"}
                 </button>
               </div>
               {selectedRelease && (
@@ -1207,31 +1200,20 @@ export function ReleasePage() {
                   </div>
                 </div>
 
-                {!ascLiveLocked && !draft && summaryItems.length > 0 && (
+                {!versionLocked && !draft && (
                   <AIProgressButton
                     onClick={() => handleLoad(true)}
                     disabled={busy && !generating}
                     loading={generating}
                     progress={generationProgress}
-                    idleLabel="下一步：生成文案"
+                    idleLabel={summaryItems.length > 0 ? "下一步：生成文案" : "新建文案"}
                   />
                 )}
-                {!ascLiveLocked && !draft && summaryItems.length === 0 && !released && (
-                  <p className="text-sm text-zinc-400 dark:text-zinc-500">
-                    本次无变更，无需生成新文案。
-                  </p>
-                )}
 
-                {released && (
-                  <div>
-                    {selectedExistingDraft ? (
-                      <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
-                        {loadingDraft ? "加载中..." : "查看文案"}
-                      </button>
-                    ) : summaryItems.length === 0 ? (
-                      <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有文案</span>
-                    ) : null}
-                  </div>
+                {released && selectedExistingDraft && (
+                  <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
+                    {loadingDraft ? "加载中..." : "查看文案"}
+                  </button>
                 )}
               </>
             )}
@@ -1239,8 +1221,8 @@ export function ReleasePage() {
             {!draft ? (
               selectedRelease && step > 1 ? (
                 <EmptyState
-                  title={released && summaryItems.length === 0 ? "该正式发布没有文案" : "等待生成提交文案"}
-                  desc={released && summaryItems.length === 0 ? "该正式发布没有新的变更素材，不生成新的商店文案。" : "确认后由 AI 生成名称、副标题、Promotional Text、描述、What's New 和关键词。"}
+                  title="尚未生成文案"
+                  desc="可基于变更素材生成，也可以在无变更时从头新建文案。"
                 />
               ) : null
             ) : (
