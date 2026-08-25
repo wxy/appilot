@@ -173,6 +173,8 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("release:saveDraft", projectId, draft),
     deleteDraft: (projectId: string, draftId: string): Promise<boolean> =>
       ipcRenderer.invoke("release:deleteDraft", projectId, draftId),
+    rebuildFromStore: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("release:rebuildFromStore", projectId, productId, releaseTag),
     translate: (
       projectId: string,
       productId: string,

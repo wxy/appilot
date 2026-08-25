@@ -22,7 +22,7 @@ import { AIProgressButton } from "../ui/AIProgressButton";
 import { CredentialBadge } from "../ui/CredentialBadge";
 import { EmptyState } from "../ui/EmptyState";
 import { FieldBlock, FieldHeader } from "../ui/Fields";
-import { GithubIcon } from "../ui/Icons";
+import { AppleIcon, GithubIcon } from "../ui/Icons";
 import { StatusChip } from "../ui/StatusChip";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import {
@@ -68,6 +68,7 @@ export function ReleasePage() {
   const [pendingVersion, setPendingVersion] = useState("");
   const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
   const [ascRefreshing, setAscRefreshing] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -396,6 +397,18 @@ export function ReleasePage() {
               已按商店公开信息部分冻结（描述/新增内容）· {formatHumanTime(draft.storeSyncedAt)}
             </span>
           )}
+          {(!draft || localizations.length < availableLanguages.length) && (
+            <button
+              type="button"
+              onClick={() => void handleRebuildFromStore()}
+              disabled={rebuilding}
+              className="inline-flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-60"
+              title="从 App Store 回读完整文案，重建本地丢失的文案"
+            >
+              <AppleIcon className="w-3 h-3" />
+              {rebuilding ? "重建中…" : "从商店重建本地文案"}
+            </button>
+          )}
           <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
             README 或需同步更新
           </span>
@@ -467,6 +480,27 @@ export function ReleasePage() {
       await loadReleases(false);
     } catch (e: any) {
       setError(e.message || "删除文案失败。");
+    }
+  };
+
+  const handleRebuildFromStore = async () => {
+    if (!project?.id || !productId || !selectedTag || rebuilding) return;
+    setRebuilding(true);
+    setError("");
+    try {
+      const rebuilt = await (window as any).appilot.release.rebuildFromStore(
+        project.id,
+        productId,
+        selectedTag,
+      );
+      if (!rebuilt?.id) throw new Error("重建失败");
+      setActive(null);
+      setHistoryDraft(null);
+      await loadReleases(false);
+    } catch (e: any) {
+      setError(e.message || "从商店重建文案失败。");
+    } finally {
+      setRebuilding(false);
     }
   };
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";

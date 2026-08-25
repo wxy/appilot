@@ -167,6 +167,85 @@ export function applyStorePublicSnapshotToDraft(
   return changed;
 }
 
+export interface StoreRebuildInput {
+  projectId: string;
+  productId: string;
+  releaseTag: string;
+  appVersion: string;
+  supportedLanguages: string[];
+  /** 版本级 localizations（description/whatsNew/keywords/promotionalText）。 */
+  versionLocalizations: AscLocalizationLike[];
+  /** App 级 localizations（商店显示的名称/副标题）。 */
+  appInfoLocalizations: AscLocalizationLike[];
+  githubDraftStatus?: GitHubReleaseStatus;
+  now?: string;
+}
+
+function localeToLanguage(locale: string, supportedLanguages: string[]): string {
+  const normalized = String(locale || "").trim();
+  if (!normalized) return "";
+  const match = supportedLanguages.find((code) => localeMatchesLocale(normalized, code));
+  return match || normalized;
+}
+
+/**
+ * Rebuild a complete local copy draft from the actual store copy after local
+ * drafts were lost (e.g. cleared and re-generated after the version went
+ * live). Version-level localizations provide description/whats-new/keywords/
+ * promotional text; App-level localizations provide the displayed
+ * name/subtitle. The rebuilt draft is stamped as confirmed and store-synced.
+ */
+export function buildStoreRebuildDraft(input: StoreRebuildInput): StoreSubmissionDraft {
+  const now = input.now || new Date().toISOString();
+  const appInfoByLocale = new Map(
+    (input.appInfoLocalizations || []).map((loc) => [String(loc.locale || "").toLowerCase(), loc]),
+  );
+  const localizations: StoreSubmissionLocalization[] = [];
+  for (const versionLoc of input.versionLocalizations || []) {
+    const locale = String(versionLoc.locale || "").trim();
+    if (!locale) continue;
+    const language = localeToLanguage(locale, input.supportedLanguages || []);
+    const appInfo = appInfoByLocale.get(locale.toLowerCase()) || null;
+    localizations.push({
+      language,
+      name: appInfo?.name || versionLoc.name || "",
+      subtitle: appInfo?.subtitle || versionLoc.subtitle || "",
+      promotionalText: versionLoc.promotionalText || "",
+      description: versionLoc.description || "",
+      whatsNew: versionLoc.whatsNew || "",
+      keywords: versionLoc.keywords || "",
+    });
+  }
+  const primary = localizations[0] || null;
+  return {
+    id: submissionDraftId(input.projectId, input.productId, input.releaseTag),
+    projectId: input.projectId,
+    productId: input.productId,
+    releaseTag: input.releaseTag,
+    sourceHash: "",
+    appVersion: String(input.appVersion || "").trim().replace(/^v/i, ""),
+    buildNumber: "",
+    githubDraftStatus: input.githubDraftStatus || "draft",
+    storeStatus: "released",
+    reviewFeedback: "",
+    masterConfirmedAt: now,
+    batchConfirmedAt: now,
+    ascSyncedAt: now,
+    summary: "按商店实际文案重建（App Store）",
+    localizations,
+    promotionalText: primary?.promotionalText || "",
+    whatsNew: primary?.whatsNew || "",
+    description: primary?.description || "",
+    submissionKeywords: localizations.map((item) => ({
+      language: item.language,
+      text: item.keywords,
+    })),
+    promotionAngles: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export function githubStatusForRelease(release: ReleaseInfo): GitHubReleaseStatus {
   return release.draft ? "draft" : "published";
 }
@@ -175,7 +254,7 @@ export function submissionDraftId(projectId: string, productId: string, releaseT
   return `${projectId}:${productId}:${releaseTag}`;
 }
 
-export function inferAppVersion(release: ReleaseInfo): string {
+export function inferAppVersion(release: { tag: string; name?: string | null }): string {
   const tag = String(release.tag || "").trim();
   if (/^v?\d+(\.\d+)*$/.test(tag)) return tag.replace(/^v/i, "");
   // GitHub release drafts may have no tag yet (tag = `gh-{id}` fallback).

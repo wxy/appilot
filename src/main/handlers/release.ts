@@ -418,4 +418,64 @@ export function registerReleaseHandlers(): void {
     return true;
   });
 
+  // Rebuild a complete local copy draft from the actual store copy after local
+  // drafts were lost (e.g. cleared and re-generated after the version went
+  // live). Requires App Store Connect credentials.
+  ipcMain.handle(
+    "release:rebuildFromStore",
+    async (_event, projectId: string, productId: string, releaseTag: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      releaseTag = assertNonEmptyString(releaseTag, "releaseTag");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const product = (project.storeProducts || []).find((item: any) => item.id === productId);
+      if (!product) throw new Error("Store product not found");
+      const creds = resolveEffectiveCredentials(s, projectId);
+      if (!creds.ascIssuerId || !creds.ascKeyId || !creds.ascPrivateKeyPath) {
+        throw new Error("需要 App Store Connect 凭证才能重建文案");
+      }
+      const existing =
+        findStoreSubmissionDraft(project, productId, releaseTag) ||
+        findDraftByVersion(project, productId, inferAppVersion({ tag: releaseTag, name: null })) ||
+        null;
+      const targetVersion = existing?.appVersion ||
+        inferAppVersion({ tag: releaseTag, name: null });
+      if (!targetVersion) throw new Error("无法确定目标版本，请先生成文案后再重建");
+
+      const fs = await import("fs");
+      const { createAscClient } = await import("../../engine/asc-api");
+      const { buildStoreRebuildDraft } = await import("../../engine/store-submission");
+      const client = createAscClient({
+        issuerId: creds.ascIssuerId,
+        keyId: creds.ascKeyId,
+        privateKeyPem: fs.readFileSync(creds.ascPrivateKeyPath, "utf8"),
+      });
+      const appId = await client.getAppIdByBundleId(product.bundleId);
+      if (!appId) throw new Error("App Store 中未找到该应用");
+      const versions = await client.listAppStoreVersions(appId);
+      const version = versions.find((v: any) => v.versionString === targetVersion) || null;
+      if (!version) throw new Error(`App Store 中未找到版本 ${targetVersion}`);
+      const [versionLocalizations, appInfoLocalizations] = await Promise.all([
+        client.listVersionLocalizations(version.id),
+        client.listAppInfoLocalizations(appId),
+      ]);
+      const draft = buildStoreRebuildDraft({
+        projectId,
+        productId,
+        releaseTag,
+        appVersion: targetVersion,
+        supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
+        versionLocalizations,
+        appInfoLocalizations,
+        githubDraftStatus: "published",
+      });
+      upsertStoreSubmissionDraft(project, draft);
+      s.set("projects", projects);
+      return draft;
+    },
+  );
+
 }

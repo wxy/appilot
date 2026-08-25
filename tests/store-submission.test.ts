@@ -1,6 +1,7 @@
 import {
   applyAscSnapshotToDraft,
   applyStorePublicSnapshotToDraft,
+  buildStoreRebuildDraft,
   inferAppVersion,
 } from "../src/engine/store-submission";
 import {
@@ -179,6 +180,53 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
     { language: "en", description: "same", whatsNew: "same" },
   ]);
   check(changed === false && d.storeSyncedAt === undefined, "内容一致时不写部分冻结时间戳");
+}
+
+// Rebuild from store: version-level + App-level localizations merge.
+{
+  const draft = buildStoreRebuildDraft({
+    projectId: "p",
+    productId: "prod",
+    releaseTag: "v1.2.6",
+    appVersion: "v1.2.6",
+    supportedLanguages: ["en", "zh-Hans", "de"],
+    versionLocalizations: [
+      { locale: "en-US", name: "", subtitle: "", description: "store desc", whatsNew: "store news", keywords: "a, b", promotionalText: "> promo" },
+      { locale: "zh-Hans", name: "", subtitle: "", description: "商店描述", whatsNew: "商店新闻", keywords: "甲, 乙" },
+      { locale: "ja-JP", name: "", subtitle: "", description: "ja desc", whatsNew: "ja news", keywords: "j" },
+    ],
+    appInfoLocalizations: [
+      { locale: "en-US", name: "AI Pulse: Coding Cost Tracker", subtitle: "API Cost Monitor" },
+      { locale: "zh-Hans", name: "AI Pulse: 编码成本追踪", subtitle: "API 支出监控" },
+    ],
+    githubDraftStatus: "published",
+    now: "2026-08-25T00:00:00Z",
+  });
+  check(draft.localizations.length === 3, "重建包含全部版本级语言");
+  check(
+    draft.localizations[0].language === "en" &&
+      draft.localizations[0].name === "AI Pulse: Coding Cost Tracker" &&
+      draft.localizations[0].subtitle === "API Cost Monitor",
+    "App 级名称/副标题合并进 en",
+  );
+  check(
+    draft.localizations[0].description === "store desc" && draft.localizations[0].keywords === "a, b",
+    "版本级描述/关键词保留",
+  );
+  check(
+    draft.localizations[1].language === "zh-Hans" && draft.localizations[1].name === "AI Pulse: 编码成本追踪",
+    "zh-Hans 语言映射与名称合并",
+  );
+  check(draft.localizations[2].language === "ja-JP", "无匹配语言码时保留 locale 原样");
+  check(draft.appVersion === "1.2.6", "版本号归一化");
+  check(
+    draft.masterConfirmedAt === "2026-08-25T00:00:00Z" &&
+      draft.batchConfirmedAt === "2026-08-25T00:00:00Z" &&
+      draft.ascSyncedAt === "2026-08-25T00:00:00Z",
+    "重建文案标记为已确认且已与商店同步",
+  );
+  check(draft.storeStatus === "released" && draft.githubDraftStatus === "published", "重建状态标记");
+  check(draft.submissionKeywords.some((k) => k.language === "zh-Hans"), "提交关键词同步重建");
 }
 
 if (errors) process.exit(1);
