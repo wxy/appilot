@@ -1,4 +1,7 @@
-import { inferAppVersion } from "../src/engine/store-submission";
+import {
+  applyAscSnapshotToDraft,
+  inferAppVersion,
+} from "../src/engine/store-submission";
 import {
   findDraftByVersion,
   normalizeDraftIdentity,
@@ -84,6 +87,50 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
   const noVersion = draft("v1.0.0", "", "2026-08-19T10:00:00Z");
   const project: any = { id: "p", storeSubmissionDrafts: [noVersion] };
   check(normalizeDraftIdentity(project) === false && project.storeSubmissionDrafts.length === 1, "无版本草稿保留");
+}
+
+// --- Freeze snapshot: store copy is the final truth once live ---
+{
+  const d = {
+    id: "p:prod:v1.1.1",
+    productId: "prod",
+    appVersion: "1.1.1",
+    localizations: [
+      { language: "en", locale: "en-US", name: "GloWalk", subtitle: "Path", description: "old", whatsNew: "old news", keywords: "walk" },
+      { language: "zh-Hans", locale: "zh-Hans", name: "GloWalk", subtitle: "光之路", description: "旧", whatsNew: "旧闻", keywords: "走路" },
+      { language: "de", locale: "de-DE", name: "GloWalk", subtitle: "Weg", description: "de", whatsNew: "n", keywords: "gehen" },
+    ],
+  } as any;
+  const changed = applyAscSnapshotToDraft(d, [
+    { locale: "en-US", name: "GloWalk: Path of Light", subtitle: "New Path", description: "new store copy", whatsNew: "new news", keywords: "walk, light" },
+    { locale: "zh-Hans", name: "GloWalk", subtitle: "光之路", description: "商店新文案", whatsNew: "新新闻", keywords: "走路, 光" },
+    { locale: "ja-JP", name: "未匹配语言", description: "不应写入" },
+  ], "2026-08-25T00:00:00Z");
+  check(changed === true, "快照覆盖返回 changed");
+  check(d.localizations[0].name === "GloWalk: Path of Light" && d.localizations[0].description === "new store copy", "en-US 匹配 en 并覆盖");
+  check(d.localizations[1].whatsNew === "新新闻", "zh-Hans 精确匹配覆盖");
+  check(d.localizations[2].description === "de", "无 ASC 匹配的语言保持不变");
+  check(d.ascSyncedAt === "2026-08-25T00:00:00Z", "冻结时间戳写入");
+}
+{
+  const d = {
+    localizations: [
+      { language: "en", locale: "en-US", name: "GloWalk", subtitle: "Path", description: "same", whatsNew: "n", keywords: "k" },
+    ],
+  } as any;
+  const changed = applyAscSnapshotToDraft(d, [
+    { locale: "en-US", name: "GloWalk", subtitle: "Path", description: "same", whatsNew: "n", keywords: "k" },
+  ]);
+  check(changed === false && d.ascSyncedAt === undefined, "内容一致时不写时间戳");
+}
+{
+  const d = {
+    localizations: [{ language: "en", locale: "en-US", name: "GloWalk", subtitle: "Path", description: "old", whatsNew: "n", keywords: "k" }],
+  } as any;
+  applyAscSnapshotToDraft(d, [
+    { locale: "en-US", name: "New Name" },
+  ]);
+  check(d.localizations[0].name === "New Name" && d.localizations[0].description === "old", "仅覆盖提供的字段");
 }
 
 if (errors) process.exit(1);

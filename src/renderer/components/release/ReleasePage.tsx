@@ -258,10 +258,10 @@ export function ReleasePage() {
     : draft?.appVersion
       ? versionStatus
       : null;
-  // 上架（ASC ready-for-sale）或 GitHub 已发布后，文案完全只读。
-  const versionLocked = Boolean(
-    released || effectiveVersionStatus?.key === "ready-for-sale",
-  );
+  // 上架（ASC ready-for-sale）后文案完全只读。GitHub 已发布本身不锁定：
+  // 先发布后提审的流程下，发布后未上架仍应允许生成/修改文案。
+  const ascLiveLocked = effectiveVersionStatus?.key === "ready-for-sale";
+  const versionLocked = ascLiveLocked;
   const githubStatus = release?.githubDraft === true
     ? { label: "发布草案", tone: "blue" as const, source: "GitHub" as const }
     : release?.githubDraft === false
@@ -350,6 +350,32 @@ export function ReleasePage() {
           配置 ASC 凭证后可自动校验版本是否提交/审核/上架。
         </span>
       )}
+      {effectiveVersionStatus?.key === "ready-for-sale" && (
+        <>
+          {release?.githubDraft === true && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-500">
+              商店已上架，可前往 GitHub 发布正式公告
+              {release?.url && (
+                <button
+                  type="button"
+                  onClick={() => (window as any).appilot?.openExternal?.(release.url)}
+                  className="underline hover:opacity-70"
+                >
+                  打开
+                </button>
+              )}
+            </span>
+          )}
+          {draft?.ascSyncedAt && (
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-500">
+              已按商店实际文案冻结 · {formatHumanTime(draft.ascSyncedAt)}
+            </span>
+          )}
+          <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+            README 或需同步更新
+          </span>
+        </>
+      )}
       {draft && localizations.length > 0 && (
         <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
           {localizations.length}/{availableLanguages.length} 语言
@@ -368,7 +394,7 @@ export function ReleasePage() {
       : selectedRelease?.submissionDrafts?.find(
           (item: any) => item?.productId === productId,
         ) || null;
-  const feedbackReadOnly = released;
+  const feedbackReadOnly = ascLiveLocked;
   const isReadOnly =
     feedbackReadOnly ||
     versionLocked ||
@@ -1099,20 +1125,19 @@ export function ReleasePage() {
                   </div>
                 </div>
 
-                {!released && !draft && (
-                  summaryItems.length > 0 ? (
-                    <AIProgressButton
-                      onClick={() => handleLoad(true)}
-                      disabled={busy && !generating}
-                      loading={generating}
-                      progress={generationProgress}
-                      idleLabel="下一步：生成文案"
-                    />
-                  ) : (
-                    <p className="text-sm text-zinc-400 dark:text-zinc-500">
-                      本次无变更，无需生成新文案。
-                    </p>
-                  )
+                {!ascLiveLocked && !draft && summaryItems.length > 0 && (
+                  <AIProgressButton
+                    onClick={() => handleLoad(true)}
+                    disabled={busy && !generating}
+                    loading={generating}
+                    progress={generationProgress}
+                    idleLabel="下一步：生成文案"
+                  />
+                )}
+                {!ascLiveLocked && !draft && summaryItems.length === 0 && !released && (
+                  <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                    本次无变更，无需生成新文案。
+                  </p>
                 )}
 
                 {released && (
@@ -1121,9 +1146,9 @@ export function ReleasePage() {
                       <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
                         {loadingDraft ? "加载中..." : "查看文案"}
                       </button>
-                    ) : (
+                    ) : summaryItems.length === 0 ? (
                       <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有文案</span>
-                    )}
+                    ) : null}
                   </div>
                 )}
               </>
@@ -1132,8 +1157,8 @@ export function ReleasePage() {
             {!draft ? (
               selectedRelease && step > 1 ? (
                 <EmptyState
-                  title={released ? "该正式发布没有文案" : "等待生成提交文案"}
-                  desc={released ? "正式发布只作为完成信号，不再生成新的商店文案。" : "确认后由 AI 生成名称、副标题、Promotional Text、描述、What's New 和关键词。"}
+                  title={released && summaryItems.length === 0 ? "该正式发布没有文案" : "等待生成提交文案"}
+                  desc={released && summaryItems.length === 0 ? "该正式发布没有新的变更素材，不生成新的商店文案。" : "确认后由 AI 生成名称、副标题、Promotional Text、描述、What's New 和关键词。"}
                 />
               ) : null
             ) : (

@@ -50,10 +50,74 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   masterConfirmedAt?: string;
   /** 整批多语言文案已确定（全部只读）的时间。 */
   batchConfirmedAt?: string;
+  /** 上架后按商店实际文案回读覆盖本地快照的时间（冻结依据）。 */
+  ascSyncedAt?: string;
   /** 变更摘要中已由用户确认为覆盖的条目 id（用于 what's-new 覆盖核对）。 */
   summaryChecklist?: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AscLocalizationLike {
+  locale: string;
+  name?: string;
+  subtitle?: string;
+  promotionalText?: string;
+  description?: string;
+  whatsNew?: string;
+  keywords?: string;
+}
+
+export function localeMatchesLocale(locale: string, code: string): boolean {
+  const a = String(locale || "").toLowerCase();
+  const b = String(code || "").toLowerCase();
+  return Boolean(a && b) && (a === b || a.startsWith(b) || b.startsWith(a));
+}
+
+/**
+ * Freeze a copy draft against the actual store copy (ASC localizations):
+ * the store is the final truth once the version is live. Overwrites matching
+ * language fields in place and stamps `ascSyncedAt`. Returns true when any
+ * field changed. Languages in ASC without a draft match are left untouched.
+ */
+export function applyAscSnapshotToDraft(
+  draft: StoreSubmissionDraft,
+  ascLocalizations: AscLocalizationLike[],
+  now = new Date().toISOString(),
+): boolean {
+  let changed = false;
+  const fields = [
+    "name",
+    "subtitle",
+    "promotionalText",
+    "description",
+    "whatsNew",
+    "keywords",
+  ] as const;
+  for (const ascLoc of ascLocalizations) {
+    const locale = String(ascLoc.locale || "").trim();
+    if (!locale) continue;
+    const match = (draft.localizations || []).find(
+      (loc) =>
+        localeMatchesLocale(locale, loc.language || "") ||
+        ((loc as any).locale && localeMatchesLocale(locale, (loc as any).locale)),
+    );
+    if (!match) continue;
+    for (const field of fields) {
+      const raw = ascLoc[field];
+      if (raw === undefined) continue;
+      const value = String(raw);
+      if (String((match as any)[field] || "") !== value) {
+        (match as any)[field] = value;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    draft.ascSyncedAt = now;
+    draft.updatedAt = now;
+  }
+  return changed;
 }
 
 export function githubStatusForRelease(release: ReleaseInfo): GitHubReleaseStatus {

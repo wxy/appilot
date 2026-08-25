@@ -789,6 +789,10 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   }
   const builds = await client.listBuilds(appId);
   const all: Record<string, any> = store.get("ascCache") || {};
+  const prev = all[task.productId] || null;
+  const prevStates = new Map(
+    (prev?.versions || []).map((v: any) => [v.versionString, v.appStoreState]),
+  );
   all[task.productId] = {
     appId,
     versions: sorted,
@@ -797,6 +801,31 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
     fetchedAt: new Date().toISOString(),
   };
   store.set("ascCache", all);
+
+  // Freeze against the actual store copy once a version is live: the store is
+  // the final truth. Applies to versions that just became READY_FOR_SALE and
+  // to already-live versions whose local draft has not been frozen yet.
+  const liveVersions = sorted.filter((v) => v.appStoreState === "READY_FOR_SALE");
+  if (liveVersions.length > 0) {
+    const { applyAscSnapshotToDraft } = await import("../engine/store-submission");
+    const projects: any[] = store.get("projects") || [];
+    let changed = false;
+    for (const project of projects) {
+      const drafts = getStoreSubmissionDrafts(project);
+      for (const draft of drafts) {
+        if (draft.productId !== task.productId) continue;
+        const version = String(draft.appVersion || "").trim().replace(/^v/i, "");
+        const live = liveVersions.find((v) => v.versionString === version);
+        if (!live) continue;
+        const wasLive = prevStates.get(live.versionString) === "READY_FOR_SALE";
+        if (wasLive && draft.ascSyncedAt) continue;
+        const ascLocalizations = await client.listVersionLocalizations(live.id);
+        if (applyAscSnapshotToDraft(draft, ascLocalizations)) changed = true;
+      }
+    }
+    if (changed) store.set("projects", projects);
+  }
+
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastStatus = "success";
