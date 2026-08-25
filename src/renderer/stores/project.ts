@@ -76,6 +76,8 @@ export interface Project {
   // projects:list so pages can badge features that are enhanced by them.
   hasGithubToken?: boolean;
   hasAscKey?: boolean;
+  githubSource?: "global" | "project" | null;
+  ascSource?: "global" | "project" | null;
   createdAt: string;
   repo: RepoInfo | null;
   briefActions: BriefActionRecord[];

@@ -53,6 +53,15 @@ export function ReviewsPage() {
   for (const entry of Object.values(byCountry)) {
     for (const item of entry?.items || []) all.push(item);
   }
+  const lastSyncedAt = Object.values(byCountry).reduce<string | null>(
+    (latest, entry) => {
+      const fetchedAt = entry?.lastFetchedAt || null;
+      return fetchedAt && (!latest || new Date(fetchedAt).getTime() > new Date(latest).getTime())
+        ? fetchedAt
+        : latest;
+    },
+    null,
+  );
   const countries = Object.keys(byCountry).filter((key) => (byCountry[key]?.items || []).length > 0);
   const versions = [...new Set(all.map((r) => r.version).filter(Boolean))].sort();
   const stats = reviewStats(all);
@@ -244,8 +253,14 @@ export function ReviewsPage() {
 
       {filtered.length === 0 ? (
         <EmptyState
-          title={all.length === 0 ? "还没有评论" : "筛选结果为空"}
-          desc={all.length === 0 ? "点击右上角「立即同步」获取评论。" : "调整筛选条件再试。"}
+          title={all.length === 0 ? (lastSyncedAt ? "已同步，暂无评论" : "还没有评论") : "筛选结果为空"}
+          desc={
+            all.length === 0
+              ? lastSyncedAt
+                ? "已同步完成，目前没有评论（应用较新或商店尚未积累评分），会自动每日更新。"
+                : "点击右上角「立即同步」获取评论。"
+              : "调整筛选条件再试。"
+          }
         />
       ) : (
         <div className="space-y-3">

@@ -288,6 +288,7 @@ export function OverviewPage() {
               kind="github"
               enabled={Boolean(project.hasGithubToken)}
               projectId={project.id}
+              source={project.githubSource}
             />
             <button
               onClick={() => navigate(`/projects/${project.id}/settings`)}

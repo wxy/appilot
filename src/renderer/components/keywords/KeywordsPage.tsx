@@ -338,7 +338,7 @@ export function KeywordsPage() {
       )}
       style={{ gridTemplateColumns: matrixGridTemplate }}
     >
-      <div className="py-1.5 pl-5 pr-4 min-w-0">
+      <div className="py-1.5 pl-5 pr-4 min-w-0 sticky left-0 z-10 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
         <div
           className={cn(
             "font-mono text-sm truncate",
@@ -679,7 +679,7 @@ export function KeywordsPage() {
         <EmptyState title="未识别支持语言" desc="请先在总览确认项目已识别出语言，再生成关键词。" />
       ) : (
         <>
-          <div className="flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+          <div className="flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm max-h-[70vh]">
             <div className="px-5 pt-4 pb-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
@@ -877,11 +877,12 @@ export function KeywordsPage() {
 
             </div>
 
+            <div className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
             <div
-              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 pr-1.5"
+              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 pr-1.5 sticky top-0 z-20"
               style={{ gridTemplateColumns: matrixGridTemplate }}
             >
-              <div className="py-2.5 pl-5 pr-4">
+              <div className="py-2.5 pl-5 pr-4 sticky left-0 z-30 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
                 <div className="flex items-center justify-between gap-2">
                   <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                     关键词（{trackedActive.length}）
@@ -1100,7 +1101,6 @@ export function KeywordsPage() {
               </div>
             </div>
 
-            <div className="overflow-auto [scrollbar-gutter:stable]">
                 {matrixRows.length === 0 ? (
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
                     暂无关键词，点击「为所选语言生成」。
