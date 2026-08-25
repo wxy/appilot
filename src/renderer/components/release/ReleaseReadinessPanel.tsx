@@ -133,33 +133,27 @@ export function ReleaseReadinessPanel({
             {alerts}
           </div>
         )}
-      </div>
-      <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800">
-        <p className="text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
-          就绪项
-        </p>
-        {result ? (
-          <div className="space-y-2">
-            {result.items.map((item) => {
-              const style = STATUS_STYLES[item.status];
-              return (
-                <div key={item.id} className="flex items-start gap-2.5">
-                  <span className={cn("mt-1.5 w-2 h-2 rounded-full shrink-0", style.dot)} />
-                  <div className="min-w-0">
-                    <div className={cn("text-sm font-medium", style.text)}>{item.label}</div>
-                    <div className="text-xs text-zinc-500 dark:text-zinc-400">{item.detail}</div>
-                  </div>
-                </div>
-              );
-            })}
-            <p className="pt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-              检查于 {new Date(result.checkedAt).toLocaleString()}
-            </p>
-          </div>
-        ) : (
-          <p className="text-sm text-zinc-400 dark:text-zinc-500">
-            尚未检查。需要 ASC 凭据回读版本/构建信息，未配置时相关项显示「未知」。
-          </p>
+        {result && (
+          (() => {
+            const issues = result.items.filter((item) => item.status !== "pass");
+            if (issues.length === 0) return null;
+            return (
+              <div className="mt-3 border-t border-zinc-100 dark:border-zinc-800 pt-2.5 space-y-1.5">
+                {issues.map((item) => {
+                  const style = STATUS_STYLES[item.status];
+                  return (
+                    <div key={item.id} className="flex items-start gap-2">
+                      <span className={cn("mt-1.5 w-2 h-2 rounded-full shrink-0", style.dot)} />
+                      <div className="min-w-0">
+                        <span className={cn("text-xs font-medium", style.text)}>{item.label}：</span>
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">{item.detail}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()
         )}
       </div>
     </div>
