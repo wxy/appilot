@@ -19,7 +19,6 @@ import {
 import {
   buildStatusTaskId,
   bootstrapRoundState,
-  IN_FLIGHT_STORE_STATUSES,
   markRoundTaskDone,
   nextRunAt,
   nextRankRunAt,
@@ -363,12 +362,16 @@ async function reconcileOpsTasks(store: AppStore): Promise<void> {
           intervalMinutes: 24 * 60,
         }),
       );
-      const hasInFlightDraft = getStoreSubmissionDrafts(project).some(
-        (draft: any) =>
-          draft.productId === product.id &&
-          IN_FLIGHT_STORE_STATUSES.includes(draft.storeStatus),
+      // Version status is derived from ASC data, so poll it whenever the
+      // product has a copy draft — but only with complete ASC credentials.
+      const creds = resolveEffectiveCredentials(store, project.id);
+      const hasAscCredential = Boolean(
+        creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath,
       );
-      if (hasInFlightDraft) {
+      const hasDraft = getStoreSubmissionDrafts(project).some(
+        (draft: any) => draft.productId === product.id,
+      );
+      if (hasAscCredential && hasDraft) {
         desired.set(
           buildStatusTaskId(product.id),
           seedScheduledTask(existing, {
