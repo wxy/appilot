@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
 import { buildStatusForVersion } from "../../../engine/build-status";
+import { inferAppVersion } from "../../../engine/store-submission";
 import { ascStoreLiveVersion, deriveVersionStatus } from "../../../engine/version-status";
 import {
   formatHumanTime,
@@ -284,6 +285,9 @@ export function ReleasePage() {
   const masterConfirmed = Boolean(draft?.masterConfirmedAt);
   const batchConfirmed = Boolean(draft?.batchConfirmedAt);
   const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
+  // 目标版本默认从发布公告推断（tag 语义版本优先，名称兜底），生成前即预填。
+  const inferredVersion = selectedRelease ? inferAppVersion(selectedRelease) : "";
+  const draftVersionHint = draft?.appVersion || pendingVersion || inferredVersion;
   const latestRelease = releases[0] || null;
   const latestHasChanges = Boolean(
     latestRelease &&
@@ -619,7 +623,7 @@ export function ReleasePage() {
               summaryChecked.has(item.id) ? item.commits.map((commit) => commit.sha) : [],
             )
           : undefined,
-        (draft?.appVersion || pendingVersion) || undefined,
+        draftVersionHint || undefined,
         summaryItems
           .filter((item) => summaryChecked.has(item.id))
           .map((item) => item.title),
@@ -1129,7 +1133,7 @@ export function ReleasePage() {
                     目标版本
                   </span>
                   <input
-                    value={draft?.appVersion ?? pendingVersion}
+                    value={draftVersionHint}
                     onChange={(e) => {
                       if (draft) updateDraftField("appVersion", e.target.value);
                       else setPendingVersion(e.target.value);
