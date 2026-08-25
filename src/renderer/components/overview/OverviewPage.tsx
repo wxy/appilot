@@ -11,7 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import type { BriefSuggestion } from "../../../engine/ai/overview-brief";
-import { deriveVersionStatus } from "../../../engine/version-status";
+import { ascStoreLiveVersion, deriveVersionStatus } from "../../../engine/version-status";
 import { briefRuleSignals } from "../../lib/overview-brief";
 import { STALE_MS } from "../../lib/matrix";
 import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
@@ -154,6 +154,7 @@ export function OverviewPage() {
         storeCurrentVersion,
       })
     : null;
+  const storeLiveVersion = ascStoreLiveVersion(ascInfo?.versions);
   // ASC configured but not synced → "待同步", never "未配置"; no version yet
   // → show no status chip at all ("版本待定" is the honest label).
   const ascConfigured = Boolean(project?.hasAscKey);
@@ -673,6 +674,17 @@ export function OverviewPage() {
                         ? "商店"
                         : "未配置"}
                   </span>
+                )}
+                {submissionDraft?.appVersion && storeLiveVersion && (
+                  storeLiveVersion === submissionDraft.appVersion ? (
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-500">
+                      商店版本 v{storeLiveVersion}，与目标一致
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-amber-600 dark:text-amber-500">
+                      商店当前版本 v{storeLiveVersion} ≠ 目标 v{submissionDraft.appVersion}
+                    </span>
+                  )
                 )}
               </div>
               <p className="text-[11px] text-zinc-400 dark:text-zinc-500">

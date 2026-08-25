@@ -1,4 +1,4 @@
-import { deriveVersionStatus } from "../src/engine/version-status";
+import { ascStoreLiveVersion, deriveVersionStatus } from "../src/engine/version-status";
 
 let errors = 0;
 function check(ok: boolean, msg: string) {
@@ -88,6 +88,30 @@ const both = deriveVersionStatus({
   storeCurrentVersion: "1.1.1",
 });
 check(both.key === "in-review" && both.source === "asc", "ASC 优先于商店查询");
+
+// Store live version derived from ASC (newest READY_FOR_SALE by createdDate).
+check(
+  ascStoreLiveVersion([
+    { versionString: "1.0", appStoreState: "READY_FOR_SALE", createdDate: "2026-07-01T00:00:00Z" },
+    { versionString: "1.1.1", appStoreState: "READY_FOR_SALE", createdDate: "2026-08-20T00:00:00Z" },
+    { versionString: "1.2.0", appStoreState: "IN_REVIEW", createdDate: "2026-08-25T00:00:00Z" },
+  ]) === "1.1.1",
+  "商店当前版本 = 最新 READY_FOR_SALE（排除审核中）",
+);
+check(
+  ascStoreLiveVersion([{ versionString: "1.0", appStoreState: "READY_FOR_SALE" }]) === "1.0",
+  "单个已上架版本",
+);
+check(
+  ascStoreLiveVersion([{ versionString: "1.2.0", appStoreState: "IN_REVIEW" }]) === null,
+  "无已上架版本 → null",
+);
+check(ascStoreLiveVersion([]) === null, "空列表 → null");
+check(ascStoreLiveVersion(null) === null, "null → null");
+check(
+  ascStoreLiveVersion([{ versionString: "1.1.1", appStoreState: "READY_FOR_SALE", createdDate: null }]) === "1.1.1",
+  "createdDate 缺失仍可返回版本",
+);
 
 if (errors) process.exit(1);
 console.log("done");

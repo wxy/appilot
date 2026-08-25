@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
 import { buildStatusForVersion } from "../../../engine/build-status";
-import { deriveVersionStatus } from "../../../engine/version-status";
+import { ascStoreLiveVersion, deriveVersionStatus } from "../../../engine/version-status";
 import {
   formatHumanTime,
   formatKilo,
@@ -250,6 +250,7 @@ export function ReleasePage() {
     ascVersions: ascInfo?.versions ?? null,
     storeCurrentVersion,
   });
+  const storeLiveVersion = ascStoreLiveVersion(ascInfo?.versions);
   // ASC configured but not synced yet → "待同步", never "未配置".
   const ascPending = ascConfigured && !ascInfo && draft?.appVersion;
   const effectiveVersionStatus = ascPending
@@ -318,6 +319,17 @@ export function ReleasePage() {
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">未配置</span>
           )}
         </span>
+      )}
+      {draft?.appVersion && storeLiveVersion && (
+        storeLiveVersion === draft.appVersion ? (
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-500">
+            商店版本 v{storeLiveVersion}，与目标一致
+          </span>
+        ) : (
+          <span className="text-[11px] text-amber-600 dark:text-amber-500">
+            商店当前版本 v{storeLiveVersion} ≠ 目标 v{draft.appVersion}（对应历史已上架版本）
+          </span>
+        )
       )}
       {githubStatus && (
         <span className="inline-flex items-center gap-1">

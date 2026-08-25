@@ -33,6 +33,7 @@ export interface VersionStatus {
 export interface AscVersionLike {
   versionString: string;
   appStoreState?: string | null;
+  createdDate?: string | null;
 }
 
 const ASC_STATE_META: Record<
@@ -88,4 +89,24 @@ export function deriveVersionStatus(input: {
   }
 
   return { key: "unknown", label: "未确认（配置 ASC 后可查看）", tone: "muted", source: "none" };
+}
+
+/**
+ * The version actually live in the store right now, per ASC: the newest
+ * READY_FOR_SALE version (by createdDate). Used to cross-check the local
+ * target version so the workbench never silently disagrees with the store.
+ * Returns null when ASC data is unavailable or nothing is live.
+ */
+export function ascStoreLiveVersion(
+  ascVersions?: AscVersionLike[] | null,
+): string | null {
+  if (!Array.isArray(ascVersions) || ascVersions.length === 0) return null;
+  const live = ascVersions
+    .filter((item) => item.appStoreState === "READY_FOR_SALE")
+    .sort((a, b) =>
+      String(b.createdDate || "").localeCompare(String(a.createdDate || "")),
+    )[0];
+  if (!live) return null;
+  const version = String(live.versionString || "").trim();
+  return version || null;
 }
