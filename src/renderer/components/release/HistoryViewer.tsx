@@ -6,7 +6,15 @@ import { FieldHeader } from "../ui/Fields";
 import { inputClass, inputLineClass } from "../ui/styles";
 import { draftVersionLabel } from "./releaseFormat";
 
-export function HistoryViewer({ draft }: { draft: any }) {
+export function HistoryViewer({
+  draft,
+  productTrackName,
+  onBack,
+}: {
+  draft: any;
+  productTrackName?: string | null;
+  onBack?: () => void;
+}) {
   const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
   const activeLanguage = localizations.some((item: any) => item.language === language)
@@ -18,11 +26,20 @@ export function HistoryViewer({ draft }: { draft: any }) {
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案列表</h3>
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案</h3>
           <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">
             {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
           </span>
         </div>
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="shrink-0 px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+          >
+            ← 返回当前文案
+          </button>
+        )}
       </div>
       <div className="p-6 space-y-6">
         {localizations.length > 1 && (
@@ -56,8 +73,12 @@ export function HistoryViewer({ draft }: { draft: any }) {
               </p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <FieldHeader label="软件名称" text={loc.name || ""} />
-                  <input value={loc.name || ""} readOnly className={inputLineClass} />
+                  <FieldHeader label="软件名称" text={loc.name || productTrackName || ""} />
+                  <input
+                    value={loc.name || productTrackName || ""}
+                    readOnly
+                    className={inputLineClass}
+                  />
                   <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
                     {(loc.name || "").length}/30 字符
                   </p>

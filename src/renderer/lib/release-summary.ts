@@ -6,6 +6,10 @@
 
 export type ChangeType = "feature" | "fix" | "perf" | "chore";
 
+function isMergeCommit(subject: string): boolean {
+  return /^Merge\s+(pull\s+request|branch)/i.test(String(subject || "").trim());
+}
+
 export interface ChangeSummaryItem {
   id: string;
   title: string;
@@ -66,6 +70,9 @@ export function summarizeChanges(
   const standalone: { sha: string; subject: string; date: string; body: string }[] = [];
 
   for (const commit of commits) {
+    // Merge commits carry no content of their own; their changes appear as
+    // the branch commits inside the same range.
+    if (isMergeCommit(commit.subject)) continue;
     const prMatch = commit.subject.match(/#(\d+)/);
     if (prMatch) {
       const number = Number(prMatch[1]);

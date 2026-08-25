@@ -130,6 +130,30 @@ export function createAscClient(credentials: AscCredentials) {
         };
       });
     },
+    /**
+     * App-level localizations (App Info): the store's displayed name/subtitle.
+     * Version-level localizations often leave name/subtitle empty (they fall
+     * back to these), so this is the authoritative source for those fields.
+     */
+    async listAppInfoLocalizations(appId: string): Promise<AscLocalization[]> {
+      const infos = await get(`/apps/${encodeURIComponent(appId)}/appInfos?limit=10`);
+      const infoId = Array.isArray(infos?.data) ? infos.data[0]?.id : null;
+      if (!infoId) return [];
+      const data = await get(`/appInfos/${encodeURIComponent(infoId)}/appInfoLocalizations?limit=50`);
+      return (Array.isArray(data?.data) ? data.data : []).map((item: any) => {
+        const a = item.attributes || {};
+        return {
+          id: item.id,
+          locale: a.locale || "",
+          name: a.name || "",
+          subtitle: a.subtitle || "",
+          promotionalText: "",
+          description: "",
+          whatsNew: "",
+          keywords: "",
+        };
+      });
+    },
     async listBuilds(appId: string): Promise<AscBuild[]> {
       const data = await get(`/apps/${encodeURIComponent(appId)}/builds?limit=50`);
       return (Array.isArray(data?.data) ? data.data : []).map((item: any) => ({

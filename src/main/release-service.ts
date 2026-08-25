@@ -68,6 +68,7 @@ export function synthesizeReleaseFromDraft(draft: any): any {
     body: draft.summary || "",
     material: null,
     source: "git-tag",
+    githubDraft: null,
     draft: true,
     commitSha: null,
   };
@@ -169,6 +170,19 @@ export async function generateStoreSubmissionDraft(
     content,
     existing: existingDraft,
   });
+  // 母本修订不清空翻译：保留已生成的翻译语言版本，避免每次重新生成都
+  // 推倒重译。受影响的翻译语言可在工作台中单独重新翻译。
+  const primaryLanguage = draft.localizations[0]?.language || language;
+  const existingTranslations = (existingDraft?.localizations || []).filter(
+    (loc: any) => loc.language !== primaryLanguage,
+  );
+  if (existingTranslations.length > 0) {
+    draft.localizations = [...draft.localizations, ...existingTranslations];
+    draft.submissionKeywords = draft.localizations.map((item) => ({
+      language: item.language,
+      text: item.keywords,
+    }));
+  }
   if (appVersionOverride && appVersionOverride.trim()) {
     draft.appVersion = appVersionOverride.trim();
   }

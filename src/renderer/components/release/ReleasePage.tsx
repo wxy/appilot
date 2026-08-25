@@ -3,7 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
 import { buildStatusForVersion } from "../../../engine/build-status";
-import { ascStateMeta } from "../../lib/asc-status";
+import { inferAppVersion } from "../../../engine/store-submission";
+import { ascStoreLiveVersion, deriveVersionStatus } from "../../../engine/version-status";
 import {
   formatHumanTime,
   formatKilo,
@@ -12,7 +13,6 @@ import {
   UI_SOURCE_LANGUAGE,
 } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
-import { STORE_STATUS_META } from "../../lib/store-status";
 import {
   CHANGE_TYPE_META,
   summarizeChanges,
@@ -22,12 +22,12 @@ import { AIProgressButton } from "../ui/AIProgressButton";
 import { CredentialBadge } from "../ui/CredentialBadge";
 import { EmptyState } from "../ui/EmptyState";
 import { FieldBlock, FieldHeader } from "../ui/Fields";
-import { GithubIcon } from "../ui/Icons";
+import { AppleIcon, GithubIcon } from "../ui/Icons";
 import { StatusChip } from "../ui/StatusChip";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import {
   btnPrimary,
-  btnSmSecondary,
+  btnSmPrimary,
   inputClass,
   inputLineClass,
 } from "../ui/styles";
@@ -37,7 +37,7 @@ import { ReferenceSection } from "./ReferenceSection";
 import { draftVersionLabel } from "./releaseFormat";
 
 export function ReleasePage() {
-  const { projects, currentProjectId, currentProductId } = useProject();
+  const { projects, currentProjectId, currentProductId, selectProduct } = useProject();
   const [searchParams, setSearchParams] = useSearchParams();
   const urlTag = searchParams.get("tag") || "";
   const project = projects.find((item) => item.id === currentProjectId);
@@ -67,6 +67,8 @@ export function ReleasePage() {
   const [pendingVersion, setPendingVersion] = useState("");
   const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
   const [ascRefreshing, setAscRefreshing] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
 
   useEffect(() => {
     const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
@@ -89,6 +91,21 @@ export function ReleasePage() {
     return () => { cancelled = true; };
   }, [productId]);
 
+  // Public store lookup: the no-ASC fallback for version status. It can only
+  // confirm the *current* live version; everything else stays "未确认".
+  const loadStoreCurrentVersion = async () => {
+    if (!productId) return;
+    try {
+      const info = await (window as any).appilot?.store?.currentVersion(productId);
+      setStoreCurrentVersion(info?.version || null);
+    } catch {
+      setStoreCurrentVersion(null);
+    }
+  };
+  useEffect(() => {
+    void loadStoreCurrentVersion();
+  }, [productId]);
+
   const handleAscRefresh = async () => {
     if (!productId || ascRefreshing) return;
     setAscRefreshing(true);
@@ -96,6 +113,7 @@ export function ReleasePage() {
       await (window as any).appilot?.asc?.sync(productId);
       const info = await (window as any).appilot?.asc?.status(productId);
       setAscInfo(info || null);
+      void loadStoreCurrentVersion();
     } finally {
       setAscRefreshing(false);
     }
@@ -103,6 +121,8 @@ export function ReleasePage() {
 
   const loadReleases = async (force = false) => {
     if (!project?.id) return;
+    // 切换项目/平台或刷新时先清空旧数据，统一走载入态，避免显示部分更新。
+    setReleases([]);
     setChecking(true);
     setError("");
     try {
@@ -114,7 +134,39 @@ export function ReleasePage() {
         }
         return null;
       });
-      const draft = next.releases?.find((item: any) => item.draft) || next.releases?.[0];
+      const candidates: any[] = next.releases || [];
+      const latest = candidates[0] || null;
+      // 当前文案 = 最新一批已确定的文案；没有新工作时默认回到它。
+      const confirmed = candidates
+        .flatMap((r: any) =>
+          (r.submissionDrafts || []).filter(
+            (d: any) => d?.productId === productId && d?.batchConfirmedAt,
+          ),
+        )
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.batchConfirmedAt).getTime() -
+            new Date(a.batchConfirmedAt).getTime(),
+        )[0] || null;
+      const currentCopyTag = confirmed
+        ? candidates.find((r: any) =>
+            (r.submissionDrafts || []).some(
+              (d: any) => d?.productId === productId && d?.id === confirmed.id,
+            ),
+          )?.tag || null
+        : null;
+      // 有新提交/PR 或发布草案 → 指向最新文案草案；否则回到当前文案。
+      const hasNewWork = Boolean(
+        latest &&
+        (latest.githubDraft === true ||
+          (latest.material?.commits || []).some(
+            (c: any) =>
+              !/^Merge\s+(pull\s+request|branch)/i.test(String(c?.subject || "")),
+          )),
+      );
+      const defaultTag = hasNewWork
+        ? latest?.tag
+        : currentCopyTag || latest?.tag || "";
       setSelectedTag((current) => {
         if (urlTag && next.releases?.some((item: any) => item.tag === urlTag)) {
           return urlTag;
@@ -122,7 +174,7 @@ export function ReleasePage() {
         if (current && next.releases?.some((item: any) => item.tag === current)) {
           return current;
         }
-        return draft?.tag || "";
+        return defaultTag;
       });
     } catch (e: any) {
       setError(e.message || "发布列表加载失败。");
@@ -134,7 +186,7 @@ export function ReleasePage() {
 
   useEffect(() => {
     void loadReleases();
-  }, [project?.id, searchParams]);
+  }, [project?.id, currentProductId, searchParams]);
 
   // Keep the selected product valid when the project or its products change
   // (e.g. switching project, or products arriving after the initial load).
@@ -191,10 +243,43 @@ export function ReleasePage() {
 
   const draft = active?.draft || null;
   const release = active?.release || null;
+  const released = Boolean(release && release.githubDraft === false);
+  const ascConfigured = Boolean(project?.hasAscKey);
+  const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
+  // 目标版本默认从发布公告推断（tag 语义版本优先，名称兜底）。没有草稿时也
+  // 用它查询商店状态——否则"无文案 + 已上架"时无法判断可重建。
+  const inferredVersion = selectedRelease ? inferAppVersion(selectedRelease) : "";
+  const versionQuery = String(
+    draft?.appVersion || inferredVersion || pendingVersion || "",
+  ).trim();
   const ascVersion = draft?.appVersion
     ? (ascInfo?.versions || []).find((v: any) => v.versionString === draft.appVersion) || null
     : null;
-  const ascMeta = ascStateMeta(ascVersion?.appStoreState);
+  const versionStatus = deriveVersionStatus({
+    appVersion: versionQuery,
+    ascVersions: ascInfo?.versions ?? null,
+    storeCurrentVersion,
+  });
+  const storeLiveVersion = ascStoreLiveVersion(ascInfo?.versions);
+  // ASC configured but not synced yet → "待同步", never "未配置".
+  const ascPending = ascConfigured && !ascInfo && versionQuery;
+  const effectiveVersionStatus = ascPending
+    ? { key: "asc-pending" as const, label: "待同步", tone: "muted" as const, source: "asc" as const }
+    : versionQuery
+      ? versionStatus
+      : null;
+  // 已确认或已按商店冻结的文案只读；没有草稿（或未确认的新草稿）时允许
+  // 从头新建，即使版本已上架——发布状态只是信息，不阻断新建。
+  const versionLocked =
+    Boolean(draft?.batchConfirmedAt) ||
+    (Boolean(draft?.ascSyncedAt) && effectiveVersionStatus?.key === "ready-for-sale");
+  const githubStatus = release?.githubDraft === true
+    ? { label: "发布草案", tone: "blue" as const, source: "GitHub" as const }
+    : release?.githubDraft === false
+      ? { label: "已发布", tone: "emerald" as const, source: "GitHub" as const }
+      : release
+        ? { label: "本地标签", tone: "muted" as const, source: "本地" as const }
+        : null;
   const buildInfo = ascVersion ? buildStatusForVersion(ascVersion, ascInfo?.builds || []) : null;
   const buildTone: "muted" | "emerald" | "amber" | "red" = buildInfo?.state === "available"
     ? "emerald"
@@ -209,17 +294,163 @@ export function ReleasePage() {
   const primaryLanguage = localizations[0]?.language || "";
   const masterConfirmed = Boolean(draft?.masterConfirmedAt);
   const batchConfirmed = Boolean(draft?.batchConfirmedAt);
-  const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
+  const draftVersionHint = draft?.appVersion || pendingVersion || inferredVersion;
+  const latestRelease = releases[0] || null;
+  const latestDraftForProduct =
+    latestRelease?.submissionDrafts?.find(
+      (item: any) => item?.productId === productId,
+    ) || null;
   const selectedProduct = products.find((item) => item.id === productId) || null;
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
+  const currentCopy =
+    (releaseContext?.drafts || []).find((item: any) => Boolean(item.batchConfirmedAt)) || null;
+  // 与商店完全对齐：从商店重建/冻结的文案 ascSyncedAt 存在。手动发布后的
+  // 对齐校验后续补上。
+  const storeAligned = Boolean(currentCopy?.ascSyncedAt || draft?.ascSyncedAt);
+  // 当前选中的发布是否还需要一份文案（没有已确认的同版本文案）。
+  const selectedNeedsCopy = Boolean(
+    selectedRelease &&
+    !(currentCopy?.appVersion && inferredVersion && currentCopy.appVersion === inferredVersion),
+  );
+  // 最新发布是否还需要一份文案（决定「最新文案草案」入口是否出现）。
+  const latestNeedsCopy = Boolean(
+    latestRelease &&
+    !(
+      currentCopy?.appVersion &&
+      inferAppVersion(latestRelease) &&
+      currentCopy.appVersion === inferAppVersion(latestRelease)
+    ),
+  );
   const orderedLanguages = availableLanguages.includes(UI_SOURCE_LANGUAGE)
     ? [
         UI_SOURCE_LANGUAGE,
         ...availableLanguages.filter((language) => language !== UI_SOURCE_LANGUAGE),
       ]
     : availableLanguages;
+  // 流程状态栏：GitHub 发布 → 本地文案草案 → 商店版本，每个节点标注自身状态。
+  const githubNode = githubStatus ? (
+    <>
+      <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
+      {release?.tag && (
+        <span className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{release.tag}</span>
+      )}
+    </>
+  ) : null;
+  const githubActions = selectedNeedsCopy && !draft && !versionLocked ? (
+    <button
+      type="button"
+      onClick={() => {
+        setHistoryDraft(null);
+        void handleLoad(true);
+      }}
+      disabled={generating || loadingDraft}
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-50"
+      title="根据发布公告素材调用 AI 新建文案"
+    >
+      <GithubIcon className="w-3 h-3" />
+      {generating ? "生成中…" : "根据发布公告新建"}
+    </button>
+  ) : null;
+  const copyNode =
+    masterConfirmed || batchConfirmed || draft?.appVersion || (draft && localizations.length > 0) ? (
+      <>
+        {masterConfirmed && !batchConfirmed && (
+          <StatusChip label="母本已确定" tone="amber" />
+        )}
+        {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
+        {draft?.appVersion && (
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">v{draft.appVersion}</span>
+        )}
+        {draft && localizations.length > 0 && (
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+            {localizations.length}/{availableLanguages.length} 语言
+          </span>
+        )}
+      </>
+    ) : null;
+  const storeNode = effectiveVersionStatus || buildInfo || (draft?.appVersion && storeLiveVersion) ? (
+    <>
+      {effectiveVersionStatus && (
+        <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
+      )}
+      {buildInfo && (
+        <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
+      )}
+      {draft?.appVersion && storeLiveVersion && (
+        storeLiveVersion === draft.appVersion ? (
+          <span className="text-[10px] text-emerald-600 dark:text-emerald-500">
+            商店版本一致
+          </span>
+        ) : (
+          <span className="text-[10px] text-amber-600 dark:text-amber-500">
+            商店 v{storeLiveVersion} ≠ 目标 v{draft.appVersion}
+          </span>
+        )
+      )}
+    </>
+  ) : null;
+  const storeActions = effectiveVersionStatus?.key === "ready-for-sale" && !storeAligned ? (
+    <button
+      type="button"
+      onClick={() => void handleRebuildFromStore()}
+      disabled={rebuilding}
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-50"
+      title="从 App Store 回读完整文案，重建本地丢失的文案"
+    >
+      <AppleIcon className="w-3 h-3" />
+      {rebuilding ? "重建中…" : "根据此版本重建文案"}
+    </button>
+  ) : null;
+  const alerts =
+    effectiveVersionStatus?.key === "not-in-asc" ||
+    (effectiveVersionStatus?.key === "unknown" && effectiveVersionStatus.source === "none") ||
+    effectiveVersionStatus?.key === "ready-for-sale" ? (
+    <>
+      {effectiveVersionStatus?.key === "not-in-asc" && (
+        <span className="text-[11px] text-amber-600 dark:text-amber-500">
+          App Store 中未找到版本 {draft?.appVersion}，提交前请确认已在 App Store Connect 创建该版本。
+        </span>
+      )}
+      {effectiveVersionStatus?.key === "unknown" && effectiveVersionStatus.source === "none" && (
+        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          配置 App Store 凭证后可自动校验版本是否提交/审核/上架。
+        </span>
+      )}
+      {effectiveVersionStatus?.key === "ready-for-sale" && (
+        <>
+          {release?.githubDraft === true && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-500">
+              商店已上架，可前往 GitHub 发布正式公告
+              {release?.url && (
+                <button
+                  type="button"
+                  onClick={() => (window as any).appilot?.openExternal?.(release.url)}
+                  className="underline hover:opacity-70"
+                >
+                  打开
+                </button>
+              )}
+            </span>
+          )}
+          {draft?.ascSyncedAt && (
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-500">
+              已按商店实际文案冻结 · {formatHumanTime(draft.ascSyncedAt)}
+            </span>
+          )}
+          {draft?.storeSyncedAt && !draft?.ascSyncedAt && (
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-500">
+              已按商店公开信息部分冻结（描述/新增内容）· {formatHumanTime(draft.storeSyncedAt)}
+            </span>
+          )}
+          <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+            README 或需同步更新
+          </span>
+        </>
+      )}
+    </>
+  ) : null;
   const remainingTranslationCount = orderedLanguages.filter(
     (language) =>
       language !== primaryLanguage &&
@@ -231,9 +462,10 @@ export function ReleasePage() {
       : selectedRelease?.submissionDrafts?.find(
           (item: any) => item?.productId === productId,
         ) || null;
-  const feedbackReadOnly = Boolean(release && !release.draft);
+  const feedbackReadOnly = versionLocked;
   const isReadOnly =
     feedbackReadOnly ||
+    versionLocked ||
     batchConfirmed ||
     (masterConfirmed && activeLocalization?.language === primaryLanguage);
   const busy = generating || loadingDraft;
@@ -255,8 +487,52 @@ export function ReleasePage() {
   const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
   const previousDraft =
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
-  const currentCopy =
-    (releaseContext?.drafts || []).find((item: any) => Boolean(item.batchConfirmedAt)) || null;
+  // 点击「当前文案」：回到当前文案的完整工作台视图（只读），而不是简化列表视图。
+  const handleOpenCurrentCopy = () => {
+    setHistoryDraft(null);
+    if (currentCopy?.releaseTag && currentCopy.releaseTag !== selectedTag) {
+      setSelectedTag(currentCopy.releaseTag);
+    }
+  };
+
+  const handleDeleteDraft = async (target: any) => {
+    if (!project?.id || !target?.id) return;
+    const label = target.appVersion
+      ? `v${String(target.appVersion).replace(/^v/i, "")}`
+      : target.releaseTag || "该文案";
+    if (!window.confirm(`删除文案 ${label}？该操作不可恢复。`)) return;
+    try {
+      const ok = await (window as any).appilot.release.deleteDraft(project.id, target.id);
+      if (!ok) return;
+      if (historyDraft?.id === target.id) setHistoryDraft(null);
+      if (active?.draft?.id === target.id) setActive(null);
+      await loadReleases(false);
+    } catch (e: any) {
+      setError(e.message || "删除文案失败。");
+    }
+  };
+
+  const handleRebuildFromStore = async () => {
+    if (!project?.id || !productId || !selectedTag || rebuilding) return;
+    if (!window.confirm("将用商店实际文案替换本地该版本文案（按版本覆盖），是否继续？")) return;
+    setRebuilding(true);
+    setError("");
+    try {
+      const rebuilt = await (window as any).appilot.release.rebuildFromStore(
+        project.id,
+        productId,
+        selectedTag,
+      );
+      if (!rebuilt?.id) throw new Error("重建失败");
+      setActive(null);
+      setHistoryDraft(null);
+      await loadReleases(false);
+    } catch (e: any) {
+      setError(e.message || "从商店重建文案失败。");
+    } finally {
+      setRebuilding(false);
+    }
+  };
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
     const rows: {
@@ -275,13 +551,13 @@ export function ReleasePage() {
     });
     const historyDrafts = releaseContext?.drafts || [];
     rows.push({
-      label: "文案列表（含历次发布公告）",
+      label: "历次发布公告与文案",
       meta:
         historyDrafts.length > 0
           ? `最近 ${historyDrafts.length} 份${historyDrafts[0]?.appVersion ? `（最新 v${String(historyDrafts[0].appVersion).replace(/^v/i, "")}）` : ""}`
           : "无",
     });
-    const activeKeywordCount = (selectedProduct?.trackedKeywords || []).filter(
+    const activeKeywordCount = ((project as any)?.trackedKeywords || []).filter(
       (keyword: any) => keyword.status !== "paused",
     ).length;
     rows.push({
@@ -295,7 +571,7 @@ export function ReleasePage() {
         meta: `${githubRelease.name || "发布正文"}${githubRelease.publishedAt ? ` · ${formatHumanTime(githubRelease.publishedAt)}` : ""}`,
         badge: "github",
         badgeTitle: githubRelease.viaToken
-          ? "发布公告来自 GitHub（通过 Token 获取，支持私有仓库与草案）"
+          ? "发布公告来自 GitHub（通过 Token 获取，支持私有仓库与发布草案）"
           : "发布公告来自 GitHub（公开仓库）",
       });
     }
@@ -411,7 +687,7 @@ export function ReleasePage() {
               summaryChecked.has(item.id) ? item.commits.map((commit) => commit.sha) : [],
             )
           : undefined,
-        (draft?.appVersion || pendingVersion) || undefined,
+        draftVersionHint || undefined,
         summaryItems
           .filter((item) => summaryChecked.has(item.id))
           .map((item) => item.title),
@@ -428,6 +704,7 @@ export function ReleasePage() {
 
   const handleProductChange = async (value: string) => {
     setProductId(value);
+    selectProduct(value);
     setActive(null);
     setActiveLanguage("");
     setReleaseContext(null);
@@ -575,9 +852,6 @@ export function ReleasePage() {
               ))}
             </div>
           )}
-          <button onClick={() => void loadReleases(true)} disabled={checking} className={btnPrimary}>
-            {checking ? "检查中..." : "检查发布"}
-          </button>
         </div>
       </div>
 
@@ -595,62 +869,102 @@ export function ReleasePage() {
         ) : (
           <EmptyState
             title="尚未检测到新的发布"
-            desc="有新提交或创建新 tag（GitHub 发布会自动打 tag）后，这里会自动生成发布文案素材。"
+            desc="有新提交、GitHub 发布草案（需配置 GitHub Token，Contents 只读权限）或创建新 tag 后，这里会自动生成发布文案素材。"
           />
         )
       ) : (
+        <>
+        <div className="mb-6">
+          <ReleaseReadinessPanel
+            projectId={project.id}
+            productId={productId}
+            draft={draft ? { id: draft.id, releaseTag: draft.releaseTag } : null}
+            githubNode={githubNode}
+            copyNode={copyNode}
+            storeNode={storeNode}
+            alerts={alerts}
+            githubActions={githubActions}
+            storeActions={storeActions}
+            onAscRefresh={handleAscRefresh}
+            ascRefreshing={ascRefreshing}
+            ascInfo={ascInfo}
+            onCheckGithub={() => void loadReleases(true)}
+            checkingGithub={checking}
+          />
+        </div>
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0 space-y-4">
             {step <= 2 && releaseContext && (
               <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">当前文案</h3>
-                </div>
-                <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                <div className="p-4">
                   <button
                     type="button"
-                    onClick={() => setHistoryDraft(currentCopy)}
+                    onClick={handleOpenCurrentCopy}
                     className={cn(
-                      "w-full flex items-center justify-between gap-2 px-5 py-3 text-left transition-colors",
-                      currentCopy && historyDraft?.releaseTag === currentCopy.releaseTag
-                        ? "bg-amber-50 dark:bg-amber-500/10"
-                        : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
+                      "w-full text-left rounded-xl px-5 py-4 shadow-sm transition-colors",
+                      currentCopy && !historyDraft && selectedTag === currentCopy.releaseTag
+                        ? "bg-amber-100 dark:bg-amber-500/20 ring-2 ring-amber-500/40"
+                        : "bg-amber-500 hover:bg-amber-600",
                     )}
                   >
-                    <span className="min-w-0">
-                      <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">当前文案</span>
-                      <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                        {currentCopy
-                          ? `${draftVersionLabel(currentCopy)} · ${formatHumanTime(currentCopy.updatedAt)}`
-                          : "暂无已确定的文案"}
+                    <span
+                      className={cn(
+                        "block text-sm font-semibold",
+                        currentCopy && !historyDraft && selectedTag === currentCopy.releaseTag
+                          ? "text-amber-800 dark:text-amber-300"
+                          : "text-white",
+                      )}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        当前文案
+                        {currentCopy?.ascSyncedAt && <AppleIcon className="w-3 h-3" />}
                       </span>
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryDraft(null)}
-                    className={cn(
-                      "w-full flex items-center justify-between gap-2 px-5 py-3 text-left transition-colors",
-                      !historyDraft
-                        ? "bg-amber-50 dark:bg-amber-500/10"
-                        : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
-                    )}
-                  >
-                    <span className="min-w-0">
-                      <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">最新草案</span>
-                      <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                        {draft
-                          ? `${draftVersionLabel(draft)} · ${formatHumanTime(draft.updatedAt)}`
-                          : "尚未生成草案，新文案从这里开始"}
-                      </span>
+                    <span
+                      className={cn(
+                        "block text-[11px] mt-0.5 truncate",
+                        currentCopy && !historyDraft && selectedTag === currentCopy.releaseTag
+                          ? "text-amber-700/80 dark:text-amber-400/80"
+                          : "text-white/80",
+                      )}
+                    >
+                      {currentCopy
+                        ? `${draftVersionLabel(currentCopy)} · ${formatHumanTime(currentCopy.updatedAt)}`
+                        : "暂无已确定的文案"}
                     </span>
                   </button>
                 </div>
               </div>
             )}
             <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">参考</h3>
+              <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">最新文案草案</h3>
+                  <span className="block text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                    {latestNeedsCopy
+                      ? latestDraftForProduct
+                        ? `${draftVersionLabel(latestDraftForProduct)} · ${formatHumanTime(latestDraftForProduct.updatedAt)}`
+                        : "可新建文案（发布草案或正式发布均可）"
+                      : "无"}
+                  </span>
+                </div>
+                {latestNeedsCopy && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryDraft(null);
+                      if (latestRelease?.tag && latestRelease.tag !== selectedTag) {
+                        setSelectedTag(latestRelease.tag);
+                      }
+                    }}
+                    className={cn(
+                      "shrink-0",
+                      btnSmPrimary,
+                    )}
+                  >
+                    {latestDraftForProduct ? "打开" : "新建"}
+                  </button>
+                )}
               </div>
               {selectedRelease && (
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -662,7 +976,7 @@ export function ReleasePage() {
                         : "无变更"
                     }
                     checked={step > 1}
-                    defaultOpen
+                    defaultOpen={false}
                     action={
                       summaryItems.length > 0 ? (
                         <button
@@ -838,7 +1152,7 @@ export function ReleasePage() {
               )}
             </div>
             {step <= 2 && releaseContext && (
-              <div>
+              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
                 <HistoryPanel
                   drafts={(releaseContext.drafts || []).filter(
                     (item: any) => item.releaseTag !== currentCopy?.releaseTag,
@@ -846,73 +1160,21 @@ export function ReleasePage() {
                   selectedDraft={historyDraft}
                   onSelect={(history: any) => setHistoryDraft(history)}
                   currentTag={selectedTag}
+                  onDelete={(item: any) => void handleDeleteDraft(item)}
                 />
               </div>
             )}
           </aside>
 
           <div className="min-w-0 space-y-6">
-            {selectedRelease && (
-              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm px-5 py-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">文档</span>
-                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                    {historyDraft
-                      ? `文案列表 · ${draftVersionLabel(historyDraft)}`
-                      : `当前文案 · ${draft?.appVersion || "版本待定"}`}
-                  </span>
-                  {!historyDraft && (
-                    <span className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                      {masterConfirmed && !batchConfirmed && (
-                        <StatusChip label="母本已确定" tone="amber" />
-                      )}
-                      {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
-                      {draft?.storeStatus && STORE_STATUS_META[draft.storeStatus] && (
-                        <StatusChip
-                          label={STORE_STATUS_META[draft.storeStatus].label}
-                          tone={STORE_STATUS_META[draft.storeStatus].tone}
-                        />
-                      )}
-                      {ascMeta && (
-                        <StatusChip label={`ASC：${ascMeta.label}`} tone={ascMeta.tone} />
-                      )}
-                      {buildInfo && (
-                        <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void handleAscRefresh()}
-                        disabled={ascRefreshing}
-                        className="text-[11px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
-                      >
-                        {ascRefreshing ? "刷新中…" : ascInfo ? `ASC 刷新 ${ascInfo.fetchedAt ? formatHumanTime(ascInfo.fetchedAt) : ""}` : "刷新 ASC 状态"}
-                      </button>
-                      {draft && localizations.length > 0 && (
-                        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                          {localizations.length}/{availableLanguages.length} 语言
-                        </span>
-                      )}
-                    </span>
-                  )}
-                </div>
-                {historyDraft && (
-                  <button type="button" onClick={() => setHistoryDraft(null)} className={btnSmSecondary}>
-                    ← 返回当前文案
-                  </button>
-                )}
-              </div>
-            )}
             {historyDraft ? (
-              <HistoryViewer draft={historyDraft} />
+              <HistoryViewer
+                draft={historyDraft}
+                productTrackName={selectedProduct?.trackName}
+                onBack={() => setHistoryDraft(null)}
+              />
             ) : (
               <>
-            {selectedRelease && draft && (
-              <ReleaseReadinessPanel
-                projectId={project.id}
-                productId={productId}
-                draft={{ id: draft.id, releaseTag: draft.releaseTag }}
-              />
-            )}
             {selectedRelease && step === 1 && (
               <>
                 <div className="flex items-center gap-2">
@@ -920,17 +1182,18 @@ export function ReleasePage() {
                     目标版本
                   </span>
                   <input
-                    value={draft?.appVersion ?? pendingVersion}
+                    value={draftVersionHint}
                     onChange={(e) => {
                       if (draft) updateDraftField("appVersion", e.target.value);
                       else setPendingVersion(e.target.value);
                     }}
                     onBlur={() => void persistCurrentDraft()}
                     placeholder="如 1.2.6"
+                    disabled={Boolean(draft) && (batchConfirmed || versionLocked)}
                     className={inputLineClass + " max-w-32"}
                   />
                   <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {draft ? "文案列表将按此版本标识" : "生成文案时将写入此版本"}
+                    {draft ? "文案将按此版本标识" : "生成文案时将写入此版本"}
                   </span>
                 </div>
                 <div>
@@ -952,32 +1215,20 @@ export function ReleasePage() {
                   </div>
                 </div>
 
-                {selectedRelease.draft && !draft && (
-                  summaryItems.length > 0 ? (
-                    <AIProgressButton
-                      onClick={() => handleLoad(true)}
-                      disabled={busy && !generating}
-                      loading={generating}
-                      progress={generationProgress}
-                      idleLabel="下一步：生成文案"
-                    />
-                  ) : (
-                    <p className="text-sm text-zinc-400 dark:text-zinc-500">
-                      本次无变更，无需生成新文案。
-                    </p>
-                  )
+                {!versionLocked && !draft && (
+                  <AIProgressButton
+                    onClick={() => handleLoad(true)}
+                    disabled={busy && !generating}
+                    loading={generating}
+                    progress={generationProgress}
+                    idleLabel={summaryItems.length > 0 ? "下一步：生成文案" : "新建文案"}
+                  />
                 )}
 
-                {!selectedRelease.draft && (
-                  <div>
-                    {selectedExistingDraft ? (
-                      <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
-                        {loadingDraft ? "加载中..." : "查看文案列表"}
-                      </button>
-                    ) : (
-                      <span className="text-sm text-zinc-400 dark:text-zinc-500">该正式发布没有文案</span>
-                    )}
-                  </div>
+                {released && selectedExistingDraft && (
+                  <button onClick={() => handleLoad(false)} disabled={busy} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
+                    {loadingDraft ? "加载中..." : "查看文案"}
+                  </button>
                 )}
               </>
             )}
@@ -985,8 +1236,8 @@ export function ReleasePage() {
             {!draft ? (
               selectedRelease && step > 1 ? (
                 <EmptyState
-                  title={selectedRelease.draft ? "等待生成提交文案" : "该正式发布没有文案"}
-                  desc={selectedRelease.draft ? "确认后由 AI 生成名称、副标题、Promotional Text、描述、What's New 和关键词。" : "正式发布只作为完成信号，不再生成新的商店文案。"}
+                  title="尚未生成文案"
+                  desc="可基于变更素材生成，也可以在无变更时从头新建文案。"
                 />
               ) : null
             ) : (
@@ -1005,6 +1256,7 @@ export function ReleasePage() {
                       onChange={(e) => updateDraftField("appVersion", e.target.value)}
                       onBlur={() => void persistCurrentDraft()}
                       placeholder="如 1.2.6"
+                      disabled={batchConfirmed || versionLocked}
                       className={inputLineClass + " max-w-32"}
                     />
                     <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
@@ -1025,7 +1277,13 @@ export function ReleasePage() {
                               onChange={(e) => updateLocalizationField("name", e.target.value)}
                               disabled={isReadOnly}
                               className={inputLineClass}
+                              placeholder={selectedProduct?.trackName || "未设置名称"}
                             />
+                            {!activeLocalization.name && (
+                              <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
+                                名称未设置，商店当前显示 App 级名称：{selectedProduct?.trackName || "—"}
+                              </p>
+                            )}
                             <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
                               建议：名称后加冒号和描述性短句（如 GloWalk: Path of Light）
                             </p>
@@ -1040,7 +1298,13 @@ export function ReleasePage() {
                               onChange={(e) => updateLocalizationField("subtitle", e.target.value)}
                               disabled={isReadOnly}
                               className={inputLineClass}
+                              placeholder={activeLocalization.name ? "未设置副标题" : "未设置副标题"}
                             />
+                            {!activeLocalization.subtitle && (
+                              <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
+                                副标题未设置
+                              </p>
+                            )}
                             <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
                               {(activeLocalization.subtitle || "").length}/30 字符
                             </p>
@@ -1183,10 +1447,17 @@ export function ReleasePage() {
                       </div>
                     )}
 
-                    {batchConfirmed && !feedbackReadOnly && (
+                    {batchConfirmed && !versionLocked && (
                       <div className="flex justify-end">
                         <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
                           文案已确定
+                        </span>
+                      </div>
+                    )}
+                    {versionLocked && batchConfirmed && (
+                      <div className="flex justify-end">
+                        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                          已上架，完全只读
                         </span>
                       </div>
                     )}
@@ -1196,10 +1467,10 @@ export function ReleasePage() {
                     <textarea
                       value={draft.reviewFeedback || ""}
                       onChange={(e) => updateDraftField("reviewFeedback", e.target.value)}
-                      disabled={feedbackReadOnly}
+                      disabled={versionLocked}
                       className={inputClass + " min-h-20 resize-y"}
                     />
-                    {!feedbackReadOnly && (
+                    {!versionLocked && (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <AIProgressButton
                           onClick={() => handleLoad(true)}
@@ -1218,6 +1489,7 @@ export function ReleasePage() {
             )}
           </div>
         </div>
+        </>
       )}
     </div>
   );

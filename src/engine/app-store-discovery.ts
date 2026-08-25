@@ -411,6 +411,68 @@ export async function lookupApp(trackId: string): Promise<AppMetadata | null> {
   }
 }
 
+/**
+ * Read the *current live* version of a store product via the public iTunes
+ * Lookup API — the no-ASC-credential fallback for version status.
+ *
+ * It can only confirm "this exact version is live right now"; it cannot tell
+ * whether a non-current version was submitted, is in review, or was rejected.
+ * Returns null on any failure (caller shows "未确认").
+ */
+export async function fetchStoreCurrentVersion(
+  trackId: string,
+  country = "us",
+): Promise<{ version: string; currentVersionReleaseDate: string | null } | null> {
+  try {
+    const res = await fetch(
+      `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
+    );
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const r = Array.isArray(data?.results) ? data.results[0] : null;
+    if (!r) return null;
+    return {
+      version: typeof r.version === "string" ? r.version : "",
+      currentVersionReleaseDate:
+        typeof r.currentVersionReleaseDate === "string"
+          ? r.currentVersionReleaseDate
+          : null,
+    };
+  } catch (err: any) {
+    log.warn(`Store current-version lookup failed for ${trackId}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Per-storefront public copy via iTunes lookup (no credentials needed):
+ * localized description + release notes for the given country. Used for the
+ * partial freeze when ASC credentials are absent.
+ */
+export async function fetchStoreLocalizedCopy(
+  trackId: string,
+  country = "us",
+): Promise<{ version: string; trackName: string; description: string; releaseNotes: string } | null> {
+  try {
+    const res = await fetch(
+      `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
+    );
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const r = Array.isArray(data?.results) ? data.results[0] : null;
+    if (!r) return null;
+    return {
+      version: typeof r.version === "string" ? r.version : "",
+      trackName: typeof r.trackName === "string" ? r.trackName : "",
+      description: typeof r.description === "string" ? r.description : "",
+      releaseNotes: typeof r.releaseNotes === "string" ? r.releaseNotes : "",
+    };
+  } catch (err: any) {
+    log.warn(`Store localized copy lookup failed for ${trackId}/${country}: ${err.message}`);
+    return null;
+  }
+}
+
 /** Extract a rough one-paragraph description from the repo README. */
 export function readRepoDescription(localPath: string): string {
   const content = readReadme(localPath);

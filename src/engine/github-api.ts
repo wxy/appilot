@@ -21,6 +21,20 @@ export interface GitHubReleaseInfo {
   viaToken?: boolean;
 }
 
+export interface GitHubReleaseItem {
+  id: number;
+  /** tag_name; null for drafts that have not been assigned a tag yet. */
+  tag: string | null;
+  name: string | null;
+  body: string;
+  draft: boolean;
+  prerelease: boolean;
+  createdAt: string | null;
+  publishedAt: string | null;
+  url: string | null;
+  viaToken: boolean;
+}
+
 const prInfoCache = new Map<
   string,
   {
@@ -29,6 +43,76 @@ const prInfoCache = new Map<
   }
 >();
 const PR_INFO_TTL_MS = 30 * 60_000;
+
+/**
+ * List GitHub releases (newest first), including drafts when the token
+ * account has push access to the repository.
+ *
+ * Degradation ladder:
+ * - With a token: full listing (drafts visible for push-access accounts).
+ * - Without a token: anonymous read of a public repo returns published
+ *   releases only (drafts are never returned anonymously).
+ * - Private repo / offline / rate limit: returns [] and the caller falls
+ *   back to local git tags.
+ *
+ * Never throws; failures degrade to [].
+ */
+export async function listGitHubReleases(
+  localPath: string,
+  token?: string | null,
+  onStats?: (requestBytes: number, responseBytes: number) => void,
+): Promise<GitHubReleaseItem[]> {
+  try {
+    const remote = await getRemoteUrl(localPath);
+    const repoUrl = normalizeGitHubUrl(remote);
+    if (!repoUrl) return [];
+    const ownerRepo = repoUrl.replace("https://github.com/", "");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${ownerRepo}/releases?per_page=30`,
+        {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            Accept: "application/vnd.github+json",
+            "User-Agent": "appilot",
+          },
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) return [];
+      const raw = await response.text();
+      const data: any = JSON.parse(raw);
+      if (!Array.isArray(data)) return [];
+      onStats?.(
+        repoUrl.length + (token ? token.length + 24 : 0),
+        raw.length,
+      );
+      return data
+        .map((item) => ({
+          id: Number(item.id) || 0,
+          tag: typeof item.tag_name === "string" && item.tag_name ? item.tag_name : null,
+          name: typeof item.name === "string" ? item.name : null,
+          body: typeof item.body === "string" ? item.body : "",
+          draft: Boolean(item.draft),
+          prerelease: Boolean(item.prerelease),
+          createdAt: typeof item.created_at === "string" ? item.created_at : null,
+          publishedAt: typeof item.published_at === "string" ? item.published_at : null,
+          url: typeof item.html_url === "string" ? item.html_url : null,
+          viaToken: Boolean(token),
+        }))
+        .sort((a, b) =>
+          String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+        );
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err: any) {
+    log.warn(`listGitHubReleases failed: ${err.message}`);
+    return [];
+  }
+}
 
 /**
  * Best-effort fetch of the GitHub release announcement for a tag.

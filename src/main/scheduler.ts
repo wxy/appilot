@@ -14,11 +14,11 @@ import {
   getStoreSubmissionDrafts,
   isProductPostRelease,
   migrateLegacyStoreProducts,
+  normalizeDraftIdentity,
 } from "./project-state";
 import {
   buildStatusTaskId,
   bootstrapRoundState,
-  IN_FLIGHT_STORE_STATUSES,
   markRoundTaskDone,
   nextRunAt,
   nextRankRunAt,
@@ -362,12 +362,16 @@ async function reconcileOpsTasks(store: AppStore): Promise<void> {
           intervalMinutes: 24 * 60,
         }),
       );
-      const hasInFlightDraft = getStoreSubmissionDrafts(project).some(
-        (draft: any) =>
-          draft.productId === product.id &&
-          IN_FLIGHT_STORE_STATUSES.includes(draft.storeStatus),
+      // Version status is derived from ASC data, so poll it whenever the
+      // product has a copy draft — but only with complete ASC credentials.
+      const creds = resolveEffectiveCredentials(store, project.id);
+      const hasAscCredential = Boolean(
+        creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath,
       );
-      if (hasInFlightDraft) {
+      const hasDraft = getStoreSubmissionDrafts(project).some(
+        (draft: any) => draft.productId === product.id,
+      );
+      if (hasAscCredential && hasDraft) {
         desired.set(
           buildStatusTaskId(product.id),
           seedScheduledTask(existing, {
@@ -536,16 +540,29 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   try {
     if (!project?.localPath) throw new Error("Project not found");
     const { fetchRemoteTags, checkForRelease } = await import("../engine/release-watcher");
+    const { listGitHubReleases } = await import("../engine/github-api");
     // Background sync must never touch the worktree or local branches: fetch
     // only updates remote-tracking refs and tags.
     await fetchRemoteTags(project.localPath);
     const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
+    // Best-effort GitHub releases listing (drafts included with token). Empty
+    // on private repos without a token / offline — checkForRelease degrades to
+    // local git tags.
+    const githubReleases = await listGitHubReleases(
+      project.localPath,
+      token,
+      (rb, pb) => {
+        requestBytes += rb;
+        responseBytes += pb;
+      },
+    );
     const result = await checkForRelease(
       project.localPath,
       project.lastReleaseSha || null,
       token,
       {
         sync: false,
+        githubReleases,
         onApiStats: (rb, pb) => {
           requestBytes += rb;
           responseBytes += pb;
@@ -559,6 +576,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       tag: release?.tag || null,
       release: material?.githubRelease ?? null,
       pullRequests: material?.pullRequests || [],
+      releases: githubReleases,
       lastSeenSha: project.lastReleaseSha || null,
       syncedAt: new Date().toISOString(),
     };
@@ -771,6 +789,10 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   }
   const builds = await client.listBuilds(appId);
   const all: Record<string, any> = store.get("ascCache") || {};
+  const prev = all[task.productId] || null;
+  const prevStates = new Map(
+    (prev?.versions || []).map((v: any) => [v.versionString, v.appStoreState]),
+  );
   all[task.productId] = {
     appId,
     versions: sorted,
@@ -779,6 +801,35 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
     fetchedAt: new Date().toISOString(),
   };
   store.set("ascCache", all);
+
+  // Freeze against the actual store copy once a version is live: the store is
+  // the final truth. Applies to versions that just became READY_FOR_SALE and
+  // to already-live versions whose local draft has not been frozen yet.
+  const liveVersions = sorted.filter((v) => v.appStoreState === "READY_FOR_SALE");
+  if (liveVersions.length > 0) {
+    const { applyAscSnapshotToDraft } = await import("../engine/store-submission");
+    const projects: any[] = store.get("projects") || [];
+    let changed = false;
+    for (const project of projects) {
+      const drafts = getStoreSubmissionDrafts(project);
+      for (const draft of drafts) {
+        if (draft.productId !== task.productId) continue;
+        const version = String(draft.appVersion || "").trim().replace(/^v/i, "");
+        const live = liveVersions.find((v) => v.versionString === version);
+        if (!live) continue;
+        const wasLive = prevStates.get(live.versionString) === "READY_FOR_SALE";
+        if (wasLive && draft.ascSyncedAt) continue;
+        const ascLocalizations = await client.listVersionLocalizations(live.id);
+        if (applyAscSnapshotToDraft(draft, ascLocalizations)) changed = true;
+        // 自愈：版本级 name/subtitle 为空（商店显示回退到 App 级），用
+        // appInfoLocalizations 回填名称/副标题——这才是商店实际显示的值。
+        const appInfoLocalizations = await client.listAppInfoLocalizations(appId);
+        if (applyAscSnapshotToDraft(draft, appInfoLocalizations)) changed = true;
+      }
+    }
+    if (changed) store.set("projects", projects);
+  }
+
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastStatus = "success";
@@ -794,6 +845,14 @@ export async function schedulerTick(): Promise<void> {
     await reconcileRankTasks(store);
     await reconcileGithubSyncTasks(store);
     await reconcileOpsTasks(store);
+    // Migrate existing drafts to the appVersion identity (one copy per
+    // target version) when legacy duplicates exist.
+    const projectsForMigration = store.get("projects") || [];
+    let draftsChanged = false;
+    for (const project of projectsForMigration) {
+      if (normalizeDraftIdentity(project)) draftsChanged = true;
+    }
+    if (draftsChanged) store.set("projects", projectsForMigration);
 
     const now = Date.now();
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];

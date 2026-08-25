@@ -474,6 +474,19 @@ export function CredentialsForm({
               </li>
             ))}
           </ul>
+          <div className="border-t border-zinc-100 dark:border-zinc-800 pt-2 space-y-1">
+            <p className="text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
+              能力 · 所需权限
+            </p>
+            <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+              <span>发布草案 / 发布公告</span>
+              <code className={credentialCodeChipClass}>Contents: Read</code>
+              <span>仓库流量数据</span>
+              <code className={credentialCodeChipClass}>Administration: Read</code>
+              <span>评论（App Store RSS）</span>
+              <span className="text-zinc-400">无需凭证</span>
+            </div>
+          </div>
           {githubExpiryWarning && (
             <p
               className={cn(
@@ -762,6 +775,17 @@ export function CredentialsForm({
               </li>
             ))}
           </ul>
+          <div className="border-t border-zinc-100 dark:border-zinc-800 pt-2 space-y-1">
+            <p className="text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
+              能力 · 所需权限
+            </p>
+            <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+              <span>版本 / 审核状态回读</span>
+              <code className={credentialCodeChipClass}>App Store Connect API Key</code>
+              <span>评论（App Store RSS）</span>
+              <span className="text-zinc-400">无需凭证</span>
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

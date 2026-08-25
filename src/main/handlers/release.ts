@@ -7,10 +7,12 @@ import { resolveEffectiveCredentials } from "../credentials";
 import {
   ensureProjectKeywordPool,
   findProductContext,
+  findDraftByVersion,
   findStoreSubmissionDraft,
   getStoreSubmissionDrafts,
   upsertStoreSubmissionDraft,
 } from "../project-state";
+import { inferAppVersion } from "../../engine/store-submission";
 import { githubSyncCacheEntry } from "../scheduler";
 import { getStore } from "../store";
 import {
@@ -21,6 +23,17 @@ import {
 import { assertNonEmptyString, assertStringArray } from "../util";
 
 export function registerReleaseHandlers(): void {
+  async function githubReleaseCandidates(
+    project: any,
+    token: string | null | undefined,
+    cached?: any,
+  ): Promise<any[]> {
+    const { listGitHubReleases } = await import("../../engine/github-api");
+    const fresh = await listGitHubReleases(project.localPath, token);
+    if (fresh.length > 0) return fresh;
+    return Array.isArray(cached?.releases) ? cached.releases : [];
+  }
+
   ipcMain.handle("release:list", async (_event, projectId: string, force?: boolean) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
@@ -29,13 +42,20 @@ export function registerReleaseHandlers(): void {
     if (!project) throw new Error("Project not found");
 
     const { checkForRelease } = await import("../../engine/release-watcher");
+    const token = resolveEffectiveCredentials(s, project.id).githubToken;
+    const githubReleases = await githubReleaseCandidates(
+      project,
+      token,
+      githubSyncCacheEntry(s, project),
+    );
     const result = await checkForRelease(
       project.localPath,
       project.lastReleaseSha || null,
-      resolveEffectiveCredentials(s, project.id).githubToken,
+      token,
       {
         sync: true,
         force: Boolean(force),
+        githubReleases,
         githubCache: githubSyncCacheEntry(s, project) ?? undefined,
       },
     );
@@ -43,7 +63,8 @@ export function registerReleaseHandlers(): void {
       releases: result.releases.map((release) => ({
         ...release,
         submissionDrafts: (project.storeProducts || []).map((product: any) =>
-          findStoreSubmissionDraft(project, product.id, release.tag),
+          findStoreSubmissionDraft(project, product.id, release.tag) ||
+          findDraftByVersion(project, product.id, inferAppVersion(release)),
         ),
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,
@@ -67,11 +88,21 @@ export function registerReleaseHandlers(): void {
 
       const { checkForRelease } = await import("../../engine/release-watcher");
       const { readFullReadme, readRepoDescription } = await import("../../engine/app-store-discovery");
+      const token = resolveEffectiveCredentials(s, project.id).githubToken;
+      const githubReleases = await githubReleaseCandidates(
+        project,
+        token,
+        githubSyncCacheEntry(s, project),
+      );
       const result = await checkForRelease(
         project.localPath,
         project.lastReleaseSha || null,
-        resolveEffectiveCredentials(s, project.id).githubToken,
-        { sync: true, githubCache: githubSyncCacheEntry(s, project) ?? undefined },
+        token,
+        {
+          sync: true,
+          githubReleases,
+          githubCache: githubSyncCacheEntry(s, project) ?? undefined,
+        },
       );
       let release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) {
@@ -84,6 +115,7 @@ export function registerReleaseHandlers(): void {
         .filter((item) => item.productId === productId)
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .map((draft) => ({
+          id: draft.id,
           releaseTag: draft.releaseTag,
           updatedAt: draft.updatedAt,
           appVersion: draft.appVersion || "",
@@ -97,7 +129,19 @@ export function registerReleaseHandlers(): void {
           storeStatus: draft.storeStatus || "",
           masterConfirmedAt: draft.masterConfirmedAt || "",
           batchConfirmedAt: draft.batchConfirmedAt || "",
-        }));
+          ascSyncedAt: draft.ascSyncedAt || "",
+        }))
+        // Identity by appVersion: one entry per target version, newest first.
+        .filter((draft, index, all) => {
+          if (!draft.appVersion) return true;
+          const version = String(draft.appVersion).replace(/^v/i, "");
+          return all.findIndex((item) => {
+            if (!item.appVersion) return false;
+            return (
+              String(item.appVersion).replace(/^v/i, "") === version
+            );
+          }) === index;
+        });
       const previous = draftSummaries.find((item) => item.releaseTag !== releaseTag) || null;
       const readme = readFullReadme(project.localPath);
       let readmeModifiedAt = "";
@@ -146,6 +190,12 @@ export function registerReleaseHandlers(): void {
     if (!product) throw new Error("Store product not found");
 
     const { checkForRelease } = await import("../../engine/release-watcher");
+    const token = resolveEffectiveCredentials(s, project.id).githubToken;
+    const githubReleases = await githubReleaseCandidates(
+      project,
+      token,
+      githubSyncCacheEntry(s, project),
+    );
     _event.sender.send("release:generateProgress", {
       kind: "phase",
       phase: "read_draft",
@@ -154,8 +204,12 @@ export function registerReleaseHandlers(): void {
     const result = await checkForRelease(
       project.localPath,
       project.lastReleaseSha || null,
-      resolveEffectiveCredentials(s, project.id).githubToken,
-      { sync: true, githubCache: githubSyncCacheEntry(s, project) ?? undefined },
+      token,
+      {
+        sync: true,
+        githubReleases,
+        githubCache: githubSyncCacheEntry(s, project) ?? undefined,
+      },
     );
     let release = result.releases.find((item) => item.tag === releaseTag) || null;
     if (!release) {
@@ -170,7 +224,15 @@ export function registerReleaseHandlers(): void {
     });
     if (!release) return { release: null, draft: null, actionable: false };
 
-    const existing = findStoreSubmissionDraft(project, productId, releaseTag);
+    let existing = findStoreSubmissionDraft(project, productId, releaseTag);
+    if (!existing) {
+      // Identity by appVersion: a copy prepared under an older release for the
+      // same target version belongs to this release's workbench too.
+      const targetVersion = String(
+        appVersion || inferAppVersion(release) || "",
+      ).trim();
+      existing = findDraftByVersion(project, productId, targetVersion);
+    }
     if (release.draft) {
       if (force) {
         // Respect the user's include/exclude checklist: only the checked
@@ -341,5 +403,80 @@ export function registerReleaseHandlers(): void {
     s.set("projects", projects);
     return draft;
   });
+
+  ipcMain.handle("release:deleteDraft", async (_event, projectId: string, draftId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    draftId = assertNonEmptyString(draftId, "draftId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const drafts = getStoreSubmissionDrafts(project);
+    const next = drafts.filter((item) => item.id !== draftId);
+    if (next.length === drafts.length) return false;
+    project.storeSubmissionDrafts = next;
+    s.set("projects", projects);
+    return true;
+  });
+
+  // Rebuild a complete local copy draft from the actual store copy after local
+  // drafts were lost (e.g. cleared and re-generated after the version went
+  // live). Requires App Store Connect credentials.
+  ipcMain.handle(
+    "release:rebuildFromStore",
+    async (_event, projectId: string, productId: string, releaseTag: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      releaseTag = assertNonEmptyString(releaseTag, "releaseTag");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const product = (project.storeProducts || []).find((item: any) => item.id === productId);
+      if (!product) throw new Error("Store product not found");
+      const creds = resolveEffectiveCredentials(s, projectId);
+      if (!creds.ascIssuerId || !creds.ascKeyId || !creds.ascPrivateKeyPath) {
+        throw new Error("需要 App Store Connect 凭证才能重建文案");
+      }
+      const existing =
+        findStoreSubmissionDraft(project, productId, releaseTag) ||
+        findDraftByVersion(project, productId, inferAppVersion({ tag: releaseTag, name: null })) ||
+        null;
+      const targetVersion = existing?.appVersion ||
+        inferAppVersion({ tag: releaseTag, name: null });
+      if (!targetVersion) throw new Error("无法确定目标版本，请先生成文案后再重建");
+
+      const fs = await import("fs");
+      const { createAscClient } = await import("../../engine/asc-api");
+      const { buildStoreRebuildDraft } = await import("../../engine/store-submission");
+      const client = createAscClient({
+        issuerId: creds.ascIssuerId,
+        keyId: creds.ascKeyId,
+        privateKeyPem: fs.readFileSync(creds.ascPrivateKeyPath, "utf8"),
+      });
+      const appId = await client.getAppIdByBundleId(product.bundleId);
+      if (!appId) throw new Error("App Store 中未找到该应用");
+      const versions = await client.listAppStoreVersions(appId);
+      const version = versions.find((v: any) => v.versionString === targetVersion) || null;
+      if (!version) throw new Error(`App Store 中未找到版本 ${targetVersion}`);
+      const [versionLocalizations, appInfoLocalizations] = await Promise.all([
+        client.listVersionLocalizations(version.id),
+        client.listAppInfoLocalizations(appId),
+      ]);
+      const draft = buildStoreRebuildDraft({
+        projectId,
+        productId,
+        releaseTag,
+        appVersion: targetVersion,
+        supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
+        versionLocalizations,
+        appInfoLocalizations,
+        githubDraftStatus: "published",
+      });
+      upsertStoreSubmissionDraft(project, draft);
+      s.set("projects", projects);
+      return draft;
+    },
+  );
 
 }

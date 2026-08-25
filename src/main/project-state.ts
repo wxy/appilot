@@ -123,9 +123,21 @@ export function upsertStoreSubmissionDraft(
 ): StoreSubmissionDraft[] {
   const drafts = getStoreSubmissionDrafts(project);
   const index = drafts.findIndex((item) => item.id === draft.id);
-  const next = index >= 0
+  const withDraft = index >= 0
     ? drafts.map((item) => item.id === draft.id ? draft : item)
     : [draft, ...drafts];
+  // Identity by appVersion: one copy per (productId, appVersion). A draft
+  // relinked to a newer release (different releaseTag → different id) replaces
+  // the previous entry for the same target version instead of duplicating it.
+  const version = normalizeVersionKey(String(draft.appVersion || ""));
+  const next = version
+    ? withDraft.filter(
+        (item) =>
+          item.id === draft.id ||
+          item.productId !== draft.productId ||
+          normalizeVersionKey(String(item.appVersion || "")) !== version,
+      )
+    : withDraft;
   project.storeSubmissionDrafts = next.slice(0, 100);
   return project.storeSubmissionDrafts;
 }
@@ -138,6 +150,62 @@ export function findStoreSubmissionDraft(
   return getStoreSubmissionDrafts(project).find(
     (item) => item.id === submissionDraftId(project.id, productId, releaseTag),
   ) || null;
+}
+
+/** Find the copy draft for a target version across any source release. */
+export function findDraftByVersion(
+  project: any,
+  productId: string,
+  appVersion: string,
+): StoreSubmissionDraft | null {
+  const version = normalizeVersionKey(appVersion);
+  if (!version) return null;
+  return getStoreSubmissionDrafts(project)
+    .filter(
+      (item) =>
+        item.productId === productId &&
+        normalizeVersionKey(String(item.appVersion || "")) === version,
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt || "").getTime() -
+        new Date(a.updatedAt || "").getTime(),
+    )[0] || null;
+}
+
+/**
+ * Migrate existing drafts to the appVersion identity: one copy per
+ * (productId, appVersion), keeping the newest updatedAt. Returns true when
+ * duplicates were removed.
+ */
+export function normalizeDraftIdentity(project: any): boolean {
+  const drafts = getStoreSubmissionDrafts(project);
+  const sorted = [...drafts].sort(
+    (a, b) =>
+      new Date(b.updatedAt || "").getTime() -
+      new Date(a.updatedAt || "").getTime(),
+  );
+  const seen = new Set<string>();
+  const next: StoreSubmissionDraft[] = [];
+  let removed = false;
+  for (const draft of sorted) {
+    const version = normalizeVersionKey(String(draft.appVersion || ""));
+    const key = version
+      ? `${draft.productId}::${version}`
+      : `${draft.productId}::no-version::${draft.id}`;
+    if (seen.has(key)) {
+      removed = true;
+      continue;
+    }
+    seen.add(key);
+    next.push(draft);
+  }
+  if (removed) project.storeSubmissionDrafts = next.slice(0, 100);
+  return removed;
+}
+
+function normalizeVersionKey(value: string): string {
+  return String(value || "").trim().replace(/^v/i, "");
 }
 
 export function isProductPostRelease(project: any, product: any): boolean {
