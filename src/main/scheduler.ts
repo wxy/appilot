@@ -1,5 +1,6 @@
 import { log } from "../engine/logger";
 import { powerMonitor } from "electron";
+import { notifyDataChanged } from "./data-sync";
 import {
   enrichKeywordFromSnapshots,
   evaluatePause,
@@ -491,6 +492,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       }
       ranksAll[project.id] = rankById;
       store.set("competitorRankSnapshots", ranksAll);
+      notifyDataChanged("competitors");
     }
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
@@ -526,6 +528,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     responseBytes,
   });
   store.set("rankExecutions", executions.slice(-5000));
+  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
@@ -555,6 +558,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       : [];
     latestProduct.rankSnapshots = appendRankSnapshots(previous, [snapshot]);
     store.set("projects", latestProjects);
+    notifyDataChanged("rank");
   }
 }
 
@@ -617,6 +621,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       syncedAt: new Date().toISOString(),
     };
     store.set("githubSyncCache", all);
+    notifyDataChanged("releases");
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
@@ -648,6 +653,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
     responseBytes,
   });
   store.set("rankExecutions", executions.slice(-5000));
+  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
@@ -738,6 +744,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
       }
       all[task.projectId] = byId;
       store.set("competitorSnapshots", all);
+      notifyDataChanged("competitors");
     }
 
     const { fetchIssues, mergeFeedbackItems, normalizeIssue, reviewsToFeedbackItems } =
@@ -760,6 +767,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
       lastSyncedAt: new Date().toISOString(),
     };
     store.set("feedback", feedbackStore);
+    notifyDataChanged("feedback");
 
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
@@ -780,6 +788,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
   const executions: any[] = Array.isArray(store.get("rankExecutions")) ? store.get("rankExecutions") : [];
   executions.push({ ts: new Date().toISOString(), productId: task.projectId, kind: "ops-sync", status, durationMs });
   store.set("rankExecutions", executions.slice(-5000));
+  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
@@ -813,6 +822,7 @@ async function runReviewsSyncTask(store: AppStore, task: ReviewsSyncTask): Promi
   }
   all[task.productId] = perProduct;
   store.set("reviews", all);
+  notifyDataChanged("reviews");
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastStatus = "success";
@@ -859,6 +869,7 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
     fetchedAt: new Date().toISOString(),
   };
   store.set("ascCache", all);
+  notifyDataChanged("asc");
 
   // Freeze against the actual store copy once a version is live: the store is
   // the final truth. Applies to versions that just became READY_FOR_SALE and

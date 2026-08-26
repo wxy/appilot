@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld("appilot", {
   getVersion: (): Promise<string> => ipcRenderer.invoke("app:getVersion"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
   openAppPage: (url: string) => ipcRenderer.invoke("shell:openAppPage", url),
+  onDataChanged: (callback: (scope: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, scope: string) => callback(scope);
+    ipcRenderer.on("data:changed", listener);
+    return () => ipcRenderer.removeListener("data:changed", listener);
+  },
   revealInFolder: (localPath: string): Promise<boolean> =>
     ipcRenderer.invoke("shell:revealInFolder", localPath),
 

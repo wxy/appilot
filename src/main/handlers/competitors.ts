@@ -6,6 +6,7 @@ import {
 import { runOpsSyncNow } from "../scheduler";
 import { getStore } from "../store";
 import { assertNonEmptyString } from "../util";
+import { notifyDataChanged } from "../data-sync";
 
 function competitorsFor(store: any, projectId: string): any[] {
   return (store.get("competitors") || {})[projectId] || [];
@@ -46,6 +47,7 @@ export function registerCompetitorsHandlers(): void {
       ? [...list.slice(0, index), normalized, ...list.slice(index + 1)]
       : [...list, normalized];
     saveCompetitors(s, projectId, next);
+    notifyDataChanged("competitors");
     return next;
   });
 
@@ -58,6 +60,7 @@ export function registerCompetitorsHandlers(): void {
       projectId,
       competitorsFor(s, projectId).filter((item: any) => item.id !== competitorId),
     );
+    notifyDataChanged("competitors");
     return true;
   });
 
@@ -120,6 +123,7 @@ export function registerCompetitorsHandlers(): void {
     }
     ranksAll[projectId] = rankById;
     s.set("competitorRankSnapshots", ranksAll);
+    notifyDataChanged("competitors");
     return true;
   });
 

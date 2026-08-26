@@ -49,6 +49,14 @@ export function CompetitorPanel({
       .catch(() => setCompetitors([]));
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
+  // 主进程数据变更推送：竞品数据更新时自动刷新。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if ((e as CustomEvent).detail === "competitors") load();
+    };
+    window.addEventListener("appilot:data-changed", handler);
+    return () => window.removeEventListener("appilot:data-changed", handler);
+  }, [load]);
 
   // Keep the search box in sync with the keyword selected in the matrix.
   useEffect(() => {
