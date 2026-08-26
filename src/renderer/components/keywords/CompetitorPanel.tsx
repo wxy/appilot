@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
-import { formatHumanTime, languageLabel } from "../../lib/format";
+import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 
@@ -173,37 +173,12 @@ export function CompetitorPanel({
     if (rank <= 200) return "bg-yellow-300/80 text-yellow-950";
     return "bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700/70 dark:text-zinc-300";
   };
-  // 自己始终可见：结果中缺失时构造占位，且排在最前。
   const ownTrackId = String(product?.trackId ?? "");
-  const selfCandidate = product?.trackName
-    ? {
-        trackId: ownTrackId,
-        trackName: String(product.trackName),
-        genre: "",
-        averageUserRating: null,
-        screenshotUrl: null,
-        subtitle: null,
-        description: null,
-        trackViewUrl: null,
-        country: "",
-        countries: [],
-        ranks: {},
-      }
-    : null;
   const hasSelfInResults = candidates.some((c) => String(c.trackId) === ownTrackId);
-  const orderedCandidates = [
-    ...(hasSelfInResults
-      ? []
-      : selfCandidate
-        ? [selfCandidate]
-        : []),
-    ...candidates.filter((c) => String(c.trackId) !== ownTrackId),
-    ...candidates.filter((c) => String(c.trackId) === ownTrackId),
-  ];
   const PAGE_SIZE = 12;
-  const totalPages = Math.max(1, Math.ceil(orderedCandidates.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(candidates.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
-  const pageCandidates = orderedCandidates.slice(
+  const pageCandidates = candidates.slice(
     safePage * PAGE_SIZE,
     safePage * PAGE_SIZE + PAGE_SIZE,
   );
@@ -233,6 +208,12 @@ export function CompetitorPanel({
 
       {candidates.length > 0 && (
         <>
+        {!hasSelfInResults && (
+          <p className="mb-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+            当前平台（{platformLabel(product?.platform || "unknown")}）的搜索结果中未包含本应用
+            ——你可能在 iOS 商店排名较高，可切换平台后查看。
+          </p>
+        )}
         <div
           className={cn(
             "mb-4 grid gap-3",
