@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -70,6 +72,7 @@ export function KeywordsPage() {
   >({});
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
+  const [showDistribution, setShowDistribution] = useState(false);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
@@ -237,7 +240,54 @@ export function KeywordsPage() {
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
-  const matrixGridTemplate = `minmax(300px, 3fr) repeat(${matrixColumns.length}, minmax(80px, 0.9fr)) 44px`;
+  // 左列固定 300px（文字/按钮不换行），商店列固定 88px（可视约 5 列，多余滚动）。
+  const matrixGridTemplate = `300px repeat(${matrixColumns.length}, 88px) 44px`;
+  const RANK_BUCKETS = [
+    { key: "top10", label: "TOP10", color: "#14532d" },
+    { key: "r11_50", label: "11–50", color: "#16a34a" },
+    { key: "r51_100", label: "51–100", color: "#4ade80" },
+    { key: "r101_200", label: "101–200", color: "#bbf7d0" },
+    { key: "unranked", label: "未进榜", color: "#e4e4e7" },
+  ] as const;
+  // 最新快照各商店排名区间分布（商店按 TOP10 数量排序，其次 11–50）。
+  const distributionData: {
+    storefront: string;
+    top10: number;
+    r11_50: number;
+    r51_100: number;
+    r101_200: number;
+    unranked: number;
+  }[] = matrixColumns
+    .map((column) => {
+      const buckets: Record<string, number> = {
+        top10: 0,
+        r11_50: 0,
+        r51_100: 0,
+        r101_200: 0,
+        unranked: 0,
+      };
+      for (const row of matrixRows) {
+        const cell = matrixCellState(rankSnapshots, row.keyword, column.storefront);
+        const rank = cell.rank;
+        if (rank == null || cell.beyond200) buckets.unranked += 1;
+        else if (rank <= 10) buckets.top10 += 1;
+        else if (rank <= 50) buckets.r11_50 += 1;
+        else if (rank <= 100) buckets.r51_100 += 1;
+        else buckets.r101_200 += 1;
+      }
+      return {
+        storefront: storefrontDisplayName(column.storefront),
+        top10: buckets.top10,
+        r11_50: buckets.r11_50,
+        r51_100: buckets.r51_100,
+        r101_200: buckets.r101_200,
+        unranked: buckets.unranked,
+      };
+    })
+    .sort(
+      (a, b) =>
+        (b.top10 - a.top10) || (b.r11_50 - a.r11_50) || (b.r51_100 - a.r51_100),
+    );
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
@@ -346,7 +396,7 @@ export function KeywordsPage() {
         setSearchParams(next, { replace: true });
       }}
       className={cn(
-        "grid items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+        "grid min-w-max items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
         dimmed && "opacity-55",
         !dimmed && "bg-emerald-50/30 dark:bg-emerald-500/[0.04]",
         keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
@@ -846,6 +896,19 @@ export function KeywordsPage() {
               <div className="mt-1.5 flex flex-wrap gap-2">
                 <button
                   type="button"
+                  onClick={() => setShowDistribution((v) => !v)}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+                    showDistribution
+                      ? "border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-emerald-500/50 hover:text-emerald-600 dark:hover:text-emerald-400",
+                  )}
+                  title="最新快照各商店排名分布（堆叠面积图）"
+                >
+                  分布
+                </button>
+                <button
+                  type="button"
                   onClick={() => setViewLang("global")}
                   className={cn(
                     "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
@@ -904,9 +967,41 @@ export function KeywordsPage() {
 
             </div>
 
+            {showDistribution && (
+              <div className="border-b border-zinc-100 dark:border-zinc-800 px-5 py-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    排名分布（最新快照）
+                  </h3>
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                    商店按 TOP10 数量排序；绿色越深代表排名越靠前的关键词越多
+                  </span>
+                </div>
+                <ResponsiveContainer width="100%" height={260}>
+                  <AreaChart data={distributionData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="text-zinc-200 dark:text-zinc-800" />
+                    <XAxis dataKey="storefront" tick={{ fontSize: 11 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    {RANK_BUCKETS.map((bucket) => (
+                      <Area
+                        key={bucket.key}
+                        type="monotone"
+                        dataKey={bucket.key}
+                        stackId="1"
+                        stroke={bucket.color}
+                        fill={bucket.color}
+                        name={bucket.label}
+                      />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
             <div className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
             <div
-              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-20"
+              className="grid min-w-max items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-20"
               style={{ gridTemplateColumns: matrixGridTemplate }}
             >
               <div className="py-2.5 pl-5 pr-4 whitespace-nowrap sticky left-0 z-30 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
