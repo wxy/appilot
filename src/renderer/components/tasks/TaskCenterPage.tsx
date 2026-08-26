@@ -33,6 +33,7 @@ export function TaskCenterPage() {
     };
     tasks: any[];
   } | null>(null);
+  const [accel, setAccel] = useState(false);
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
@@ -55,6 +56,13 @@ export function TaskCenterPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
+  }, []);
+
+  // 读取当前加速模式状态。
+  useEffect(() => {
+    (window as any).appilot?.scheduler?.status()
+      .then((status: any) => setAccel(Boolean(status?.accel)))
+      .catch(() => undefined);
   }, []);
 
   // 主进程数据变更推送：任务状态变化时立即刷新（不用等 15 秒轮询）。
@@ -111,6 +119,40 @@ export function TaskCenterPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !accel;
+              setAccel(next);
+              (window as any).appilot?.scheduler?.setAccel(next)
+                .then(() => {
+                  (window as any).appilot?.scheduler?.list()
+                    .then(setData)
+                    .catch(() => undefined);
+                })
+                .catch(() => setAccel(!next));
+            }}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+              accel
+                ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
+            )}
+            title={
+              accel
+                ? "加速模式已开启：每 10 秒一轮、每轮最多 40 个任务，用于快速清空积压"
+                : "开启加速模式，以更快速度处理积压任务"
+            }
+          >
+            {accel ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                加速模式（开）
+              </>
+            ) : (
+              "加速模式"
+            )}
+          </button>
           {nowRunning && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />

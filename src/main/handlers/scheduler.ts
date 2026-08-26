@@ -4,6 +4,7 @@ import {
   isSchedulerTimerActive,
   schedulerStatusSnapshot,
   schedulerTick,
+  setSchedulerAccel,
   type ScheduledTask,
 } from "../scheduler";
 import { computeRankSchedulerStatus } from "../scheduler-status";
@@ -16,8 +17,14 @@ export function registerSchedulerHandlers(): void {
     const now = Date.now();
     return {
       enabled: isSchedulerTimerActive(),
+      accel: s.get("schedulerAccel") === true,
       ...computeRankSchedulerStatus(tasks, now),
     };
+  });
+
+  ipcMain.handle("scheduler:setAccel", async (_event, enabled: boolean) => {
+    await setSchedulerAccel(Boolean(enabled));
+    return true;
   });
 
   ipcMain.handle("scheduler:list", async () => {

@@ -102,6 +102,12 @@ let overdueScattered = false;
 let powerListenersRegistered = false;
 /** How many rank tasks one scheduler tick may execute (throughput vs load). */
 const MAX_RANK_TASKS_PER_TICK = 8;
+const MAX_RANK_TASKS_PER_TICK_ACCEL = 40;
+const TICK_INTERVAL_MS = 60_000;
+const TICK_INTERVAL_ACCEL_MS = 10_000;
+const TASK_BREAK_MS = 1500;
+const TASK_BREAK_ACCEL_MS = 200;
+let schedulerPaused = false;
 /** What the scheduler is executing right now (for the timeline UI). */
 let nowRunningTask: RunningTaskInfo | null = null;
 
@@ -924,6 +930,7 @@ export async function schedulerTick(): Promise<void> {
     if (draftsChanged) store.set("projects", projectsForMigration);
 
     const now = Date.now();
+    const accel = store.get("schedulerAccel") === true;
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
     // Oldest-overdue first: array order is per-project, so an early project can
     // otherwise starve every later project (GloWalk sat enabled but untouched
@@ -937,7 +944,10 @@ export async function schedulerTick(): Promise<void> {
       .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime());
     // Run whole keyword groups back-to-back so a group's round completes as
     // early as possible, then take the tick's throughput cap.
-    const selected = prioritizeGroupCompletion(due).slice(0, MAX_RANK_TASKS_PER_TICK);
+    const selected = prioritizeGroupCompletion(due).slice(
+      0,
+      accel ? MAX_RANK_TASKS_PER_TICK_ACCEL : MAX_RANK_TASKS_PER_TICK,
+    );
 
     for (const task of selected) {
       if (task.kind === "github-sync") {
@@ -951,7 +961,9 @@ export async function schedulerTick(): Promise<void> {
       } else {
         await runRankTask(store, task);
       }
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) =>
+        setTimeout(resolve, accel ? TASK_BREAK_ACCEL_MS : TASK_BREAK_MS),
+      );
     }
     // Merge the tick's per-task updates into the latest task list instead of
     // overwriting it: concurrent handlers (e.g. projects:remove) may have
@@ -985,25 +997,33 @@ async function scatterOverdueTasks(store: AppStore): Promise<void> {
   }
 }
 
+async function schedulerLoopOnce(): Promise<void> {
+  const store = await getStore();
+  const accel = store.get("schedulerAccel") === true;
+  // 加速模式跳过积压分散：让任务按序立即处理，而不是散到未来 120 分钟。
+  if (!overdueScattered && !accel) {
+    await scatterOverdueTasks(store);
+    overdueScattered = true;
+  }
+  await schedulerTick();
+  if (schedulerPaused) return;
+  schedulerTimer = setTimeout(
+    () => void schedulerLoopOnce(),
+    accel ? TICK_INTERVAL_ACCEL_MS : TICK_INTERVAL_MS,
+  );
+}
+
 function startSchedulerLoop(): void {
   if (schedulerTimer) return;
-  void (async () => {
-    const store = await getStore();
-    if (!overdueScattered) {
-      await scatterOverdueTasks(store);
-      overdueScattered = true;
-    }
-    schedulerTimer = setInterval(() => {
-      void schedulerTick();
-    }, 60_000);
-    await schedulerTick();
-  })();
+  schedulerPaused = false;
+  void schedulerLoopOnce();
 }
 
 /** Stop the scheduler timer so sleep is not disturbed while the system suspends. */
 export function pauseTaskScheduler(): void {
+  schedulerPaused = true;
   if (schedulerTimer) {
-    clearInterval(schedulerTimer);
+    clearTimeout(schedulerTimer);
     schedulerTimer = null;
   }
 }
@@ -1012,6 +1032,35 @@ export function pauseTaskScheduler(): void {
 export function resumeTaskScheduler(): void {
   overdueScattered = false;
   startSchedulerLoop();
+}
+
+/**
+ * 加速模式：更快的调度节奏（10 秒一轮、每轮最多 40 个任务、任务间 200ms），
+ * 用于快速清空积压（如重建某平台的全部排名数据）。
+ */
+export async function setSchedulerAccel(enabled: boolean): Promise<void> {
+  const store = await getStore();
+  store.set("schedulerAccel", Boolean(enabled));
+  if (enabled) {
+    // 让尚未到期的任务立即到期，加速按序处理。
+    const tasks: any[] = store.get("scheduledTasks") || [];
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const task of tasks) {
+      if (task.enabled && new Date(task.nextRunAt).getTime() > Date.now()) {
+        task.nextRunAt = now;
+        changed = true;
+      }
+    }
+    if (changed) store.set("scheduledTasks", tasks);
+  }
+  // 立即应用新的调度节奏。
+  if (schedulerTimer) {
+    clearTimeout(schedulerTimer);
+    schedulerTimer = null;
+  }
+  startSchedulerLoop();
+  return;
 }
 
 export function startTaskScheduler(): void {
