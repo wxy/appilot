@@ -17,6 +17,7 @@ export function CompetitorPanel({
     supportedLanguages?: { code: string }[];
     trackId?: string | null;
     bundleId?: string | null;
+    trackName?: string | null;
   };
   defaultTerm: string;
   viewLang: string;
@@ -31,6 +32,7 @@ export function CompetitorPanel({
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
   const [refreshingRanks, setRefreshingRanks] = useState(false);
+  const [page, setPage] = useState(0);
   const [searchError, setSearchError] = useState("");
 
   const load = useCallback(() => {
@@ -171,6 +173,40 @@ export function CompetitorPanel({
     if (rank <= 200) return "bg-yellow-300/80 text-yellow-950";
     return "bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700/70 dark:text-zinc-300";
   };
+  // 自己始终可见：结果中缺失时构造占位，且排在最前。
+  const ownTrackId = String(product?.trackId ?? "");
+  const selfCandidate = product?.trackName
+    ? {
+        trackId: ownTrackId,
+        trackName: String(product.trackName),
+        genre: "",
+        averageUserRating: null,
+        screenshotUrl: null,
+        subtitle: null,
+        description: null,
+        trackViewUrl: null,
+        country: "",
+        countries: [],
+        ranks: {},
+      }
+    : null;
+  const hasSelfInResults = candidates.some((c) => String(c.trackId) === ownTrackId);
+  const orderedCandidates = [
+    ...(hasSelfInResults
+      ? []
+      : selfCandidate
+        ? [selfCandidate]
+        : []),
+    ...candidates.filter((c) => String(c.trackId) !== ownTrackId),
+    ...candidates.filter((c) => String(c.trackId) === ownTrackId),
+  ];
+  const PAGE_SIZE = 12;
+  const totalPages = Math.max(1, Math.ceil(orderedCandidates.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageCandidates = orderedCandidates.slice(
+    safePage * PAGE_SIZE,
+    safePage * PAGE_SIZE + PAGE_SIZE,
+  );
 
   return (
     <div className="mt-8">
@@ -196,6 +232,7 @@ export function CompetitorPanel({
       )}
 
       {candidates.length > 0 && (
+        <>
         <div
           className={cn(
             "mb-4 grid gap-3",
@@ -204,7 +241,7 @@ export function CompetitorPanel({
               : "grid-cols-3 sm:grid-cols-4 lg:grid-cols-6",
           )}
         >
-          {candidates.slice(0, 12).map((candidate) => {
+          {pageCandidates.map((candidate) => {
             const isSelf = String(candidate.trackId) === String(product?.trackId ?? "");
             const isAdded = competitors.some(
               (c: any) => String(c.trackId) === String(candidate.trackId),
@@ -259,22 +296,11 @@ export function CompetitorPanel({
                           : "")}
                     </p>
                   )}
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                    {(candidate.countries && candidate.countries.length > 0) && (
-                      <>
-                        {candidate.countries
-                          .map(
-                            (c: string) =>
-                              `${storefrontDisplayName(c)}#${candidate.ranks?.[c] ?? "?"}`,
-                          )
-                          .join(" ")}
-                        {" · "}
-                      </>
-                    )}
-                    {candidate.genre || "未知分类"}
-                    {candidate.averageUserRating ? ` · ★${Number(candidate.averageUserRating).toFixed(1)}` : ""}
-                  </p>
-                  <div className="mt-auto pt-1.5">
+                  <div className="mt-auto pt-1.5 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                      {candidate.genre || "未知分类"}
+                      {candidate.averageUserRating ? ` · ★${Number(candidate.averageUserRating).toFixed(1)}` : ""}
+                    </p>
                     {isSelf ? (
                       <span className="inline-flex px-2 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400">
                         当前应用
@@ -299,11 +325,47 @@ export function CompetitorPanel({
                       </button>
                     )}
                   </div>
+                  {(candidate.countries && candidate.countries.length > 0) && (
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                      {candidate.countries
+                        .map(
+                          (c: string) =>
+                            `${storefrontDisplayName(c)}${
+                              candidate.ranks?.[c] ? `#${candidate.ranks[c]}` : ""
+                            }`,
+                        )
+                        .join("  ")}
+                    </p>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
+        {totalPages > 1 && (
+          <div className="mb-4 flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((v) => Math.max(0, v - 1))}
+              disabled={safePage === 0}
+              className={btnSmSecondary}
+            >
+              上一页
+            </button>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              {safePage + 1} / {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((v) => Math.min(totalPages - 1, v + 1))}
+              disabled={safePage >= totalPages - 1}
+              className={btnSmSecondary}
+            >
+              下一页
+            </button>
+          </div>
+        )}
+        </>
       )}
 
       {competitors.length > 0 && (
