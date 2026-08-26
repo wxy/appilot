@@ -125,8 +125,8 @@ export function CompetitorPanel({
           className={cn(
             "mb-4 grid gap-3",
             product?.platform === "macos"
-              ? "grid-cols-2 md:grid-cols-3"
-              : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4",
+              ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"
+              : "grid-cols-3 sm:grid-cols-4 lg:grid-cols-6",
           )}
         >
           {candidates.slice(0, 12).map((candidate) => {

@@ -21,8 +21,10 @@ export function registerShellHandlers(): void {
     if (!/^https:\/\//i.test(url)) {
       throw new Error("Only https URLs can be opened in-app");
     }
+    // 去掉 iTunes 的 ?uo=4 打开参数（可能导致跳转/打开客户端）。
+    const cleanUrl = url.replace(/\?uo=\d+$/, "");
     if (appPageWindow && !appPageWindow.isDestroyed()) {
-      appPageWindow.loadURL(url);
+      appPageWindow.loadURL(cleanUrl);
       appPageWindow.focus();
     } else {
       appPageWindow = new BrowserWindow({
@@ -35,7 +37,11 @@ export function registerShellHandlers(): void {
           sandbox: true,
         },
       });
-      appPageWindow.loadURL(url);
+      // 标准桌面 UA：避免苹果对含 Electron 的 UA 返回降级/移动页面。
+      appPageWindow.webContents.setUserAgent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      );
+      appPageWindow.loadURL(cleanUrl);
       appPageWindow.on("closed", () => {
         appPageWindow = null;
       });
