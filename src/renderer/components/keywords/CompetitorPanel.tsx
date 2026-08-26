@@ -32,6 +32,9 @@ export function CompetitorPanel({
   const [candidates, setCandidates] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
+  const [addMessage, setAddMessage] = useState("");
+  const [linkCandidates, setLinkCandidates] = useState<Record<string, any[]>>({});
+  const [linkingId, setLinkingId] = useState<string | null>(null);
   const [refreshingRanks, setRefreshingRanks] = useState(false);
   const [page, setPage] = useState(0);
   const [searchError, setSearchError] = useState("");
@@ -96,10 +99,13 @@ export function CompetitorPanel({
   const handleAdd = async (candidate: any) => {
     setAdding(candidate.trackId);
     try {
-      await (window as any).appilot?.competitors?.save(projectId, {
+      const platform = product?.platform === "macos" ? "macos" : "ios";
+      const res = await (window as any).appilot?.competitors?.save(projectId, {
         name: candidate.trackName,
         trackId: candidate.trackId,
-        platform: product?.platform || "unknown",
+        platform,
+        // 按平台写入 trackId：同一品牌可再关联另一平台的列表。
+        trackIds: { [platform]: candidate.trackId },
         githubUrl: null,
         notes: "",
         // 关联当前关键词：之后按 (竞品, 关键词, 商店) 采集竞品排名。
@@ -109,10 +115,55 @@ export function CompetitorPanel({
           ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
           : [],
       });
+      setAddMessage(
+        res?.merged
+          ? "该竞品已存在，已自动关联当前平台版本。"
+          : "",
+      );
       load();
     } finally {
       setAdding(null);
     }
+  };
+
+  // 当前视图平台：竞品矩阵只看该平台的排名，避免 iOS/macOS 数据混比。
+  const viewPlatform: "ios" | "macos" =
+    product?.platform === "macos" ? "macos" : "ios";
+  const otherPlatform: "ios" | "macos" = viewPlatform === "macos" ? "ios" : "macos";
+  const competitorTrackId = (competitor: any, platform: "ios" | "macos"): string | null => {
+    const ids = { ...(competitor.trackIds || {}) };
+    if (competitor.trackId && competitor.platform === platform) {
+      ids[platform] = competitor.trackId;
+    }
+    return ids[platform] ? String(ids[platform]) : null;
+  };
+  const handleLinkSearch = async (competitor: any) => {
+    setLinkingId(competitor.id);
+    try {
+      const results = await (window as any).appilot?.competitors?.search({
+        term: competitor.name,
+        countries: countryOptions,
+        platform: otherPlatform,
+      });
+      setLinkCandidates((prev) => ({
+        ...prev,
+        [competitor.id]: (results || []).slice(0, 6),
+      }));
+    } catch {
+      setLinkCandidates((prev) => ({ ...prev, [competitor.id]: [] }));
+    } finally {
+      setLinkingId(null);
+    }
+  };
+  const handleLinkPlatform = async (competitor: any, candidate: any) => {
+    await (window as any).appilot?.competitors?.linkPlatform(
+      projectId,
+      competitor.id,
+      otherPlatform,
+      candidate.trackId,
+    );
+    setLinkCandidates((prev) => ({ ...prev, [competitor.id]: undefined }));
+    load();
   };
 
   const appStorePageUrl = (candidate: any) =>
@@ -163,7 +214,11 @@ export function CompetitorPanel({
     const item = (competitorRanks[competitor.id] || []).find(
       (r: any) =>
         r.keyword === activeLink.keyword &&
-        r.storefront === storefront,
+        r.storefront === storefront &&
+        // 兼容旧数据：无 platform 字段的条目按竞品原平台判定。
+        (r.platform == null
+          ? competitor.platform === viewPlatform
+          : r.platform === viewPlatform),
     );
     return item?.rank ?? null;
   };
@@ -184,6 +239,13 @@ export function CompetitorPanel({
   };
   const ownTrackId = String(product?.trackId ?? "");
   const hasSelfInResults = candidates.some((c) => String(c.trackId) === ownTrackId);
+  const isAddedCandidate = (candidate: any) =>
+    competitors.some((c: any) => {
+      const ids = [c.trackId, ...Object.values(c.trackIds || {})]
+        .filter(Boolean)
+        .map(String);
+      return ids.includes(String(candidate.trackId));
+    });
   const PAGE_SIZE = 12;
   const totalPages = Math.max(1, Math.ceil(candidates.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -214,6 +276,9 @@ export function CompetitorPanel({
       {searchError && (
         <p className="mb-4 text-xs text-red-600 dark:text-red-400">{searchError}</p>
       )}
+      {addMessage && (
+        <p className="mb-4 text-xs text-amber-600 dark:text-amber-400">{addMessage}</p>
+      )}
 
       {candidates.length > 0 && (
         <>
@@ -233,9 +298,7 @@ export function CompetitorPanel({
         >
           {pageCandidates.map((candidate) => {
             const isSelf = String(candidate.trackId) === String(product?.trackId ?? "");
-            const isAdded = competitors.some(
-              (c: any) => String(c.trackId) === String(candidate.trackId),
-            );
+            const isAdded = isAddedCandidate(candidate);
             return (
               <div
                 key={candidate.trackId}
@@ -454,6 +517,21 @@ export function CompetitorPanel({
                           >
                             {c.name}
                           </button>
+                          <span className="flex gap-0.5">
+                            {(["ios", "macos"] as const).map((p) => (
+                              <span
+                                key={p}
+                                className={cn(
+                                  "px-1 py-px rounded text-[9px] font-medium leading-none",
+                                  competitorTrackId(c, p)
+                                    ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600",
+                                )}
+                              >
+                                {p === "macos" ? "macOS" : "iOS"}
+                              </span>
+                            ))}
+                          </span>
                           <button
                             type="button"
                             onClick={() => void handleRemove(c.id)}
@@ -468,9 +546,13 @@ export function CompetitorPanel({
                           {(() => {
                             const latestRankAt = (competitorRanks[c.id] || []).reduce(
                               (latest: string | null, r: any) =>
-                                !latest || new Date(r.checkedAt).getTime() > new Date(latest).getTime()
-                                  ? r.checkedAt
-                                  : latest,
+                                r.platform != null && r.platform !== viewPlatform
+                                  ? latest
+                                  : !latest ||
+                                      new Date(r.checkedAt).getTime() >
+                                        new Date(latest).getTime()
+                                    ? r.checkedAt
+                                    : latest,
                               null,
                             );
                             return latestRankAt
@@ -478,19 +560,63 @@ export function CompetitorPanel({
                               : " · 排名尚未查询";
                           })()}
                         </div>
+                        {!competitorTrackId(c, viewPlatform) && (
+                          <div className="mt-1">
+                            <button
+                              type="button"
+                              onClick={() => void handleLinkSearch(c)}
+                              disabled={linkingId === c.id}
+                              className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline"
+                            >
+                              {linkingId === c.id
+                                ? "搜索中…"
+                                : `关联 ${platformLabel(otherPlatform)} 版本`}
+                            </button>
+                            {linkCandidates[c.id] && (
+                              <div className="mt-1 flex flex-col gap-1">
+                                {linkCandidates[c.id].length === 0 ? (
+                                  <span className="text-[10px] text-zinc-400">
+                                    未找到同名应用
+                                  </span>
+                                ) : (
+                                  linkCandidates[c.id].map((cand: any) => (
+                                    <div
+                                      key={cand.trackId}
+                                      className="flex items-center justify-between gap-2 text-[10px]"
+                                    >
+                                      <span className="truncate text-zinc-600 dark:text-zinc-400">
+                                        {cand.trackName}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleLinkPlatform(c, cand)}
+                                        className="text-amber-600 dark:text-amber-400 hover:underline shrink-0"
+                                      >
+                                        关联
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </td>
                       {stores.map((store) => {
+                        const hasPlatform = Boolean(competitorTrackId(c, viewPlatform));
                         const rank = competitorRankAt(c, store);
                         return (
                           <td
                             key={store}
                             className={cn(
                               "py-2 px-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap",
-                              rankCellClass(rank),
+                              hasPlatform
+                                ? rankCellClass(rank)
+                                : "bg-zinc-50 dark:bg-zinc-900 text-zinc-300 dark:text-zinc-600",
                             )}
                           >
                             <ValueFlash value={rank}>
-                              {rank ?? "未上榜"}
+                              {!hasPlatform ? "未上架" : rank ?? "未上榜"}
                             </ValueFlash>
                           </td>
                         );

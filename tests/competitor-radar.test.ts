@@ -1,6 +1,11 @@
 import {
   createCompetitor,
+  competitorPlatforms,
+  competitorTrackIdFor,
   fetchCompetitorSnapshot,
+  findCompetitorByName,
+  migrateCompetitor,
+  normalizeCompetitorName,
   searchCompetitorCandidates,
   searchCompetitorCandidatesAcross,
 } from "../src/engine/competitor-radar";
@@ -58,7 +63,14 @@ async function run() {
     });
     check(candidates.length === 1 && candidates[0]?.trackId === "1", "排除自己（trackId/bundleId）");
     check(candidates[0]?.country === "us", "候选带来源商店");
+    check(candidates[0]?.platform === "ios", "候选带平台标记（默认 software → ios）");
     check(candidates[0]?.screenshotUrl === "https://example.com/1.png" && candidates[0]?.subtitle === "Subtitle here", "候选带截图与副标题");
+    const macCandidates = await searchCompetitorCandidates({
+      term: "walk",
+      country: "us",
+      entity: "macSoftware",
+    });
+    check(macCandidates[0]?.platform === "macos", "macSoftware 搜索候选标记为 macos");
     const across = await searchCompetitorCandidatesAcross({
       term: "walk",
       countries: ["us", "sg"],
@@ -81,6 +93,13 @@ async function run() {
     check(snapshot.date === new Date().toISOString().slice(0, 10), "快照 date 为当天");
     const snapSg = await fetchCompetitorSnapshot({ ...competitor, trackId: "1" }, null, "sg");
     check(snapSg.country === "sg", "快照记录来源商店");
+    const snapMac = await fetchCompetitorSnapshot(
+      { ...competitor, trackIds: { ios: "123", macos: "456" } },
+      null,
+      "us",
+      "macos",
+    );
+    check(snapMac.platform === "macos", "快照记录平台");
   } catch (err: any) {
     check(false, `competitor-radar 异常: ${err.message}`);
   } finally {
@@ -89,3 +108,58 @@ async function run() {
   }
 }
 void run();
+
+check(
+  normalizeCompetitorName("  AI Pulse  ") === "ai pulse",
+  "竞品名称归一化（去空格/小写）",
+);
+{
+  const legacy = migrateCompetitor({
+    id: "cid-1",
+    name: "Comp",
+    trackId: "123",
+    platform: "ios",
+    githubUrl: null,
+    notes: "",
+    addedAt: "2026-08-24T00:00:00Z",
+  });
+  check(
+    legacy.trackIds?.ios === "123" && legacy.trackIds?.macos == null,
+    "旧数据迁移：trackId+platform 填入按平台字段",
+  );
+  check(
+    competitorTrackIdFor(legacy, "ios") === "123" &&
+      competitorTrackIdFor(legacy, "macos") === null,
+    "按平台取 trackId（未上架平台为 null）",
+  );
+  check(
+    JSON.stringify(competitorPlatforms(legacy)) === JSON.stringify(["ios"]),
+    "只返回已上架平台",
+  );
+}
+{
+  const dual = migrateCompetitor({
+    id: "cid-2",
+    name: "Pulse",
+    trackId: "111",
+    platform: "macos",
+    trackIds: { ios: "222", macos: "111" },
+    githubUrl: null,
+    notes: "",
+    addedAt: "2026-08-24T00:00:00Z",
+  });
+  check(
+    competitorTrackIdFor(dual, "ios") === "222" &&
+      competitorTrackIdFor(dual, "macos") === "111",
+    "双平台 trackIds 分别取用",
+  );
+  const list = [dual];
+  check(
+    findCompetitorByName(list, " pulse ")?.id === "cid-2",
+    "同名竞品查找（忽略大小写/空格）",
+  );
+  check(findCompetitorByName(list, "Other") === null, "不同名不误合并");
+}
+
+if (errors) process.exit(1);
+console.log("\n🎉 All competitor-radar tests passed!");

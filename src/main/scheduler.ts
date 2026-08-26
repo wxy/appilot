@@ -473,8 +473,17 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
           link.language === task.queryLanguage,
       ),
     );
+    // 只传与当前产品平台一致的竞品 trackId：iOS 产品用 software 实体搜索，
+    // macOS 产品用 macSoftware，避免把另一平台的列表拿来对比。
+    const { competitorTrackIdFor, migrateCompetitor } = await import(
+      "../engine/competitor-radar"
+    );
+    const entityPlatform: "ios" | "macos" =
+      product?.platform === "macos" ? "macos" : "ios";
     const candidateTrackIds = linkedCompetitors
-      .map((competitor: any) => String(competitor.trackId || ""))
+      .map((competitor: any) =>
+        competitorTrackIdFor(migrateCompetitor(competitor), entityPlatform),
+      )
       .filter(Boolean);
     const result = await searchAppStoreRank({
       term: task.keyword,
@@ -501,19 +510,32 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       const rankById: Record<string, any[]> = ranksAll[project.id] || {};
       const checkedAt = new Date().toISOString();
       for (const competitor of linkedCompetitors) {
+        const competitorTrackId = competitorTrackIdFor(
+          migrateCompetitor(competitor),
+          entityPlatform,
+        );
+        // 该竞品未在当前平台（iOS/macOS）上架：不写排名条目，界面按
+        // trackIds 判定为“未上架”，而不是误显示“未上榜”。
+        if (!competitorTrackId) continue;
         const entry = {
           keyword: task.keyword,
           language: task.queryLanguage,
           storefront: task.storefront,
-          rank: result.candidateRanks[String(competitor.trackId)] ?? null,
+          platform: entityPlatform,
+          rank: result.candidateRanks[competitorTrackId] ?? null,
           checkedAt,
         };
-        // 同一 (关键词, 商店) 只保留最新一条，数据量 = 竞品 × 关键词 × 商店。
+        // 同一 (关键词, 商店, 平台) 只保留最新一条。
         const prev = rankById[competitor.id] || [];
         rankById[competitor.id] = [
           ...prev.filter(
             (item: any) =>
-              !(item.keyword === entry.keyword && item.storefront === entry.storefront),
+              !(
+                item.keyword === entry.keyword &&
+                item.storefront === entry.storefront &&
+                // 旧数据无 platform 字段，写入新条目时一并替换。
+                (item.platform == null || item.platform === entry.platform)
+              ),
           ),
           entry,
         ].slice(-300);
@@ -733,7 +755,9 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
     const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
     if (competitors.length > 0) {
       const {
+        competitorPlatforms,
         fetchCompetitorSnapshot,
+        migrateCompetitor,
       } = await import("../engine/competitor-radar");
       const { storefrontsForLanguage } = await import("../engine/storefronts");
       const all: Record<string, Record<string, any[]>> = store.get("competitorSnapshots") || {};
@@ -750,19 +774,33 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
         const effectiveCountries: string[] =
           countries.length > 0 ? countries : ["us"];
         const list = byId[competitor.id] || [];
-        for (const country of effectiveCountries) {
-          const snap = await fetchCompetitorSnapshot(competitor, token, country);
-          const key = `${snap.date}\u0000${country}`;
-          if (!list.some((item: any) => `${item.date}\u0000${item.country}` === key)) {
-            list.push(snap);
+        // 按平台分别采集快照，与排名对齐；未在该平台上架的竞品不采。
+        for (const platform of competitorPlatforms(migrateCompetitor(competitor))) {
+          for (const country of effectiveCountries) {
+            const snap = await fetchCompetitorSnapshot(
+              competitor,
+              token,
+              country,
+              platform,
+            );
+            const key = `${snap.date}\u0000${country}\u0000${platform}`;
+            if (
+              !list.some(
+                (item: any) =>
+                  `${item.date}\u0000${item.country}\u0000${item.platform}` === key,
+              )
+            ) {
+              list.push(snap);
+            }
           }
         }
         list.sort(
           (a: any, b: any) =>
             new Date(b.date).getTime() - new Date(a.date).getTime() ||
-            String(a.country || "").localeCompare(String(b.country || "")),
+            String(a.country || "").localeCompare(String(b.country || "")) ||
+            String(a.platform || "").localeCompare(String(b.platform || "")),
         );
-        byId[competitor.id] = list.slice(0, 90 * 8);
+        byId[competitor.id] = list.slice(0, 90 * 8 * 2);
       }
       all[task.projectId] = byId;
       store.set("competitorSnapshots", all);
