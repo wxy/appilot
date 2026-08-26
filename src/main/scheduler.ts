@@ -123,7 +123,9 @@ function appendExecution(store: AppStore, entry: Record<string, any>): Promise<v
         ? store.get("rankExecutions")
         : [];
       executions.push(entry);
-      store.set("rankExecutions", executions.slice(-5000));
+      // 加速会话可能一次写上千条；5000 上限会截断近 24h 数据导致
+      // 流量/入榜率统计波动（"清零又恢复"）。上限放宽并保留足够窗口。
+      store.set("rankExecutions", executions.slice(-20000));
     });
   return executionsWriteChain;
 }

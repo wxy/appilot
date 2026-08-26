@@ -285,7 +285,7 @@ export function TaskCenterPage() {
             label="下次执行"
             value={
               overview.overdue > 0
-                ? `待执行 ×${overview.overdue}`
+                ? `积压 ×${overview.overdue}`
                 : overview.nextDueAt
                   ? formatHumanTime(overview.nextDueAt)
                   : "—"
