@@ -72,8 +72,6 @@ export function KeywordsPage() {
   >({});
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
-  // 分布是独立查看模式（折线填充图）；全局/语言均为矩阵视图。
-  const [isDistributionView, setIsDistributionView] = useState(false);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
@@ -530,6 +528,21 @@ export function KeywordsPage() {
     </div>
   );
 
+  // 左右两块各自垂直滚动，滚动位置互相同步，保证表头各自冻结且行对齐。
+  const leftScrollRef = useRef<HTMLDivElement>(null);
+  const rightScrollRef = useRef<HTMLDivElement>(null);
+  const syncingScroll = useRef(false);
+  const syncScroll = (source: "left" | "right") => {
+    if (syncingScroll.current) return;
+    syncingScroll.current = true;
+    const from = source === "left" ? leftScrollRef.current : rightScrollRef.current;
+    const to = source === "left" ? rightScrollRef.current : leftScrollRef.current;
+    if (from && to) to.scrollTop = from.scrollTop;
+    requestAnimationFrame(() => {
+      syncingScroll.current = false;
+    });
+  };
+
   const rowsToRender: { row: (typeof matrixRows)[number]; dimmed: boolean }[] =
     matrixRows.length === 0
       ? []
@@ -983,22 +996,8 @@ export function KeywordsPage() {
               <div className="mt-1.5 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsDistributionView((v) => !v)}
-                  className={cn(
-                    "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
-                    isDistributionView
-                      ? "border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-emerald-500/50 hover:text-emerald-600 dark:hover:text-emerald-400",
-                  )}
-                  title="全部关键词 × 全部商店的排名分布（折线填充图）"
-                >
-                  分布
-                </button>
-                <button
-                  type="button"
                   onClick={() => {
                     setViewLang("global");
-                    setIsDistributionView(false);
                   }}
                   className={cn(
                     "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
@@ -1028,7 +1027,6 @@ export function KeywordsPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setIsDistributionView(false);
                           setViewLang(option.code);
                           setLitLangs((prev) => (prev.includes(option.code) ? prev : [...prev, option.code]));
                         }}
@@ -1058,45 +1056,13 @@ export function KeywordsPage() {
 
             </div>
 
-            {isDistributionView ? (
-              <div className="flex-1 min-h-0 px-5 py-4 flex flex-col">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    排名分布（最新快照）
-                  </h3>
-                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    商店按 TOP10 数量排序；绿色越深代表排名越靠前的关键词越多
-                  </span>
-                </div>
-                <div className="flex-1 min-h-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={distributionData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" className="text-zinc-200 dark:text-zinc-800" />
-                    <XAxis dataKey="storefront" tick={{ fontSize: 11 }} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                    <Tooltip content={<DistributionTooltip />} />
-                    {RANK_BUCKETS.map((bucket) => (
-                      <Area
-                        key={bucket.key}
-                        type="monotone"
-                        dataKey={bucket.key}
-                        stackId="1"
-                        stroke="none"
-                        fill={bucket.color}
-                        fillOpacity={bucket.opacity}
-                        name={bucket.label}
-                      />
-                    ))}
-                  </AreaChart>
-                </ResponsiveContainer>
-                </div>
-              </div>
-            ) : (
-
-            <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]">
-            <div className="flex items-stretch min-w-0">
+            <div className="flex flex-1 min-h-0 min-w-0">
             {/* 左块：关键词列（尽量宽，不横向滚动） */}
-            <div className="flex-1 min-w-0 shrink-0">
+            <div
+              ref={leftScrollRef}
+              onScroll={() => syncScroll("left")}
+              className="flex-1 min-w-0 overflow-y-auto [scrollbar-gutter:stable]"
+            >
               <div className="sticky top-0 z-30 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
                 <div className="h-12 flex items-center justify-between gap-2 px-5 whitespace-nowrap">
                   <div className="flex items-center gap-2">
@@ -1266,7 +1232,9 @@ export function KeywordsPage() {
             </div>
             {/* 右块：商店列固定 5 列宽，多余横向滚动 */}
             <div
-              className="shrink-0 overflow-x-auto border-l border-zinc-200 dark:border-zinc-800"
+              ref={rightScrollRef}
+              onScroll={() => syncScroll("right")}
+              className="shrink-0 overflow-auto border-l border-zinc-200 dark:border-zinc-800"
               style={{ width: 5 * 88 + 44 }}
             >
               <div
@@ -1299,13 +1267,57 @@ export function KeywordsPage() {
               {rowsToRender.map(({ row, dimmed }) => renderRightRow(row, dimmed))}
             </div>
             </div>
-            </div>
-            )}
 
             </div>
 
-            <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5 space-y-5">
-                {!isGlobalView && !isDistributionView && chartKeyword && chartData.length > 0 && (
+            {(isGlobalView && distributionData.length > 0) ||
+            (!isGlobalView && chartKeyword && chartData.length > 0) ? (
+            <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5">
+                {isGlobalView ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        排名分布（最新快照）
+                      </h4>
+                      <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                        全部关键词 × 全部商店；商店按 TOP10 数量排序
+                      </span>
+                    </div>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={distributionData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="text-zinc-200 dark:text-zinc-800" />
+                          <XAxis dataKey="storefront" tick={{ fontSize: 11 }} />
+                          <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                          <Tooltip content={<DistributionTooltip />} />
+                          {RANK_BUCKETS.map((bucket) => (
+                            <Area
+                              key={bucket.key}
+                              type="monotone"
+                              dataKey={bucket.key}
+                              stackId="1"
+                              stroke="none"
+                              fill={bucket.color}
+                              fillOpacity={bucket.opacity}
+                              name={bucket.label}
+                            />
+                          ))}
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {RANK_BUCKETS.map((bucket) => (
+                        <span
+                          key={bucket.key}
+                          className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                        >
+                          <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: bucket.color }} />
+                          {bucket.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
                   <div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1369,6 +1381,7 @@ export function KeywordsPage() {
                 )}
 
             </div>
+            ) : null}
 
         </>
       )}
