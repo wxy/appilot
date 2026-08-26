@@ -50,8 +50,20 @@ export function registerSchedulerHandlers(): void {
     ).length;
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
+    const todayExecutedTaskIds = new Set(
+      executions
+        .filter(
+          (entry: any) =>
+            entry.taskId &&
+            new Date(entry.ts).getTime() >= todayStart.getTime(),
+        )
+        .map((entry: any) => entry.taskId),
+    );
     const executedToday = executions.filter(
       (entry) => new Date(entry.ts).getTime() >= todayStart.getTime(),
+    ).length;
+    const pending = enabled.filter(
+      (task) => !todayExecutedTaskIds.has(task.id),
     ).length;
     const totalExecuted = tasks.reduce(
       (sum, task) => sum + (task.executionCount || 0),
@@ -76,7 +88,7 @@ export function registerSchedulerHandlers(): void {
     return {
       overview: {
         total: tasks.length,
-        pending: enabled.length,
+        pending,
         overdue,
         executedToday,
         totalExecuted,
@@ -118,8 +130,20 @@ export function registerSchedulerHandlers(): void {
     ).length;
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
+    const todayExecutedTaskIds = new Set(
+      executions
+        .filter(
+          (entry: any) =>
+            entry.taskId &&
+            new Date(entry.ts).getTime() >= todayStart.getTime(),
+        )
+        .map((entry: any) => entry.taskId),
+    );
     const executedToday = executions.filter(
       (entry) => new Date(entry.ts).getTime() >= todayStart.getTime(),
+    ).length;
+    const pending = enabled.filter(
+      (task) => !todayExecutedTaskIds.has(task.id),
     ).length;
     const totalExecuted = tasks.reduce(
       (sum, task) => sum + (task.executionCount || 0),
@@ -181,7 +205,7 @@ export function registerSchedulerHandlers(): void {
       ...schedulerStatusSnapshot(),
       overview: {
         total: tasks.length,
-        pending: enabled.length,
+        pending,
         overdue,
         executedToday,
         totalExecuted,

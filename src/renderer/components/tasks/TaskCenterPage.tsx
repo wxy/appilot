@@ -739,19 +739,27 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             </span>
             <div className="min-w-0">
               <div className="flex items-center gap-1 min-w-0">
-                <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                  {group.kind === "rank"
-                    ? `${group.projectName} · ${group.productName} · ${
-                        group.platform === "ios"
-                          ? "iOS"
-                          : group.platform === "macos"
-                            ? "macOS"
-                            : "未识别"
-                      } · ${languageLabel(group.queryLanguage || "")} · ${
-                        storefrontDisplayName(group.storefront || "")
-                      } · ${group.tasks.length} 个关键词`
-                    : `${group.projectName} · ${KIND_LABELS[group.kind] || group.kind}`}
-                </div>
+                {group.kind === "rank" ? (
+                  <>
+                    <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                      {group.productName} ·{" "}
+                      {group.platform === "ios"
+                        ? "iOS"
+                        : group.platform === "macos"
+                          ? "macOS"
+                          : "未识别"}
+                    </div>
+                    <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                      {storefrontDisplayName(group.storefront || "")} ·{" "}
+                      {languageLabel(group.queryLanguage || "")} ·{" "}
+                      {group.tasks.length} 个关键词
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                    {group.projectName} · {KIND_LABELS[group.kind] || group.kind}
+                  </div>
+                )}
                 {group.kind === "github-sync" && (
                   <span title="依赖 GitHub 凭证" className="shrink-0">
                     <GithubIcon className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />
