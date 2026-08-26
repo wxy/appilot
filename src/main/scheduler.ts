@@ -1106,16 +1106,22 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
   const store = await getStore();
   if (enabled) {
     // 开启或延长：每次点击把截止时间延长 5 分钟（已开启时累加）。
-    accelHandledTaskIds = new Set();
+    const alreadyOn = store.get("schedulerAccel") === true;
+    // 只有从关闭切换到开启时才是全新会话：清空已处理集合、轮次从 0 重新
+    // 爬坡。已开启时点击仅表示延长，必须保留已处理集合，否则已执行过的
+    // 任务会重新进入“可拉取”池而被重复执行。
+    if (!alreadyOn) {
+      accelHandledTaskIds = new Set();
+      store.set("schedulerAccelRound", 0);
+    }
     const existingUntil = store.get("schedulerAccelUntil");
     const base =
-      store.get("schedulerAccel") === true && existingUntil
+      alreadyOn && existingUntil
         ? new Date(existingUntil).getTime()
         : Date.now();
     const until = Math.max(Date.now() + ACCEL_AUTO_OFF_MS, base + ACCEL_AUTO_OFF_MS);
     store.set("schedulerAccel", true);
     store.set("schedulerAccelUntil", new Date(until).toISOString());
-    if (store.get("schedulerAccelRound") == null) store.set("schedulerAccelRound", 0);
   } else {
     await disableAccel(store);
   }
@@ -1129,8 +1135,9 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
 }
 
 /**
- * 关闭加速：把加速期间被提前到当前时段的未执行任务重新排回未来
- * （按各自的原间隔），避免解除后仍积压在积压队列里。
+ * 关闭加速：停止加速调度节奏。添油模式下每轮只从未来拉取本轮额度内的
+ * 任务并当场执行，不存在“被提前但未执行”的残留；未处理任务仍保留在原
+ * 排期，之后由正常调度按各自间隔继续执行。
  */
 async function disableAccel(store: AppStore): Promise<void> {
   accelHandledTaskIds = new Set();
