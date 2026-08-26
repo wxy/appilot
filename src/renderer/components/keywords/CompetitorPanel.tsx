@@ -444,15 +444,26 @@ export function CompetitorPanel({
           ) : activeLink ? (
           (() => {
             const stores = storefrontsForLanguage(activeLink.language);
-            const trackedCompetitors = competitors.filter((c: any) =>
+            const linkedCompetitors = competitors.filter((c: any) =>
               (c.linkedKeywords || []).some(
                 (l: any) =>
                   l.keyword === activeLink.keyword && l.language === activeLink.language,
               ),
             );
+            // 未在当前平台（iOS/macOS）上架的竞品不进入该平台的跟踪表，
+            // 多平台应用两边的视图都会显示。
+            const trackedCompetitors = linkedCompetitors.filter((c: any) =>
+              Boolean(competitorTrackId(c, viewPlatform)),
+            );
+            const hiddenCount = linkedCompetitors.length - trackedCompetitors.length;
             return (
-          <div className="p-4">
-            <div className="flex flex-wrap gap-1.5 mb-3">
+            <div className="p-4">
+              {hiddenCount > 0 && (
+                <p className="mb-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                  {hiddenCount} 个竞品未在{platformLabel(viewPlatform)}上架，已在当前平台隐藏。
+                </p>
+              )}
+              <div className="flex flex-wrap gap-1.5 mb-3">
               {linkedKeywords.map((link: any) => (
                 <button
                   key={`${link.keyword}\u0000${link.language}`}
@@ -560,7 +571,7 @@ export function CompetitorPanel({
                               : " · 排名尚未查询";
                           })()}
                         </div>
-                        {!competitorTrackId(c, viewPlatform) && (
+                        {!competitorTrackId(c, otherPlatform) && (
                           <div className="mt-1">
                             <button
                               type="button"
@@ -603,20 +614,17 @@ export function CompetitorPanel({
                         )}
                       </td>
                       {stores.map((store) => {
-                        const hasPlatform = Boolean(competitorTrackId(c, viewPlatform));
                         const rank = competitorRankAt(c, store);
                         return (
                           <td
                             key={store}
                             className={cn(
                               "py-2 px-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap",
-                              hasPlatform
-                                ? rankCellClass(rank)
-                                : "bg-zinc-50 dark:bg-zinc-900 text-zinc-300 dark:text-zinc-600",
+                              rankCellClass(rank),
                             )}
                           >
                             <ValueFlash value={rank}>
-                              {!hasPlatform ? "未上架" : rank ?? "未上榜"}
+                              {rank ?? "未上榜"}
                             </ValueFlash>
                           </td>
                         );
