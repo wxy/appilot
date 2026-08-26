@@ -27,12 +27,12 @@ export function TaskCenterPage() {
     running: boolean;
     nowRunning: any;
     overview: any;
-    timeline: {
-      recent: { hour: number; success: number; failed: number }[];
-      upcoming: { hour: number; count: number }[];
-    };
     tasks: any[];
   } | null>(null);
+  const [timeline, setTimeline] = useState<{
+    recent: { hour: number; success: number; failed: number }[];
+    upcoming: { hour: number; count: number }[];
+  } | undefined>(undefined);
   const [accel, setAccel] = useState(false);
   const [accelRemainingMs, setAccelRemainingMs] = useState<number | null>(null);
   const [projectFilter, setProjectFilter] = useState<string>("all");
@@ -51,7 +51,15 @@ export function TaskCenterPage() {
           if (!cancelled) setData(null);
         });
     };
+    const refreshTimeline = () => {
+      (window as any).appilot?.scheduler?.timeline()
+        .then((next: any) => {
+          if (!cancelled) setTimeline(next);
+        })
+        .catch(() => undefined);
+    };
     refresh();
+    refreshTimeline();
     // 加速模式下刷新更频繁（5 秒），正常 15 秒。
     const timer = window.setInterval(refresh, accel ? 5_000 : 15_000);
     return () => {
@@ -85,10 +93,13 @@ export function TaskCenterPage() {
             ),
           )
           .catch(() => undefined);
-        if (Date.now() - last > 1500) {
+        if (Date.now() - last > 800) {
           last = Date.now();
           (window as any).appilot?.scheduler?.list()
             .then(setData)
+            .catch(() => undefined);
+          (window as any).appilot?.scheduler?.timeline()
+            .then(setTimeline)
             .catch(() => undefined);
         }
       }
@@ -152,7 +163,6 @@ export function TaskCenterPage() {
   const failedGroups = groupTasks(failed);
   const overview = data?.overview;
   const nowRunning = data?.nowRunning;
-  const timeline = data?.timeline;
 
   return (
     <div className="p-10 max-w-7xl mx-auto">

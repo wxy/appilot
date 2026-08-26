@@ -214,6 +214,7 @@ contextBridge.exposeInMainWorld("appilot", {
     setAccel: (enabled: boolean): Promise<boolean> =>
       ipcRenderer.invoke("scheduler:setAccel", enabled),
     overview: (): Promise<any> => ipcRenderer.invoke("scheduler:overview"),
+    timeline: (): Promise<any> => ipcRenderer.invoke("scheduler:timeline"),
     list: (): Promise<any> => ipcRenderer.invoke("scheduler:list"),
     runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
   },

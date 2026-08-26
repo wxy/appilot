@@ -10,6 +10,53 @@ import {
 import { computeRankSchedulerStatus } from "../scheduler-status";
 import { getStore } from "../store";
 
+function computeTimeline(
+  tasks: ScheduledTask[],
+  executions: any[],
+  now: number,
+): {
+  recent: { hour: number; success: number; failed: number }[];
+  upcoming: { hour: number; count: number }[];
+} {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const recent = executions.filter(
+    (entry) => new Date(entry.ts).getTime() >= now - dayMs,
+  );
+  const enabled = tasks.filter((task) => task.enabled);
+  const hourStart = (ts: number) => {
+    const d = new Date(ts);
+    d.setMinutes(0, 0, 0);
+    return d.getTime();
+  };
+  const recentTimeline: { hour: number; success: number; failed: number }[] = [];
+  for (let i = 23; i >= 0; i--) {
+    const start = hourStart(now) - i * 60 * 60 * 1000;
+    const end = start + 60 * 60 * 1000;
+    const inHour = recent.filter((entry) => {
+      const ts = new Date(entry.ts).getTime();
+      return ts >= start && ts < end;
+    });
+    recentTimeline.push({
+      hour: start,
+      success: inHour.filter((entry) => entry.status === "success").length,
+      failed: inHour.filter((entry) => entry.status === "failed").length,
+    });
+  }
+  const upcomingTimeline: { hour: number; count: number }[] = [];
+  for (let i = 0; i < 24; i++) {
+    const start = hourStart(now) + i * 60 * 60 * 1000;
+    const end = start + 60 * 60 * 1000;
+    upcomingTimeline.push({
+      hour: start,
+      count: enabled.filter((task) => {
+        const ts = new Date(task.nextRunAt).getTime();
+        return ts >= start && ts < end;
+      }).length,
+    });
+  }
+  return { recent: recentTimeline, upcoming: upcomingTimeline };
+}
+
 export function registerSchedulerHandlers(): void {
   ipcMain.handle("scheduler:status", async () => {
     const s = await getStore();
@@ -101,6 +148,14 @@ export function registerSchedulerHandlers(): void {
     };
   });
 
+  // 执行时间线独立接口：柱形图单独刷新，不拖慢任务列表。
+  ipcMain.handle("scheduler:timeline", async () => {
+    const s = await getStore();
+    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
+    const executions: any[] = s.get("rankExecutions") || [];
+    return computeTimeline(tasks, executions, Date.now());
+  });
+
   ipcMain.handle("scheduler:list", async () => {
     const s = await getStore();
     const projects: any[] = (s.get("projects") || []).map(migrateLegacyStoreProducts);
@@ -168,39 +223,6 @@ export function registerSchedulerHandlers(): void {
       .map((task) => new Date(task.nextRunAt).getTime())
       .sort((a, b) => a - b)[0];
 
-    // 24 hourly buckets of past executions + 24 hourly buckets of scheduled runs.
-    const hourStart = (ts: number) => {
-      const d = new Date(ts);
-      d.setMinutes(0, 0, 0);
-      return d.getTime();
-    };
-    const recentTimeline: { hour: number; success: number; failed: number }[] = [];
-    for (let i = 23; i >= 0; i--) {
-      const start = hourStart(now) - i * 60 * 60 * 1000;
-      const end = start + 60 * 60 * 1000;
-      const inHour = recent.filter((entry) => {
-        const ts = new Date(entry.ts).getTime();
-        return ts >= start && ts < end;
-      });
-      recentTimeline.push({
-        hour: start,
-        success: inHour.filter((entry) => entry.status === "success").length,
-        failed: inHour.filter((entry) => entry.status === "failed").length,
-      });
-    }
-    const upcomingTimeline: { hour: number; count: number }[] = [];
-    for (let i = 0; i < 24; i++) {
-      const start = hourStart(now) + i * 60 * 60 * 1000;
-      const end = start + 60 * 60 * 1000;
-      upcomingTimeline.push({
-        hour: start,
-        count: enabled.filter((task) => {
-          const ts = new Date(task.nextRunAt).getTime();
-          return ts >= start && ts < end;
-        }).length,
-      });
-    }
-
     return {
       ...schedulerStatusSnapshot(),
       overview: {
@@ -217,7 +239,6 @@ export function registerSchedulerHandlers(): void {
         responseBytes: recent.reduce((sum, entry) => sum + (entry.responseBytes || 0), 0),
         nextDueAt: nextDue ? new Date(nextDue).toISOString() : null,
       },
-      timeline: { recent: recentTimeline, upcoming: upcomingTimeline },
       tasks: tasks.map((task) => {
         const isProjectTask = task.kind === "github-sync" || task.kind === "ops-sync";
         const context: { project: any; product?: any } | null = isProjectTask

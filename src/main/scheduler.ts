@@ -112,6 +112,21 @@ const ACCEL_AUTO_OFF_MS = 5 * 60_000;
 let schedulerPaused = false;
 // 单次加速会话中已处理过的任务：添油时跳过，避免执行后被推回未来的任务被反复拉取。
 let accelHandledTaskIds = new Set<string>();
+// 执行记录的写入链：调度 tick 与手动触发并发写时保证串行，避免互相覆盖
+// 导致统计（流量/入榜率）忽清忽恢复。
+let executionsWriteChain: Promise<void> = Promise.resolve();
+function appendExecution(store: AppStore, entry: Record<string, any>): Promise<void> {
+  executionsWriteChain = executionsWriteChain
+    .catch(() => undefined)
+    .then(() => {
+      const executions: any[] = Array.isArray(store.get("rankExecutions"))
+        ? store.get("rankExecutions")
+        : [];
+      executions.push(entry);
+      store.set("rankExecutions", executions.slice(-5000));
+    });
+  return executionsWriteChain;
+}
 /** What the scheduler is executing right now (for the timeline UI). */
 let nowRunningTask: RunningTaskInfo | null = null;
 
@@ -522,10 +537,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastDurationMs = durationMs;
-  const executions: any[] = Array.isArray(store.get("rankExecutions"))
-    ? store.get("rankExecutions")
-    : [];
-  executions.push({
+  await appendExecution(store, {
     ts: new Date().toISOString(),
     taskId: task.id,
     productId: task.productId,
@@ -538,7 +550,6 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     requestBytes,
     responseBytes,
   });
-  store.set("rankExecutions", executions.slice(-5000));
   notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
@@ -651,10 +662,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastDurationMs = durationMs;
-  const executions: any[] = Array.isArray(store.get("rankExecutions"))
-    ? store.get("rankExecutions")
-    : [];
-  executions.push({
+  await appendExecution(store, {
     ts: new Date().toISOString(),
     taskId: task.id,
     productId: task.projectId,
@@ -664,7 +672,6 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
     requestBytes,
     responseBytes,
   });
-  store.set("rankExecutions", executions.slice(-5000));
   notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
@@ -797,9 +804,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastDurationMs = durationMs;
-  const executions: any[] = Array.isArray(store.get("rankExecutions")) ? store.get("rankExecutions") : [];
-  executions.push({ ts: new Date().toISOString(), taskId: task.id, productId: task.projectId, kind: "ops-sync", status, durationMs });
-  store.set("rankExecutions", executions.slice(-5000));
+  await appendExecution(store, { ts: new Date().toISOString(), taskId: task.id, productId: task.projectId, kind: "ops-sync", status, durationMs });
   notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
