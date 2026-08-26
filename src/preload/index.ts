@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("competitors:snapshots", projectId, competitorId),
     rankSnapshots: (projectId: string, competitorId: string): Promise<any[]> =>
       ipcRenderer.invoke("competitors:rankSnapshots", projectId, competitorId),
+    refreshRanks: (projectId: string): Promise<boolean> =>
+      ipcRenderer.invoke("competitors:refreshRanks", projectId),
     sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("competitors:sync", projectId),
   },
 

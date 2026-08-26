@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
-import { formatHumanTime } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 
@@ -30,6 +29,7 @@ export function CompetitorPanel({
   const [candidates, setCandidates] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
+  const [refreshingRanks, setRefreshingRanks] = useState(false);
   const [searchError, setSearchError] = useState("");
 
   const load = useCallback(() => {
@@ -95,6 +95,8 @@ export function CompetitorPanel({
           ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
           : [],
       });
+      // 立即补采新竞品的排名（不需要等下一次定时关键词抓取）。
+      await (window as any).appilot?.competitors?.refreshRanks(projectId);
       load();
     } finally {
       setAdding(null);
@@ -108,6 +110,17 @@ export function CompetitorPanel({
   const handleRemove = async (competitorId: string) => {
     await (window as any).appilot?.competitors?.remove(projectId, competitorId);
     load();
+  };
+
+  const handleRefreshRanks = async () => {
+    if (refreshingRanks) return;
+    setRefreshingRanks(true);
+    try {
+      await (window as any).appilot?.competitors?.refreshRanks(projectId);
+      await load();
+    } finally {
+      setRefreshingRanks(false);
+    }
   };
 
   // 竞品跟踪：按关联关键词查看自己与所有竞品的排名对比。
@@ -166,12 +179,27 @@ export function CompetitorPanel({
         <p className="mb-4 text-xs text-red-600 dark:text-red-400">{searchError}</p>
       )}
 
-      {linkedKeywords.length > 0 && activeLink && (
+      {competitors.length > 0 && (
         <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">竞品跟踪</h3>
-            <span className="text-[11px] text-zinc-400">按关联关键词对比自己与竞品排名</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-zinc-400">按关联关键词对比自己与竞品排名</span>
+              <button
+                type="button"
+                onClick={() => void handleRefreshRanks()}
+                disabled={refreshingRanks}
+                className={btnSmSecondary}
+              >
+                {refreshingRanks ? "采集中…" : "刷新排名"}
+              </button>
+            </div>
           </div>
+          {linkedKeywords.length === 0 ? (
+            <p className="px-4 py-4 text-xs text-zinc-400 dark:text-zinc-500">
+              竞品未关联关键词。添加竞品时使用搜索关键词关联，排名随关键词抓取采集。
+            </p>
+          ) : activeLink ? (
           <div className="p-4">
             <div className="flex flex-wrap gap-1.5 mb-3">
               {linkedKeywords.map((link: any) => (
@@ -198,7 +226,17 @@ export function CompetitorPanel({
                     <th className="py-1.5 pr-3 font-medium text-amber-600 dark:text-amber-400">我</th>
                     {competitors.map((c) => (
                       <th key={c.id} className="py-1.5 pr-3 font-medium text-zinc-500 dark:text-zinc-400">
-                        <span className="truncate inline-block max-w-28 align-bottom">{c.name}</span>
+                        <span className="inline-flex items-center gap-1.5 align-bottom">
+                          <span className="truncate inline-block max-w-24">{c.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => void handleRemove(c.id)}
+                            className="text-zinc-300 dark:text-zinc-600 hover:text-red-500 transition-colors"
+                            title="移除竞品"
+                          >
+                            ✕
+                          </button>
+                        </span>
                       </th>
                     ))}
                   </tr>
@@ -226,6 +264,7 @@ export function CompetitorPanel({
               </table>
             </div>
           </div>
+          ) : null}
         </div>
       )}
 
@@ -292,7 +331,11 @@ export function CompetitorPanel({
                   )}
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
                     {candidate.genre || "未知分类"}
-                    {candidate.country ? ` · ${storefrontDisplayName(candidate.country)}` : ""}
+                    {(candidate.countries && candidate.countries.length > 0
+                      ? `可用：${candidate.countries.slice(0, 3).map((c: string) => storefrontDisplayName(c)).join("、")}`
+                      : candidate.country
+                        ? `可用：${storefrontDisplayName(candidate.country)}`
+                        : "")}
                     {candidate.averageUserRating ? ` · ★${Number(candidate.averageUserRating).toFixed(1)}` : ""}
                   </p>
                   <div className="mt-auto pt-1.5">
@@ -324,44 +367,7 @@ export function CompetitorPanel({
 
       {competitors.length === 0 ? (
         <p className="text-sm text-zinc-400 dark:text-zinc-500">尚未添加竞品。</p>
-      ) : (
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-          <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {competitors.map((competitor) => (
-              <div key={competitor.id} className="flex items-center justify-between gap-2 px-4 py-2.5">
-                <div className="min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (competitor.trackId) {
-                        (window as any).appilot?.openAppPage(`https://apps.apple.com/us/app/id${competitor.trackId}`);
-                      }
-                    }}
-                    disabled={!competitor.trackId}
-                    className={cn(
-                      "text-sm truncate text-left max-w-full",
-                      competitor.trackId
-                        ? "text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
-                        : "text-zinc-800 dark:text-zinc-200 cursor-default",
-                    )}
-                    title={competitor.trackId ? "打开 App Store 页面" : "无商店链接"}
-                  >
-                    {competitor.name}
-                  </button>
-                  <div className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {competitor.trackId ? `trackId ${competitor.trackId}` : "无商店链接"}
-                    {competitor.githubUrl ? ` · ${competitor.githubUrl}` : ""}
-                    {competitor.addedAt ? ` · 加入于 ${formatHumanTime(competitor.addedAt)}` : ""}
-                  </div>
-                </div>
-                <button type="button" onClick={() => void handleRemove(competitor.id)} className={btnSmSecondary}>
-                  移除
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }

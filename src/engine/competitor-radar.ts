@@ -24,6 +24,8 @@ export interface CompetitorCandidate {
   trackViewUrl: string | null;
   /** 命中该候选的商店（多商店合并搜索时标记来源）。 */
   country?: string;
+  /** 该候选在本次搜索中出现过的全部商店（即确认已上架的商店）。 */
+  countries?: string[];
 }
 
 export interface CompetitorSnapshot {
@@ -126,16 +128,58 @@ export async function searchCompetitorCandidatesAcross(opts: {
       }).catch(() => []),
     ),
   );
-  const seen = new Set<string>();
+  const byTrackId = new Map<string, CompetitorCandidate>();
   const merged: CompetitorCandidate[] = [];
   for (const list of perCountry) {
     for (const candidate of list) {
-      if (seen.has(candidate.trackId)) continue;
-      seen.add(candidate.trackId);
+      const existing = byTrackId.get(candidate.trackId);
+      if (existing) {
+        if (candidate.country && !existing.countries?.includes(candidate.country)) {
+          existing.countries = [...(existing.countries || []), candidate.country];
+        }
+        continue;
+      }
+      byTrackId.set(candidate.trackId, candidate);
       merged.push(candidate);
     }
   }
   return merged;
+}
+
+
+/**
+ * Collect the competitor's rank for every linked keyword × storefront pair
+ * (per-language storefronts) — used to backfill ranks right after adding a
+ * competitor, so ranks don't wait for the next scheduled keyword run.
+ */
+export async function collectCompetitorRankSnapshots(
+  competitor: Competitor,
+): Promise<CompetitorRankSnapshot[]> {
+  if (!competitor.trackId || !competitor.linkedKeywords?.length) return [];
+  const { searchAppStoreRank } = await import("./rank-collector");
+  const { storefrontsForLanguage } = await import("./storefronts");
+  const productType = competitor.platform === "macos" ? "macos" : "ios";
+  const checkedAt = new Date().toISOString();
+  const entries: CompetitorRankSnapshot[] = [];
+  for (const link of competitor.linkedKeywords) {
+    const storefronts = storefrontsForLanguage(link.language) || [];
+    for (const storefront of storefronts) {
+      const result = await searchAppStoreRank({
+        term: link.keyword,
+        country: storefront,
+        trackId: competitor.trackId,
+        productType,
+      }).catch(() => null);
+      entries.push({
+        keyword: link.keyword,
+        language: link.language,
+        storefront,
+        rank: result?.rank ?? null,
+        checkedAt,
+      });
+    }
+  }
+  return entries;
 }
 
 export async function fetchCompetitorSnapshot(

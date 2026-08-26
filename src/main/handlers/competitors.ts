@@ -97,6 +97,32 @@ export function registerCompetitorsHandlers(): void {
     return (s.get("competitorRankSnapshots") || {})[projectId]?.[competitorId] || [];
   });
 
+  // 立即为所有竞品的关联关键词补采排名（无需等待下次定时关键词抓取）。
+  ipcMain.handle("competitors:refreshRanks", async (_event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const s = await getStore();
+    const list = competitorsFor(s, projectId);
+    const { collectCompetitorRankSnapshots } = await import("../../engine/competitor-radar");
+    const ranksAll: Record<string, Record<string, any[]>> =
+      s.get("competitorRankSnapshots") || {};
+    const rankById: Record<string, any[]> = ranksAll[projectId] || {};
+    for (const competitor of list) {
+      const ranks = await collectCompetitorRankSnapshots(competitor);
+      if (ranks.length === 0) continue;
+      const prev = rankById[competitor.id] || [];
+      const kept = prev.filter(
+        (item: any) =>
+          !ranks.some(
+            (r: any) => r.keyword === item.keyword && r.storefront === item.storefront,
+          ),
+      );
+      rankById[competitor.id] = [...kept, ...ranks].slice(-300);
+    }
+    ranksAll[projectId] = rankById;
+    s.set("competitorRankSnapshots", ranksAll);
+    return true;
+  });
+
   ipcMain.handle("competitors:sync", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     return runOpsSyncNow(projectId);
