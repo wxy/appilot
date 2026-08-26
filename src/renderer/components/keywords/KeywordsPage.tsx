@@ -237,7 +237,7 @@ export function KeywordsPage() {
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
-  const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(80px, 0.9fr)) 44px`;
+  const matrixGridTemplate = `minmax(300px, 3fr) repeat(${matrixColumns.length}, minmax(80px, 0.9fr)) 44px`;
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
@@ -353,7 +353,7 @@ export function KeywordsPage() {
       )}
       style={{ gridTemplateColumns: matrixGridTemplate }}
     >
-      <div className="py-1.5 pl-5 pr-4 min-w-0 sticky left-0 z-10 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
+      <div className="py-1.5 pl-5 pr-4 min-w-0 whitespace-nowrap sticky left-0 z-10 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
         <div
           className={cn(
             "font-mono text-sm truncate",
@@ -909,7 +909,7 @@ export function KeywordsPage() {
               className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-20"
               style={{ gridTemplateColumns: matrixGridTemplate }}
             >
-              <div className="py-2.5 pl-5 pr-4 sticky left-0 z-30 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
+              <div className="py-2.5 pl-5 pr-4 whitespace-nowrap sticky left-0 z-30 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">

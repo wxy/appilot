@@ -10,11 +10,11 @@ export function trackingLanguageOptions(
 ): { code: string; label: string }[] {
   const options = supported.map((language) =>
     language.code === "en"
-      ? { code: "en", label: "英文（全局）" }
+      ? { code: "en", label: "英文" }
       : { code: language.code, label: language.name },
   );
   if (!supported.some((language) => language.code === "en")) {
-    options.push({ code: "en", label: "英文（全局）" });
+    options.push({ code: "en", label: "英文" });
   }
   return [
     ...options.filter((option) => option.code === "en"),
