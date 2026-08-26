@@ -140,6 +140,15 @@
   border-radius: 0.75rem;
 }
 
+/* 矩阵区域滚动保留功能，但隐藏滚动条视觉（避免占位与错位）。 */
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

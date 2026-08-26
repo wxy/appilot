@@ -314,7 +314,8 @@ export function KeywordsPage() {
     })
     .sort(
       (a, b) =>
-        (b.top10 - a.top10) || (b.r11_50 - a.r11_50) || (b.r51_100 - a.r51_100),
+        (b.top10 * 100 + b.r11_50 * 50 + b.r51_100 * 20 + b.r101_200 * 5) -
+        (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
     );
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const scopeFilteredRanked =
@@ -1061,7 +1062,7 @@ export function KeywordsPage() {
             <div
               ref={leftScrollRef}
               onScroll={() => syncScroll("left")}
-              className="flex-1 min-w-0 overflow-y-auto [scrollbar-gutter:stable]"
+              className="flex-1 min-w-0 overflow-y-auto scrollbar-hidden"
             >
               <div className="sticky top-0 z-30 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
                 <div className="h-12 flex items-center justify-between gap-2 px-5 whitespace-nowrap">
@@ -1234,8 +1235,8 @@ export function KeywordsPage() {
             <div
               ref={rightScrollRef}
               onScroll={() => syncScroll("right")}
-              className="shrink-0 overflow-auto border-l border-zinc-200 dark:border-zinc-800"
-              style={{ width: 5 * 88 + 44 }}
+              className="shrink-0 overflow-auto scrollbar-hidden border-l border-zinc-200 dark:border-zinc-800"
+              style={{ width: Math.min(matrixColumns.length * 88 + 44, 5 * 88 + 44) }}
             >
               <div
                 className="grid min-w-max sticky top-0 z-20 bg-white dark:bg-zinc-900 border-b border-zinc-100 dark:border-zinc-800"
