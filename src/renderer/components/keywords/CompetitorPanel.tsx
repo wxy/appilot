@@ -8,6 +8,7 @@ export function CompetitorPanel({
   projectId,
   product,
   defaultTerm,
+  defaultLanguage,
   viewLang,
   rankSnapshots,
 }: {
@@ -19,6 +20,8 @@ export function CompetitorPanel({
     bundleId?: string | null;
   };
   defaultTerm: string;
+  /** 关键词本身的 language（en=全局，或具体语言），用于关联竞品排名。 */
+  defaultLanguage?: string;
   viewLang: string;
   /** 自己的关键词排名（product.rankSnapshots），用于与竞品对比。 */
   rankSnapshots: any[];
@@ -93,7 +96,7 @@ export function CompetitorPanel({
         notes: "",
         // 关联当前关键词：之后按 (竞品, 关键词, 商店) 采集竞品排名。
         linkedKeywords: defaultTerm.trim()
-          ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
+          ? [{ keyword: defaultTerm.trim(), language: defaultLanguage || viewLang || "en" }]
           : [],
       });
       // 立即补采新竞品的排名（不需要等下一次定时关键词抓取）。
@@ -141,7 +144,8 @@ export function CompetitorPanel({
   const ownRankByStore = new Map<string, number | null>();
   if (activeLink) {
     for (const s of rankSnapshots || []) {
-      if (s.keyword === activeLink.keyword && s.language === activeLink.language) {
+      // 只按关键词文本匹配：兼容旧数据中关联语言可能记错的情况。
+      if (s.keyword === activeLink.keyword) {
         ownRankByStore.set(s.storefront, s.rank);
       }
     }
@@ -151,10 +155,24 @@ export function CompetitorPanel({
     const item = (competitorRanks[competitor.id] || []).find(
       (r: any) =>
         r.keyword === activeLink.keyword &&
-        r.language === activeLink.language &&
         r.storefront === storefront,
     );
     return item?.rank ?? null;
+  };
+  // 每个关键词最多关联 5 个竞品。
+  const MAX_COMPETITORS_PER_KEYWORD = 5;
+  const defaultKeyword = defaultTerm.trim();
+  const defaultLinkedCount = competitors.filter((c: any) =>
+    (c.linkedKeywords || []).some((l: any) => l.keyword === defaultKeyword),
+  ).length;
+  const atLimit = defaultLinkedCount >= MAX_COMPETITORS_PER_KEYWORD;
+  const rankCellClass = (rank: number | null) => {
+    if (rank == null) return "bg-zinc-100/70 dark:bg-zinc-800/40 text-zinc-400 dark:text-zinc-500";
+    if (rank <= 10) return "bg-green-700/85 text-white";
+    if (rank <= 50) return "bg-green-500/85 text-white";
+    if (rank <= 100) return "bg-lime-300/80 text-green-950";
+    if (rank <= 200) return "bg-yellow-300/80 text-yellow-950";
+    return "bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700/70 dark:text-zinc-300";
   };
 
   return (
@@ -237,20 +255,16 @@ export function CompetitorPanel({
                     {candidate.trackName}
                   </button>
                   {(candidate.subtitle || candidate.description) && (
-                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 truncate">
+                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 line-clamp-2 leading-4">
                       {candidate.subtitle ||
                         (candidate.description
-                          ? String(candidate.description).slice(0, 60)
+                          ? String(candidate.description).slice(0, 140)
                           : "")}
                     </p>
                   )}
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                    {candidate.country ? `${storefrontDisplayName(candidate.country)} · ` : ""}
                     {candidate.genre || "未知分类"}
-                    {(candidate.countries && candidate.countries.length > 0
-                      ? `可用：${candidate.countries.slice(0, 3).map((c: string) => storefrontDisplayName(c)).join("、")}`
-                      : candidate.country
-                        ? `可用：${storefrontDisplayName(candidate.country)}`
-                        : "")}
                     {candidate.averageUserRating ? ` · ★${Number(candidate.averageUserRating).toFixed(1)}` : ""}
                   </p>
                   <div className="mt-auto pt-1.5">
@@ -266,10 +280,15 @@ export function CompetitorPanel({
                       <button
                         type="button"
                         onClick={() => void handleAdd(candidate)}
-                        disabled={adding === candidate.trackId}
+                        disabled={adding === candidate.trackId || atLimit}
                         className={btnSmPrimary}
+                        title={atLimit ? `该关键词最多关联 ${MAX_COMPETITORS_PER_KEYWORD} 个竞品` : undefined}
                       >
-                        {adding === candidate.trackId ? "添加中…" : "添加"}
+                        {adding === candidate.trackId
+                          ? "添加中…"
+                          : atLimit
+                            ? "已达上限"
+                            : "添加"}
                       </button>
                     )}
                   </div>
@@ -347,7 +366,13 @@ export function CompetitorPanel({
                       我
                     </td>
                     {stores.map((store) => (
-                      <td key={store} className="py-1.5 pr-3 text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                      <td
+                        key={store}
+                        className={cn(
+                          "py-1.5 pr-3 text-center rounded whitespace-nowrap font-medium",
+                          rankCellClass(ownRankByStore.get(store) ?? null),
+                        )}
+                      >
                         {ownRankByStore.get(store) ?? "未上榜"}
                       </td>
                     ))}
@@ -383,7 +408,13 @@ export function CompetitorPanel({
                       {stores.map((store) => {
                         const rank = competitorRankAt(c, store);
                         return (
-                          <td key={store} className="py-1.5 pr-3 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
+                          <td
+                            key={store}
+                            className={cn(
+                              "py-1.5 pr-3 text-center rounded whitespace-nowrap",
+                              rankCellClass(rank),
+                            )}
+                          >
                             {rank ?? "未上榜"}
                           </td>
                         );
