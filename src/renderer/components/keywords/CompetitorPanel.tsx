@@ -82,6 +82,10 @@ export function CompetitorPanel({
         platform: product?.platform || "unknown",
         githubUrl: null,
         notes: "",
+        // 关联当前关键词：之后按 (竞品, 关键词, 商店) 采集竞品排名。
+        linkedKeywords: defaultTerm.trim()
+          ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
+          : [],
       });
       load();
     } finally {

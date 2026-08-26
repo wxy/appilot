@@ -37,6 +37,9 @@ export function registerCompetitorsHandlers(): void {
           platform: competitor.platform || "unknown",
           githubUrl: competitor.githubUrl || null,
           notes: competitor.notes || "",
+          linkedKeywords: Array.isArray(competitor.linkedKeywords)
+            ? competitor.linkedKeywords
+            : undefined,
         });
     const index = list.findIndex((item: any) => item.id === normalized.id);
     const next = index >= 0
@@ -85,6 +88,13 @@ export function registerCompetitorsHandlers(): void {
     competitorId = assertNonEmptyString(competitorId, "competitorId");
     const s = await getStore();
     return (s.get("competitorSnapshots") || {})[projectId]?.[competitorId] || [];
+  });
+
+  ipcMain.handle("competitors:rankSnapshots", async (_event, projectId: string, competitorId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    competitorId = assertNonEmptyString(competitorId, "competitorId");
+    const s = await getStore();
+    return (s.get("competitorRankSnapshots") || {})[projectId]?.[competitorId] || [];
   });
 
   ipcMain.handle("competitors:sync", async (_event, projectId: string) => {

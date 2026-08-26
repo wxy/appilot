@@ -668,18 +668,51 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
 
     const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
     if (competitors.length > 0) {
-      const { fetchCompetitorSnapshot } = await import("../engine/competitor-radar");
+      const {
+        collectCompetitorRankSnapshots,
+        fetchCompetitorSnapshot,
+      } = await import("../engine/competitor-radar");
+      const { storefrontsForLanguage } = await import("../engine/storefronts");
       const all: Record<string, Record<string, any[]>> = store.get("competitorSnapshots") || {};
+      const ranksAll: Record<string, Record<string, any[]>> =
+        store.get("competitorRankSnapshots") || {};
       const byId: Record<string, any[]> = all[task.projectId] || {};
+      const rankById: Record<string, any[]> = ranksAll[task.projectId] || {};
       for (const competitor of competitors) {
-        const snap = await fetchCompetitorSnapshot(competitor, token);
+        // 快照按竞品关联关键词的语言商店采集；无关联时回退美国区。
+        const countries: string[] = Array.from(
+          new Set(
+            (competitor.linkedKeywords || []).flatMap(
+              (link: any) => storefrontsForLanguage(link.language) || [],
+            ),
+          ),
+        );
+        const effectiveCountries: string[] =
+          countries.length > 0 ? countries : ["us"];
         const list = byId[competitor.id] || [];
-        if (list[list.length - 1]?.date !== snap.date) {
-          byId[competitor.id] = [...list, snap].slice(-90);
+        for (const country of effectiveCountries) {
+          const snap = await fetchCompetitorSnapshot(competitor, token, country);
+          const key = `${snap.date}\u0000${country}`;
+          if (!list.some((item: any) => `${item.date}\u0000${item.country}` === key)) {
+            list.push(snap);
+          }
+        }
+        list.sort(
+          (a: any, b: any) =>
+            new Date(b.date).getTime() - new Date(a.date).getTime() ||
+            String(a.country || "").localeCompare(String(b.country || "")),
+        );
+        byId[competitor.id] = list.slice(0, 90 * 8);
+        // 竞品排名：关联关键词 × 语言商店。
+        const ranks = await collectCompetitorRankSnapshots(competitor);
+        if (ranks.length > 0) {
+          rankById[competitor.id] = [...(rankById[competitor.id] || []), ...ranks].slice(-300);
         }
       }
       all[task.projectId] = byId;
+      ranksAll[task.projectId] = rankById;
       store.set("competitorSnapshots", all);
+      store.set("competitorRankSnapshots", ranksAll);
     }
 
     const { fetchIssues, mergeFeedbackItems, normalizeIssue, reviewsToFeedbackItems } =

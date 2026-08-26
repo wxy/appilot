@@ -11,7 +11,7 @@ const competitor: Competitor = {
   id: "cid-1", name: "Comp", trackId: "1", platform: "ios", githubUrl: null, notes: "", addedAt: "2026-08-01T00:00:00Z",
 };
 const base = (date: string): CompetitorSnapshot => ({
-  date, version: "1.0", releaseDate: null, price: 0, averageUserRating: 4, ratingCount: 10, stars: 10, recentReleases: [],
+  date, country: "us", version: "1.0", releaseDate: null, price: 0, averageUserRating: 4, ratingCount: 10, stars: 10, recentReleases: [],
 });
 const snapshots = [
   base("2026-08-20"),

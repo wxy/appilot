@@ -1,5 +1,6 @@
 import { normalizeGitHubUrl } from "./git-info";
 import { fetchGitHubJson } from "./gh-traffic";
+import { storefrontsForLanguage } from "./storefronts";
 
 export interface Competitor {
   id: string;
@@ -9,6 +10,8 @@ export interface Competitor {
   githubUrl: string | null;
   notes: string;
   addedAt: string;
+  /** 添加竞品时关联的关键词（按 (竞品, 关键词, 商店) 采集排名）。 */
+  linkedKeywords?: { keyword: string; language: string }[];
 }
 
 export interface CompetitorCandidate {
@@ -23,6 +26,8 @@ export interface CompetitorCandidate {
 
 export interface CompetitorSnapshot {
   date: string;
+  /** 采集该快照的商店。 */
+  country: string;
   version: string | null;
   releaseDate: string | null;
   price: number | null;
@@ -30,6 +35,14 @@ export interface CompetitorSnapshot {
   ratingCount: number | null;
   stars: number | null;
   recentReleases: { tag: string; publishedAt: string | null }[];
+}
+
+export interface CompetitorRankSnapshot {
+  keyword: string;
+  language: string;
+  storefront: string;
+  rank: number | null;
+  checkedAt: string;
 }
 
 export function createCompetitor(input: Omit<Competitor, "id" | "addedAt">): Competitor {
@@ -121,9 +134,11 @@ export async function searchCompetitorCandidatesAcross(opts: {
 export async function fetchCompetitorSnapshot(
   competitor: Competitor,
   token?: string | null,
+  country = "us",
 ): Promise<CompetitorSnapshot> {
   const snapshot: CompetitorSnapshot = {
     date: new Date().toISOString().slice(0, 10),
+    country,
     version: null,
     releaseDate: null,
     price: null,
@@ -135,7 +150,9 @@ export async function fetchCompetitorSnapshot(
 
   if (competitor.trackId) {
     try {
-      const res = await fetchWithTimeout(`https://itunes.apple.com/lookup?id=${encodeURIComponent(competitor.trackId)}`);
+      const res = await fetchWithTimeout(
+        `https://itunes.apple.com/lookup?id=${encodeURIComponent(competitor.trackId)}&country=${encodeURIComponent(country)}`,
+      );
       if (res.ok) {
         const data = JSON.parse(await res.text());
         const app = Array.isArray(data?.results) ? data.results[0] : null;
@@ -172,6 +189,40 @@ export async function fetchCompetitorSnapshot(
   }
 
   return snapshot;
+}
+
+/**
+ * Collect the competitor's rank for every linked keyword × storefront pair
+ * (per-language storefronts). Deterministic lookup against the competitor's
+ * trackId — same mechanism as our own ranking.
+ */
+export async function collectCompetitorRankSnapshots(
+  competitor: Competitor,
+): Promise<CompetitorRankSnapshot[]> {
+  if (!competitor.trackId || !competitor.linkedKeywords?.length) return [];
+  const { searchAppStoreRank } = await import("./rank-collector");
+  const productType = competitor.platform === "macos" ? "macos" : "ios";
+  const checkedAt = new Date().toISOString();
+  const entries: CompetitorRankSnapshot[] = [];
+  for (const link of competitor.linkedKeywords) {
+    const storefronts = storefrontsForLanguage(link.language) || [];
+    for (const storefront of storefronts) {
+      const result = await searchAppStoreRank({
+        term: link.keyword,
+        country: storefront,
+        trackId: competitor.trackId,
+        productType,
+      }).catch(() => null);
+      entries.push({
+        keyword: link.keyword,
+        language: link.language,
+        storefront,
+        rank: result?.rank ?? null,
+        checkedAt,
+      });
+    }
+  }
+  return entries;
 }
 
 export function competitorDeltaSummary(

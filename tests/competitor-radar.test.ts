@@ -1,5 +1,6 @@
 import {
   createCompetitor,
+  collectCompetitorRankSnapshots,
   fetchCompetitorSnapshot,
   searchCompetitorCandidates,
   searchCompetitorCandidatesAcross,
@@ -74,6 +75,15 @@ async function run() {
     const snapshot = await fetchCompetitorSnapshot(competitor, "token-1");
     check(snapshot.version === "2.0.0" && snapshot.stars === 88 && snapshot.recentReleases[0]?.tag === "v2.0.0", "快照解析 lookup + GitHub stars/releases");
     check(snapshot.date === new Date().toISOString().slice(0, 10), "快照 date 为当天");
+    const snapSg = await fetchCompetitorSnapshot({ ...competitor, trackId: "1" }, null, "sg");
+    check(snapSg.country === "sg", "快照记录来源商店");
+    const ranks = await collectCompetitorRankSnapshots({
+      ...competitor,
+      trackId: "1",
+      linkedKeywords: [{ keyword: "walk", language: "en" }],
+    });
+    check(ranks.length === 6, "竞品排名覆盖该语言全部商店");
+    check(ranks.find((r) => r.storefront === "us")?.rank === 1, "竞品在 us 商店排名正确");
   } catch (err: any) {
     check(false, `competitor-radar 异常: ${err.message}`);
   } finally {
