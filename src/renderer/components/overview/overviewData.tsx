@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import type { RankSnapshot } from "../../stores/project";
 import { STALE_MS } from "../../lib/matrix";
 import { cn } from "../../lib/utils";
+import { ValueFlash } from "../ui/ValueFlash";
 
 export interface OverviewRankRow {
   keyword: string;
@@ -148,7 +149,9 @@ export function MetricBlock({
       <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
         {label}
       </p>
-      <p
+      <ValueFlash
+        value={value}
+        mode="text"
         className={cn(
           "mt-1 text-xl font-mono font-semibold leading-none",
           highlight || warn
@@ -157,7 +160,7 @@ export function MetricBlock({
         )}
       >
         {value}
-      </p>
+      </ValueFlash>
       {sub && <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500 truncate">{sub}</p>}
     </Link>
   );

@@ -7,6 +7,7 @@ import { normalizeTrackedKeyword } from "../../engine/rank-keywords";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../../engine/storefronts";
 import { createAiProvider } from "../ai-service";
 import { importAscKeyFileTo } from "../asc-key-file";
+import { notifyDataChanged } from "../data-sync";
 import {
   ascJwt,
   decryptApiKey,
@@ -189,6 +190,7 @@ export function registerProjectsHandlers(): void {
         s.set("projects", latestProjects);
       }
       void schedulerTick();
+    notifyDataChanged("projects");
       emitProjectsChanged();
       return project;
     },
@@ -559,6 +561,7 @@ export function registerProjectsHandlers(): void {
     }
     s.set("projects", latestProjects);
     void schedulerTick();
+    notifyDataChanged("projects");
     emitProjectsChanged();
     return project;
   });
@@ -595,6 +598,7 @@ export function registerProjectsHandlers(): void {
       s.set("githubSyncCache", syncCache);
     }
     void schedulerTick();
+    notifyDataChanged("projects");
     emitProjectsChanged();
     return true;
   });
@@ -750,6 +754,7 @@ export function registerProjectsHandlers(): void {
     }));
     s.set("projects", nextProjects);
     void schedulerTick();
+    notifyDataChanged("projects");
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
@@ -763,6 +768,7 @@ export function registerProjectsHandlers(): void {
     }));
     s.set("projects", nextProjects);
     void schedulerTick();
+    notifyDataChanged("projects");
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
@@ -792,6 +798,7 @@ export function registerProjectsHandlers(): void {
     });
     s.set("projects", nextProjects);
     void schedulerTick();
+    notifyDataChanged("projects");
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
@@ -821,6 +828,7 @@ export function registerProjectsHandlers(): void {
     });
     s.set("projects", nextProjects);
     void schedulerTick();
+    notifyDataChanged("projects");
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
@@ -855,6 +863,7 @@ export function registerProjectsHandlers(): void {
     });
     s.set("projects", nextProjects);
     void schedulerTick();
+    notifyDataChanged("projects");
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 
@@ -871,6 +880,7 @@ export function registerProjectsHandlers(): void {
     }));
     s.set("projects", nextProjects);
     void schedulerTick();
+    notifyDataChanged("projects");
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
 

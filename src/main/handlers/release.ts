@@ -21,6 +21,7 @@ import {
   synthesizeReleaseFromDraft,
 } from "../release-service";
 import { assertNonEmptyString, assertStringArray } from "../util";
+import { notifyDataChanged } from "../data-sync";
 
 export function registerReleaseHandlers(): void {
   async function githubReleaseCandidates(
@@ -401,6 +402,7 @@ export function registerReleaseHandlers(): void {
       }));
     }
     s.set("projects", projects);
+    notifyDataChanged("releases");
     return draft;
   });
 
@@ -416,6 +418,7 @@ export function registerReleaseHandlers(): void {
     if (next.length === drafts.length) return false;
     project.storeSubmissionDrafts = next;
     s.set("projects", projects);
+    notifyDataChanged("releases");
     return true;
   });
 
@@ -475,6 +478,7 @@ export function registerReleaseHandlers(): void {
       });
       upsertStoreSubmissionDraft(project, draft);
       s.set("projects", projects);
+      notifyDataChanged("releases");
       return draft;
     },
   );

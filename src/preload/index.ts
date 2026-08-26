@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld("appilot", {
   platform: process.platform,
   getVersion: (): Promise<string> => ipcRenderer.invoke("app:getVersion"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+  openAppPage: (url: string) => ipcRenderer.invoke("shell:openAppPage", url),
+  onDataChanged: (callback: (scope: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, scope: string) => callback(scope);
+    ipcRenderer.on("data:changed", listener);
+    return () => ipcRenderer.removeListener("data:changed", listener);
+  },
   revealInFolder: (localPath: string): Promise<boolean> =>
     ipcRenderer.invoke("shell:revealInFolder", localPath),
 
@@ -27,10 +33,21 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("competitors:save", projectId, competitor),
     remove: (projectId: string, competitorId: string): Promise<boolean> =>
       ipcRenderer.invoke("competitors:remove", projectId, competitorId),
-    search: (opts: { term: string; country: string; platform?: string }): Promise<any[]> =>
+    search: (opts: {
+      term: string;
+      country?: string;
+      countries?: string[];
+      platform?: string;
+      excludeTrackIds?: string[];
+      excludeBundleIds?: string[];
+    }): Promise<any[]> =>
       ipcRenderer.invoke("competitors:search", opts),
     snapshots: (projectId: string, competitorId: string): Promise<any[]> =>
       ipcRenderer.invoke("competitors:snapshots", projectId, competitorId),
+    rankSnapshots: (projectId: string, competitorId: string): Promise<any[]> =>
+      ipcRenderer.invoke("competitors:rankSnapshots", projectId, competitorId),
+    refreshRanks: (projectId: string): Promise<boolean> =>
+      ipcRenderer.invoke("competitors:refreshRanks", projectId),
     sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("competitors:sync", projectId),
   },
 

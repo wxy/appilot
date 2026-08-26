@@ -43,6 +43,17 @@ async function run() {
   assert(found.totalResults === 3, "returns result count");
   assert(new URL(lastRequestUrl).searchParams.get("entity") === "software", "uses software entity for iOS");
 
+  const withCandidates = await searchAppStoreRank({
+    term: "target",
+    country: "us",
+    trackId: "222",
+    productType: "ios",
+    candidateTrackIds: ["111", "333", "999"],
+  });
+  assert(withCandidates.candidateRanks["111"] === 1, "candidate 111 rank 1");
+  assert(withCandidates.candidateRanks["333"] === 3, "candidate 333 rank 3");
+  assert(withCandidates.candidateRanks["999"] === null, "missing candidate rank null");
+
   mockFetch([{ trackId: 999, trackName: "Not target" }]);
   const missing = await searchAppStoreRank({
     term: "missing",

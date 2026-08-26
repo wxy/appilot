@@ -14,6 +14,7 @@ import { KeywordsPage } from "./components/keywords/KeywordsPage";
 import { TrendPage } from "./components/trend/TrendPage";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { ProjectSettingsPage } from "./components/settings/ProjectSettingsPage";
+import { DataSyncLayer } from "./components/ui/DataSyncLayer";
 
 /* ── Layout ── */
 
@@ -86,6 +87,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950">
+      <DataSyncLayer />
       {/* Top bar */}
       <header className="shrink-0 z-30 flex items-center gap-2.5 px-4 h-14 border-b border-zinc-200/60 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
         {/* Brand */}

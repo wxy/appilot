@@ -149,6 +149,25 @@
   display: none;
 }
 
+/* 数据局部更新反馈：按元素类型分别动画。 */
+@keyframes appilot-flash-bg {
+  0% { background-color: rgba(16, 185, 129, 0.5); }
+  100% { background-color: transparent; }
+}
+.flash-bg { animation: appilot-flash-bg 1.1s ease-out; border-radius: 4px; }
+
+@keyframes appilot-flash-text {
+  0% { color: #10b981; transform: scale(1.18); }
+  100% { color: inherit; transform: scale(1); }
+}
+.flash-text { animation: appilot-flash-text 1.1s ease-out; }
+
+@keyframes appilot-flash-input {
+  0% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.7); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+.flash-input { animation: appilot-flash-input 1.1s ease-out; border-radius: 6px; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

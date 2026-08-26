@@ -1,5 +1,6 @@
 import { log } from "../engine/logger";
 import { powerMonitor } from "electron";
+import { notifyDataChanged } from "./data-sync";
 import {
   enrichKeywordFromSnapshots,
   evaluatePause,
@@ -103,7 +104,6 @@ let powerListenersRegistered = false;
 const MAX_RANK_TASKS_PER_TICK = 8;
 /** What the scheduler is executing right now (for the timeline UI). */
 let nowRunningTask: RunningTaskInfo | null = null;
-const rankEntityCache = new Map<string, "software" | "macSoftware">();
 
 export function isSchedulerTimerActive(): boolean {
   return Boolean(schedulerTimer);
@@ -157,14 +157,11 @@ export function githubSyncCacheEntry(
   };
 }
 
-async function resolveRankEntity(product: any): Promise<"software" | "macSoftware"> {
-  const cached = rankEntityCache.get(product.trackId);
-  if (cached) return cached;
-  const { lookupApp } = await import("../engine/app-store-discovery");
-  const metadata = await lookupApp(product.trackId);
-  const entity: "software" | "macSoftware" = metadata?.kind === "mac-software" ? "macSoftware" : "software";
-  rankEntityCache.set(product.trackId, entity);
-  return entity;
+// 按产品平台决定搜索实体：macOS 商店用 macSoftware，iOS 商店用 software。
+// 不能用 lookup 的 kind 猜测——universal app 的 kind 常是 software，
+// 导致 macOS 产品错误地采集 iOS 商店的排名（两个平台数据相同）。
+function resolveRankEntity(product: any): "software" | "macSoftware" {
+  return product?.platform === "macos" ? "macSoftware" : "software";
 }
 
 async function reconcileRankTasks(store: AppStore): Promise<void> {
@@ -438,11 +435,25 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
   let status: "success" | "failed" = "success";
   let snapshot: any = null;
   try {
+    // 关联该 (关键词, 语言) 的竞品：同一次搜索顺带定位它们的排名。
+    const competitors =
+      (store.get("competitors") || {})[project.id] || [];
+    const linkedCompetitors = competitors.filter((competitor: any) =>
+      (competitor.linkedKeywords || []).some(
+        (link: any) =>
+          link.keyword === task.keyword &&
+          link.language === task.queryLanguage,
+      ),
+    );
+    const candidateTrackIds = linkedCompetitors
+      .map((competitor: any) => String(competitor.trackId || ""))
+      .filter(Boolean);
     const result = await searchAppStoreRank({
       term: task.keyword,
       country: task.storefront,
       trackId: product.trackId,
       entity,
+      candidateTrackIds: candidateTrackIds.length > 0 ? candidateTrackIds : undefined,
     });
     durationMs = result.durationMs;
     requestBytes = result.requestBytes;
@@ -456,6 +467,33 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       totalResults: result.totalResults,
       checkedAt: new Date().toISOString(),
     };
+    if (linkedCompetitors.length > 0 && result.candidateRanks) {
+      const ranksAll: Record<string, Record<string, any[]>> =
+        store.get("competitorRankSnapshots") || {};
+      const rankById: Record<string, any[]> = ranksAll[project.id] || {};
+      const checkedAt = new Date().toISOString();
+      for (const competitor of linkedCompetitors) {
+        const entry = {
+          keyword: task.keyword,
+          language: task.queryLanguage,
+          storefront: task.storefront,
+          rank: result.candidateRanks[String(competitor.trackId)] ?? null,
+          checkedAt,
+        };
+        // 同一 (关键词, 商店) 只保留最新一条，数据量 = 竞品 × 关键词 × 商店。
+        const prev = rankById[competitor.id] || [];
+        rankById[competitor.id] = [
+          ...prev.filter(
+            (item: any) =>
+              !(item.keyword === entry.keyword && item.storefront === entry.storefront),
+          ),
+          entry,
+        ].slice(-300);
+      }
+      ranksAll[project.id] = rankById;
+      store.set("competitorRankSnapshots", ranksAll);
+      notifyDataChanged("competitors");
+    }
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
@@ -490,6 +528,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     responseBytes,
   });
   store.set("rankExecutions", executions.slice(-5000));
+  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
@@ -519,6 +558,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       : [];
     latestProduct.rankSnapshots = appendRankSnapshots(previous, [snapshot]);
     store.set("projects", latestProjects);
+    notifyDataChanged("rank");
   }
 }
 
@@ -581,6 +621,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       syncedAt: new Date().toISOString(),
     };
     store.set("githubSyncCache", all);
+    notifyDataChanged("releases");
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
@@ -612,6 +653,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
     responseBytes,
   });
   store.set("rankExecutions", executions.slice(-5000));
+  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
@@ -668,18 +710,41 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
 
     const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
     if (competitors.length > 0) {
-      const { fetchCompetitorSnapshot } = await import("../engine/competitor-radar");
+      const {
+        fetchCompetitorSnapshot,
+      } = await import("../engine/competitor-radar");
+      const { storefrontsForLanguage } = await import("../engine/storefronts");
       const all: Record<string, Record<string, any[]>> = store.get("competitorSnapshots") || {};
       const byId: Record<string, any[]> = all[task.projectId] || {};
       for (const competitor of competitors) {
-        const snap = await fetchCompetitorSnapshot(competitor, token);
+        // 快照按竞品关联关键词的语言商店采集；无关联时回退美国区。
+        const countries: string[] = Array.from(
+          new Set(
+            (competitor.linkedKeywords || []).flatMap(
+              (link: any) => storefrontsForLanguage(link.language) || [],
+            ),
+          ),
+        );
+        const effectiveCountries: string[] =
+          countries.length > 0 ? countries : ["us"];
         const list = byId[competitor.id] || [];
-        if (list[list.length - 1]?.date !== snap.date) {
-          byId[competitor.id] = [...list, snap].slice(-90);
+        for (const country of effectiveCountries) {
+          const snap = await fetchCompetitorSnapshot(competitor, token, country);
+          const key = `${snap.date}\u0000${country}`;
+          if (!list.some((item: any) => `${item.date}\u0000${item.country}` === key)) {
+            list.push(snap);
+          }
         }
+        list.sort(
+          (a: any, b: any) =>
+            new Date(b.date).getTime() - new Date(a.date).getTime() ||
+            String(a.country || "").localeCompare(String(b.country || "")),
+        );
+        byId[competitor.id] = list.slice(0, 90 * 8);
       }
       all[task.projectId] = byId;
       store.set("competitorSnapshots", all);
+      notifyDataChanged("competitors");
     }
 
     const { fetchIssues, mergeFeedbackItems, normalizeIssue, reviewsToFeedbackItems } =
@@ -702,6 +767,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
       lastSyncedAt: new Date().toISOString(),
     };
     store.set("feedback", feedbackStore);
+    notifyDataChanged("feedback");
 
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
@@ -722,6 +788,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
   const executions: any[] = Array.isArray(store.get("rankExecutions")) ? store.get("rankExecutions") : [];
   executions.push({ ts: new Date().toISOString(), productId: task.projectId, kind: "ops-sync", status, durationMs });
   store.set("rankExecutions", executions.slice(-5000));
+  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
@@ -755,6 +822,7 @@ async function runReviewsSyncTask(store: AppStore, task: ReviewsSyncTask): Promi
   }
   all[task.productId] = perProduct;
   store.set("reviews", all);
+  notifyDataChanged("reviews");
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastStatus = "success";
@@ -801,6 +869,7 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
     fetchedAt: new Date().toISOString(),
   };
   store.set("ascCache", all);
+  notifyDataChanged("asc");
 
   // Freeze against the actual store copy once a version is live: the store is
   // the final truth. Applies to versions that just became READY_FOR_SALE and

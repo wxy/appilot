@@ -9,18 +9,33 @@ export interface Competitor {
   githubUrl: string | null;
   notes: string;
   addedAt: string;
+  /** 添加竞品时关联的关键词（按 (竞品, 关键词, 商店) 采集排名）。 */
+  linkedKeywords?: { keyword: string; language: string }[];
 }
 
 export interface CompetitorCandidate {
   trackId: string;
   trackName: string;
+  /** 首张截图（App Store 商品图）。 */
+  screenshotUrl: string | null;
+  subtitle: string | null;
+  /** 完整描述（副标题/推广文本不可得时用于了解应用）。 */
+  description: string | null;
   genre: string;
   averageUserRating: number | null;
   trackViewUrl: string | null;
+  /** 命中该候选的商店（多商店合并搜索时标记来源）。 */
+  country?: string;
+  /** 该候选在本次搜索中出现过的全部商店（即确认已上架的商店）。 */
+  countries?: string[];
+  /** 每个出现商店中的排名（1 起）。 */
+  ranks?: Record<string, number>;
 }
 
 export interface CompetitorSnapshot {
   date: string;
+  /** 采集该快照的商店。 */
+  country: string;
   version: string | null;
   releaseDate: string | null;
   price: number | null;
@@ -28,6 +43,14 @@ export interface CompetitorSnapshot {
   ratingCount: number | null;
   stars: number | null;
   recentReleases: { tag: string; publishedAt: string | null }[];
+}
+
+export interface CompetitorRankSnapshot {
+  keyword: string;
+  language: string;
+  storefront: string;
+  rank: number | null;
+  checkedAt: string;
 }
 
 export function createCompetitor(input: Omit<Competitor, "id" | "addedAt">): Competitor {
@@ -51,6 +74,8 @@ export async function searchCompetitorCandidates(opts: {
   term: string;
   country: string;
   entity?: "software" | "macSoftware";
+  excludeTrackIds?: string[];
+  excludeBundleIds?: string[];
 }): Promise<CompetitorCandidate[]> {
   const url = new URL("https://itunes.apple.com/search");
   url.searchParams.set("term", opts.term);
@@ -60,23 +85,137 @@ export async function searchCompetitorCandidates(opts: {
   const res = await fetchWithTimeout(url.toString());
   if (!res.ok) throw new Error(`iTunes Search API ${res.status}`);
   const data = JSON.parse(await res.text());
+  const excludedTrack = new Set(opts.excludeTrackIds || []);
+  const excludedBundle = new Set(opts.excludeBundleIds || []);
   return (Array.isArray(data?.results) ? data.results : [])
-    .map((r: any) => ({
+    .filter(
+      (r: any) =>
+        !excludedTrack.has(String(r.trackId || "")) &&
+        !(r.bundleId && excludedBundle.has(String(r.bundleId))),
+    )
+    .map((r: any, index: number) => ({
       trackId: String(r.trackId || ""),
       trackName: String(r.trackName || ""),
+      screenshotUrl:
+        Array.isArray(r.screenshotUrls) && r.screenshotUrls.length > 0
+          ? String(r.screenshotUrls[0])
+          : null,
+      subtitle: typeof r.subtitle === "string" ? r.subtitle : null,
+      description: typeof r.description === "string" ? r.description : null,
       genre: String(r.primaryGenreName || ""),
       averageUserRating: typeof r.averageUserRating === "number" ? r.averageUserRating : null,
       trackViewUrl: typeof r.trackViewUrl === "string" ? r.trackViewUrl : null,
+      country: opts.country,
+      countries: [opts.country],
+      ranks: { [opts.country]: index + 1 },
     }))
     .filter((c: CompetitorCandidate) => c.trackId);
+}
+
+export async function searchCompetitorCandidatesAcross(opts: {
+  term: string;
+  countries: string[];
+  entity?: "software" | "macSoftware";
+  excludeTrackIds?: string[];
+  excludeBundleIds?: string[];
+  /** 每个商店最多取多少个候选（防止第一个商店垄断）。 */
+  perStorefrontLimit?: number;
+}): Promise<CompetitorCandidate[]> {
+  const limit = opts.perStorefrontLimit || 10;
+  const perCountry = await Promise.all(
+    opts.countries.map((country) =>
+      searchCompetitorCandidates({
+        term: opts.term,
+        country,
+        entity: opts.entity,
+        excludeTrackIds: opts.excludeTrackIds,
+        excludeBundleIds: opts.excludeBundleIds,
+      })
+        .then((list) => list.slice(0, limit))
+        .catch(() => []),
+    ),
+  );
+  const byTrackId = new Map<string, CompetitorCandidate>();
+  const merged: CompetitorCandidate[] = [];
+  for (const list of perCountry) {
+    for (const candidate of list) {
+      const existing = byTrackId.get(candidate.trackId);
+      if (existing) {
+        if (candidate.country && !existing.countries?.includes(candidate.country)) {
+          existing.countries = [...(existing.countries || []), candidate.country];
+        }
+        if (candidate.country && candidate.ranks) {
+          existing.ranks = { ...(existing.ranks || {}), [candidate.country]: candidate.ranks[candidate.country] };
+        }
+        continue;
+      }
+      byTrackId.set(candidate.trackId, candidate);
+      merged.push(candidate);
+    }
+  }
+  // 有意义的竞品 = 跨商店出现次数多、平均排名靠前（而不是第一个商店垄断）。
+  return merged
+    .map((c) => {
+      const countries = c.countries || [];
+      const ranks = c.ranks || {};
+      const values = countries.map((store) => ranks[store]).filter((v): v is number => typeof v === "number");
+      const avg = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : Number.POSITIVE_INFINITY;
+      return { c, countryCount: countries.length, avgRank: avg };
+    })
+    .sort(
+      (a, b) =>
+        b.countryCount - a.countryCount ||
+        a.avgRank - b.avgRank,
+    )
+    .map(({ c }) => c);
+}
+
+
+/**
+ * Collect the competitor's rank for every linked keyword × storefront pair
+ * (per-language storefronts) — used to backfill ranks right after adding a
+ * competitor, so ranks don't wait for the next scheduled keyword run.
+ */
+export async function collectCompetitorRankSnapshots(
+  competitor: Competitor,
+): Promise<CompetitorRankSnapshot[]> {
+  if (!competitor.trackId || !competitor.linkedKeywords?.length) return [];
+  const { searchAppStoreRank } = await import("./rank-collector");
+  const { storefrontsForLanguage } = await import("./storefronts");
+  const productType = competitor.platform === "macos" ? "macos" : "ios";
+  const checkedAt = new Date().toISOString();
+  const entries: CompetitorRankSnapshot[] = [];
+  for (const link of competitor.linkedKeywords) {
+    // 竞品排名按关联时的视图语言商店采集：中文视图 → cn/sg；英文视图 → us/gb 等。
+    // 全局（en）关键词在某个语言视图里跟踪时，排名也按该视图语言的商店。
+    const storefronts = storefrontsForLanguage(link.language) || [];
+    for (const storefront of storefronts) {
+      const result = await searchAppStoreRank({
+        term: link.keyword,
+        country: storefront,
+        trackId: competitor.trackId,
+        productType,
+      }).catch(() => null);
+      entries.push({
+        keyword: link.keyword,
+        language: link.language,
+        storefront,
+        rank: result?.rank ?? null,
+        checkedAt,
+      });
+    }
+  }
+  return entries;
 }
 
 export async function fetchCompetitorSnapshot(
   competitor: Competitor,
   token?: string | null,
+  country = "us",
 ): Promise<CompetitorSnapshot> {
   const snapshot: CompetitorSnapshot = {
     date: new Date().toISOString().slice(0, 10),
+    country,
     version: null,
     releaseDate: null,
     price: null,
@@ -88,7 +227,9 @@ export async function fetchCompetitorSnapshot(
 
   if (competitor.trackId) {
     try {
-      const res = await fetchWithTimeout(`https://itunes.apple.com/lookup?id=${encodeURIComponent(competitor.trackId)}`);
+      const res = await fetchWithTimeout(
+        `https://itunes.apple.com/lookup?id=${encodeURIComponent(competitor.trackId)}&country=${encodeURIComponent(country)}`,
+      );
       if (res.ok) {
         const data = JSON.parse(await res.text());
         const app = Array.isArray(data?.results) ? data.results[0] : null;
@@ -126,6 +267,7 @@ export async function fetchCompetitorSnapshot(
 
   return snapshot;
 }
+
 
 export function competitorDeltaSummary(
   competitor: Competitor,

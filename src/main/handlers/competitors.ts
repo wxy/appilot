@@ -1,8 +1,12 @@
 import { ipcMain } from "electron";
-import { createCompetitor, searchCompetitorCandidates } from "../../engine/competitor-radar";
+import {
+  createCompetitor,
+  searchCompetitorCandidatesAcross,
+} from "../../engine/competitor-radar";
 import { runOpsSyncNow } from "../scheduler";
 import { getStore } from "../store";
 import { assertNonEmptyString } from "../util";
+import { notifyDataChanged } from "../data-sync";
 
 function competitorsFor(store: any, projectId: string): any[] {
   return (store.get("competitors") || {})[projectId] || [];
@@ -34,12 +38,16 @@ export function registerCompetitorsHandlers(): void {
           platform: competitor.platform || "unknown",
           githubUrl: competitor.githubUrl || null,
           notes: competitor.notes || "",
+          linkedKeywords: Array.isArray(competitor.linkedKeywords)
+            ? competitor.linkedKeywords
+            : undefined,
         });
     const index = list.findIndex((item: any) => item.id === normalized.id);
     const next = index >= 0
       ? [...list.slice(0, index), normalized, ...list.slice(index + 1)]
       : [...list, normalized];
     saveCompetitors(s, projectId, next);
+    notifyDataChanged("competitors");
     return next;
   });
 
@@ -52,16 +60,29 @@ export function registerCompetitorsHandlers(): void {
       projectId,
       competitorsFor(s, projectId).filter((item: any) => item.id !== competitorId),
     );
+    notifyDataChanged("competitors");
     return true;
   });
 
-  ipcMain.handle("competitors:search", async (_event, opts: { term?: string; country?: string; platform?: string }) => {
+  ipcMain.handle("competitors:search", async (_event, opts: {
+    term?: string;
+    country?: string;
+    countries?: string[];
+    platform?: string;
+    excludeTrackIds?: string[];
+    excludeBundleIds?: string[];
+  }) => {
     const term = assertNonEmptyString(opts?.term, "term");
-    const country = assertNonEmptyString(opts?.country, "country");
-    return searchCompetitorCandidates({
+    const countries =
+      Array.isArray(opts?.countries) && opts.countries.length > 0
+        ? opts.countries.filter((c: string) => c)
+        : [assertNonEmptyString(opts?.country, "country")];
+    return searchCompetitorCandidatesAcross({
       term,
-      country,
+      countries,
       entity: opts?.platform === "macos" ? "macSoftware" : "software",
+      excludeTrackIds: Array.isArray(opts?.excludeTrackIds) ? opts.excludeTrackIds : undefined,
+      excludeBundleIds: Array.isArray(opts?.excludeBundleIds) ? opts.excludeBundleIds : undefined,
     });
   });
 
@@ -70,6 +91,40 @@ export function registerCompetitorsHandlers(): void {
     competitorId = assertNonEmptyString(competitorId, "competitorId");
     const s = await getStore();
     return (s.get("competitorSnapshots") || {})[projectId]?.[competitorId] || [];
+  });
+
+  ipcMain.handle("competitors:rankSnapshots", async (_event, projectId: string, competitorId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    competitorId = assertNonEmptyString(competitorId, "competitorId");
+    const s = await getStore();
+    return (s.get("competitorRankSnapshots") || {})[projectId]?.[competitorId] || [];
+  });
+
+  // 立即为所有竞品的关联关键词补采排名（无需等待下次定时关键词抓取）。
+  ipcMain.handle("competitors:refreshRanks", async (_event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const s = await getStore();
+    const list = competitorsFor(s, projectId);
+    const { collectCompetitorRankSnapshots } = await import("../../engine/competitor-radar");
+    const ranksAll: Record<string, Record<string, any[]>> =
+      s.get("competitorRankSnapshots") || {};
+    const rankById: Record<string, any[]> = ranksAll[projectId] || {};
+    for (const competitor of list) {
+      const ranks = await collectCompetitorRankSnapshots(competitor);
+      if (ranks.length === 0) continue;
+      const prev = rankById[competitor.id] || [];
+      const kept = prev.filter(
+        (item: any) =>
+          !ranks.some(
+            (r: any) => r.keyword === item.keyword && r.storefront === item.storefront,
+          ),
+      );
+      rankById[competitor.id] = [...kept, ...ranks].slice(-300);
+    }
+    ranksAll[projectId] = rankById;
+    s.set("competitorRankSnapshots", ranksAll);
+    notifyDataChanged("competitors");
+    return true;
   });
 
   ipcMain.handle("competitors:sync", async (_event, projectId: string) => {

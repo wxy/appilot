@@ -35,6 +35,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { HistoryViewer } from "./HistoryViewer";
 import { ReferenceSection } from "./ReferenceSection";
 import { draftVersionLabel } from "./releaseFormat";
+import { ValueFlash } from "../ui/ValueFlash";
 
 export function ReleasePage() {
   const { projects, currentProjectId, currentProductId, selectProduct } = useProject();
@@ -187,6 +188,22 @@ export function ReleasePage() {
   useEffect(() => {
     void loadReleases();
   }, [project?.id, currentProductId, searchParams]);
+
+  // 主进程数据变更推送：发布/App Store 状态更新时自动刷新工作台。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const scope = (e as CustomEvent).detail;
+      if (scope === "releases") {
+        void loadReleases(false);
+      } else if (scope === "asc" && productId) {
+        (window as any).appilot?.asc?.status(productId)
+          .then(setAscInfo)
+          .catch(() => undefined);
+      }
+    };
+    window.addEventListener("appilot:data-changed", handler);
+    return () => window.removeEventListener("appilot:data-changed", handler);
+  }, [productId]);
 
   // Keep the selected product valid when the project or its products change
   // (e.g. switching project, or products arriving after the initial load).
@@ -373,7 +390,9 @@ export function ReleasePage() {
   const storeNode = effectiveVersionStatus || buildInfo || (draft?.appVersion && storeLiveVersion) ? (
     <>
       {effectiveVersionStatus && (
-        <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
+        <ValueFlash value={effectiveVersionStatus.key} mode="text">
+          <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
+        </ValueFlash>
       )}
       {buildInfo && (
         <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
@@ -1251,14 +1270,16 @@ export function ReleasePage() {
                     <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
                       目标版本
                     </span>
-                    <input
-                      value={draft.appVersion || ""}
-                      onChange={(e) => updateDraftField("appVersion", e.target.value)}
-                      onBlur={() => void persistCurrentDraft()}
-                      placeholder="如 1.2.6"
-                      disabled={batchConfirmed || versionLocked}
-                      className={inputLineClass + " max-w-32"}
-                    />
+                    <ValueFlash value={draft.appVersion || ""} mode="input">
+                      <input
+                        value={draft.appVersion || ""}
+                        onChange={(e) => updateDraftField("appVersion", e.target.value)}
+                        onBlur={() => void persistCurrentDraft()}
+                        placeholder="如 1.2.6"
+                        disabled={batchConfirmed || versionLocked}
+                        className={inputLineClass + " max-w-32"}
+                      />
+                    </ValueFlash>
                     <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
                       确定文案前需填写
                     </span>

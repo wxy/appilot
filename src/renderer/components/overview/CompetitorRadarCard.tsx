@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { storefrontDisplayName } from "../../../engine/storefronts";
 import { formatHumanTime } from "../../lib/format";
 
 export function CompetitorRadarCard({ project }: { project: any }) {
   const [competitors, setCompetitors] = useState<any[]>([]);
   const [snapshots, setSnapshots] = useState<Record<string, any[]>>({});
+  const [rankSnapshots, setRankSnapshots] = useState<Record<string, any[]>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -15,15 +17,23 @@ export function CompetitorRadarCard({ project }: { project: any }) {
         return Promise.all(
           list.map(async (competitor) => {
             const items = await (window as any).appilot?.competitors?.snapshots(project.id, competitor.id);
-            return [competitor.id, items || []] as const;
+            const ranks = await (window as any).appilot?.competitors?.rankSnapshots(project.id, competitor.id);
+            return [competitor.id, items || [], ranks || []] as const;
           }),
         );
       })
       .then((entries: any) => {
         if (cancelled || !entries) return;
-        setSnapshots(Object.fromEntries(entries));
+        setSnapshots(Object.fromEntries(entries.map((e: any) => [e[0], e[1]])));
+        setRankSnapshots(Object.fromEntries(entries.map((e: any) => [e[0], e[2]])));
       })
-      .catch(() => { if (!cancelled) { setCompetitors([]); setSnapshots({}); } });
+      .catch(() => {
+        if (!cancelled) {
+          setCompetitors([]);
+          setSnapshots({});
+          setRankSnapshots({});
+        }
+      });
     return () => { cancelled = true; };
   }, [project.id]);
 
@@ -45,16 +55,26 @@ export function CompetitorRadarCard({ project }: { project: any }) {
         <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
           {top3.map((competitor) => {
             const items = snapshots[competitor.id] || [];
-            const latest = items[items.length - 1] || null;
-            const previous = items[items.length - 2] || null;
+            const latest = items[0] || null;
+            const previous = items.find((item: any) => item.date !== latest?.date) || items[1] || null;
             const versionChanged = latest?.version && previous?.version && latest.version !== previous.version;
             const starsDelta = latest?.stars != null && previous?.stars != null ? latest.stars - previous.stars : null;
+            const ranks = rankSnapshots[competitor.id] || [];
+            const latestRanks = Array.from(
+              new Map(
+                ranks.map((r: any) => [`${r.keyword}\u0000${r.storefront}`, r]),
+              ).values(),
+            )
+              .sort((a: any, b: any) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime())
+              .slice(0, 2);
             return (
               <div key={competitor.id} className="px-4 py-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{competitor.name}</span>
                   {latest?.releaseDate && (
-                    <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0">{formatHumanTime(latest.releaseDate)} 发版</span>
+                    <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0">
+                      {latest.country ? `${storefrontDisplayName(latest.country)} · ` : ""}{formatHumanTime(latest.releaseDate)} 发版
+                    </span>
                   )}
                 </div>
                 <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -63,6 +83,19 @@ export function CompetitorRadarCard({ project }: { project: any }) {
                   {starsDelta != null && starsDelta !== 0 ? ` · ★${starsDelta > 0 ? "+" : ""}${starsDelta}` : ""}
                   {latest?.stars != null ? ` · ★${latest.stars}` : ""}
                 </div>
+                {latestRanks.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-x-2.5 gap-y-0.5">
+                    {latestRanks.map((rank: any, index: number) => (
+                      <span
+                        key={`${rank.keyword}:${rank.storefront}:${index}`}
+                        className="text-[10px] text-zinc-400 dark:text-zinc-500"
+                      >
+                        {rank.keyword} · {storefrontDisplayName(rank.storefront)} #
+                        {rank.rank ?? "未上榜"}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
