@@ -80,11 +80,17 @@ export function CompetitorPanel({
           ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
           : [],
       });
+      // 已成功添加的候选从结果里移除，避免“添加中”后仍显示可添加。
+      setCandidates((prev) => prev.filter((c) => c.trackId !== candidate.trackId));
       load();
     } finally {
       setAdding(null);
     }
   };
+
+  const appStorePageUrl = (candidate: any) =>
+    candidate.trackViewUrl ||
+    `https://apps.apple.com/${candidate.country || "us"}/app/id${candidate.trackId}`;
 
   const handleRemove = async (competitorId: string) => {
     await (window as any).appilot?.competitors?.remove(projectId, competitorId);
@@ -115,41 +121,58 @@ export function CompetitorPanel({
       )}
 
       {candidates.length > 0 && (
-        <div className="mb-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div
+          className={cn(
+            "mb-4 grid gap-3",
+            product?.platform === "macos"
+              ? "grid-cols-2 md:grid-cols-3"
+              : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4",
+          )}
+        >
           {candidates.slice(0, 12).map((candidate) => {
             const isSelf = String(candidate.trackId) === String(product?.trackId ?? "");
+            const isAdded = competitors.some(
+              (c: any) => String(c.trackId) === String(candidate.trackId),
+            );
             return (
               <div
                 key={candidate.trackId}
                 className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden flex flex-col"
               >
-                {candidate.screenshotUrl ? (
+                <div
+                  className={cn(
+                    "w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800",
+                    product?.platform === "macos" ? "aspect-[4/3]" : "aspect-[3/4]",
+                  )}
+                >
+                  {candidate.screenshotUrl ? (
                   <img
                     src={candidate.screenshotUrl}
                     alt={candidate.trackName}
-                    className="h-28 w-full object-cover bg-zinc-100 dark:bg-zinc-800"
+                    className="w-full h-full object-cover"
                     loading="lazy"
                     referrerPolicy="no-referrer"
                   />
-                ) : (
-                  <div className="h-28 w-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-400 dark:text-zinc-500">
+                  ) : (
+                  <div className="w-full h-full flex items-center justify-center text-[10px] text-zinc-400 dark:text-zinc-500">
                     无截图
                   </div>
-                )}
+                  )}
+                </div>
                 <div className="p-2.5 flex-1 flex flex-col gap-1">
                   <button
                     type="button"
                     onClick={() => {
-                      if (candidate.trackViewUrl) (window as any).appilot?.openExternal(candidate.trackViewUrl);
+                      (window as any).appilot?.openAppPage(appStorePageUrl(candidate));
                     }}
-                    disabled={!candidate.trackViewUrl}
+                    disabled={!candidate.trackId}
                     className={cn(
                       "text-sm font-medium truncate text-left",
-                      candidate.trackViewUrl
+                      candidate.trackId
                         ? "text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
                         : "text-zinc-800 dark:text-zinc-200 cursor-default",
                     )}
-                    title={candidate.trackViewUrl ? "打开 App Store 页面" : "无商店链接"}
+                    title="在网页中打开 App Store 页面"
                   >
                     {candidate.trackName}
                   </button>
@@ -167,6 +190,10 @@ export function CompetitorPanel({
                     {isSelf ? (
                       <span className="inline-flex px-2 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400">
                         当前应用
+                      </span>
+                    ) : isAdded ? (
+                      <span className="inline-flex px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-500/10 text-[11px] text-emerald-600 dark:text-emerald-400">
+                        已添加
                       </span>
                     ) : (
                       <button
@@ -198,7 +225,7 @@ export function CompetitorPanel({
                     type="button"
                     onClick={() => {
                       if (competitor.trackId) {
-                        (window as any).appilot?.openExternal(`https://apps.apple.com/app/id${competitor.trackId}`);
+                        (window as any).appilot?.openAppPage(`https://apps.apple.com/us/app/id${competitor.trackId}`);
                       }
                     }}
                     disabled={!competitor.trackId}
