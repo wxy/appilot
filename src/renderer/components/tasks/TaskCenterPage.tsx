@@ -76,11 +76,21 @@ export function TaskCenterPage() {
   useEffect(() => {
     let last = 0;
     const handler = (e: Event) => {
-      if ((e as CustomEvent).detail === "tasks" && Date.now() - last > 1500) {
-        last = Date.now();
-        (window as any).appilot?.scheduler?.list()
-          .then(setData)
+      if ((e as CustomEvent).detail === "tasks") {
+        // 统计面板轻量、即时刷新；任务列表节流刷新。
+        (window as any).appilot?.scheduler?.overview()
+          .then(({ overview, nowRunning }: any) =>
+            setData((prev) =>
+              prev ? { ...prev, overview, nowRunning } : prev,
+            ),
+          )
           .catch(() => undefined);
+        if (Date.now() - last > 1500) {
+          last = Date.now();
+          (window as any).appilot?.scheduler?.list()
+            .then(setData)
+            .catch(() => undefined);
+        }
       }
     };
     window.addEventListener("appilot:data-changed", handler);

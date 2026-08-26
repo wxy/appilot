@@ -213,6 +213,7 @@ contextBridge.exposeInMainWorld("appilot", {
     status: (): Promise<any> => ipcRenderer.invoke("scheduler:status"),
     setAccel: (enabled: boolean): Promise<boolean> =>
       ipcRenderer.invoke("scheduler:setAccel", enabled),
+    overview: (): Promise<any> => ipcRenderer.invoke("scheduler:overview"),
     list: (): Promise<any> => ipcRenderer.invoke("scheduler:list"),
     runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
   },

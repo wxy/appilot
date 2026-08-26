@@ -34,6 +34,61 @@ export function registerSchedulerHandlers(): void {
     return true;
   });
 
+  // 轻量统计：单独刷新顶部面板，避免被 1000+ 任务的完整列表计算拖慢。
+  ipcMain.handle("scheduler:overview", async () => {
+    const s = await getStore();
+    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
+    const now = Date.now();
+    const executions: any[] = s.get("rankExecutions") || [];
+    const dayMs = 24 * 60 * 60 * 1000;
+    const recent = executions.filter(
+      (entry) => new Date(entry.ts).getTime() >= now - dayMs,
+    );
+    const enabled = tasks.filter((task) => task.enabled);
+    const overdue = enabled.filter(
+      (task) => new Date(task.nextRunAt).getTime() <= now,
+    ).length;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const executedToday = executions.filter(
+      (entry) => new Date(entry.ts).getTime() >= todayStart.getTime(),
+    ).length;
+    const totalExecuted = tasks.reduce(
+      (sum, task) => sum + (task.executionCount || 0),
+      0,
+    );
+    const avgDurationMs = recent.length
+      ? Math.round(
+          recent.reduce((sum, entry) => sum + (entry.durationMs || 0), 0) /
+            recent.length,
+        )
+      : 0;
+    const successRate = recent.length
+      ? Math.round(
+          (recent.filter((entry) => entry.status === "success").length /
+            recent.length) *
+            100,
+        )
+      : null;
+    const nextDue = enabled
+      .map((task) => new Date(task.nextRunAt).getTime())
+      .sort((a, b) => a - b)[0];
+    return {
+      overview: {
+        total: tasks.length,
+        pending: enabled.length,
+        overdue,
+        executedToday,
+        totalExecuted,
+        avgDurationMs,
+        densityPerHour: Math.round((recent.length / 24) * 10) / 10,
+        successRate,
+        nextDueAt: nextDue ? new Date(nextDue).toISOString() : null,
+      },
+      nowRunning: schedulerStatusSnapshot().nowRunning || null,
+    };
+  });
+
   ipcMain.handle("scheduler:list", async () => {
     const s = await getStore();
     const projects: any[] = (s.get("projects") || []).map(migrateLegacyStoreProducts);
