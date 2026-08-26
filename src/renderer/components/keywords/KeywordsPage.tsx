@@ -72,7 +72,8 @@ export function KeywordsPage() {
   >({});
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
-  const [showDistribution, setShowDistribution] = useState(false);
+  // 分布是独立查看模式（折线填充图）；全局/语言均为矩阵视图。
+  const [isDistributionView, setIsDistributionView] = useState(false);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
@@ -248,6 +249,26 @@ export function KeywordsPage() {
     { key: "r101_200", label: "101–200", color: "#facc15", opacity: 0.6 },
     { key: "unranked", label: "未进榜", color: "#a1a1aa", opacity: 0.35 },
   ] as const;
+  const DistributionTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow px-3 py-2 text-xs">
+        <p className="font-medium mb-1">{label}</p>
+        {RANK_BUCKETS.map((bucket) => {
+          const item = payload.find((p: any) => p.dataKey === bucket.key);
+          return (
+            <div key={bucket.key} className="flex items-center gap-2 py-0.5">
+              <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: bucket.color }} />
+              <span className="text-zinc-600 dark:text-zinc-300">{bucket.label}</span>
+              <span className="ml-auto pl-3 font-medium text-zinc-800 dark:text-zinc-100">
+                {item?.value ?? 0}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
   // 分布始终是全局视角：所有语言的关键词 × 全部商店，与当前语言选择无关。
   const allTrackedActive = (project.trackedKeywords || []).filter(
     (k: any) => k.status !== "paused",
@@ -464,7 +485,7 @@ export function KeywordsPage() {
       key={`${keyword.language}:${keyword.keyword}:cells`}
       onClick={() => handleSelectKeyword(keyword)}
       className={cn(
-        "h-11 grid items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+        "h-11 grid min-w-max items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
         dimmed && "opacity-55",
         !dimmed && "bg-emerald-50/30 dark:bg-emerald-500/[0.04]",
         keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
@@ -794,6 +815,31 @@ export function KeywordsPage() {
                   </p>
                 </div>
                 <div className="flex items-start gap-2">
+                  {schedulerStatus && (
+                    <span className="flex items-center gap-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500 pt-1">
+                      <span>
+                        {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
+                        {schedulerStatus.nextDueAt
+                          ? new Date(schedulerStatus.nextDueAt).getTime() <= Date.now()
+                            ? " · 待执行"
+                            : ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
+                          : ""}
+                      </span>
+                      <button
+                        onClick={() => void handleRunDue()}
+                        disabled={runningDue}
+                        className={cn(
+                          "transition-colors",
+                          runningDue
+                            ? "text-zinc-400 dark:text-zinc-500 cursor-wait"
+                            : "text-amber-600 dark:text-amber-400 hover:underline",
+                        )}
+                        title={runningDue ? "正在执行待处理任务…" : "立即执行待处理任务"}
+                      >
+                        {runningDue ? "执行中…" : "立即执行"}
+                      </button>
+                    </span>
+                  )}
                   <div className="relative">
                     <button onClick={openSubmissionPanel} className={btnSecondary}>
                       提交内容
@@ -937,20 +983,23 @@ export function KeywordsPage() {
               <div className="mt-1.5 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowDistribution((v) => !v)}
+                  onClick={() => setIsDistributionView((v) => !v)}
                   className={cn(
                     "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
-                    showDistribution
+                    isDistributionView
                       ? "border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                       : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-emerald-500/50 hover:text-emerald-600 dark:hover:text-emerald-400",
                   )}
-                  title="最新快照各商店排名分布（堆叠面积图）"
+                  title="全部关键词 × 全部商店的排名分布（折线填充图）"
                 >
                   分布
                 </button>
                 <button
                   type="button"
-                  onClick={() => setViewLang("global")}
+                  onClick={() => {
+                    setViewLang("global");
+                    setIsDistributionView(false);
+                  }}
                   className={cn(
                     "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
                     isGlobalView
@@ -979,6 +1028,7 @@ export function KeywordsPage() {
                       <button
                         type="button"
                         onClick={() => {
+                          setIsDistributionView(false);
                           setViewLang(option.code);
                           setLitLangs((prev) => (prev.includes(option.code) ? prev : [...prev, option.code]));
                         }}
@@ -1008,8 +1058,8 @@ export function KeywordsPage() {
 
             </div>
 
-            {showDistribution && (
-              <div className="border-b border-zinc-100 dark:border-zinc-800 px-5 py-4">
+            {isDistributionView ? (
+              <div className="flex-1 min-h-0 px-5 py-4 flex flex-col">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                     排名分布（最新快照）
@@ -1018,12 +1068,13 @@ export function KeywordsPage() {
                     商店按 TOP10 数量排序；绿色越深代表排名越靠前的关键词越多
                   </span>
                 </div>
-                <ResponsiveContainer width="100%" height={260}>
+                <div className="flex-1 min-h-0">
+                <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={distributionData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" className="text-zinc-200 dark:text-zinc-800" />
                     <XAxis dataKey="storefront" tick={{ fontSize: 11 }} />
                     <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                    <Tooltip />
+                    <Tooltip content={<DistributionTooltip />} />
                     {RANK_BUCKETS.map((bucket) => (
                       <Area
                         key={bucket.key}
@@ -1038,16 +1089,16 @@ export function KeywordsPage() {
                     ))}
                   </AreaChart>
                 </ResponsiveContainer>
+                </div>
               </div>
-            )}
+            ) : (
 
             <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]">
             <div className="flex items-stretch min-w-0">
             {/* 左块：关键词列（尽量宽，不横向滚动） */}
             <div className="flex-1 min-w-0 shrink-0">
               <div className="sticky top-0 z-30 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
-                <div className="px-5 py-2.5 whitespace-nowrap">
-                <div className="flex items-center justify-between gap-2">
+                <div className="h-12 flex items-center justify-between gap-2 px-5 whitespace-nowrap">
                   <div className="flex items-center gap-2">
                     <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                       关键词（{trackedActive.length}）
@@ -1204,32 +1255,6 @@ export function KeywordsPage() {
                     </span>
                   )}
                 </div>
-                {schedulerStatus && (
-                  <span className="mt-0.5 flex items-center gap-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                    <span>
-                      {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
-                      {schedulerStatus.nextDueAt
-                        ? new Date(schedulerStatus.nextDueAt).getTime() <= Date.now()
-                          ? " · 待执行"
-                          : ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
-                        : ""}
-                    </span>
-                    <button
-                      onClick={() => void handleRunDue()}
-                      disabled={runningDue}
-                      className={cn(
-                        "transition-colors",
-                        runningDue
-                          ? "text-zinc-400 dark:text-zinc-500 cursor-wait"
-                          : "text-amber-600 dark:text-amber-400 hover:underline",
-                      )}
-                      title={runningDue ? "正在执行待处理任务…" : "立即执行待处理任务"}
-                    >
-                      {runningDue ? "执行中…" : "立即执行"}
-                    </button>
-                  </span>
-                )}
-                </div>
               </div>
               {rowsToRender.length === 0 ? (
                 <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 px-5 text-center">
@@ -1245,7 +1270,7 @@ export function KeywordsPage() {
               style={{ width: 5 * 88 + 44 }}
             >
               <div
-                className="grid sticky top-0 z-20 bg-white dark:bg-zinc-900 border-b border-zinc-100 dark:border-zinc-800"
+                className="grid min-w-max sticky top-0 z-20 bg-white dark:bg-zinc-900 border-b border-zinc-100 dark:border-zinc-800"
                 style={{ gridTemplateColumns: storeGridTemplate }}
               >
                 {matrixColumns.map((column) => (
@@ -1275,11 +1300,12 @@ export function KeywordsPage() {
             </div>
             </div>
             </div>
+            )}
 
             </div>
 
             <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5 space-y-5">
-                {chartKeyword && chartData.length > 0 && (
+                {!isGlobalView && !isDistributionView && chartKeyword && chartData.length > 0 && (
                   <div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
