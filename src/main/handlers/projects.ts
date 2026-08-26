@@ -749,9 +749,35 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (_project) => ({
-      trackedKeywords: trackedKeywords.map((item: any) => normalizeTrackedKeyword(item)),
-    }));
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
+      const normalized = trackedKeywords.map((item: any) => normalizeTrackedKeyword(item));
+      // 全量保存时，把“旧列表有、新列表无”的关键词记入已删除历史（可恢复），
+      // 与单条删除行为保持一致。
+      const oldItems = project.trackedKeywords || [];
+      const newKeys = new Set(
+        normalized.map((k: any) => `${k.language}\u0000${k.keyword}`),
+      );
+      const removedKeywords = [...(project.removedKeywords || [])];
+      for (const item of oldItems) {
+        const key = `${item.language}\u0000${item.keyword}`;
+        if (newKeys.has(key)) continue;
+        if (
+          removedKeywords.some(
+            (r: any) => `${r.language}\u0000${r.keyword}` === key,
+          )
+        ) {
+          continue;
+        }
+        removedKeywords.push({
+          language: item.language,
+          keyword: item.keyword,
+          rationale: item.rationale || "",
+          translation: item.translation || "",
+          removedAt: new Date().toISOString(),
+        });
+      }
+      return { trackedKeywords: normalized, removedKeywords };
+    });
     s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
