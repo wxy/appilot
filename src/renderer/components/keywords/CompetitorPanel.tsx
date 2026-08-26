@@ -70,6 +70,7 @@ export function CompetitorPanel({
   useEffect(() => {
     setCandidates([]);
     setSearchError("");
+    setPage(0);
   }, [viewLang, defaultTerm]);
 
   // 切换语言后，跟踪表默认回到该语言下第一个关联关键词。
@@ -85,6 +86,7 @@ export function CompetitorPanel({
     setSearching(true);
     setSearchError("");
     setAddMessage("");
+    setPage(0);
     setCandidates([]);
     try {
       const results = await (window as any).appilot?.competitors?.search({
@@ -104,7 +106,8 @@ export function CompetitorPanel({
     setAdding(candidate.trackId);
     try {
       const platform = product?.platform === "macos" ? "macos" : "ios";
-      const keyword = defaultTerm.trim();
+      // 关联搜索框里正在搜索的关键词（用户可能搜了别的词），而不是矩阵选中词。
+      const keyword = term.trim();
       const language = viewLang || "en";
       // 搜索结果已带各商店排名：随保存立即回填竞品矩阵，不必等下次抓取。
       const seedRanks = Object.entries(candidate.ranks || {})
@@ -220,9 +223,12 @@ export function CompetitorPanel({
   };
   // 每个关键词最多关联 10 个竞品。
   const MAX_COMPETITORS_PER_KEYWORD = 10;
-  const defaultKeyword = defaultTerm.trim();
+  const defaultKeyword = term.trim();
   const defaultLinkedCount = competitors.filter((c: any) =>
-    (c.linkedKeywords || []).some((l: any) => l.keyword === defaultKeyword),
+    (c.linkedKeywords || []).some(
+      (l: any) =>
+        l.keyword === defaultKeyword && l.language === (viewLang || "en"),
+    ),
   ).length;
   const atLimit = defaultLinkedCount >= MAX_COMPETITORS_PER_KEYWORD;
   const rankCellClass = (rank: number | null) => {
@@ -246,7 +252,7 @@ export function CompetitorPanel({
         ids.includes(String(candidate.trackId)) &&
         (c.linkedKeywords || []).some(
           (l: any) =>
-            l.keyword === defaultTerm.trim() &&
+            l.keyword === term.trim() &&
             l.language === (viewLang || "en"),
         )
       );
@@ -460,14 +466,8 @@ export function CompetitorPanel({
             const trackedCompetitors = linkedCompetitors.filter((c: any) =>
               Boolean(competitorTrackId(c, viewPlatform)),
             );
-            const hiddenCount = linkedCompetitors.length - trackedCompetitors.length;
             return (
             <div className="p-4">
-              {hiddenCount > 0 && (
-                <p className="mb-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-                  {hiddenCount} 个竞品未在{platformLabel(viewPlatform)}上架，已在当前平台隐藏。
-                </p>
-              )}
               <div className="flex flex-wrap gap-1.5 mb-3">
               {linkedKeywords.map((link: any) => (
                 <button
