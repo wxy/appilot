@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
-import { languageLabel } from "../../lib/format";
+import { formatHumanTime, languageLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 
@@ -98,8 +98,6 @@ export function CompetitorPanel({
           ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
           : [],
       });
-      // 立即补采新竞品的排名（不需要等下一次定时关键词抓取）。
-      await (window as any).appilot?.competitors?.refreshRanks(projectId);
       load();
     } finally {
       setAdding(null);
@@ -350,37 +348,35 @@ export function CompetitorPanel({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="text-left">
-                    <th className="py-1.5 pr-3 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400">竞品</th>
+                    <th className="py-2 px-3 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400 text-left">竞品</th>
                     {stores.map((store) => (
-                      <th key={store} className="py-1.5 pr-3 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                      <th key={store} className="py-2 px-3 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                         {storefrontDisplayName(store)}
                       </th>
                     ))}
-                    <th className="py-1.5 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400" />
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
-                    <td className="py-1.5 pr-3 border border-zinc-200 dark:border-zinc-700 font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                    <td className="py-2 px-3 border border-zinc-200 dark:border-zinc-700 font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
                       我
                     </td>
                     {stores.map((store) => (
                       <td
                         key={store}
                         className={cn(
-                          "py-1.5 pr-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap font-medium",
+                          "py-2 px-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap font-medium",
                           rankCellClass(ownRankByStore.get(store) ?? null),
                         )}
                       >
                         {ownRankByStore.get(store) ?? "未上榜"}
                       </td>
                     ))}
-                    <td className="border border-zinc-200 dark:border-zinc-700" />
                   </tr>
                   {trackedCompetitors.map((c) => (
                     <tr key={c.id}>
-                      <td className="py-1.5 pr-3 border border-zinc-200 dark:border-zinc-700 whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1.5">
+                      <td className="py-2 px-3 border border-zinc-200 dark:border-zinc-700 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => {
@@ -402,7 +398,22 @@ export function CompetitorPanel({
                           >
                             ✕
                           </button>
-                        </span>
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+                          {c.addedAt ? `加入 ${formatHumanTime(c.addedAt)}` : "加入时间未知"}
+                          {(() => {
+                            const latestRankAt = (competitorRanks[c.id] || []).reduce(
+                              (latest: string | null, r: any) =>
+                                !latest || new Date(r.checkedAt).getTime() > new Date(latest).getTime()
+                                  ? r.checkedAt
+                                  : latest,
+                              null,
+                            );
+                            return latestRankAt
+                              ? ` · 排名 ${formatHumanTime(latestRankAt)}`
+                              : " · 排名尚未查询";
+                          })()}
+                        </div>
                       </td>
                       {stores.map((store) => {
                         const rank = competitorRankAt(c, store);
@@ -410,7 +421,7 @@ export function CompetitorPanel({
                           <td
                             key={store}
                             className={cn(
-                              "py-1.5 pr-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap",
+                              "py-2 px-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap",
                               rankCellClass(rank),
                             )}
                           >
@@ -418,7 +429,6 @@ export function CompetitorPanel({
                           </td>
                         );
                       })}
-                      <td className="border border-zinc-200 dark:border-zinc-700" />
                     </tr>
                   ))}
                 </tbody>
