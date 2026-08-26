@@ -102,11 +102,13 @@ let overdueScattered = false;
 let powerListenersRegistered = false;
 /** How many rank tasks one scheduler tick may execute (throughput vs load). */
 const MAX_RANK_TASKS_PER_TICK = 8;
-const MAX_RANK_TASKS_PER_TICK_ACCEL = 40;
 const TICK_INTERVAL_MS = 60_000;
 const TICK_INTERVAL_ACCEL_MS = 10_000;
 const TASK_BREAK_MS = 1500;
 const TASK_BREAK_ACCEL_MS = 200;
+const ACCEL_MAX_ROUNDS = 6;
+const ACCEL_MAX_TASKS_PER_TICK = 40;
+const ACCEL_AUTO_OFF_MS = 5 * 60_000;
 let schedulerPaused = false;
 /** What the scheduler is executing right now (for the timeline UI). */
 let nowRunningTask: RunningTaskInfo | null = null;
@@ -932,6 +934,19 @@ export async function schedulerTick(): Promise<void> {
     const now = Date.now();
     const accel = store.get("schedulerAccel") === true;
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    // 渐进提速：加速不是瞬间满负荷，而是每轮逐步提升到峰值（踩油门）。
+    let accelRound = 0;
+    if (accel) {
+      accelRound = Number(store.get("schedulerAccelRound") || 0) + 1;
+      store.set("schedulerAccelRound", accelRound);
+    }
+    const accelFactor = accel ? Math.min(1, accelRound / ACCEL_MAX_ROUNDS) : 0;
+    const maxPerTick = accel
+      ? Math.round(MAX_RANK_TASKS_PER_TICK + (ACCEL_MAX_TASKS_PER_TICK - MAX_RANK_TASKS_PER_TICK) * accelFactor)
+      : MAX_RANK_TASKS_PER_TICK;
+    const breakMs = accel
+      ? Math.round(TASK_BREAK_MS - (TASK_BREAK_MS - TASK_BREAK_ACCEL_MS) * accelFactor)
+      : TASK_BREAK_MS;
     // Oldest-overdue first: array order is per-project, so an early project can
     // otherwise starve every later project (GloWalk sat enabled but untouched
     // behind ai-pulse's larger task list).
@@ -942,11 +957,23 @@ export async function schedulerTick(): Promise<void> {
           new Date(task.nextRunAt).getTime() <= now,
       )
       .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime());
+    // 自动解除：积压清空（本轮没有到期任务，且已至少跑过一轮）或超过时限。
+    if (accel) {
+      const since = store.get("schedulerAccelSince");
+      const expired =
+        since && Date.now() - new Date(since).getTime() > ACCEL_AUTO_OFF_MS;
+      const backlogCleared = due.length === 0 && accelRound > 1;
+      if (expired || backlogCleared) {
+        store.set("schedulerAccel", false);
+        overdueScattered = false;
+        notifyDataChanged("tasks");
+      }
+    }
     // Run whole keyword groups back-to-back so a group's round completes as
     // early as possible, then take the tick's throughput cap.
     const selected = prioritizeGroupCompletion(due).slice(
       0,
-      accel ? MAX_RANK_TASKS_PER_TICK_ACCEL : MAX_RANK_TASKS_PER_TICK,
+      maxPerTick,
     );
 
     for (const task of selected) {
@@ -962,7 +989,7 @@ export async function schedulerTick(): Promise<void> {
         await runRankTask(store, task);
       }
       await new Promise((resolve) =>
-        setTimeout(resolve, accel ? TASK_BREAK_ACCEL_MS : TASK_BREAK_MS),
+        setTimeout(resolve, breakMs),
       );
     }
     // Merge the tick's per-task updates into the latest task list instead of
@@ -1042,6 +1069,8 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
   const store = await getStore();
   store.set("schedulerAccel", Boolean(enabled));
   if (enabled) {
+    store.set("schedulerAccelSince", new Date().toISOString());
+    store.set("schedulerAccelRound", 0);
     // 让尚未到期的任务立即到期，加速按序处理。
     const tasks: any[] = store.get("scheduledTasks") || [];
     const now = new Date().toISOString();

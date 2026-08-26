@@ -34,6 +34,7 @@ export function TaskCenterPage() {
     tasks: any[];
   } | null>(null);
   const [accel, setAccel] = useState(false);
+  const [accelRemainingMs, setAccelRemainingMs] = useState<number | null>(null);
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
@@ -61,7 +62,12 @@ export function TaskCenterPage() {
   // 读取当前加速模式状态。
   useEffect(() => {
     (window as any).appilot?.scheduler?.status()
-      .then((status: any) => setAccel(Boolean(status?.accel)))
+      .then((status: any) => {
+        setAccel(Boolean(status?.accel));
+        setAccelRemainingMs(
+          typeof status?.accelRemainingMs === "number" ? status.accelRemainingMs : null,
+        );
+      })
       .catch(() => undefined);
   }, []);
 
@@ -147,7 +153,9 @@ export function TaskCenterPage() {
             {accel ? (
               <>
                 <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                加速模式（开）
+                {accelRemainingMs != null
+                  ? `加速中 · ${Math.ceil(accelRemainingMs / 1000)} 秒后自动解除`
+                  : "加速模式（开）"}
               </>
             ) : (
               "加速模式"
