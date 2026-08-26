@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
+import { languageLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 
@@ -179,95 +180,6 @@ export function CompetitorPanel({
         <p className="mb-4 text-xs text-red-600 dark:text-red-400">{searchError}</p>
       )}
 
-      {competitors.length > 0 && (
-        <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">竞品跟踪</h3>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-zinc-400">按关联关键词对比自己与竞品排名</span>
-              <button
-                type="button"
-                onClick={() => void handleRefreshRanks()}
-                disabled={refreshingRanks}
-                className={btnSmSecondary}
-              >
-                {refreshingRanks ? "采集中…" : "刷新排名"}
-              </button>
-            </div>
-          </div>
-          {linkedKeywords.length === 0 ? (
-            <p className="px-4 py-4 text-xs text-zinc-400 dark:text-zinc-500">
-              竞品未关联关键词。添加竞品时使用搜索关键词关联，排名随关键词抓取采集。
-            </p>
-          ) : activeLink ? (
-          <div className="p-4">
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {linkedKeywords.map((link: any) => (
-                <button
-                  key={`${link.keyword}\u0000${link.language}`}
-                  type="button"
-                  onClick={() => setTrackedKeyword(`${link.keyword}\u0000${link.language}`)}
-                  className={cn(
-                    "px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors",
-                    activeLink.keyword === link.keyword && activeLink.language === link.language
-                      ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50",
-                  )}
-                >
-                  {link.keyword}
-                </button>
-              ))}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-zinc-100 dark:border-zinc-800 text-left">
-                    <th className="py-1.5 pr-3 font-medium text-zinc-400">商店</th>
-                    <th className="py-1.5 pr-3 font-medium text-amber-600 dark:text-amber-400">我</th>
-                    {competitors.map((c) => (
-                      <th key={c.id} className="py-1.5 pr-3 font-medium text-zinc-500 dark:text-zinc-400">
-                        <span className="inline-flex items-center gap-1.5 align-bottom">
-                          <span className="truncate inline-block max-w-24">{c.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemove(c.id)}
-                            className="text-zinc-300 dark:text-zinc-600 hover:text-red-500 transition-colors"
-                            title="移除竞品"
-                          >
-                            ✕
-                          </button>
-                        </span>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {storefrontsForLanguage(activeLink.language).map((store) => (
-                    <tr key={store} className="border-b border-zinc-100/60 dark:border-zinc-800/60 last:border-b-0">
-                      <td className="py-1.5 pr-3 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
-                        {storefrontDisplayName(store)}
-                      </td>
-                      <td className="py-1.5 pr-3 font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
-                        {ownRankByStore.get(store) ?? "未上榜"}
-                      </td>
-                      {competitors.map((c) => {
-                        const rank = competitorRankAt(c, store);
-                        return (
-                          <td key={c.id} className="py-1.5 pr-3 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
-                            {rank ?? "未上榜"}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          ) : null}
-        </div>
-      )}
-
       {candidates.length > 0 && (
         <div
           className={cn(
@@ -324,9 +236,12 @@ export function CompetitorPanel({
                   >
                     {candidate.trackName}
                   </button>
-                  {candidate.subtitle && (
+                  {(candidate.subtitle || candidate.description) && (
                     <p className="text-[11px] text-zinc-400 dark:text-zinc-500 truncate">
-                      {candidate.subtitle}
+                      {candidate.subtitle ||
+                        (candidate.description
+                          ? String(candidate.description).slice(0, 60)
+                          : "")}
                     </p>
                   )}
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
@@ -362,6 +277,127 @@ export function CompetitorPanel({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {competitors.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">竞品跟踪</h3>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-zinc-400">按关联关键词对比自己与竞品排名</span>
+              <button
+                type="button"
+                onClick={() => void handleRefreshRanks()}
+                disabled={refreshingRanks}
+                className={btnSmSecondary}
+              >
+                {refreshingRanks ? "采集中…" : "刷新排名"}
+              </button>
+            </div>
+          </div>
+          {linkedKeywords.length === 0 ? (
+            <p className="px-4 py-4 text-xs text-zinc-400 dark:text-zinc-500">
+              竞品未关联关键词。添加竞品时使用搜索关键词关联，排名随关键词抓取采集。
+            </p>
+          ) : activeLink ? (
+          (() => {
+            const stores = storefrontsForLanguage(activeLink.language);
+            const trackedCompetitors = competitors.filter((c: any) =>
+              (c.linkedKeywords || []).some(
+                (l: any) =>
+                  l.keyword === activeLink.keyword && l.language === activeLink.language,
+              ),
+            );
+            return (
+          <div className="p-4">
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {linkedKeywords.map((link: any) => (
+                <button
+                  key={`${link.keyword}\u0000${link.language}`}
+                  type="button"
+                  onClick={() => setTrackedKeyword(`${link.keyword}\u0000${link.language}`)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors",
+                    activeLink.keyword === link.keyword && activeLink.language === link.language
+                      ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50",
+                  )}
+                >
+                  {languageLabel(link.language)} · {link.keyword}
+                </button>
+              ))}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-zinc-100 dark:border-zinc-800 text-left">
+                    <th className="py-1.5 pr-3 font-medium text-zinc-400">竞品</th>
+                    {stores.map((store) => (
+                      <th key={store} className="py-1.5 pr-3 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                        {storefrontDisplayName(store)}
+                      </th>
+                    ))}
+                    <th className="py-1.5 font-medium text-zinc-400" />
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-zinc-100/60 dark:border-zinc-800/60">
+                    <td className="py-1.5 pr-3 font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                      我
+                    </td>
+                    {stores.map((store) => (
+                      <td key={store} className="py-1.5 pr-3 text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                        {ownRankByStore.get(store) ?? "未上榜"}
+                      </td>
+                    ))}
+                    <td />
+                  </tr>
+                  {trackedCompetitors.map((c) => (
+                    <tr key={c.id} className="border-b border-zinc-100/60 dark:border-zinc-800/60 last:border-b-0">
+                      <td className="py-1.5 pr-3 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (c.trackId) {
+                                (window as any).appilot?.openAppPage(
+                                  `https://apps.apple.com/us/app/id${c.trackId}`,
+                                );
+                              }
+                            }}
+                            className="text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
+                          >
+                            {c.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleRemove(c.id)}
+                            className="text-zinc-300 dark:text-zinc-600 hover:text-red-500 transition-colors"
+                            title="移除竞品"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      </td>
+                      {stores.map((store) => {
+                        const rank = competitorRankAt(c, store);
+                        return (
+                          <td key={store} className="py-1.5 pr-3 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
+                            {rank ?? "未上榜"}
+                          </td>
+                        );
+                      })}
+                      <td />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+            );
+          })()
+          ) : null}
         </div>
       )}
 

@@ -19,6 +19,8 @@ export interface CompetitorCandidate {
   /** 首张截图（App Store 商品图）。 */
   screenshotUrl: string | null;
   subtitle: string | null;
+  /** 完整描述（副标题/推广文本不可得时用于了解应用）。 */
+  description: string | null;
   genre: string;
   averageUserRating: number | null;
   trackViewUrl: string | null;
@@ -97,6 +99,7 @@ export async function searchCompetitorCandidates(opts: {
           ? String(r.screenshotUrls[0])
           : null,
       subtitle: typeof r.subtitle === "string" ? r.subtitle : null,
+      description: typeof r.description === "string" ? r.description : null,
       genre: String(r.primaryGenreName || ""),
       averageUserRating: typeof r.averageUserRating === "number" ? r.averageUserRating : null,
       trackViewUrl: typeof r.trackViewUrl === "string" ? r.trackViewUrl : null,
@@ -154,15 +157,22 @@ export async function searchCompetitorCandidatesAcross(opts: {
  */
 export async function collectCompetitorRankSnapshots(
   competitor: Competitor,
+  supportedLanguages?: string[],
 ): Promise<CompetitorRankSnapshot[]> {
   if (!competitor.trackId || !competitor.linkedKeywords?.length) return [];
   const { searchAppStoreRank } = await import("./rank-collector");
-  const { storefrontsForLanguage } = await import("./storefronts");
+  const { ALL_STOREFRONT_CODES, storefrontsForLanguage } = await import("./storefronts");
   const productType = competitor.platform === "macos" ? "macos" : "ios";
   const checkedAt = new Date().toISOString();
   const entries: CompetitorRankSnapshot[] = [];
   for (const link of competitor.linkedKeywords) {
-    const storefronts = storefrontsForLanguage(link.language) || [];
+    // 全局（en）关键词覆盖项目全部语言商店，与全局排名语义一致。
+    const storefronts =
+      link.language === "en" && supportedLanguages?.length
+        ? Array.from(new Set(supportedLanguages.flatMap((code) => storefrontsForLanguage(code) || [])))
+        : link.language === "en"
+          ? ALL_STOREFRONT_CODES
+          : storefrontsForLanguage(link.language) || [];
     for (const storefront of storefronts) {
       const result = await searchAppStoreRank({
         term: link.keyword,

@@ -103,11 +103,20 @@ export function registerCompetitorsHandlers(): void {
     const s = await getStore();
     const list = competitorsFor(s, projectId);
     const { collectCompetitorRankSnapshots } = await import("../../engine/competitor-radar");
+    const project = (s.get("projects") || []).find((p: any) => p.id === projectId);
+    const supportedLanguages: string[] = Array.from(
+      new Set(
+        ((project?.storeProducts || []) as any[]).flatMap(
+          (product: any) =>
+            ((product.supportedLanguages || []) as any[]).map((l: any) => String(l.code)),
+        ),
+      ),
+    );
     const ranksAll: Record<string, Record<string, any[]>> =
       s.get("competitorRankSnapshots") || {};
     const rankById: Record<string, any[]> = ranksAll[projectId] || {};
     for (const competitor of list) {
-      const ranks = await collectCompetitorRankSnapshots(competitor);
+      const ranks = await collectCompetitorRankSnapshots(competitor, supportedLanguages);
       if (ranks.length === 0) continue;
       const prev = rankById[competitor.id] || [];
       const kept = prev.filter(
