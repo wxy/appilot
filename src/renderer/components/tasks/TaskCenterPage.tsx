@@ -108,6 +108,21 @@ export function TaskCenterPage() {
     return () => window.clearInterval(timer);
   }, [accel]);
 
+  // 倒计时归零：立即触发主进程解除（不用等下一轮调度检测），
+  // 未执行任务会被重新排回未来时段。
+  useEffect(() => {
+    if (!accel || accelRemainingMs == null || accelRemainingMs > 0) return;
+    (window as any).appilot?.scheduler?.setAccel(false)
+      .then(() => {
+        setAccel(false);
+        setAccelRemainingMs(null);
+        (window as any).appilot?.scheduler?.list()
+          .then(setData)
+          .catch(() => undefined);
+      })
+      .catch(() => undefined);
+  }, [accel, accelRemainingMs]);
+
   const projectOptions = Array.from(
     new Set(
       (data?.tasks || [])

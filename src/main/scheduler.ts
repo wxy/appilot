@@ -965,9 +965,12 @@ export async function schedulerTick(): Promise<void> {
       const expired = until && Date.now() >= new Date(until).getTime();
       const backlogCleared = due.length === 0 && accelRound > 1;
       if (expired || backlogCleared) {
-        store.set("schedulerAccel", false);
+        await disableAccel(store);
         overdueScattered = false;
         notifyDataChanged("tasks");
+        // 本轮不再继续执行加速任务，等下一轮恢复正常节奏。
+        // （selected 稍后按空 due 计算）
+        due.length = 0;
       }
     }
     // Run whole keyword groups back-to-back so a group's round completes as
@@ -1091,8 +1094,7 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
     }
     if (changed) store.set("scheduledTasks", tasks);
   } else {
-    store.set("schedulerAccel", false);
-    store.set("schedulerAccelUntil", null);
+    await disableAccel(store);
   }
   // 立即应用新的调度节奏。
   if (schedulerTimer) {
@@ -1101,6 +1103,25 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
   }
   startSchedulerLoop();
   return;
+}
+
+/**
+ * 关闭加速：把加速期间被提前到当前时段的未执行任务重新排回未来
+ * （按各自的原间隔），避免解除后仍积压在积压队列里。
+ */
+async function disableAccel(store: AppStore): Promise<void> {
+  store.set("schedulerAccel", false);
+  store.set("schedulerAccelUntil", null);
+  const tasks: any[] = store.get("scheduledTasks") || [];
+  const nowMs = Date.now();
+  let changed = false;
+  for (const task of tasks) {
+    if (task.enabled && new Date(task.nextRunAt).getTime() <= nowMs) {
+      task.nextRunAt = nextRunAt(task.id, task.intervalMinutes || 60);
+      changed = true;
+    }
+  }
+  if (changed) store.set("scheduledTasks", tasks);
 }
 
 export function startTaskScheduler(): void {
