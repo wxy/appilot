@@ -103,7 +103,6 @@ let powerListenersRegistered = false;
 const MAX_RANK_TASKS_PER_TICK = 8;
 /** What the scheduler is executing right now (for the timeline UI). */
 let nowRunningTask: RunningTaskInfo | null = null;
-const rankEntityCache = new Map<string, "software" | "macSoftware">();
 
 export function isSchedulerTimerActive(): boolean {
   return Boolean(schedulerTimer);
@@ -157,14 +156,11 @@ export function githubSyncCacheEntry(
   };
 }
 
-async function resolveRankEntity(product: any): Promise<"software" | "macSoftware"> {
-  const cached = rankEntityCache.get(product.trackId);
-  if (cached) return cached;
-  const { lookupApp } = await import("../engine/app-store-discovery");
-  const metadata = await lookupApp(product.trackId);
-  const entity: "software" | "macSoftware" = metadata?.kind === "mac-software" ? "macSoftware" : "software";
-  rankEntityCache.set(product.trackId, entity);
-  return entity;
+// 按产品平台决定搜索实体：macOS 商店用 macSoftware，iOS 商店用 software。
+// 不能用 lookup 的 kind 猜测——universal app 的 kind 常是 software，
+// 导致 macOS 产品错误地采集 iOS 商店的排名（两个平台数据相同）。
+function resolveRankEntity(product: any): "software" | "macSoftware" {
+  return product?.platform === "macos" ? "macSoftware" : "software";
 }
 
 async function reconcileRankTasks(store: AppStore): Promise<void> {
