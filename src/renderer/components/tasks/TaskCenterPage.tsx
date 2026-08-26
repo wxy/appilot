@@ -52,12 +52,13 @@ export function TaskCenterPage() {
         });
     };
     refresh();
-    const timer = window.setInterval(refresh, 15_000);
+    // 加速模式下刷新更频繁（5 秒），正常 15 秒。
+    const timer = window.setInterval(refresh, accel ? 5_000 : 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [accel]);
 
   // 读取当前加速模式状态。
   useEffect(() => {
@@ -71,10 +72,12 @@ export function TaskCenterPage() {
       .catch(() => undefined);
   }, []);
 
-  // 主进程数据变更推送：任务状态变化时立即刷新（不用等 15 秒轮询）。
+  // 主进程数据变更推送：任务状态变化时立即刷新（节流 1.5 秒，避免每任务全量重拉）。
   useEffect(() => {
+    let last = 0;
     const handler = (e: Event) => {
-      if ((e as CustomEvent).detail === "tasks") {
+      if ((e as CustomEvent).detail === "tasks" && Date.now() - last > 1500) {
+        last = Date.now();
         (window as any).appilot?.scheduler?.list()
           .then(setData)
           .catch(() => undefined);
@@ -83,6 +86,17 @@ export function TaskCenterPage() {
     window.addEventListener("appilot:data-changed", handler);
     return () => window.removeEventListener("appilot:data-changed", handler);
   }, []);
+
+  // 加速倒计时本地每秒递减，按钮上的秒数即时变化。
+  useEffect(() => {
+    if (!accel) return;
+    const timer = window.setInterval(() => {
+      setAccelRemainingMs((prev) =>
+        prev != null ? Math.max(0, prev - 1000) : prev,
+      );
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [accel]);
 
   const projectOptions = Array.from(
     new Set(
@@ -125,6 +139,13 @@ export function TaskCenterPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {nowRunning && (
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              正在执行{" "}
+              {nowRunning.kind === "github-sync" ? "GitHub 同步" : nowRunning.keyword}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -168,13 +189,6 @@ export function TaskCenterPage() {
               "加速模式"
             )}
           </button>
-          {nowRunning && (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              正在执行{" "}
-              {nowRunning.kind === "github-sync" ? "GitHub 同步" : nowRunning.keyword}
-            </span>
-          )}
           <span
             className={cn(
               "px-2.5 py-1 rounded-full text-xs font-medium",
