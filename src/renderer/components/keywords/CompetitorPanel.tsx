@@ -22,7 +22,6 @@ export function CompetitorPanel({
 }) {
   const [competitors, setCompetitors] = useState<any[]>([]);
   const [term, setTerm] = useState(defaultTerm);
-  const [country, setCountry] = useState("");
   const [candidates, setCandidates] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
@@ -32,13 +31,6 @@ export function CompetitorPanel({
     (window as any).appilot?.competitors?.list(projectId).then(setCompetitors).catch(() => setCompetitors([]));
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
-
-  // Follow the current view language: search in that language's storefronts.
-  const countryOptions = viewLang ? storefrontsForLanguage(viewLang) : ["us"];
-  useEffect(() => {
-    const options = viewLang ? storefrontsForLanguage(viewLang) : ["us"];
-    setCountry((current) => (options.includes(current) ? current : options[0] || "us"));
-  }, [viewLang]);
 
   // Keep the search box in sync with the keyword selected in the matrix.
   useEffect(() => {
@@ -50,7 +42,10 @@ export function CompetitorPanel({
   useEffect(() => {
     setCandidates([]);
     setSearchError("");
-  }, [viewLang, country, defaultTerm]);
+  }, [viewLang, defaultTerm]);
+
+  // 按语言搜索：该语言对应的全部商店。
+  const countryOptions = viewLang ? storefrontsForLanguage(viewLang) : ["us"];
 
   const handleSearch = async () => {
     if (!term.trim()) return;
@@ -110,9 +105,6 @@ export function CompetitorPanel({
           placeholder="搜索竞品（默认当前关键词）"
           className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm px-2.5 py-1.5 w-56"
         />
-        <select value={country} onChange={(e) => setCountry(e.target.value)} className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm px-2.5 py-1.5">
-          {countryOptions.map((c) => <option key={c} value={c}>{storefrontDisplayName(c) || c}</option>)}
-        </select>
         <button type="button" onClick={() => void handleSearch()} disabled={searching} className={btnPrimary}>
           {searching ? "搜索中…" : "搜索候选"}
         </button>
@@ -137,6 +129,7 @@ export function CompetitorPanel({
                     alt={candidate.trackName}
                     className="h-28 w-full object-cover bg-zinc-100 dark:bg-zinc-800"
                     loading="lazy"
+                    referrerPolicy="no-referrer"
                   />
                 ) : (
                   <div className="h-28 w-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-400 dark:text-zinc-500">
@@ -168,7 +161,7 @@ export function CompetitorPanel({
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
                     {candidate.genre || "未知分类"}
                     {candidate.country ? ` · ${storefrontDisplayName(candidate.country)}` : ""}
-                    {candidate.averageUserRating ? ` · ★${candidate.averageUserRating}` : ""}
+                    {candidate.averageUserRating ? ` · ★${Number(candidate.averageUserRating).toFixed(1)}` : ""}
                   </p>
                   <div className="mt-auto pt-1.5">
                     {isSelf ? (
