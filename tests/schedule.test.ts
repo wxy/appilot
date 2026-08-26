@@ -10,6 +10,7 @@ import {
   prioritizeGroupCompletion,
   pruneRoundMembers,
   rankGroupKey,
+  rebalanceCollapsedTasks,
 } from "../src/main/schedule";
 
 const MIN = 60_000;
@@ -164,6 +165,57 @@ console.log("✅ PASS: markRoundTaskDone completes a round only when every membe
   // A duplicate completion must not double-complete.
   const dup = markRoundTaskDone(third.state, "a", t(4));
   assert.equal(dup.completed, false);
+}
+
+console.log("✅ PASS: rebalanceCollapsedTasks spreads a collapsed batch to stable phases");
+{
+  const now = new Date("2026-08-24T02:00:00Z");
+  const collapsedAt = new Date(now.getTime() + 23 * HOUR).toISOString();
+  const tasks = Array.from({ length: 120 }, (_, i) => ({
+    id: `rank:${i}`,
+    kind: "rank",
+    enabled: true,
+    intervalMinutes: 1440,
+    nextRunAt: collapsedAt,
+  }));
+  const { tasks: next, changed } = rebalanceCollapsedTasks(tasks, now);
+  assert.equal(changed, true, "large same-minute batch is detected");
+  const times = next.map((t) => Date.parse(t.nextRunAt)).sort((a, b) => a - b);
+  assert.equal(next.length, 120);
+  assert.ok(
+    new Set(times.map((ts) => Math.floor(ts / MIN))).size > 100,
+    "rebalanced times are spread across distinct minutes",
+  );
+  assert.ok(times[0] > now.getTime(), "next run stays in the future");
+}
+
+console.log("✅ PASS: rebalanceCollapsedTasks leaves small batches untouched");
+{
+  const now = new Date("2026-08-24T02:00:00Z");
+  const shared = new Date(now.getTime() + 23 * HOUR).toISOString();
+  const tasks = [
+    { id: "a", kind: "rank", enabled: true, intervalMinutes: 1440, nextRunAt: shared },
+    { id: "b", kind: "rank", enabled: true, intervalMinutes: 1440, nextRunAt: shared },
+    { id: "c", kind: "rank", enabled: true, intervalMinutes: 1440, nextRunAt: shared },
+  ];
+  const { tasks: next, changed } = rebalanceCollapsedTasks(tasks, now);
+  assert.equal(changed, false, "small batch is a normal phase collision, not a collapse");
+  assert.deepEqual(next, tasks);
+}
+
+console.log("✅ PASS: rebalanceCollapsedTasks skips overdue and disabled tasks");
+{
+  const now = new Date("2026-08-24T02:00:00Z");
+  const overdueAt = new Date(now.getTime() - HOUR).toISOString();
+  const futureAt = new Date(now.getTime() + 23 * HOUR).toISOString();
+  const tasks = [
+    { id: "a", kind: "rank", enabled: true, intervalMinutes: 1440, nextRunAt: overdueAt },
+    { id: "b", kind: "rank", enabled: false, intervalMinutes: 1440, nextRunAt: futureAt },
+  ];
+  const { tasks: next, changed } = rebalanceCollapsedTasks(tasks, now);
+  assert.equal(changed, false);
+  assert.equal(next[0].nextRunAt, overdueAt);
+  assert.equal(next[1].nextRunAt, futureAt);
 }
 
 console.log("\n🎉 All schedule tests passed!");

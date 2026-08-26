@@ -24,6 +24,7 @@ import {
   nextRunAt,
   nextRankRunAt,
   nextRunWithinMinutes,
+  rebalanceCollapsedTasks,
   opsSyncTaskId,
   prioritizeGroupCompletion,
   pruneRoundMembers,
@@ -945,6 +946,20 @@ export async function schedulerTick(): Promise<void> {
     const now = Date.now();
     const accel = store.get("schedulerAccel") === true;
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    // 非加速状态下自愈“排期坍缩”：一次性重排/迁移可能把整批任务的下次
+    // 执行时间设成同一分钟，这里按各自稳定相位重新散布，避免未来某一分钟
+    // 同时爆发成积压。加速期间跳过（当轮拉取的任务共享同一分钟）。
+    if (!accel) {
+      const rebalanced = rebalanceCollapsedTasks(
+        tasks,
+        new Date(now),
+        rankRunsPerDay(store),
+      );
+      if (rebalanced.changed) {
+        tasks.splice(0, tasks.length, ...rebalanced.tasks);
+        store.set("scheduledTasks", tasks);
+      }
+    }
     // 渐进提速：加速不是瞬间满负荷，而是每轮逐步提升到峰值（踩油门）。
     let accelRound = 0;
     if (accel) {
