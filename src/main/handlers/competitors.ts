@@ -1,5 +1,8 @@
 import { ipcMain } from "electron";
-import { createCompetitor, searchCompetitorCandidates } from "../../engine/competitor-radar";
+import {
+  createCompetitor,
+  searchCompetitorCandidatesAcross,
+} from "../../engine/competitor-radar";
 import { runOpsSyncNow } from "../scheduler";
 import { getStore } from "../store";
 import { assertNonEmptyString } from "../util";
@@ -55,13 +58,25 @@ export function registerCompetitorsHandlers(): void {
     return true;
   });
 
-  ipcMain.handle("competitors:search", async (_event, opts: { term?: string; country?: string; platform?: string }) => {
+  ipcMain.handle("competitors:search", async (_event, opts: {
+    term?: string;
+    country?: string;
+    countries?: string[];
+    platform?: string;
+    excludeTrackIds?: string[];
+    excludeBundleIds?: string[];
+  }) => {
     const term = assertNonEmptyString(opts?.term, "term");
-    const country = assertNonEmptyString(opts?.country, "country");
-    return searchCompetitorCandidates({
+    const countries =
+      Array.isArray(opts?.countries) && opts.countries.length > 0
+        ? opts.countries.filter((c: string) => c)
+        : [assertNonEmptyString(opts?.country, "country")];
+    return searchCompetitorCandidatesAcross({
       term,
-      country,
+      countries,
       entity: opts?.platform === "macos" ? "macSoftware" : "software",
+      excludeTrackIds: Array.isArray(opts?.excludeTrackIds) ? opts.excludeTrackIds : undefined,
+      excludeBundleIds: Array.isArray(opts?.excludeBundleIds) ? opts.excludeBundleIds : undefined,
     });
   });
 

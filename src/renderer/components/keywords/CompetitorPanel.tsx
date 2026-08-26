@@ -11,7 +11,12 @@ export function CompetitorPanel({
   viewLang,
 }: {
   projectId: string;
-  product: { platform?: string; supportedLanguages?: { code: string }[] };
+  product: {
+    platform?: string;
+    supportedLanguages?: { code: string }[];
+    trackId?: string | null;
+    bundleId?: string | null;
+  };
   defaultTerm: string;
   viewLang: string;
 }) {
@@ -55,8 +60,10 @@ export function CompetitorPanel({
     try {
       const results = await (window as any).appilot?.competitors?.search({
         term: term.trim(),
-        country,
+        countries: countryOptions,
         platform: product?.platform,
+        excludeTrackIds: product?.trackId ? [String(product.trackId)] : undefined,
+        excludeBundleIds: product?.bundleId ? [String(product.bundleId)] : undefined,
       });
       setCandidates(results || []);
     } catch (err: any) {
@@ -136,7 +143,9 @@ export function CompetitorPanel({
                     {candidate.trackName}
                   </button>
                   <div className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {candidate.genre || "未知分类"}{candidate.averageUserRating ? ` · ★${candidate.averageUserRating}` : ""}
+                    {candidate.genre || "未知分类"}
+                    {candidate.country ? ` · ${storefrontDisplayName(candidate.country)}` : ""}
+                    {candidate.averageUserRating ? ` · ★${candidate.averageUserRating}` : ""}
                   </div>
                 </div>
                 <button

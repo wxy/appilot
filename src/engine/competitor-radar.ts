@@ -17,6 +17,8 @@ export interface CompetitorCandidate {
   genre: string;
   averageUserRating: number | null;
   trackViewUrl: string | null;
+  /** 命中该候选的商店（多商店合并搜索时标记来源）。 */
+  country?: string;
 }
 
 export interface CompetitorSnapshot {
@@ -51,6 +53,8 @@ export async function searchCompetitorCandidates(opts: {
   term: string;
   country: string;
   entity?: "software" | "macSoftware";
+  excludeTrackIds?: string[];
+  excludeBundleIds?: string[];
 }): Promise<CompetitorCandidate[]> {
   const url = new URL("https://itunes.apple.com/search");
   url.searchParams.set("term", opts.term);
@@ -60,15 +64,58 @@ export async function searchCompetitorCandidates(opts: {
   const res = await fetchWithTimeout(url.toString());
   if (!res.ok) throw new Error(`iTunes Search API ${res.status}`);
   const data = JSON.parse(await res.text());
+  const excludedTrack = new Set(opts.excludeTrackIds || []);
+  const excludedBundle = new Set(opts.excludeBundleIds || []);
   return (Array.isArray(data?.results) ? data.results : [])
+    .filter(
+      (r: any) =>
+        !excludedTrack.has(String(r.trackId || "")) &&
+        !(r.bundleId && excludedBundle.has(String(r.bundleId))),
+    )
     .map((r: any) => ({
       trackId: String(r.trackId || ""),
       trackName: String(r.trackName || ""),
       genre: String(r.primaryGenreName || ""),
       averageUserRating: typeof r.averageUserRating === "number" ? r.averageUserRating : null,
       trackViewUrl: typeof r.trackViewUrl === "string" ? r.trackViewUrl : null,
+      country: opts.country,
     }))
     .filter((c: CompetitorCandidate) => c.trackId);
+}
+
+/**
+ * Search across several storefronts in parallel and merge by trackId,
+ * keeping first-storefront order. Lets niche/local competitors surface
+ * instead of only the global names iTunes ranks first in one store.
+ */
+export async function searchCompetitorCandidatesAcross(opts: {
+  term: string;
+  countries: string[];
+  entity?: "software" | "macSoftware";
+  excludeTrackIds?: string[];
+  excludeBundleIds?: string[];
+}): Promise<CompetitorCandidate[]> {
+  const perCountry = await Promise.all(
+    opts.countries.map((country) =>
+      searchCompetitorCandidates({
+        term: opts.term,
+        country,
+        entity: opts.entity,
+        excludeTrackIds: opts.excludeTrackIds,
+        excludeBundleIds: opts.excludeBundleIds,
+      }).catch(() => []),
+    ),
+  );
+  const seen = new Set<string>();
+  const merged: CompetitorCandidate[] = [];
+  for (const list of perCountry) {
+    for (const candidate of list) {
+      if (seen.has(candidate.trackId)) continue;
+      seen.add(candidate.trackId);
+      merged.push(candidate);
+    }
+  }
+  return merged;
 }
 
 export async function fetchCompetitorSnapshot(

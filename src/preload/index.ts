@@ -27,7 +27,14 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("competitors:save", projectId, competitor),
     remove: (projectId: string, competitorId: string): Promise<boolean> =>
       ipcRenderer.invoke("competitors:remove", projectId, competitorId),
-    search: (opts: { term: string; country: string; platform?: string }): Promise<any[]> =>
+    search: (opts: {
+      term: string;
+      country?: string;
+      countries?: string[];
+      platform?: string;
+      excludeTrackIds?: string[];
+      excludeBundleIds?: string[];
+    }): Promise<any[]> =>
       ipcRenderer.invoke("competitors:search", opts),
     snapshots: (projectId: string, competitorId: string): Promise<any[]> =>
       ipcRenderer.invoke("competitors:snapshots", projectId, competitorId),
