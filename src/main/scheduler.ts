@@ -959,9 +959,8 @@ export async function schedulerTick(): Promise<void> {
       .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime());
     // 自动解除：积压清空（本轮没有到期任务，且已至少跑过一轮）或超过时限。
     if (accel) {
-      const since = store.get("schedulerAccelSince");
-      const expired =
-        since && Date.now() - new Date(since).getTime() > ACCEL_AUTO_OFF_MS;
+      const until = store.get("schedulerAccelUntil");
+      const expired = until && Date.now() >= new Date(until).getTime();
       const backlogCleared = due.length === 0 && accelRound > 1;
       if (expired || backlogCleared) {
         store.set("schedulerAccel", false);
@@ -1067,10 +1066,17 @@ export function resumeTaskScheduler(): void {
  */
 export async function setSchedulerAccel(enabled: boolean): Promise<void> {
   const store = await getStore();
-  store.set("schedulerAccel", Boolean(enabled));
   if (enabled) {
-    store.set("schedulerAccelSince", new Date().toISOString());
-    store.set("schedulerAccelRound", 0);
+    // 开启或延长：每次点击把截止时间延长 5 分钟（已开启时累加）。
+    const existingUntil = store.get("schedulerAccelUntil");
+    const base =
+      store.get("schedulerAccel") === true && existingUntil
+        ? new Date(existingUntil).getTime()
+        : Date.now();
+    const until = Math.max(Date.now() + ACCEL_AUTO_OFF_MS, base + ACCEL_AUTO_OFF_MS);
+    store.set("schedulerAccel", true);
+    store.set("schedulerAccelUntil", new Date(until).toISOString());
+    if (store.get("schedulerAccelRound") == null) store.set("schedulerAccelRound", 0);
     // 让尚未到期的任务立即到期，加速按序处理。
     const tasks: any[] = store.get("scheduledTasks") || [];
     const now = new Date().toISOString();
@@ -1082,6 +1088,9 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
       }
     }
     if (changed) store.set("scheduledTasks", tasks);
+  } else {
+    store.set("schedulerAccel", false);
+    store.set("schedulerAccelUntil", null);
   }
   // 立即应用新的调度节奏。
   if (schedulerTimer) {

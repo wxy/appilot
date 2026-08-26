@@ -128,15 +128,22 @@ export function TaskCenterPage() {
           <button
             type="button"
             onClick={() => {
-              const next = !accel;
-              setAccel(next);
-              (window as any).appilot?.scheduler?.setAccel(next)
+              // 未开启 → 开启；已开启 → 延长 5 分钟。
+              (window as any).appilot?.scheduler?.setAccel(true)
                 .then(() => {
+                  setAccel(true);
                   (window as any).appilot?.scheduler?.list()
                     .then(setData)
                     .catch(() => undefined);
+                  (window as any).appilot?.scheduler?.status()
+                    .then((st: any) =>
+                      setAccelRemainingMs(
+                        typeof st?.accelRemainingMs === "number" ? st.accelRemainingMs : null,
+                      ),
+                    )
+                    .catch(() => undefined);
                 })
-                .catch(() => setAccel(!next));
+                .catch(() => undefined);
             }}
             className={cn(
               "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
@@ -146,7 +153,7 @@ export function TaskCenterPage() {
             )}
             title={
               accel
-                ? "加速模式已开启：每 10 秒一轮、每轮最多 40 个任务，用于快速清空积压"
+                ? "点击延长 5 分钟加速；积压清空或到时后自动解除"
                 : "开启加速模式，以更快速度处理积压任务"
             }
           >
@@ -239,7 +246,7 @@ export function TaskCenterPage() {
         </div>
       )}
 
-      <TaskTimelineChart timeline={timeline} />
+      <TaskTimelineChart timeline={timeline} accel={accel} />
 
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
         <select
@@ -329,11 +336,13 @@ function niceStep(target: number): number {
 
 function TaskTimelineChart({
   timeline,
+  accel,
 }: {
   timeline?: {
     recent: { hour: number; success: number; failed: number }[];
     upcoming: { hour: number; count: number }[];
   };
+  accel?: boolean;
 }) {
   const [hovered, setHovered] = useState<{
     index: number;
@@ -411,7 +420,9 @@ function TaskTimelineChart({
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">执行时间线</h3>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-          每小时计划任务与实际执行叠加（悬停查看详情）
+          {accel
+            ? "加速模式：积压任务集中在当前时段，柱形图随处理回落"
+            : "每小时计划任务与实际执行叠加（悬停查看详情）"}
         </p>
       </div>
       <div className="px-6 py-4 relative">

@@ -16,10 +16,10 @@ export function registerSchedulerHandlers(): void {
     const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
     const now = Date.now();
     const accel = s.get("schedulerAccel") === true;
-    const since = s.get("schedulerAccelSince");
+    const until = s.get("schedulerAccelUntil");
     const accelRemainingMs =
-      accel && since
-        ? Math.max(0, 5 * 60_000 - (now - new Date(since).getTime()))
+      accel && until
+        ? Math.max(0, new Date(until).getTime() - now)
         : null;
     return {
       enabled: isSchedulerTimerActive(),
