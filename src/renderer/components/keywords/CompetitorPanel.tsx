@@ -9,6 +9,7 @@ export function CompetitorPanel({
   product,
   defaultTerm,
   viewLang,
+  rankSnapshots,
 }: {
   projectId: string;
   product: {
@@ -19,8 +20,12 @@ export function CompetitorPanel({
   };
   defaultTerm: string;
   viewLang: string;
+  /** 自己的关键词排名（product.rankSnapshots），用于与竞品对比。 */
+  rankSnapshots: any[];
 }) {
   const [competitors, setCompetitors] = useState<any[]>([]);
+  const [competitorRanks, setCompetitorRanks] = useState<Record<string, any[]>>({});
+  const [trackedKeyword, setTrackedKeyword] = useState("");
   const [term, setTerm] = useState(defaultTerm);
   const [candidates, setCandidates] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
@@ -28,7 +33,17 @@ export function CompetitorPanel({
   const [searchError, setSearchError] = useState("");
 
   const load = useCallback(() => {
-    (window as any).appilot?.competitors?.list(projectId).then(setCompetitors).catch(() => setCompetitors([]));
+    (window as any).appilot?.competitors?.list(projectId)
+      .then(async (list: any[]) => {
+        setCompetitors(list);
+        const ranks: Record<string, any[]> = {};
+        for (const competitor of list) {
+          ranks[competitor.id] =
+            (await (window as any).appilot?.competitors?.rankSnapshots(projectId, competitor.id)) || [];
+        }
+        setCompetitorRanks(ranks);
+      })
+      .catch(() => setCompetitors([]));
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
 
@@ -80,8 +95,6 @@ export function CompetitorPanel({
           ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
           : [],
       });
-      // 已成功添加的候选从结果里移除，避免“添加中”后仍显示可添加。
-      setCandidates((prev) => prev.filter((c) => c.trackId !== candidate.trackId));
       load();
     } finally {
       setAdding(null);
@@ -95,6 +108,39 @@ export function CompetitorPanel({
   const handleRemove = async (competitorId: string) => {
     await (window as any).appilot?.competitors?.remove(projectId, competitorId);
     load();
+  };
+
+  // 竞品跟踪：按关联关键词查看自己与所有竞品的排名对比。
+  const linkedKeywords = Array.from(
+    new Map(
+      competitors
+        .flatMap((c: any) => c.linkedKeywords || [])
+        .map((l: any) => [`${l.keyword}\u0000${l.language}`, l]),
+    ).values(),
+  );
+  const activeLink =
+    linkedKeywords.find(
+      (l: any) => `${l.keyword}\u0000${l.language}` === trackedKeyword,
+    ) ||
+    linkedKeywords[0] ||
+    null;
+  const ownRankByStore = new Map<string, number | null>();
+  if (activeLink) {
+    for (const s of rankSnapshots || []) {
+      if (s.keyword === activeLink.keyword && s.language === activeLink.language) {
+        ownRankByStore.set(s.storefront, s.rank);
+      }
+    }
+  }
+  const competitorRankAt = (competitor: any, storefront: string): number | null => {
+    if (!activeLink) return null;
+    const item = (competitorRanks[competitor.id] || []).find(
+      (r: any) =>
+        r.keyword === activeLink.keyword &&
+        r.language === activeLink.language &&
+        r.storefront === storefront,
+    );
+    return item?.rank ?? null;
   };
 
   return (
@@ -118,6 +164,69 @@ export function CompetitorPanel({
 
       {searchError && (
         <p className="mb-4 text-xs text-red-600 dark:text-red-400">{searchError}</p>
+      )}
+
+      {linkedKeywords.length > 0 && activeLink && (
+        <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">竞品跟踪</h3>
+            <span className="text-[11px] text-zinc-400">按关联关键词对比自己与竞品排名</span>
+          </div>
+          <div className="p-4">
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {linkedKeywords.map((link: any) => (
+                <button
+                  key={`${link.keyword}\u0000${link.language}`}
+                  type="button"
+                  onClick={() => setTrackedKeyword(`${link.keyword}\u0000${link.language}`)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors",
+                    activeLink.keyword === link.keyword && activeLink.language === link.language
+                      ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50",
+                  )}
+                >
+                  {link.keyword}
+                </button>
+              ))}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-zinc-100 dark:border-zinc-800 text-left">
+                    <th className="py-1.5 pr-3 font-medium text-zinc-400">商店</th>
+                    <th className="py-1.5 pr-3 font-medium text-amber-600 dark:text-amber-400">我</th>
+                    {competitors.map((c) => (
+                      <th key={c.id} className="py-1.5 pr-3 font-medium text-zinc-500 dark:text-zinc-400">
+                        <span className="truncate inline-block max-w-28 align-bottom">{c.name}</span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {storefrontsForLanguage(activeLink.language).map((store) => (
+                    <tr key={store} className="border-b border-zinc-100/60 dark:border-zinc-800/60 last:border-b-0">
+                      <td className="py-1.5 pr-3 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
+                        {storefrontDisplayName(store)}
+                      </td>
+                      <td className="py-1.5 pr-3 font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                        {ownRankByStore.get(store) ?? "未上榜"}
+                      </td>
+                      {competitors.map((c) => {
+                        const rank = competitorRankAt(c, store);
+                        return (
+                          <td key={c.id} className="py-1.5 pr-3 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
+                            {rank ?? "未上榜"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       )}
 
       {candidates.length > 0 && (

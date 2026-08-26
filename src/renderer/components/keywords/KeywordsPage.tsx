@@ -1409,6 +1409,7 @@ export function KeywordsPage() {
           product={{ platform: product.platform, supportedLanguages: product.supportedLanguages }}
           defaultTerm={selectedKeyword || ""}
           viewLang={currentLang}
+          rankSnapshots={rankSnapshots}
         />
       )}
     </div>
