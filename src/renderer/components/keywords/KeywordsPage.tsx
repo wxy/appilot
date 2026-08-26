@@ -107,7 +107,7 @@ export function KeywordsPage() {
   const isGlobalView = viewLang === "global";
   const activeViewLang = isGlobalView
     ? "global"
-    : litLangs.includes(viewLang)
+    : viewLang
       ? viewLang
       : litLangs[0] || "";
 
@@ -185,19 +185,12 @@ export function KeywordsPage() {
     );
   };
 
-  useEffect(() => {
-    if (litLangs.length > 0 && viewLang !== "global" && !litLangs.includes(viewLang)) {
-      setViewLang(litLangs[0] || "");
-    }
-  }, [litLangs, viewLang]);
-
   // Apply navigation params from the overview page: locate a keyword in a
   // language view, and/or narrow the matrix scope.
   useEffect(() => {
     if (!product) return;
     if (urlLang && languageOptions.some((option) => option.code === urlLang)) {
       setViewLang(urlLang);
-      setLitLangs((prev) => (prev.includes(urlLang) ? prev : [...prev, urlLang]));
     }
     if (urlKeyword) {
       setSelectedKeyword(urlKeyword);

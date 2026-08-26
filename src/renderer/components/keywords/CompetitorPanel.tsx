@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
-import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
+import { formatHumanTime, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { ValueFlash } from "../ui/ValueFlash";
@@ -71,6 +71,11 @@ export function CompetitorPanel({
     setCandidates([]);
     setSearchError("");
   }, [viewLang, defaultTerm]);
+
+  // 切换语言后，跟踪表默认回到该语言下第一个关联关键词。
+  useEffect(() => {
+    setTrackedKeyword("");
+  }, [viewLang]);
 
   // 按语言搜索：该语言对应的全部商店。
   const countryOptions = viewLang ? storefrontsForLanguage(viewLang) : ["us"];
@@ -171,7 +176,7 @@ export function CompetitorPanel({
     }
   };
 
-  // 竞品跟踪：按关联关键词查看自己与所有竞品的排名对比。
+  // 竞品跟踪：按 (平台, 当前语言) 下的关联关键词查看自己与竞品的排名对比。
   const linkedKeywords = Array.from(
     new Map(
       competitors
@@ -179,6 +184,9 @@ export function CompetitorPanel({
         // 不进入本平台的列表，避免出现“没有竞品”的空关键词。
         .filter((c: any) => Boolean(competitorTrackId(c, viewPlatform)))
         .flatMap((c: any) => c.linkedKeywords || [])
+        // 只看当前查看语言的关联关键词：切换语言标签后列表随之变化，
+        // 因此竞品关键词前面无需再标语言。
+        .filter((l: any) => l.language === viewLang)
         .map((l: any) => [`${l.keyword}\u0000${l.language}`, l]),
     ).values(),
   );
@@ -465,7 +473,11 @@ export function CompetitorPanel({
                 <button
                   key={`${link.keyword}\u0000${link.language}`}
                   type="button"
-                  onClick={() => setTrackedKeyword(`${link.keyword}\u0000${link.language}`)}
+                  onClick={() => {
+                    setTrackedKeyword(`${link.keyword}\u0000${link.language}`);
+                    // 同步搜索框关键词，方便立即在竞品雷达中搜索该关键词。
+                    setTerm(link.keyword);
+                  }}
                   className={cn(
                     "px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors",
                     activeLink.keyword === link.keyword && activeLink.language === link.language
@@ -473,7 +485,7 @@ export function CompetitorPanel({
                       : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50",
                   )}
                 >
-                  {languageLabel(link.language)} · {link.keyword}
+                  {link.keyword}
                 </button>
               ))}
             </div>
