@@ -62,8 +62,6 @@ export function CompetitorPanel({
         term: term.trim(),
         countries: countryOptions,
         platform: product?.platform,
-        excludeTrackIds: product?.trackId ? [String(product.trackId)] : undefined,
-        excludeBundleIds: product?.bundleId ? [String(product.bundleId)] : undefined,
       });
       setCandidates(results || []);
     } catch (err: any) {
@@ -125,11 +123,27 @@ export function CompetitorPanel({
       )}
 
       {candidates.length > 0 && (
-        <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-          <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {candidates.slice(0, 10).map((candidate) => (
-              <div key={candidate.trackId} className="flex items-center justify-between gap-2 px-4 py-2.5">
-                <div className="min-w-0">
+        <div className="mb-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          {candidates.slice(0, 12).map((candidate) => {
+            const isSelf = String(candidate.trackId) === String(product?.trackId ?? "");
+            return (
+              <div
+                key={candidate.trackId}
+                className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden flex flex-col"
+              >
+                {candidate.screenshotUrl ? (
+                  <img
+                    src={candidate.screenshotUrl}
+                    alt={candidate.trackName}
+                    className="h-28 w-full object-cover bg-zinc-100 dark:bg-zinc-800"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="h-28 w-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-400 dark:text-zinc-500">
+                    无截图
+                  </div>
+                )}
+                <div className="p-2.5 flex-1 flex flex-col gap-1">
                   <button
                     type="button"
                     onClick={() => {
@@ -137,7 +151,7 @@ export function CompetitorPanel({
                     }}
                     disabled={!candidate.trackViewUrl}
                     className={cn(
-                      "text-sm truncate text-left max-w-full",
+                      "text-sm font-medium truncate text-left",
                       candidate.trackViewUrl
                         ? "text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
                         : "text-zinc-800 dark:text-zinc-200 cursor-default",
@@ -146,23 +160,36 @@ export function CompetitorPanel({
                   >
                     {candidate.trackName}
                   </button>
-                  <div className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  {candidate.subtitle && (
+                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 truncate">
+                      {candidate.subtitle}
+                    </p>
+                  )}
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
                     {candidate.genre || "未知分类"}
                     {candidate.country ? ` · ${storefrontDisplayName(candidate.country)}` : ""}
                     {candidate.averageUserRating ? ` · ★${candidate.averageUserRating}` : ""}
+                  </p>
+                  <div className="mt-auto pt-1.5">
+                    {isSelf ? (
+                      <span className="inline-flex px-2 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        当前应用
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleAdd(candidate)}
+                        disabled={adding === candidate.trackId}
+                        className={btnSmPrimary}
+                      >
+                        {adding === candidate.trackId ? "添加中…" : "添加"}
+                      </button>
+                    )}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void handleAdd(candidate)}
-                  disabled={adding === candidate.trackId}
-                  className={btnSmPrimary}
-                >
-                  {adding === candidate.trackId ? "添加中…" : "添加"}
-                </button>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       )}
 

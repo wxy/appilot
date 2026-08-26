@@ -1,6 +1,5 @@
 import {
   createCompetitor,
-  collectCompetitorRankSnapshots,
   fetchCompetitorSnapshot,
   searchCompetitorCandidates,
   searchCompetitorCandidatesAcross,
@@ -24,7 +23,7 @@ async function run() {
   const originalFetch = globalThis.fetch;
   const searchResultsByCountry: Record<string, any[]> = {
     us: [
-      { trackId: 1, trackName: "Global App", primaryGenreName: "Productivity", averageUserRating: 4.9, trackViewUrl: "https://apps.apple.com/us/app/1/id1", bundleId: "com.global.app" },
+      { trackId: 1, trackName: "Global App", subtitle: "Subtitle here", screenshotUrls: ["https://example.com/1.png"], primaryGenreName: "Productivity", averageUserRating: 4.9, trackViewUrl: "https://apps.apple.com/us/app/1/id1", bundleId: "com.global.app" },
       { trackId: 2, trackName: "Mine", primaryGenreName: "Utilities", averageUserRating: 4.0, trackViewUrl: "https://apps.apple.com/us/app/mine/id2", bundleId: "com.mine.app" },
     ],
     sg: [
@@ -59,6 +58,7 @@ async function run() {
     });
     check(candidates.length === 1 && candidates[0]?.trackId === "1", "排除自己（trackId/bundleId）");
     check(candidates[0]?.country === "us", "候选带来源商店");
+    check(candidates[0]?.screenshotUrl === "https://example.com/1.png" && candidates[0]?.subtitle === "Subtitle here", "候选带截图与副标题");
     const across = await searchCompetitorCandidatesAcross({
       term: "walk",
       countries: ["us", "sg"],
@@ -77,13 +77,6 @@ async function run() {
     check(snapshot.date === new Date().toISOString().slice(0, 10), "快照 date 为当天");
     const snapSg = await fetchCompetitorSnapshot({ ...competitor, trackId: "1" }, null, "sg");
     check(snapSg.country === "sg", "快照记录来源商店");
-    const ranks = await collectCompetitorRankSnapshots({
-      ...competitor,
-      trackId: "1",
-      linkedKeywords: [{ keyword: "walk", language: "en" }],
-    });
-    check(ranks.length === 6, "竞品排名覆盖该语言全部商店");
-    check(ranks.find((r) => r.storefront === "us")?.rank === 1, "竞品在 us 商店排名正确");
   } catch (err: any) {
     check(false, `competitor-radar 异常: ${err.message}`);
   } finally {

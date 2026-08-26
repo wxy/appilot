@@ -1,6 +1,5 @@
 import { normalizeGitHubUrl } from "./git-info";
 import { fetchGitHubJson } from "./gh-traffic";
-import { storefrontsForLanguage } from "./storefronts";
 
 export interface Competitor {
   id: string;
@@ -17,6 +16,9 @@ export interface Competitor {
 export interface CompetitorCandidate {
   trackId: string;
   trackName: string;
+  /** 首张截图（App Store 商品图）。 */
+  screenshotUrl: string | null;
+  subtitle: string | null;
   genre: string;
   averageUserRating: number | null;
   trackViewUrl: string | null;
@@ -88,6 +90,11 @@ export async function searchCompetitorCandidates(opts: {
     .map((r: any) => ({
       trackId: String(r.trackId || ""),
       trackName: String(r.trackName || ""),
+      screenshotUrl:
+        Array.isArray(r.screenshotUrls) && r.screenshotUrls.length > 0
+          ? String(r.screenshotUrls[0])
+          : null,
+      subtitle: typeof r.subtitle === "string" ? r.subtitle : null,
       genre: String(r.primaryGenreName || ""),
       averageUserRating: typeof r.averageUserRating === "number" ? r.averageUserRating : null,
       trackViewUrl: typeof r.trackViewUrl === "string" ? r.trackViewUrl : null,
@@ -191,39 +198,6 @@ export async function fetchCompetitorSnapshot(
   return snapshot;
 }
 
-/**
- * Collect the competitor's rank for every linked keyword × storefront pair
- * (per-language storefronts). Deterministic lookup against the competitor's
- * trackId — same mechanism as our own ranking.
- */
-export async function collectCompetitorRankSnapshots(
-  competitor: Competitor,
-): Promise<CompetitorRankSnapshot[]> {
-  if (!competitor.trackId || !competitor.linkedKeywords?.length) return [];
-  const { searchAppStoreRank } = await import("./rank-collector");
-  const productType = competitor.platform === "macos" ? "macos" : "ios";
-  const checkedAt = new Date().toISOString();
-  const entries: CompetitorRankSnapshot[] = [];
-  for (const link of competitor.linkedKeywords) {
-    const storefronts = storefrontsForLanguage(link.language) || [];
-    for (const storefront of storefronts) {
-      const result = await searchAppStoreRank({
-        term: link.keyword,
-        country: storefront,
-        trackId: competitor.trackId,
-        productType,
-      }).catch(() => null);
-      entries.push({
-        keyword: link.keyword,
-        language: link.language,
-        storefront,
-        rank: result?.rank ?? null,
-        checkedAt,
-      });
-    }
-  }
-  return entries;
-}
 
 export function competitorDeltaSummary(
   competitor: Competitor,

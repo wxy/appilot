@@ -438,11 +438,25 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
   let status: "success" | "failed" = "success";
   let snapshot: any = null;
   try {
+    // 关联该 (关键词, 语言) 的竞品：同一次搜索顺带定位它们的排名。
+    const competitors =
+      (store.get("competitors") || {})[project.id] || [];
+    const linkedCompetitors = competitors.filter((competitor: any) =>
+      (competitor.linkedKeywords || []).some(
+        (link: any) =>
+          link.keyword === task.keyword &&
+          link.language === task.queryLanguage,
+      ),
+    );
+    const candidateTrackIds = linkedCompetitors
+      .map((competitor: any) => String(competitor.trackId || ""))
+      .filter(Boolean);
     const result = await searchAppStoreRank({
       term: task.keyword,
       country: task.storefront,
       trackId: product.trackId,
       entity,
+      candidateTrackIds: candidateTrackIds.length > 0 ? candidateTrackIds : undefined,
     });
     durationMs = result.durationMs;
     requestBytes = result.requestBytes;
@@ -456,6 +470,32 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       totalResults: result.totalResults,
       checkedAt: new Date().toISOString(),
     };
+    if (linkedCompetitors.length > 0 && result.candidateRanks) {
+      const ranksAll: Record<string, Record<string, any[]>> =
+        store.get("competitorRankSnapshots") || {};
+      const rankById: Record<string, any[]> = ranksAll[project.id] || {};
+      const checkedAt = new Date().toISOString();
+      for (const competitor of linkedCompetitors) {
+        const entry = {
+          keyword: task.keyword,
+          language: task.queryLanguage,
+          storefront: task.storefront,
+          rank: result.candidateRanks[String(competitor.trackId)] ?? null,
+          checkedAt,
+        };
+        // 同一 (关键词, 商店) 只保留最新一条，数据量 = 竞品 × 关键词 × 商店。
+        const prev = rankById[competitor.id] || [];
+        rankById[competitor.id] = [
+          ...prev.filter(
+            (item: any) =>
+              !(item.keyword === entry.keyword && item.storefront === entry.storefront),
+          ),
+          entry,
+        ].slice(-300);
+      }
+      ranksAll[project.id] = rankById;
+      store.set("competitorRankSnapshots", ranksAll);
+    }
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
@@ -669,15 +709,11 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
     const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
     if (competitors.length > 0) {
       const {
-        collectCompetitorRankSnapshots,
         fetchCompetitorSnapshot,
       } = await import("../engine/competitor-radar");
       const { storefrontsForLanguage } = await import("../engine/storefronts");
       const all: Record<string, Record<string, any[]>> = store.get("competitorSnapshots") || {};
-      const ranksAll: Record<string, Record<string, any[]>> =
-        store.get("competitorRankSnapshots") || {};
       const byId: Record<string, any[]> = all[task.projectId] || {};
-      const rankById: Record<string, any[]> = ranksAll[task.projectId] || {};
       for (const competitor of competitors) {
         // 快照按竞品关联关键词的语言商店采集；无关联时回退美国区。
         const countries: string[] = Array.from(
@@ -703,16 +739,9 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
             String(a.country || "").localeCompare(String(b.country || "")),
         );
         byId[competitor.id] = list.slice(0, 90 * 8);
-        // 竞品排名：关联关键词 × 语言商店。
-        const ranks = await collectCompetitorRankSnapshots(competitor);
-        if (ranks.length > 0) {
-          rankById[competitor.id] = [...(rankById[competitor.id] || []), ...ranks].slice(-300);
-        }
       }
       all[task.projectId] = byId;
-      ranksAll[task.projectId] = rankById;
       store.set("competitorSnapshots", all);
-      store.set("competitorRankSnapshots", ranksAll);
     }
 
     const { fetchIssues, mergeFeedbackItems, normalizeIssue, reviewsToFeedbackItems } =

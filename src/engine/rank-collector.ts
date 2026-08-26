@@ -58,12 +58,15 @@ export async function searchAppStoreRank(opts: {
   trackId: string;
   productType?: string | null;
   entity?: "software" | "macSoftware";
+  /** 在同一结果中顺带定位这些竞品 trackId 的排名（复用同一次搜索）。 */
+  candidateTrackIds?: string[];
 }): Promise<{
   rank: number | null;
   totalResults: number;
   durationMs: number;
   requestBytes: number;
   responseBytes: number;
+  candidateRanks: Record<string, number | null>;
 }> {
   const url = new URL(ITUNES_SEARCH_URL);
   url.searchParams.set("term", opts.term);
@@ -90,12 +93,18 @@ export async function searchAppStoreRank(opts: {
     const results: any[] = Array.isArray(data?.results) ? data.results : [];
     const index = results.findIndex((r) => String(r.trackId) === String(opts.trackId));
 
+    const candidateRanks: Record<string, number | null> = {};
+    for (const id of opts.candidateTrackIds || []) {
+      const index = results.findIndex((r) => String(r.trackId) === String(id));
+      candidateRanks[String(id)] = index >= 0 ? index + 1 : null;
+    }
     return {
       rank: index >= 0 ? index + 1 : null,
       totalResults: results.length,
       durationMs: Date.now() - startedAt,
       requestBytes,
       responseBytes: raw.length,
+      candidateRanks,
     };
   }
 
