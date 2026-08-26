@@ -157,22 +157,17 @@ export async function searchCompetitorCandidatesAcross(opts: {
  */
 export async function collectCompetitorRankSnapshots(
   competitor: Competitor,
-  supportedLanguages?: string[],
 ): Promise<CompetitorRankSnapshot[]> {
   if (!competitor.trackId || !competitor.linkedKeywords?.length) return [];
   const { searchAppStoreRank } = await import("./rank-collector");
-  const { ALL_STOREFRONT_CODES, storefrontsForLanguage } = await import("./storefronts");
+  const { storefrontsForLanguage } = await import("./storefronts");
   const productType = competitor.platform === "macos" ? "macos" : "ios";
   const checkedAt = new Date().toISOString();
   const entries: CompetitorRankSnapshot[] = [];
   for (const link of competitor.linkedKeywords) {
-    // 全局（en）关键词覆盖项目全部语言商店，与全局排名语义一致。
-    const storefronts =
-      link.language === "en" && supportedLanguages?.length
-        ? Array.from(new Set(supportedLanguages.flatMap((code) => storefrontsForLanguage(code) || [])))
-        : link.language === "en"
-          ? ALL_STOREFRONT_CODES
-          : storefrontsForLanguage(link.language) || [];
+    // 竞品排名按关联时的视图语言商店采集：中文视图 → cn/sg；英文视图 → us/gb 等。
+    // 全局（en）关键词在某个语言视图里跟踪时，排名也按该视图语言的商店。
+    const storefronts = storefrontsForLanguage(link.language) || [];
     for (const storefront of storefronts) {
       const result = await searchAppStoreRank({
         term: link.keyword,

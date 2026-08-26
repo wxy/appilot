@@ -8,7 +8,6 @@ export function CompetitorPanel({
   projectId,
   product,
   defaultTerm,
-  defaultLanguage,
   viewLang,
   rankSnapshots,
 }: {
@@ -20,8 +19,6 @@ export function CompetitorPanel({
     bundleId?: string | null;
   };
   defaultTerm: string;
-  /** 关键词本身的 language（en=全局，或具体语言），用于关联竞品排名。 */
-  defaultLanguage?: string;
   viewLang: string;
   /** 自己的关键词排名（product.rankSnapshots），用于与竞品对比。 */
   rankSnapshots: any[];
@@ -95,8 +92,10 @@ export function CompetitorPanel({
         githubUrl: null,
         notes: "",
         // 关联当前关键词：之后按 (竞品, 关键词, 商店) 采集竞品排名。
+        // 关联语言 = 搜索时的视图语言（中文视图 → cn/sg，英文视图 → us/gb 等），
+        // 竞品排名按该语言商店采集，与矩阵中该视图看到的排名一致。
         linkedKeywords: defaultTerm.trim()
-          ? [{ keyword: defaultTerm.trim(), language: defaultLanguage || viewLang || "en" }]
+          ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
           : [],
       });
       // 立即补采新竞品的排名（不需要等下一次定时关键词抓取）。
@@ -348,39 +347,39 @@ export function CompetitorPanel({
               ))}
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-xs">
+              <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-zinc-100 dark:border-zinc-800 text-left">
-                    <th className="py-1.5 pr-3 font-medium text-zinc-400">竞品</th>
+                  <tr className="text-left">
+                    <th className="py-1.5 pr-3 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400">竞品</th>
                     {stores.map((store) => (
-                      <th key={store} className="py-1.5 pr-3 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                      <th key={store} className="py-1.5 pr-3 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                         {storefrontDisplayName(store)}
                       </th>
                     ))}
-                    <th className="py-1.5 font-medium text-zinc-400" />
+                    <th className="py-1.5 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400" />
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-zinc-100/60 dark:border-zinc-800/60">
-                    <td className="py-1.5 pr-3 font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                  <tr>
+                    <td className="py-1.5 pr-3 border border-zinc-200 dark:border-zinc-700 font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
                       我
                     </td>
                     {stores.map((store) => (
                       <td
                         key={store}
                         className={cn(
-                          "py-1.5 pr-3 text-center rounded whitespace-nowrap font-medium",
+                          "py-1.5 pr-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap font-medium",
                           rankCellClass(ownRankByStore.get(store) ?? null),
                         )}
                       >
                         {ownRankByStore.get(store) ?? "未上榜"}
                       </td>
                     ))}
-                    <td />
+                    <td className="border border-zinc-200 dark:border-zinc-700" />
                   </tr>
                   {trackedCompetitors.map((c) => (
-                    <tr key={c.id} className="border-b border-zinc-100/60 dark:border-zinc-800/60 last:border-b-0">
-                      <td className="py-1.5 pr-3 whitespace-nowrap">
+                    <tr key={c.id}>
+                      <td className="py-1.5 pr-3 border border-zinc-200 dark:border-zinc-700 whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5">
                           <button
                             type="button"
@@ -411,7 +410,7 @@ export function CompetitorPanel({
                           <td
                             key={store}
                             className={cn(
-                              "py-1.5 pr-3 text-center rounded whitespace-nowrap",
+                              "py-1.5 pr-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap",
                               rankCellClass(rank),
                             )}
                           >
@@ -419,7 +418,7 @@ export function CompetitorPanel({
                           </td>
                         );
                       })}
-                      <td />
+                      <td className="border border-zinc-200 dark:border-zinc-700" />
                     </tr>
                   ))}
                 </tbody>

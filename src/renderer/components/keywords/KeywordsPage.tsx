@@ -1408,10 +1408,6 @@ export function KeywordsPage() {
           projectId={project.id}
           product={{ platform: product.platform, supportedLanguages: product.supportedLanguages }}
           defaultTerm={selectedKeyword || ""}
-          defaultLanguage={
-            matrixRows.find((row: any) => row.keyword === selectedKeyword)?.language ||
-            currentLang
-          }
           viewLang={currentLang}
           rankSnapshots={rankSnapshots}
         />
