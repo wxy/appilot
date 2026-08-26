@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import type { BriefSuggestion } from "../../../engine/ai/overview-brief";
+import { storefrontsForLanguage } from "../../../engine/storefronts";
+import { storefrontDisplayName } from "../../../engine/storefronts";
 import { ascStoreLiveVersion, deriveVersionStatus } from "../../../engine/version-status";
 import { briefRuleSignals } from "../../lib/overview-brief";
-import { STALE_MS } from "../../lib/matrix";
+import { matrixCellState, STALE_MS } from "../../lib/matrix";
 import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
 import { cn } from "../../lib/utils";
@@ -27,10 +28,7 @@ import { FeedbackThemesCard } from "./FeedbackThemesCard";
 import { TrafficCard } from "./TrafficCard";
 import {
   MetricBlock,
-  OVERVIEW_CHART_COLORS,
-  OVERVIEW_CHART_DAYS,
   overviewRankRows,
-  overviewTrendData,
 } from "./overviewData";
 
 export function OverviewPage() {
@@ -42,7 +40,6 @@ export function OverviewPage() {
     draft: { name: string | null; tag: string; publishedAt: string; commitCount: number } | null;
     submission: any | null;
   } | null>(null);
-  const [chartDays, setChartDays] = useState(OVERVIEW_CHART_DAYS);
   const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
   const [briefState, setBriefState] = useState<{
@@ -130,7 +127,74 @@ export function OverviewPage() {
   );
   const newestCheckedAt = newestSnapshot?.checkedAt || null;
   const dataStale = newestCheckedAt ? Date.now() - new Date(newestCheckedAt).getTime() > STALE_MS : false;
-  const { series: chartSeries, data: chartData } = overviewTrendData(rankRows, rankSnapshots, chartDays);
+  // 全局排名分布（最新快照）：全部关键词 × 当前产品全部商店。
+  const RANK_BUCKETS = [
+    { key: "top10", label: "TOP10", color: "#15803d", opacity: 1 },
+    { key: "r11_50", label: "11–50", color: "#22c55e", opacity: 0.9 },
+    { key: "r51_100", label: "51–100", color: "#a3e635", opacity: 0.75 },
+    { key: "r101_200", label: "101–200", color: "#facc15", opacity: 0.6 },
+    { key: "unranked", label: "未进榜", color: "#a1a1aa", opacity: 0.35 },
+  ] as const;
+  const allStorefronts = Array.from(
+    new Set(
+      (product.supportedLanguages || []).flatMap((lang: any) =>
+        storefrontsForLanguage(lang.code),
+      ),
+    ),
+  );
+  const distributionData: {
+    storefront: string;
+    top10: number;
+    r11_50: number;
+    r51_100: number;
+    r101_200: number;
+    unranked: number;
+  }[] = allStorefronts
+    .map((storefront) => {
+      const buckets = { top10: 0, r11_50: 0, r51_100: 0, r101_200: 0, unranked: 0 };
+      for (const row of trackedActive) {
+        const cell = matrixCellState(rankSnapshots, row.keyword, storefront);
+        const rank = cell.rank;
+        if (rank == null || cell.beyond200) buckets.unranked += 1;
+        else if (rank <= 10) buckets.top10 += 1;
+        else if (rank <= 50) buckets.r11_50 += 1;
+        else if (rank <= 100) buckets.r51_100 += 1;
+        else buckets.r101_200 += 1;
+      }
+      return {
+        storefront: storefrontDisplayName(storefront),
+        top10: buckets.top10,
+        r11_50: buckets.r11_50,
+        r51_100: buckets.r51_100,
+        r101_200: buckets.r101_200,
+        unranked: buckets.unranked,
+      };
+    })
+    .sort(
+      (a, b) =>
+        (b.top10 * 100 + b.r11_50 * 50 + b.r51_100 * 20 + b.r101_200 * 5) -
+        (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
+    );
+  const DistributionTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow px-3 py-2 text-xs">
+        <p className="font-medium mb-1">{label}</p>
+        {RANK_BUCKETS.map((bucket) => {
+          const item = payload.find((p: any) => p.dataKey === bucket.key);
+          return (
+            <div key={bucket.key} className="flex items-center gap-2 py-0.5">
+              <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: bucket.color }} />
+              <span className="text-zinc-600 dark:text-zinc-300">{bucket.label}</span>
+              <span className="ml-auto pl-3 font-medium text-zinc-800 dark:text-zinc-100">
+                {item?.value ?? 0}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
   const repoGithubUrl = project.repo?.githubUrl || null;
   const releaseDraft = releaseOverview?.draft ?? null;
   const submissionDraft = releaseOverview?.submission ?? null;
@@ -460,24 +524,8 @@ export function OverviewPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <div className="lg:col-span-2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
           <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名趋势</h3>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名分布</h3>
             <div className="flex items-center gap-2.5 shrink-0">
-              <div className="flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
-                {[7, 14, 30].map((days) => (
-                  <button
-                    key={days}
-                    onClick={() => setChartDays(days)}
-                    className={cn(
-                      "px-2 py-0.5 text-[11px] font-medium transition-colors",
-                      chartDays === days
-                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                        : "bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800",
-                    )}
-                  >
-                    {days}天
-                  </button>
-                ))}
-              </div>
               <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
                 {newestCheckedAt ? (
                   <span className={cn(dataStale && "text-amber-600 dark:text-amber-400")}>
@@ -489,12 +537,12 @@ export function OverviewPage() {
               </span>
             </div>
           </div>
-          {chartSeries.length === 0 || chartData.length === 0 ? (
+          {trackedActive.length === 0 || distributionData.length === 0 ? (
             <div className="h-56 flex flex-col items-center justify-center gap-3">
               <p className="text-sm text-zinc-400 dark:text-zinc-500">
                 {trackedActive.length === 0
                   ? "还没有跟踪关键词"
-                  : `近 ${chartDays} 天暂无排名数据`}
+                  : "暂无排名数据"}
               </p>
               <Link to="/keywords" className={btnSmSecondary}>
                 {trackedActive.length === 0 ? "去生成关键词" : "去排名页"}
@@ -503,60 +551,48 @@ export function OverviewPage() {
           ) : (
             <div className="p-3">
               <ResponsiveContainer width="100%" height={224}>
-                <LineChart data={chartData} margin={{ top: 8, right: 16, left: -18, bottom: 0 }}>
+                <AreaChart data={distributionData} margin={{ top: 8, right: 16, left: -18, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
                   <XAxis
-                    dataKey="day"
+                    dataKey="storefront"
                     tick={{ fontSize: 10, fill: "#a1a1aa" }}
                     tickLine={false}
                     axisLine={false}
                     minTickGap={28}
                   />
                   <YAxis
-                    reversed
-                    domain={[1, "dataMax"]}
+                    allowDecimals={false}
                     tick={{ fontSize: 10, fill: "#a1a1aa" }}
                     tickLine={false}
                     axisLine={false}
                     width={44}
                   />
-                  <Tooltip
-                    contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e4e4e7" }}
-                    formatter={(value: any, name: any) => [`#${value}`, String(name)]}
-                    labelFormatter={(label) => `${label} 排名`}
-                  />
-                  <Legend
-                    wrapperStyle={{ fontSize: 11 }}
-                    onClick={(entry: any) => {
-                      const key = typeof entry?.dataKey === "string" ? entry.dataKey : "";
-                      const sep = key.indexOf("\u0000");
-                      if (sep > 0) {
-                        navigate(
-                          `/keywords?keyword=${encodeURIComponent(key.slice(sep + 1))}&lang=${encodeURIComponent(key.slice(0, sep))}`,
-                        );
-                      } else {
-                        navigate("/keywords");
-                      }
-                    }}
-                  />
-                  {chartSeries.map((entry, index) => (
-                    <Line
-                      key={entry.key}
+                  <Tooltip content={<DistributionTooltip />} />
+                  {RANK_BUCKETS.map((bucket) => (
+                    <Area
+                      key={bucket.key}
                       type="monotone"
-                      dataKey={entry.key}
-                      name={entry.label}
-                      stroke={OVERVIEW_CHART_COLORS[index % OVERVIEW_CHART_COLORS.length]}
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 3.5 }}
-                      connectNulls={false}
+                      dataKey={bucket.key}
+                      stackId="1"
+                      stroke="none"
+                      fill={bucket.color}
+                      fillOpacity={bucket.opacity}
+                      name={bucket.label}
                     />
                   ))}
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
-              <p className="text-center text-[10px] text-zinc-300 dark:text-zinc-600">
-                近 {chartDays} 天 · 点击图例进入排名页
-              </p>
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+                {RANK_BUCKETS.map((bucket) => (
+                  <span
+                    key={bucket.key}
+                    className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                  >
+                    <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: bucket.color }} />
+                    {bucket.label}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
         </div>

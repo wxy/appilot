@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -237,7 +239,84 @@ export function KeywordsPage() {
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
-  const matrixGridTemplate = `minmax(240px, 3fr) repeat(${matrixColumns.length}, minmax(80px, 0.9fr)) 44px`;
+  const storeGridTemplate = `repeat(${matrixColumns.length}, 88px) 44px`;
+  const RANK_BUCKETS = [
+    { key: "top10", label: "TOP10", color: "#15803d", opacity: 1 },
+    { key: "r11_50", label: "11–50", color: "#22c55e", opacity: 0.9 },
+    { key: "r51_100", label: "51–100", color: "#a3e635", opacity: 0.75 },
+    { key: "r101_200", label: "101–200", color: "#facc15", opacity: 0.6 },
+    { key: "unranked", label: "未进榜", color: "#a1a1aa", opacity: 0.35 },
+  ] as const;
+  const DistributionTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow px-3 py-2 text-xs">
+        <p className="font-medium mb-1">{label}</p>
+        {RANK_BUCKETS.map((bucket) => {
+          const item = payload.find((p: any) => p.dataKey === bucket.key);
+          return (
+            <div key={bucket.key} className="flex items-center gap-2 py-0.5">
+              <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: bucket.color }} />
+              <span className="text-zinc-600 dark:text-zinc-300">{bucket.label}</span>
+              <span className="ml-auto pl-3 font-medium text-zinc-800 dark:text-zinc-100">
+                {item?.value ?? 0}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+  // 分布始终是全局视角：所有语言的关键词 × 全部商店，与当前语言选择无关。
+  const allTrackedActive = (project.trackedKeywords || []).filter(
+    (k: any) => k.status !== "paused",
+  );
+  const allStorefronts = Array.from(
+    new Set(
+      (product?.supportedLanguages || []).flatMap((lang: any) =>
+        storefrontsForLanguage(lang.code),
+      ),
+    ),
+  );
+  const distributionData: {
+    storefront: string;
+    top10: number;
+    r11_50: number;
+    r51_100: number;
+    r101_200: number;
+    unranked: number;
+  }[] = allStorefronts
+    .map((storefront) => {
+      const buckets: Record<string, number> = {
+        top10: 0,
+        r11_50: 0,
+        r51_100: 0,
+        r101_200: 0,
+        unranked: 0,
+      };
+      for (const row of allTrackedActive) {
+        const cell = matrixCellState(rankSnapshots, row.keyword, storefront);
+        const rank = cell.rank;
+        if (rank == null || cell.beyond200) buckets.unranked += 1;
+        else if (rank <= 10) buckets.top10 += 1;
+        else if (rank <= 50) buckets.r11_50 += 1;
+        else if (rank <= 100) buckets.r51_100 += 1;
+        else buckets.r101_200 += 1;
+      }
+      return {
+        storefront: storefrontDisplayName(storefront),
+        top10: buckets.top10,
+        r11_50: buckets.r11_50,
+        r51_100: buckets.r51_100,
+        r101_200: buckets.r101_200,
+        unranked: buckets.unranked,
+      };
+    })
+    .sort(
+      (a, b) =>
+        (b.top10 * 100 + b.r11_50 * 50 + b.r51_100 * 20 + b.r101_200 * 5) -
+        (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
+    );
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
@@ -329,7 +408,15 @@ export function KeywordsPage() {
       ? `最近查询 ${new Date(cell.checkedAt).toLocaleString()} · 结果量 ${cell.totalResults ?? "—"}`
       : "尚未查询";
 
-  const renderMatrixRow = (
+  const handleSelectKeyword = (keyword: (typeof matrixRows)[number]) => {
+    setSelectedKeyword(keyword.keyword);
+    const next = new URLSearchParams(searchParams);
+    next.set("keyword", keyword.keyword);
+    next.set("lang", currentLang);
+    setSearchParams(next, { replace: true });
+  };
+
+  const renderLeftCell = (
     keyword: (typeof matrixRows)[number],
     dimmed: boolean,
     applied?: "add" | "remove" | null,
@@ -338,63 +425,72 @@ export function KeywordsPage() {
       key={`${keyword.language}:${keyword.keyword}`}
       data-keyword={keyword.keyword}
       data-language={keyword.language}
-      onClick={() => {
-        setSelectedKeyword(keyword.keyword);
-        const next = new URLSearchParams(searchParams);
-        next.set("keyword", keyword.keyword);
-        next.set("lang", currentLang);
-        setSearchParams(next, { replace: true });
-      }}
+      onClick={() => handleSelectKeyword(keyword)}
       className={cn(
-        "grid items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+        "h-11 flex items-center gap-2 px-5 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors min-w-0",
         dimmed && "opacity-55",
         !dimmed && "bg-emerald-50/30 dark:bg-emerald-500/[0.04]",
         keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
       )}
-      style={{ gridTemplateColumns: matrixGridTemplate }}
     >
-      <div className="py-1.5 pl-5 pr-4 min-w-0 sticky left-0 z-10 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
-        <div
-          className={cn(
-            "font-mono text-sm truncate",
-            dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200",
-            applied === "remove" && "line-through",
-          )}
-          title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
-        >
-          {keyword.keyword}
-          {keyword.language === "en" && (
-            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
-              全局
-            </span>
-          )}
-          {keyword.source === "submission" && (
-            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-500/15 text-[10px] font-sans font-medium text-sky-600 dark:text-sky-400 align-middle">
-              商店
-            </span>
-          )}
-          {keyword.source === "name" && (
-            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-violet-100 dark:bg-violet-500/15 text-[10px] font-sans font-medium text-violet-600 dark:text-violet-400 align-middle">
-              名称
-            </span>
-          )}
-          {keyword.source === "subtitle" && (
-            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-teal-100 dark:bg-teal-500/15 text-[10px] font-sans font-medium text-teal-600 dark:text-teal-400 align-middle">
-              副标题
-            </span>
-          )}
-          {applied === "add" && (
-            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/15 text-[10px] font-sans font-medium text-emerald-600 dark:text-emerald-400 align-middle">
-              新增
-            </span>
-          )}
-          {applied === "remove" && (
-            <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-500/15 text-[10px] font-sans font-medium text-red-600 dark:text-red-400 align-middle">
-              已删除
-            </span>
-          )}
-        </div>
-      </div>
+      <span
+        className={cn(
+          "font-mono text-sm truncate whitespace-nowrap min-w-0",
+          dimmed ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-800 dark:text-zinc-200",
+          applied === "remove" && "line-through",
+        )}
+        title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
+      >
+        {keyword.keyword}
+        {keyword.language === "en" && (
+          <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
+            全局
+          </span>
+        )}
+        {keyword.source === "submission" && (
+          <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-500/15 text-[10px] font-sans font-medium text-sky-600 dark:text-sky-400 align-middle">
+            商店
+          </span>
+        )}
+        {keyword.source === "name" && (
+          <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-violet-100 dark:bg-violet-500/15 text-[10px] font-sans font-medium text-violet-600 dark:text-violet-400 align-middle">
+            名称
+          </span>
+        )}
+        {keyword.source === "subtitle" && (
+          <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-teal-100 dark:bg-teal-500/15 text-[10px] font-sans font-medium text-teal-600 dark:text-teal-400 align-middle">
+            副标题
+          </span>
+        )}
+        {applied === "add" && (
+          <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/15 text-[10px] font-sans font-medium text-emerald-600 dark:text-emerald-400 align-middle">
+            新增
+          </span>
+        )}
+        {applied === "remove" && (
+          <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-500/15 text-[10px] font-sans font-medium text-red-600 dark:text-red-400 align-middle">
+            已删除
+          </span>
+        )}
+      </span>
+    </div>
+  );
+
+  const renderRightRow = (
+    keyword: (typeof matrixRows)[number],
+    dimmed: boolean,
+  ) => (
+    <div
+      key={`${keyword.language}:${keyword.keyword}:cells`}
+      onClick={() => handleSelectKeyword(keyword)}
+      className={cn(
+        "h-11 grid min-w-max items-center border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors",
+        dimmed && "opacity-55",
+        !dimmed && "bg-emerald-50/30 dark:bg-emerald-500/[0.04]",
+        keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
+      )}
+      style={{ gridTemplateColumns: storeGridTemplate }}
+    >
       {matrixColumns.map((column) => {
         const cell = matrixCellState(rankSnapshots, keyword.keyword, column.storefront);
         return (
@@ -432,6 +528,36 @@ export function KeywordsPage() {
       </div>
     </div>
   );
+
+  // 左右两块各自垂直滚动，滚动位置互相同步，保证表头各自冻结且行对齐。
+  const leftScrollRef = useRef<HTMLDivElement>(null);
+  const rightScrollRef = useRef<HTMLDivElement>(null);
+  const syncingScroll = useRef(false);
+  const syncScroll = (source: "left" | "right") => {
+    if (syncingScroll.current) return;
+    syncingScroll.current = true;
+    const from = source === "left" ? leftScrollRef.current : rightScrollRef.current;
+    const to = source === "left" ? rightScrollRef.current : leftScrollRef.current;
+    if (from && to) to.scrollTop = from.scrollTop;
+    requestAnimationFrame(() => {
+      syncingScroll.current = false;
+    });
+  };
+
+  const rowsToRender: { row: (typeof matrixRows)[number]; dimmed: boolean }[] =
+    matrixRows.length === 0
+      ? []
+      : showUnrankedRows
+        ? unranked.length > 0
+          ? unranked.map((row) => ({ row, dimmed: true }))
+          : []
+        : scopeFilteredRanked.length > 0
+          ? scopeFilteredRanked.map(({ row }) => ({ row, dimmed: false }))
+          : [];
+  const emptyMatrixMessage =
+    matrixRows.length === 0
+      ? "暂无关键词，点击「为所选语言生成」。"
+      : "该筛选范围内暂无关键词。";
 
   const generateOne = async (lang: string): Promise<{ lang: string; gen: KeywordGeneration | null }> => {
     try {
@@ -703,6 +829,31 @@ export function KeywordsPage() {
                   </p>
                 </div>
                 <div className="flex items-start gap-2">
+                  {schedulerStatus && (
+                    <span className="flex items-center gap-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500 pt-1">
+                      <span>
+                        {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
+                        {schedulerStatus.nextDueAt
+                          ? new Date(schedulerStatus.nextDueAt).getTime() <= Date.now()
+                            ? " · 待执行"
+                            : ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
+                          : ""}
+                      </span>
+                      <button
+                        onClick={() => void handleRunDue()}
+                        disabled={runningDue}
+                        className={cn(
+                          "transition-colors",
+                          runningDue
+                            ? "text-zinc-400 dark:text-zinc-500 cursor-wait"
+                            : "text-amber-600 dark:text-amber-400 hover:underline",
+                        )}
+                        title={runningDue ? "正在执行待处理任务…" : "立即执行待处理任务"}
+                      >
+                        {runningDue ? "执行中…" : "立即执行"}
+                      </button>
+                    </span>
+                  )}
                   <div className="relative">
                     <button onClick={openSubmissionPanel} className={btnSecondary}>
                       提交内容
@@ -846,7 +997,9 @@ export function KeywordsPage() {
               <div className="mt-1.5 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setViewLang("global")}
+                  onClick={() => {
+                    setViewLang("global");
+                  }}
                   className={cn(
                     "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
                     isGlobalView
@@ -904,13 +1057,15 @@ export function KeywordsPage() {
 
             </div>
 
-            <div className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable]">
+            <div className="flex flex-1 min-h-0 min-w-0">
+            {/* 左块：关键词列（尽量宽，不横向滚动） */}
             <div
-              className="grid items-start border-b border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-20"
-              style={{ gridTemplateColumns: matrixGridTemplate }}
+              ref={leftScrollRef}
+              onScroll={() => syncScroll("left")}
+              className="flex-1 min-w-0 overflow-y-auto scrollbar-hidden"
             >
-              <div className="py-2.5 pl-5 pr-4 sticky left-0 z-30 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
-                <div className="flex items-center justify-between gap-2">
+              <div className="sticky top-0 z-30 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
+                <div className="h-12 flex items-center justify-between gap-2 px-5 whitespace-nowrap">
                   <div className="flex items-center gap-2">
                     <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                       关键词（{trackedActive.length}）
@@ -1067,33 +1222,27 @@ export function KeywordsPage() {
                     </span>
                   )}
                 </div>
-                {schedulerStatus && (
-                  <span className="mt-0.5 flex items-center gap-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                    <span>
-                      {schedulerStatus.enabled ? "自动任务已启用" : "自动任务未启用"}
-                      {schedulerStatus.nextDueAt
-                        ? new Date(schedulerStatus.nextDueAt).getTime() <= Date.now()
-                          ? " · 待执行"
-                          : ` · 下次 ${new Date(schedulerStatus.nextDueAt).toLocaleString()}`
-                        : ""}
-                    </span>
-                    <button
-                      onClick={() => void handleRunDue()}
-                      disabled={runningDue}
-                      className={cn(
-                        "transition-colors",
-                        runningDue
-                          ? "text-zinc-400 dark:text-zinc-500 cursor-wait"
-                          : "text-amber-600 dark:text-amber-400 hover:underline",
-                      )}
-                      title={runningDue ? "正在执行待处理任务…" : "立即执行待处理任务"}
-                    >
-                      {runningDue ? "执行中…" : "立即执行"}
-                    </button>
-                  </span>
-                )}
               </div>
-              {matrixColumns.map((column) => (
+              {rowsToRender.length === 0 ? (
+                <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 px-5 text-center">
+                  {emptyMatrixMessage}
+                </p>
+              ) : (
+                rowsToRender.map(({ row, dimmed }) => renderLeftCell(row, dimmed))
+              )}
+            </div>
+            {/* 右块：商店列固定 5 列宽，多余横向滚动 */}
+            <div
+              ref={rightScrollRef}
+              onScroll={() => syncScroll("right")}
+              className="shrink-0 overflow-auto scrollbar-hidden border-l border-zinc-200 dark:border-zinc-800"
+              style={{ width: Math.min(matrixColumns.length * 88 + 44, 5 * 88 + 44) }}
+            >
+              <div
+                className="grid min-w-max sticky top-0 z-20 bg-white dark:bg-zinc-900 border-b border-zinc-100 dark:border-zinc-800"
+                style={{ gridTemplateColumns: storeGridTemplate }}
+              >
+                {matrixColumns.map((column) => (
                 <div
                   key={column.storefront}
                   className={cn(
@@ -1111,37 +1260,65 @@ export function KeywordsPage() {
                     {column.meta.stale ? " · 过期" : ""}
                   </div>
                 </div>
-              ))}
-              <div className="pl-3 pr-5 py-2 text-right border-l border-zinc-100 dark:border-zinc-800 text-xs font-medium text-zinc-400 dark:text-zinc-500">
-                操作
+                ))}
+                <div className="pl-3 pr-5 py-2 text-right border-l border-zinc-100 dark:border-zinc-800 text-xs font-medium text-zinc-400 dark:text-zinc-500">
+                  操作
+                </div>
               </div>
+              {rowsToRender.map(({ row, dimmed }) => renderRightRow(row, dimmed))}
+            </div>
             </div>
 
-                {matrixRows.length === 0 ? (
-                  <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
-                    暂无关键词，点击「为所选语言生成」。
-                  </p>
-                ) : showUnrankedRows ? (
-                  unranked.length > 0 ? (
-                    unranked.map((row) => renderMatrixRow(row, true))
-                  ) : (
-                    <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
-                      该筛选范围内暂无关键词。
-                    </p>
-                  )
-                ) : scopeFilteredRanked.length > 0 ? (
-                  scopeFilteredRanked.map(({ row }) => renderMatrixRow(row, false))
+            </div>
+
+            {(isGlobalView && distributionData.length > 0) ||
+            (!isGlobalView && chartKeyword && chartData.length > 0) ? (
+            <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5">
+                {isGlobalView ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        排名分布（最新快照）
+                      </h4>
+                      <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                        全部关键词 × 全部商店；商店按 TOP10 数量排序
+                      </span>
+                    </div>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={distributionData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="text-zinc-200 dark:text-zinc-800" />
+                          <XAxis dataKey="storefront" tick={{ fontSize: 11 }} />
+                          <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                          <Tooltip content={<DistributionTooltip />} />
+                          {RANK_BUCKETS.map((bucket) => (
+                            <Area
+                              key={bucket.key}
+                              type="monotone"
+                              dataKey={bucket.key}
+                              stackId="1"
+                              stroke="none"
+                              fill={bucket.color}
+                              fillOpacity={bucket.opacity}
+                              name={bucket.label}
+                            />
+                          ))}
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {RANK_BUCKETS.map((bucket) => (
+                        <span
+                          key={bucket.key}
+                          className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                        >
+                          <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: bucket.color }} />
+                          {bucket.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 ) : (
-                  <p className="text-sm text-zinc-400 dark:text-zinc-500 py-4 text-center">
-                    该筛选范围内暂无关键词。
-                  </p>
-                )}
-            </div>
-
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5 space-y-5">
-                {chartKeyword && chartData.length > 0 && (
                   <div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1205,6 +1382,7 @@ export function KeywordsPage() {
                 )}
 
             </div>
+            ) : null}
 
         </>
       )}
