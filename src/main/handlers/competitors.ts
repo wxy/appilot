@@ -99,38 +99,6 @@ export function registerCompetitorsHandlers(): void {
     return { list: next, merged };
   });
 
-  // 把另一个平台（iOS/macOS）的商店 ID 关联到既有竞品：同名应用多平台合并。
-  ipcMain.handle(
-    "competitors:linkPlatform",
-    async (
-      _event,
-      projectId: string,
-      competitorId: string,
-      platform: "ios" | "macos",
-      trackId: string,
-    ) => {
-      projectId = assertNonEmptyString(projectId, "projectId");
-      competitorId = assertNonEmptyString(competitorId, "competitorId");
-      trackId = assertNonEmptyString(trackId, "trackId");
-      if (platform !== "ios" && platform !== "macos") {
-        throw new Error("platform 必须是 ios 或 macos");
-      }
-      const s = await getStore();
-      const list = competitorsFor(s, projectId);
-      const index = list.findIndex((item: any) => item.id === competitorId);
-      if (index < 0) throw new Error("竞品不存在");
-      const competitor = migrateCompetitor(list[index]);
-      const normalized = {
-        ...competitor,
-        trackIds: { ...(competitor.trackIds || {}), [platform]: String(trackId) },
-      };
-      const next = [...list.slice(0, index), normalized, ...list.slice(index + 1)];
-      saveCompetitors(s, projectId, next);
-      notifyDataChanged("competitors");
-      return true;
-    },
-  );
-
   ipcMain.handle("competitors:remove", async (_event, projectId: string, competitorId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     competitorId = assertNonEmptyString(competitorId, "competitorId");

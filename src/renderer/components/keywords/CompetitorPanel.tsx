@@ -33,8 +33,6 @@ export function CompetitorPanel({
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
   const [addMessage, setAddMessage] = useState("");
-  const [linkCandidates, setLinkCandidates] = useState<Record<string, any[]>>({});
-  const [linkingId, setLinkingId] = useState<string | null>(null);
   const [refreshingRanks, setRefreshingRanks] = useState(false);
   const [page, setPage] = useState(0);
   const [searchError, setSearchError] = useState("");
@@ -129,41 +127,12 @@ export function CompetitorPanel({
   // 当前视图平台：竞品矩阵只看该平台的排名，避免 iOS/macOS 数据混比。
   const viewPlatform: "ios" | "macos" =
     product?.platform === "macos" ? "macos" : "ios";
-  const otherPlatform: "ios" | "macos" = viewPlatform === "macos" ? "ios" : "macos";
   const competitorTrackId = (competitor: any, platform: "ios" | "macos"): string | null => {
     const ids = { ...(competitor.trackIds || {}) };
     if (competitor.trackId && competitor.platform === platform) {
       ids[platform] = competitor.trackId;
     }
     return ids[platform] ? String(ids[platform]) : null;
-  };
-  const handleLinkSearch = async (competitor: any) => {
-    setLinkingId(competitor.id);
-    try {
-      const results = await (window as any).appilot?.competitors?.search({
-        term: competitor.name,
-        countries: countryOptions,
-        platform: otherPlatform,
-      });
-      setLinkCandidates((prev) => ({
-        ...prev,
-        [competitor.id]: (results || []).slice(0, 6),
-      }));
-    } catch {
-      setLinkCandidates((prev) => ({ ...prev, [competitor.id]: [] }));
-    } finally {
-      setLinkingId(null);
-    }
-  };
-  const handleLinkPlatform = async (competitor: any, candidate: any) => {
-    await (window as any).appilot?.competitors?.linkPlatform(
-      projectId,
-      competitor.id,
-      otherPlatform,
-      candidate.trackId,
-    );
-    setLinkCandidates((prev) => ({ ...prev, [competitor.id]: undefined }));
-    load();
   };
 
   const appStorePageUrl = (candidate: any) =>
@@ -190,6 +159,9 @@ export function CompetitorPanel({
   const linkedKeywords = Array.from(
     new Map(
       competitors
+        // 只统计当前平台已上架竞品关联的关键词：仅在另一平台关联的关键词
+        // 不进入本平台的列表，避免出现“没有竞品”的空关键词。
+        .filter((c: any) => Boolean(competitorTrackId(c, viewPlatform)))
         .flatMap((c: any) => c.linkedKeywords || [])
         .map((l: any) => [`${l.keyword}\u0000${l.language}`, l]),
     ).values(),
@@ -439,7 +411,7 @@ export function CompetitorPanel({
           </div>
           {linkedKeywords.length === 0 ? (
             <p className="px-4 py-4 text-xs text-zinc-400 dark:text-zinc-500">
-              竞品未关联关键词。添加竞品时使用搜索关键词关联，排名随关键词抓取采集。
+              当前平台没有已上架竞品关联的关键词。添加竞品时使用搜索关键词关联，排名随关键词抓取采集。
             </p>
           ) : activeLink ? (
           (() => {
@@ -571,47 +543,6 @@ export function CompetitorPanel({
                               : " · 排名尚未查询";
                           })()}
                         </div>
-                        {!competitorTrackId(c, otherPlatform) && (
-                          <div className="mt-1">
-                            <button
-                              type="button"
-                              onClick={() => void handleLinkSearch(c)}
-                              disabled={linkingId === c.id}
-                              className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline"
-                            >
-                              {linkingId === c.id
-                                ? "搜索中…"
-                                : `关联 ${platformLabel(otherPlatform)} 版本`}
-                            </button>
-                            {linkCandidates[c.id] && (
-                              <div className="mt-1 flex flex-col gap-1">
-                                {linkCandidates[c.id].length === 0 ? (
-                                  <span className="text-[10px] text-zinc-400">
-                                    未找到同名应用
-                                  </span>
-                                ) : (
-                                  linkCandidates[c.id].map((cand: any) => (
-                                    <div
-                                      key={cand.trackId}
-                                      className="flex items-center justify-between gap-2 text-[10px]"
-                                    >
-                                      <span className="truncate text-zinc-600 dark:text-zinc-400">
-                                        {cand.trackName}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleLinkPlatform(c, cand)}
-                                        className="text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-                                      >
-                                        关联
-                                      </button>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </td>
                       {stores.map((store) => {
                         const rank = competitorRankAt(c, store);
