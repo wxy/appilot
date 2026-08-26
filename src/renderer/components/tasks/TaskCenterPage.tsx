@@ -199,7 +199,7 @@ export function TaskCenterPage() {
             )}
             title={
               accel
-                ? "点击延长 5 分钟加速；积压清空或到时后自动解除"
+                ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
                 : "开启加速模式，以更快速度处理积压任务"
             }
           >
@@ -460,7 +460,7 @@ function TaskTimelineChart({
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">执行时间线</h3>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
           {accel
-            ? "加速模式：积压任务集中在当前时段，柱形图随处理回落"
+            ? "加速模式：从后续时段逐批提取任务执行，处理完自动解除"
             : "每小时计划任务与实际执行叠加（悬停查看详情）"}
         </p>
       </div>

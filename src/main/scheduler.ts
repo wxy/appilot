@@ -110,6 +110,8 @@ const ACCEL_MAX_ROUNDS = 6;
 const ACCEL_MAX_TASKS_PER_TICK = 40;
 const ACCEL_AUTO_OFF_MS = 5 * 60_000;
 let schedulerPaused = false;
+// 单次加速会话中已处理过的任务：添油时跳过，避免执行后被推回未来的任务被反复拉取。
+let accelHandledTaskIds = new Set<string>();
 /** What the scheduler is executing right now (for the timeline UI). */
 let nowRunningTask: RunningTaskInfo | null = null;
 
@@ -959,17 +961,40 @@ export async function schedulerTick(): Promise<void> {
           new Date(task.nextRunAt).getTime() <= now,
       )
       .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime());
-    // 自动解除：积压清空（本轮没有到期任务，且已至少跑过一轮）或超过时限。
+    // 添油战术：加速时不把所有任务一次性提前，而是每轮从未来拉取紧邻的
+    // 未处理任务补足本轮额度——平滑推进，结束后无需把任务推回。
     if (accel) {
+      const future = tasks
+        .filter(
+          (task) =>
+            task.enabled &&
+            !accelHandledTaskIds.has(task.id) &&
+            new Date(task.nextRunAt).getTime() > now,
+        )
+        .sort(
+          (a, b) =>
+            new Date(a.nextRunAt).getTime() -
+            new Date(b.nextRunAt).getTime(),
+        );
+      const need = maxPerTick - due.length;
+      if (need > 0 && future.length > 0) {
+        const pulled = future.slice(0, need);
+        const nowIso = new Date(now).toISOString();
+        for (const task of pulled) task.nextRunAt = nowIso;
+        due.push(...pulled);
+        store.set("scheduledTasks", tasks);
+      }
+      // 自动解除：超过时限，或所有启用任务都已被加速处理过。
       const until = store.get("schedulerAccelUntil");
       const expired = until && Date.now() >= new Date(until).getTime();
-      const backlogCleared = due.length === 0 && accelRound > 1;
-      if (expired || backlogCleared) {
+      const allHandled =
+        tasks.filter(
+          (task) => task.enabled && !accelHandledTaskIds.has(task.id),
+        ).length === 0;
+      if (expired || (allHandled && accelRound > 1)) {
         await disableAccel(store);
         overdueScattered = false;
         notifyDataChanged("tasks");
-        // 本轮不再继续执行加速任务，等下一轮恢复正常节奏。
-        // （selected 稍后按空 due 计算）
         due.length = 0;
       }
     }
@@ -981,6 +1006,7 @@ export async function schedulerTick(): Promise<void> {
     );
 
     for (const task of selected) {
+      accelHandledTaskIds.add(task.id);
       if (task.kind === "github-sync") {
         await runGithubSyncTask(store, task);
       } else if (task.kind === "ops-sync") {
@@ -1073,6 +1099,7 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
   const store = await getStore();
   if (enabled) {
     // 开启或延长：每次点击把截止时间延长 5 分钟（已开启时累加）。
+    accelHandledTaskIds = new Set();
     const existingUntil = store.get("schedulerAccelUntil");
     const base =
       store.get("schedulerAccel") === true && existingUntil
@@ -1082,17 +1109,6 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
     store.set("schedulerAccel", true);
     store.set("schedulerAccelUntil", new Date(until).toISOString());
     if (store.get("schedulerAccelRound") == null) store.set("schedulerAccelRound", 0);
-    // 让尚未到期的任务立即到期，加速按序处理。
-    const tasks: any[] = store.get("scheduledTasks") || [];
-    const now = new Date().toISOString();
-    let changed = false;
-    for (const task of tasks) {
-      if (task.enabled && new Date(task.nextRunAt).getTime() > Date.now()) {
-        task.nextRunAt = now;
-        changed = true;
-      }
-    }
-    if (changed) store.set("scheduledTasks", tasks);
   } else {
     await disableAccel(store);
   }
@@ -1110,18 +1126,9 @@ export async function setSchedulerAccel(enabled: boolean): Promise<void> {
  * （按各自的原间隔），避免解除后仍积压在积压队列里。
  */
 async function disableAccel(store: AppStore): Promise<void> {
+  accelHandledTaskIds = new Set();
   store.set("schedulerAccel", false);
   store.set("schedulerAccelUntil", null);
-  const tasks: any[] = store.get("scheduledTasks") || [];
-  const nowMs = Date.now();
-  let changed = false;
-  for (const task of tasks) {
-    if (task.enabled && new Date(task.nextRunAt).getTime() <= nowMs) {
-      task.nextRunAt = nextRunAt(task.id, task.intervalMinutes || 60);
-      changed = true;
-    }
-  }
-  if (changed) store.set("scheduledTasks", tasks);
 }
 
 export function startTaskScheduler(): void {
