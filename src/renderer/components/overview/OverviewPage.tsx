@@ -26,6 +26,7 @@ import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { CompetitorRadarCard } from "./CompetitorRadarCard";
 import { FeedbackThemesCard } from "./FeedbackThemesCard";
 import { TrafficCard } from "./TrafficCard";
+import { ValueFlash } from "../ui/ValueFlash";
 import {
   MetricBlock,
   overviewRankRows,
@@ -632,7 +633,9 @@ export function OverviewPage() {
                       {languageLabel(row.language)}
                     </span>
                   )}
-                  <span
+                  <ValueFlash
+                    value={row.bestRank}
+                    mode="box"
                     className={cn(
                       "shrink-0 w-8 text-right font-mono text-[13px] font-semibold",
                       row.bestRank <= 10
@@ -641,7 +644,7 @@ export function OverviewPage() {
                     )}
                   >
                     #{row.bestRank}
-                  </span>
+                  </ValueFlash>
                   <span className="shrink-0 w-11 text-right text-[11px]">
                     {row.trend === "up" && (
                       <span className="text-emerald-600 dark:text-emerald-400">▲{row.delta}</span>

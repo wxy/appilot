@@ -12,6 +12,7 @@ import {
 import { cn } from "../../lib/utils";
 import { GithubIcon } from "../ui/Icons";
 import { inputLineClass } from "../ui/styles";
+import { ValueFlash } from "../ui/ValueFlash";
 
 const KIND_LABELS: Record<string, string> = {
   "github-sync": "GitHub 同步",
@@ -54,6 +55,19 @@ export function TaskCenterPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
+  }, []);
+
+  // 主进程数据变更推送：任务状态变化时立即刷新（不用等 15 秒轮询）。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if ((e as CustomEvent).detail === "tasks") {
+        (window as any).appilot?.scheduler?.list()
+          .then(setData)
+          .catch(() => undefined);
+      }
+    };
+    window.addEventListener("appilot:data-changed", handler);
+    return () => window.removeEventListener("appilot:data-changed", handler);
   }, []);
 
   const projectOptions = Array.from(
@@ -240,9 +254,13 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 shadow-sm">
       <div className="text-xs text-zinc-500 dark:text-zinc-400">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100 leading-tight">
+      <ValueFlash
+        value={value}
+        mode="text"
+        className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100 leading-tight"
+      >
         {value}
-      </div>
+      </ValueFlash>
       {sub && <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">{sub}</div>}
     </div>
   );
@@ -669,12 +687,16 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
             <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
-              {group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+              <ValueFlash value={group.lastRunAt} mode="text">
+                {group.lastRunAt ? formatHumanTime(group.lastRunAt) : "尚未执行"}
+              </ValueFlash>
             </div>
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
             <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
-              {formatHumanTime(group.nextRunAt)}
+              <ValueFlash value={group.nextRunAt} mode="text">
+                {formatHumanTime(group.nextRunAt)}
+              </ValueFlash>
             </div>
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
@@ -682,9 +704,13 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
               <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate">—</div>
             ) : (
               <>
-                <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
+                <ValueFlash
+                  value={group.round ? `${group.round.done}/${group.round.total}` : "—"}
+                  mode="text"
+                  className="text-xs text-zinc-600 dark:text-zinc-300 truncate"
+                >
                   {group.round ? `${group.round.done}/${group.round.total}` : "—"}
-                </div>
+                </ValueFlash>
                 <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
                   {group.round && group.round.total > 0 && group.round.done >= group.round.total
                     ? "本轮已完成"
