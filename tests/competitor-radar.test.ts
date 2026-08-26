@@ -66,7 +66,11 @@ async function run() {
     });
     check(
       across.map((c) => c.trackId).join(",") === "1,3",
-      "多商店搜索合并去重（本地竞品出现）",
+      "多商店合并：跨商店出现优先、平均排名靠前优先",
+    );
+    check(
+      across[0]?.countries?.length === 2 && across[0]?.ranks?.us === 1,
+      "跨商店竞品记录出现商店与各商店排名",
     );
     check(
       across.find((c) => c.trackId === "3")?.country === "sg",

@@ -28,6 +28,8 @@ export interface CompetitorCandidate {
   country?: string;
   /** 该候选在本次搜索中出现过的全部商店（即确认已上架的商店）。 */
   countries?: string[];
+  /** 每个出现商店中的排名（1 起）。 */
+  ranks?: Record<string, number>;
 }
 
 export interface CompetitorSnapshot {
@@ -91,7 +93,7 @@ export async function searchCompetitorCandidates(opts: {
         !excludedTrack.has(String(r.trackId || "")) &&
         !(r.bundleId && excludedBundle.has(String(r.bundleId))),
     )
-    .map((r: any) => ({
+    .map((r: any, index: number) => ({
       trackId: String(r.trackId || ""),
       trackName: String(r.trackName || ""),
       screenshotUrl:
@@ -104,22 +106,22 @@ export async function searchCompetitorCandidates(opts: {
       averageUserRating: typeof r.averageUserRating === "number" ? r.averageUserRating : null,
       trackViewUrl: typeof r.trackViewUrl === "string" ? r.trackViewUrl : null,
       country: opts.country,
+      countries: [opts.country],
+      ranks: { [opts.country]: index + 1 },
     }))
     .filter((c: CompetitorCandidate) => c.trackId);
 }
 
-/**
- * Search across several storefronts in parallel and merge by trackId,
- * keeping first-storefront order. Lets niche/local competitors surface
- * instead of only the global names iTunes ranks first in one store.
- */
 export async function searchCompetitorCandidatesAcross(opts: {
   term: string;
   countries: string[];
   entity?: "software" | "macSoftware";
   excludeTrackIds?: string[];
   excludeBundleIds?: string[];
+  /** 每个商店最多取多少个候选（防止第一个商店垄断）。 */
+  perStorefrontLimit?: number;
 }): Promise<CompetitorCandidate[]> {
+  const limit = opts.perStorefrontLimit || 10;
   const perCountry = await Promise.all(
     opts.countries.map((country) =>
       searchCompetitorCandidates({
@@ -128,7 +130,9 @@ export async function searchCompetitorCandidatesAcross(opts: {
         entity: opts.entity,
         excludeTrackIds: opts.excludeTrackIds,
         excludeBundleIds: opts.excludeBundleIds,
-      }).catch(() => []),
+      })
+        .then((list) => list.slice(0, limit))
+        .catch(() => []),
     ),
   );
   const byTrackId = new Map<string, CompetitorCandidate>();
@@ -140,13 +144,30 @@ export async function searchCompetitorCandidatesAcross(opts: {
         if (candidate.country && !existing.countries?.includes(candidate.country)) {
           existing.countries = [...(existing.countries || []), candidate.country];
         }
+        if (candidate.country && candidate.ranks) {
+          existing.ranks = { ...(existing.ranks || {}), [candidate.country]: candidate.ranks[candidate.country] };
+        }
         continue;
       }
       byTrackId.set(candidate.trackId, candidate);
       merged.push(candidate);
     }
   }
-  return merged;
+  // 有意义的竞品 = 跨商店出现次数多、平均排名靠前（而不是第一个商店垄断）。
+  return merged
+    .map((c) => {
+      const countries = c.countries || [];
+      const ranks = c.ranks || {};
+      const values = countries.map((store) => ranks[store]).filter((v): v is number => typeof v === "number");
+      const avg = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : Number.POSITIVE_INFINITY;
+      return { c, countryCount: countries.length, avgRank: avg };
+    })
+    .sort(
+      (a, b) =>
+        b.countryCount - a.countryCount ||
+        a.avgRank - b.avgRank,
+    )
+    .map(({ c }) => c);
 }
 
 

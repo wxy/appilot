@@ -260,7 +260,17 @@ export function CompetitorPanel({
                     </p>
                   )}
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                    {candidate.country ? `${storefrontDisplayName(candidate.country)} · ` : ""}
+                    {(candidate.countries && candidate.countries.length > 0) && (
+                      <>
+                        {candidate.countries
+                          .map(
+                            (c: string) =>
+                              `${storefrontDisplayName(c)}#${candidate.ranks?.[c] ?? "?"}`,
+                          )
+                          .join(" ")}
+                        {" · "}
+                      </>
+                    )}
                     {candidate.genre || "未知分类"}
                     {candidate.averageUserRating ? ` · ★${Number(candidate.averageUserRating).toFixed(1)}` : ""}
                   </p>
