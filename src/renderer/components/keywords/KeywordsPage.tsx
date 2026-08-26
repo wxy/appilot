@@ -1437,7 +1437,13 @@ export function KeywordsPage() {
       {project && product && (
         <CompetitorPanel
           projectId={project.id}
-          product={{ platform: product.platform, supportedLanguages: product.supportedLanguages }}
+          product={{
+            platform: product.platform,
+            supportedLanguages: product.supportedLanguages,
+            trackId: product.trackId,
+            bundleId: product.bundleId,
+            trackName: product.trackName,
+          }}
           defaultTerm={selectedKeyword || ""}
           viewLang={currentLang}
           rankSnapshots={rankSnapshots}

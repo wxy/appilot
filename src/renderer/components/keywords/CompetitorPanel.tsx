@@ -211,12 +211,21 @@ export function CompetitorPanel({
   };
   const ownTrackId = String(product?.trackId ?? "");
   const hasSelfInResults = candidates.some((c) => String(c.trackId) === ownTrackId);
+  // “已添加”按 (竞品, 当前关键词) 判定：同一竞品关联了别的关键词时，
+  // 仍可把它再关联到当前关键词（跟踪关系按关键词 × 商店组合）。
   const isAddedCandidate = (candidate: any) =>
     competitors.some((c: any) => {
       const ids = [c.trackId, ...Object.values(c.trackIds || {})]
         .filter(Boolean)
         .map(String);
-      return ids.includes(String(candidate.trackId));
+      return (
+        ids.includes(String(candidate.trackId)) &&
+        (c.linkedKeywords || []).some(
+          (l: any) =>
+            l.keyword === defaultTerm.trim() &&
+            l.language === (viewLang || "en"),
+        )
+      );
     });
   const PAGE_SIZE = 12;
   const totalPages = Math.max(1, Math.ceil(candidates.length / PAGE_SIZE));
