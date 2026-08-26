@@ -79,6 +79,7 @@ export function CompetitorPanel({
     if (!term.trim()) return;
     setSearching(true);
     setSearchError("");
+    setAddMessage("");
     setCandidates([]);
     try {
       const results = await (window as any).appilot?.competitors?.search({
@@ -98,6 +99,18 @@ export function CompetitorPanel({
     setAdding(candidate.trackId);
     try {
       const platform = product?.platform === "macos" ? "macos" : "ios";
+      const keyword = defaultTerm.trim();
+      const language = viewLang || "en";
+      // 搜索结果已带各商店排名：随保存立即回填竞品矩阵，不必等下次抓取。
+      const seedRanks = Object.entries(candidate.ranks || {})
+        .filter(([, rank]) => typeof rank === "number")
+        .map(([storefront, rank]) => ({
+          keyword,
+          language,
+          storefront,
+          platform,
+          rank: rank as number,
+        }));
       const res = await (window as any).appilot?.competitors?.save(projectId, {
         name: candidate.trackName,
         trackId: candidate.trackId,
@@ -109,16 +122,19 @@ export function CompetitorPanel({
         // 关联当前关键词：之后按 (竞品, 关键词, 商店) 采集竞品排名。
         // 关联语言 = 搜索时的视图语言（中文视图 → cn/sg，英文视图 → us/gb 等），
         // 竞品排名按该语言商店采集，与矩阵中该视图看到的排名一致。
-        linkedKeywords: defaultTerm.trim()
-          ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
+        linkedKeywords: keyword
+          ? [{ keyword, language }]
           : [],
+        seedRanks,
       });
       setAddMessage(
         res?.merged
-          ? "该竞品已存在，已自动关联当前平台版本。"
-          : "",
+          ? "该竞品已存在，已自动关联当前平台版本，排名已按搜索结果回填。"
+          : "已添加，排名已按搜索结果回填。",
       );
-      load();
+      await load();
+      // 定位到当前关键词，让新竞品行出现在跟踪表里。
+      if (keyword) setTrackedKeyword(`${keyword}\u0000${language}`);
     } finally {
       setAdding(null);
     }
@@ -194,8 +210,8 @@ export function CompetitorPanel({
     );
     return item?.rank ?? null;
   };
-  // 每个关键词最多关联 5 个竞品。
-  const MAX_COMPETITORS_PER_KEYWORD = 5;
+  // 每个关键词最多关联 10 个竞品。
+  const MAX_COMPETITORS_PER_KEYWORD = 10;
   const defaultKeyword = defaultTerm.trim();
   const defaultLinkedCount = competitors.filter((c: any) =>
     (c.linkedKeywords || []).some((l: any) => l.keyword === defaultKeyword),

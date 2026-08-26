@@ -46,6 +46,7 @@ export function registerCompetitorsHandlers(): void {
         : {}),
     };
     let merged = false;
+    let savedId: string | null = null;
     let next: any[];
     if (competitor.id) {
       // 更新既有竞品。
@@ -61,6 +62,7 @@ export function registerCompetitorsHandlers(): void {
       next = index >= 0
         ? [...list.slice(0, index), normalized, ...list.slice(index + 1)]
         : [...list, normalized];
+      savedId = normalized.id;
     } else {
       // 新增：同名竞品（同一品牌另一平台的列表）自动合并，不新建重复条目。
       const sameName = findCompetitorByName(list, competitor.name);
@@ -79,6 +81,7 @@ export function registerCompetitorsHandlers(): void {
         };
         next = [...list.slice(0, index), normalized, ...list.slice(index + 1)];
         merged = true;
+        savedId = sameName.id;
       } else {
         const normalized = createCompetitor({
           name: String(competitor.name).trim(),
@@ -92,9 +95,45 @@ export function registerCompetitorsHandlers(): void {
             : undefined,
         });
         next = [...list, normalized];
+        savedId = normalized.id;
       }
     }
     saveCompetitors(s, projectId, next);
+    // 用搜索结果里已带出的各商店排名立即回填，不用等下一次调度抓取。
+    const seedRanks = Array.isArray(competitor.seedRanks)
+      ? competitor.seedRanks
+      : [];
+    if (savedId && seedRanks.length > 0) {
+      const ranksAll: Record<string, Record<string, any[]>> =
+        s.get("competitorRankSnapshots") || {};
+      const rankById: Record<string, any[]> = ranksAll[projectId] || {};
+      let nextRanks = [...(rankById[savedId] || [])];
+      for (const seed of seedRanks) {
+        if (!seed.keyword || !seed.storefront) continue;
+        const seedPlatform: "ios" | "macos" =
+          seed.platform === "macos" ? "macos" : "ios";
+        // 替换同 (关键词, 商店, 平台) 旧条目，并清理无平台旧数据。
+        nextRanks = nextRanks.filter(
+          (item: any) =>
+            !(
+              item.keyword === seed.keyword &&
+              item.storefront === seed.storefront &&
+              (item.platform == null || item.platform === seedPlatform)
+            ),
+        );
+        nextRanks.push({
+          keyword: seed.keyword,
+          language: seed.language || "en",
+          storefront: seed.storefront,
+          platform: seedPlatform,
+          rank: typeof seed.rank === "number" ? seed.rank : null,
+          checkedAt: new Date().toISOString(),
+        });
+      }
+      rankById[savedId] = nextRanks.slice(-300);
+      ranksAll[projectId] = rankById;
+      s.set("competitorRankSnapshots", ranksAll);
+    }
     notifyDataChanged("competitors");
     return { list: next, merged };
   });
