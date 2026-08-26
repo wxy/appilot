@@ -3,6 +3,7 @@ import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/s
 import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
+import { ValueFlash } from "../ui/ValueFlash";
 
 export function CompetitorPanel({
   projectId,
@@ -430,7 +431,9 @@ export function CompetitorPanel({
                           rankCellClass(ownRankByStore.get(store) ?? null),
                         )}
                       >
-                        {ownRankByStore.get(store) ?? "未上榜"}
+                        <ValueFlash value={ownRankByStore.get(store) ?? null}>
+                          {ownRankByStore.get(store) ?? "未上榜"}
+                        </ValueFlash>
                       </td>
                     ))}
                   </tr>
@@ -486,7 +489,9 @@ export function CompetitorPanel({
                               rankCellClass(rank),
                             )}
                           >
-                            {rank ?? "未上榜"}
+                            <ValueFlash value={rank}>
+                              {rank ?? "未上榜"}
+                            </ValueFlash>
                           </td>
                         );
                       })}

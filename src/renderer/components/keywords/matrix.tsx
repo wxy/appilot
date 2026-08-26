@@ -1,5 +1,6 @@
 import type { MatrixCell } from "../../lib/matrix";
 import { cn } from "../../lib/utils";
+import { ValueFlash } from "../ui/ValueFlash";
 
 export function matrixRankText(cell: MatrixCell): string {
   if (cell.beyond200) return "200+";
@@ -19,7 +20,9 @@ export function MatrixCellView({ cell }: { cell: MatrixCell }) {
   const trendText = matrixTrendText(cell);
   return (
     <span className="inline-flex items-baseline gap-1 justify-end">
-      <span
+      <ValueFlash
+        value={cell.rank}
+        mode="box"
         className={cn(
           "font-mono",
           cell.rank !== null && cell.rank <= 10
@@ -28,7 +31,7 @@ export function MatrixCellView({ cell }: { cell: MatrixCell }) {
         )}
       >
         {rankText}
-      </span>
+      </ValueFlash>
       {trendText && (
         <span
           className={cn(

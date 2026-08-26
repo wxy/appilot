@@ -35,6 +35,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { HistoryViewer } from "./HistoryViewer";
 import { ReferenceSection } from "./ReferenceSection";
 import { draftVersionLabel } from "./releaseFormat";
+import { ValueFlash } from "../ui/ValueFlash";
 
 export function ReleasePage() {
   const { projects, currentProjectId, currentProductId, selectProduct } = useProject();
@@ -389,7 +390,9 @@ export function ReleasePage() {
   const storeNode = effectiveVersionStatus || buildInfo || (draft?.appVersion && storeLiveVersion) ? (
     <>
       {effectiveVersionStatus && (
-        <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
+        <ValueFlash value={effectiveVersionStatus.key} mode="text">
+          <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
+        </ValueFlash>
       )}
       {buildInfo && (
         <StatusChip label={`构建：${buildInfo.label}`} tone={buildTone} />
@@ -1267,14 +1270,16 @@ export function ReleasePage() {
                     <span className="text-xs font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 shrink-0">
                       目标版本
                     </span>
-                    <input
-                      value={draft.appVersion || ""}
-                      onChange={(e) => updateDraftField("appVersion", e.target.value)}
-                      onBlur={() => void persistCurrentDraft()}
-                      placeholder="如 1.2.6"
-                      disabled={batchConfirmed || versionLocked}
-                      className={inputLineClass + " max-w-32"}
-                    />
+                    <ValueFlash value={draft.appVersion || ""} mode="input">
+                      <input
+                        value={draft.appVersion || ""}
+                        onChange={(e) => updateDraftField("appVersion", e.target.value)}
+                        onBlur={() => void persistCurrentDraft()}
+                        placeholder="如 1.2.6"
+                        disabled={batchConfirmed || versionLocked}
+                        className={inputLineClass + " max-w-32"}
+                      />
+                    </ValueFlash>
                     <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
                       确定文案前需填写
                     </span>
