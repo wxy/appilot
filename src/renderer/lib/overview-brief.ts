@@ -23,6 +23,7 @@ export function briefRuleSignals(args: {
   rankRows: { keyword: string; language: string; bestRank: number; trend: string }[];
   trackedActiveCount: number;
   pausedCount: number;
+  pendingPauseCount: number;
   languageTotal: number;
   generatedLanguageCount: number;
 }): BriefSignal[] {
@@ -58,7 +59,16 @@ export function briefRuleSignals(args: {
     signals.push({
       id: "rule-paused",
       title: `处理 ${args.pausedCount} 个暂停关键词`,
-      reason: "有跟踪关键词因连续未入榜被自动暂停，可恢复或删除。",
+      reason: "有跟踪关键词已暂停（人工处理），可恢复或删除。",
+      action: "keywords",
+      target: null,
+    });
+  }
+  if (args.pendingPauseCount > 0) {
+    signals.push({
+      id: "rule-pending-pause",
+      title: `复核 ${args.pendingPauseCount} 个待处理暂停关键词`,
+      reason: "连续未在榜的关键词等待人工分类：恢复 / 暂停 / 移除 / 列为文案缺口。",
       action: "keywords",
       target: null,
     });

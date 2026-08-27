@@ -115,6 +115,9 @@ export function OverviewPage() {
   const trackedKeywords = project.trackedKeywords || [];
   const trackedActive = trackedKeywords.filter((k) => k.status !== "paused");
   const pausedCount = trackedKeywords.length - trackedActive.length;
+  const pendingPauseCount = trackedKeywords.filter((k) =>
+    (k.pendingPausePlatforms || []).includes(product.platform),
+  ).length;
   const rankSnapshots = product.rankSnapshots || [];
   const rankRows = overviewRankRows(trackedActive, rankSnapshots);
   const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
@@ -242,6 +245,7 @@ export function OverviewPage() {
     rankRows,
     trackedActiveCount: trackedActive.length,
     pausedCount,
+    pendingPauseCount,
     languageTotal,
     generatedLanguageCount,
   }).filter((signal) => !handledBriefIds.has(signal.id));

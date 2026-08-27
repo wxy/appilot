@@ -75,6 +75,7 @@ const signals = briefRuleSignals({
   ],
   trackedActiveCount: 8,
   pausedCount: 2,
+  pendingPauseCount: 0,
   languageTotal: 8,
   generatedLanguageCount: 3,
 });
@@ -83,9 +84,20 @@ assert(signals[0].action === "keywords" && signals[0].target === "night walk", "
 assert(signals[1].action === "release", "rules: incomplete languages signal");
 assert(signals[2].id === "rule-paused", "rules: paused signal when keywords exist");
 assert(
-  briefRuleSignals({ rankRows: [], trackedActiveCount: 0, pausedCount: 0, languageTotal: 0, generatedLanguageCount: 0 })
+  briefRuleSignals({ rankRows: [], trackedActiveCount: 0, pausedCount: 0, pendingPauseCount: 0, languageTotal: 0, generatedLanguageCount: 0 })
     .some((s) => s.id === "rule-no-keywords"),
   "rules: no-keywords signal when empty",
+);
+assert(
+  briefRuleSignals({
+    rankRows: [],
+    trackedActiveCount: 3,
+    pausedCount: 0,
+    pendingPauseCount: 4,
+    languageTotal: 8,
+    generatedLanguageCount: 8,
+  }).some((s) => s.id === "rule-pending-pause" && s.title.includes("4")),
+  "rules: pending-pause review signal",
 );
 
 // 4. generateOverviewBrief with a stub provider
