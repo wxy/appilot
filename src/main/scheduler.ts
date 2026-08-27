@@ -224,13 +224,23 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
           const evaluated = evaluatePause(
             enrichKeywordFromSnapshots(keyword, snapshots),
             snapshots,
+            undefined,
+            // 复核/恢复后只统计新快照，避免处理完立刻又回到复核队列。
+            keyword.pauseReviewedAt
+              ? new Date(keyword.pauseReviewedAt)
+              : undefined,
           );
           const pendingPlatforms = Array.isArray(keyword.pendingPausePlatforms)
             ? keyword.pendingPausePlatforms
             : [];
+          const pausedPlatforms = Array.isArray(keyword.pausedPlatforms)
+            ? keyword.pausedPlatforms
+            : [];
           if (
             evaluated.status === "pending-pause" &&
-            !pendingPlatforms.includes(platformKey)
+            !pendingPlatforms.includes(platformKey) &&
+            // 已最终暂停的平台不再重新进入复核队列。
+            !pausedPlatforms.includes(platformKey)
           ) {
             keyword.pendingPausePlatforms = [...pendingPlatforms, platformKey];
             keyword.pendingPauseReason = evaluated.pausedReason || null;

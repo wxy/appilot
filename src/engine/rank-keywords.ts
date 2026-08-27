@@ -77,9 +77,16 @@ export function evaluatePause<T extends TrackedKeywordLike>(
   keyword: T,
   snapshots: RankSnapshotLike[],
   consecutive = PAUSE_CONSECUTIVE_MISSES,
+  since?: Date,
 ): T {
   const own = snapshots
-    .filter((s) => s.keyword === keyword.keyword && s.language === keyword.language)
+    .filter(
+      (s) =>
+        s.keyword === keyword.keyword &&
+        s.language === keyword.language &&
+        (!since ||
+          (s.checkedAt && new Date(s.checkedAt).getTime() >= since.getTime())),
+    )
     .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
   const byStorefront = new Map<string, RankSnapshotLike[]>();
   for (const snapshot of own) {
