@@ -18,6 +18,7 @@ import { matrixCellState, STALE_MS } from "../../lib/matrix";
 import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
 import { cn } from "../../lib/utils";
+import { KeywordRuby } from "../ui/KeywordRuby";
 import { useProject, type RankSnapshot } from "../../stores/project";
 import { CredentialBadge } from "../ui/CredentialBadge";
 import { EmptyState } from "../ui/EmptyState";
@@ -115,6 +116,9 @@ export function OverviewPage() {
   const trackedKeywords = project.trackedKeywords || [];
   const trackedActive = trackedKeywords.filter((k) => k.status !== "paused");
   const pausedCount = trackedKeywords.length - trackedActive.length;
+  const pendingPauseCount = trackedKeywords.filter((k) =>
+    (k.pendingPausePlatforms || []).includes(product.platform),
+  ).length;
   const rankSnapshots = product.rankSnapshots || [];
   const rankRows = overviewRankRows(trackedActive, rankSnapshots);
   const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
@@ -238,10 +242,18 @@ export function OverviewPage() {
   const handledBriefIds = new Set(
     (project.briefActions || []).map((item) => item.id),
   );
+  const rankRowsWithTranslation = rankRows.map((row) => ({
+    ...row,
+    translation:
+      trackedKeywords.find(
+        (k: any) => k.language === row.language && k.keyword === row.keyword,
+      )?.translation || null,
+  }));
   const ruleSignals = briefRuleSignals({
-    rankRows,
+    rankRows: rankRowsWithTranslation,
     trackedActiveCount: trackedActive.length,
     pausedCount,
+    pendingPauseCount,
     languageTotal,
     generatedLanguageCount,
   }).filter((signal) => !handledBriefIds.has(signal.id));
@@ -474,7 +486,30 @@ export function OverviewPage() {
               >
                 <span className="w-4 shrink-0 text-xs font-mono text-zinc-400 dark:text-zinc-500">{index + 1}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{item.title}</p>
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                    {(() => {
+                      // 规则信号标题里嵌入的关键词，用 ruby 标注译文。
+                      const brief = item as any;
+                      if (!brief.keyword) return item.title;
+                      const title = String(item.title || "");
+                      const idx = title.indexOf(brief.keyword);
+                      if (idx < 0) return title;
+                      return (
+                        <>
+                          {title.slice(0, idx)}
+                          <KeywordRuby
+                            keyword={brief.keyword}
+                            translation={brief.translation}
+                            annotate={
+                              brief.keywordLanguage !== "zh-Hans" &&
+                              brief.keywordLanguage !== "zh-Hant"
+                            }
+                          />
+                          {title.slice(idx + brief.keyword.length)}
+                        </>
+                      );
+                    })()}
+                  </p>
                   <p className="text-[11px] text-zinc-400 dark:text-zinc-500 truncate" title={item.reason}>
                     {item.reason}
                   </p>

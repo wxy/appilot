@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
-import { languageLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
+import { languageLabel, platformLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import {
   matrixCellState,
   matrixColumnMeta,
@@ -30,6 +30,7 @@ import { CurationDialog } from "./CurationDialog";
 import type { KeywordGeneration, KeywordSuggestion } from "./keywordTypes";
 import { ChartTick, MatrixCellView, RankTooltip } from "./matrix";
 import { CompetitorPanel } from "./CompetitorPanel";
+import { KeywordRuby } from "../ui/KeywordRuby";
 
 export function KeywordsPage() {
   const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, resumePausedKeyword, clearRemovedKeywords } = useProject();
@@ -72,6 +73,16 @@ export function KeywordsPage() {
   >({});
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
+  const [showPendingReview, setShowPendingReview] = useState(false);
+  const [pendingEntries, setPendingEntries] = useState<any[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [pendingActing, setPendingActing] = useState<string | null>(null);
+  const [translatingKey, setTranslatingKey] = useState<string | null>(null);
+  const [translatingAll, setTranslatingAll] = useState(false);
+  const [translateProgress, setTranslateProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
@@ -218,6 +229,15 @@ export function KeywordsPage() {
   const pausedForCurrent = tracked.filter(
     (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
   );
+  const pendingForCurrent = tracked.filter((k) =>
+    (k.pendingPausePlatforms || []).includes(product.platform),
+  );
+  const missingTranslationCount = (project.trackedKeywords || []).filter(
+    (k) =>
+      k.language !== "zh-Hans" &&
+      k.language !== "zh-Hant" &&
+      !(k.translation && String(k.translation).trim()),
+  ).length;
   const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
   const storefronts = isGlobalView
     ? Array.from(
@@ -441,7 +461,13 @@ export function KeywordsPage() {
         )}
         title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
       >
-        {keyword.keyword}
+        <KeywordRuby
+          keyword={keyword.keyword}
+          translation={keyword.translation}
+          annotate={
+            keyword.language !== "zh-Hans" && keyword.language !== "zh-Hant"
+          }
+        />
         {keyword.language === "en" && (
           <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
             全局
@@ -832,6 +858,110 @@ export function KeywordsPage() {
     await removeTrackedKeyword(product.id, language, kw);
   };
 
+  // 待处理暂停复核：打开队列（仅当前平台），并支持分类处理。
+  const openPendingReview = async () => {
+    if (pendingLoading) return;
+    setPendingLoading(true);
+    try {
+      const entries =
+        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+      setPendingEntries(
+        entries.filter((entry: any) => entry.platform === product.platform),
+      );
+      setShowPendingReview(true);
+    } catch {
+      setPendingEntries([]);
+    } finally {
+      setPendingLoading(false);
+    }
+  };
+
+  const actPending = async (
+    entry: any,
+    action: "resume" | "pause" | "remove" | "copy-gap",
+  ) => {
+    const key = `${entry.language}:${entry.keyword}:${entry.platform}`;
+    setPendingActing(key);
+    try {
+      await (window as any).appilot?.projects?.reviewPendingPause(
+        product.id,
+        entry.language,
+        entry.keyword,
+        entry.platform,
+        action,
+      );
+      // 立即从列表移除该条目（已处理），再刷新确认。
+      setPendingEntries((prev) =>
+        prev.filter(
+          (item: any) =>
+            !(
+              item.keyword === entry.keyword &&
+              item.language === entry.language &&
+              item.platform === entry.platform
+            ),
+        ),
+      );
+      await useProject.getState().load();
+      const entries =
+        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+      setPendingEntries(
+        entries.filter((item: any) => item.platform === product.platform),
+      );
+    } catch (e: any) {
+      setError(e.message || "处理失败。");
+    } finally {
+      setPendingActing(null);
+    }
+  };
+
+  const translatePendingKeyword = async (entry: any) => {
+    const key = `${entry.language}:${entry.keyword}:${entry.platform}`;
+    setTranslatingKey(key);
+    try {
+      await (window as any).appilot?.projects?.translateKeyword(
+        product.id,
+        entry.language,
+        entry.keyword,
+      );
+      const entries =
+        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+      setPendingEntries(
+        entries.filter((item: any) => item.platform === product.platform),
+      );
+    } catch (e: any) {
+      setError(e.message || "翻译失败。");
+    } finally {
+      setTranslatingKey(null);
+    }
+  };
+
+  // 批量补全所有缺译文的关键词（一次性任务，已有译文的跳过）。
+  const runTranslateAll = async () => {
+    if (translatingAll) return;
+    setTranslatingAll(true);
+    setTranslateProgress({ done: 0, total: missingTranslationCount });
+    try {
+      await (window as any).appilot?.projects?.translateKeywords(project.id);
+      await useProject.getState().load();
+    } catch (e: any) {
+      setError(e.message || "批量翻译失败。");
+    } finally {
+      setTranslatingAll(false);
+      setTranslateProgress(null);
+    }
+  };
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onTranslateKeywordsProgress?.(
+      (progress: any) => {
+        if (progress && typeof progress.done === "number") {
+          setTranslateProgress(progress);
+        }
+      },
+    );
+    return () => off?.();
+  }, []);
+
   const restoreTracked = async (language: string, kw: string) => {
     await restoreTrackedKeyword(product.id, language, kw);
   };
@@ -1155,8 +1285,33 @@ export function KeywordsPage() {
                       已暂停 ✕
                     </button>
                   )}
-                  {(pausedForCurrent.length > 0 || removedForCurrent.length > 0 || unranked.length > 0) && (
+                  {(pendingForCurrent.length > 0 || pausedForCurrent.length > 0 || removedForCurrent.length > 0 || unranked.length > 0) && (
                     <span className="flex items-center gap-1.5">
+                      {(missingTranslationCount > 0 || translatingAll) && (
+                        <button
+                          type="button"
+                          onClick={() => void runTranslateAll()}
+                          disabled={translatingAll}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors bg-sky-500/15 dark:bg-sky-500/20 text-sky-700 dark:text-sky-400 ring-1 ring-sky-500/40 hover:bg-sky-500/25 disabled:opacity-60"
+                          title="一次性翻译所有非中文关键词（简体中文标注）"
+                        >
+                          {translatingAll
+                            ? `翻译中 ${translateProgress?.done ?? 0}/${translateProgress?.total ?? missingTranslationCount}`
+                            : `补全译文 ${missingTranslationCount}`}
+                        </button>
+                      )}
+                      {pendingForCurrent.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => void openPendingReview()}
+                          disabled={pendingLoading}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/40 hover:bg-amber-500/25"
+                          title="连续未在榜的关键词等待人工分类（恢复 / 暂停 / 移除 / 暂停并列入文案缺口）"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          待处理暂停 {pendingForCurrent.length}
+                        </button>
+                      )}
                       {pausedForCurrent.length > 0 && (
                         <span className="relative" ref={pausedPopoverRef}>
                           <button
@@ -1415,6 +1570,180 @@ export function KeywordsPage() {
         </>
       )}
 
+      {showPendingReview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6"
+          onClick={() => setShowPendingReview(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[80vh] overflow-auto rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                待处理暂停复核 · {platformLabel(product.platform)}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowPendingReview(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                这些关键词已连续未在榜，已停止采集等待处理。分类建议来自规则层
+                （文案覆盖 / 产品档案），可自行改判。
+              </p>
+              {pendingEntries.length === 0 ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-6 text-center">
+                  暂无待处理项。
+                </p>
+              ) : (
+                pendingEntries.map((entry) => {
+                  const actKey = `${entry.language}:${entry.keyword}:${entry.platform}`;
+                  const busy = pendingActing === actKey;
+                  // 根据暂停原因确定默认推荐动作（明显标出）。
+                  const recommended =
+                    entry.suggestion === "copy-gap"
+                      ? "copy-gap"
+                      : entry.suggestion === "off-topic"
+                        ? "remove"
+                        : "pause";
+                  const recBtnClass = (kind: string) =>
+                    cn(
+                      "px-2 py-1 rounded-md text-[11px] font-medium disabled:opacity-50",
+                      recommended === kind
+                        ? kind === "remove"
+                          ? "bg-red-600 text-white ring-2 ring-red-500/30 hover:bg-red-700"
+                          : kind === "copy-gap"
+                            ? "bg-sky-600 text-white ring-2 ring-sky-500/30 hover:bg-sky-700"
+                            : "bg-amber-600 text-white ring-2 ring-amber-500/30 hover:bg-amber-700"
+                        : "border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60",
+                    );
+                  const suggestionMeta =
+                    entry.suggestion === "copy-gap"
+                      ? {
+                          label: "可能文案缺口",
+                          cls: "bg-sky-100 dark:bg-sky-500/15 text-sky-700 dark:text-sky-400",
+                        }
+                      : entry.suggestion === "competitive"
+                        ? {
+                            label: "竞争（文案已覆盖）",
+                            cls: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400",
+                          }
+                        : {
+                            label: "可能与产品无关",
+                            cls: "bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-400",
+                          };
+                  return (
+                    <div
+                      key={actKey}
+                      className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3"
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <KeywordRuby
+                          keyword={entry.keyword}
+                          translation={entry.translation}
+                          annotate={
+                            entry.language !== "zh-Hans" &&
+                            entry.language !== "zh-Hant"
+                          }
+                          className="text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                        />
+                        {entry.language !== "zh-Hans" &&
+                          entry.language !== "zh-Hant" &&
+                          !entry.translation && (
+                            <button
+                              type="button"
+                              disabled={translatingKey === actKey}
+                              onClick={() => void translatePendingKeyword(entry)}
+                              className="text-[10px] text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-50"
+                              title="翻译为中文"
+                            >
+                              {translatingKey === actKey ? "翻译中…" : "翻译"}
+                            </button>
+                          )}
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
+                          {languageLabel(entry.language)}
+                        </span>
+                        <span
+                          className={cn(
+                            "px-1.5 py-0.5 rounded text-[10px]",
+                            entry.state === "paused"
+                              ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                              : "bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400",
+                          )}
+                        >
+                          {entry.state === "paused"
+                            ? "已暂停（历史自动）"
+                            : "待处理"}
+                        </span>
+                        <span
+                          className={cn(
+                            "px-1.5 py-0.5 rounded text-[10px] font-medium",
+                            suggestionMeta.cls,
+                          )}
+                          title={entry.suggestionDetail}
+                        >
+                          {suggestionMeta.label}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                        {entry.reason}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void actPending(entry, "resume")}
+                          className={recBtnClass("resume")}
+                        >
+                          恢复跟踪
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void actPending(entry, "pause")}
+                          className={recBtnClass("pause")}
+                          title={
+                            recommended === "pause"
+                              ? "推荐动作"
+                              : undefined
+                          }
+                        >
+                          {entry.state === "paused" ? "保持暂停" : "暂停"}
+                          {recommended === "pause" && "（推荐）"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void actPending(entry, "copy-gap")}
+                          className={recBtnClass("copy-gap")}
+                          title="暂停该平台，并把关键词列入下版文案素材（文案缺口）"
+                        >
+                          暂停并列入文案缺口
+                          {recommended === "copy-gap" && "（推荐）"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void actPending(entry, "remove")}
+                          className={recBtnClass("remove")}
+                        >
+                          移除（无关）{recommended === "remove" && "（推荐）"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <CurationDialog
         curation={curation}
         curationOpen={curationOpen}
@@ -1434,6 +1763,7 @@ export function KeywordsPage() {
       {project && product && (
         <CompetitorPanel
           projectId={project.id}
+          projectKeywords={project.trackedKeywords || []}
           product={{
             platform: product.platform,
             supportedLanguages: product.supportedLanguages,

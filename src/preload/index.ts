@@ -128,6 +128,38 @@ contextBridge.exposeInMainWorld("appilot", {
     saveSubmissionKeywords: (projectId: string, submissionKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveSubmissionKeywords", projectId, submissionKeywords),
     removeTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
       ipcRenderer.invoke("projects:removeTrackedKeyword", projectId, language, keyword),
+    pendingPauseList: (projectId: string): Promise<any[]> =>
+      ipcRenderer.invoke("projects:pendingPauseList", projectId),
+    translateKeyword: (
+      productId: string,
+      language: string,
+      keyword: string,
+    ): Promise<{ translation: string }> =>
+      ipcRenderer.invoke("projects:translateKeyword", productId, language, keyword),
+    translateKeywords: (projectId: string): Promise<{ total: number; translated: number }> =>
+      ipcRenderer.invoke("projects:translateKeywords", projectId),
+    onTranslateKeywordsProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) =>
+        callback(progress);
+      ipcRenderer.on("projects:translateKeywordsProgress", listener);
+      return () =>
+        ipcRenderer.removeListener("projects:translateKeywordsProgress", listener);
+    },
+    reviewPendingPause: (
+      productId: string,
+      language: string,
+      keyword: string,
+      platform: string,
+      action: "resume" | "pause" | "remove" | "copy-gap",
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "projects:reviewPendingPause",
+        productId,
+        language,
+        keyword,
+        platform,
+        action,
+      ),
     restoreTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
       ipcRenderer.invoke("projects:restoreTrackedKeyword", projectId, language, keyword),
     resumePausedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>

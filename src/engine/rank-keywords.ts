@@ -4,6 +4,7 @@
  */
 
 import type { RankSnapshotLike } from "./rank-snapshots";
+import { storefrontDisplayName } from "./storefronts";
 
 export type KeywordStatus = "active" | "paused";
 export type KeywordSource = "ai" | "submission" | "name" | "subtitle" | "manual";
@@ -13,7 +14,7 @@ export interface TrackedKeywordLike {
   keyword: string;
   rationale?: string;
   translation?: string;
-  status?: KeywordStatus;
+  status?: KeywordStatus | "pending-pause";
   source?: KeywordSource;
   addedAt?: string;
   bestRank?: number | null;
@@ -22,6 +23,11 @@ export interface TrackedKeywordLike {
   pausedReason?: string | null;
   /** Platforms where auto-pause applies (per-platform; manual pause is global). */
   pausedPlatforms?: string[];
+  /** 已进入人工复核并处理过（避免历史自动暂停项重复出现在复核队列）。 */
+  pauseReviewedAt?: string | null;
+  /** Platforms awaiting manual pause review (自动暂停已取消，命中先进入复核队列)。 */
+  pendingPausePlatforms?: string[];
+  pendingPauseReason?: string | null;
 }
 
 export const PAUSE_CONSECUTIVE_MISSES = 10;
@@ -42,6 +48,11 @@ export function normalizeTrackedKeyword(item: any, now = new Date().toISOString(
     pausedAt: item.pausedAt || null,
     pausedReason: item.pausedReason || null,
     pausedPlatforms: Array.isArray(item.pausedPlatforms) ? item.pausedPlatforms : [],
+    pauseReviewedAt: item.pauseReviewedAt || null,
+    pendingPausePlatforms: Array.isArray(item.pendingPausePlatforms)
+      ? item.pendingPausePlatforms
+      : [],
+    pendingPauseReason: item.pendingPauseReason || null,
   };
 }
 
@@ -66,9 +77,16 @@ export function evaluatePause<T extends TrackedKeywordLike>(
   keyword: T,
   snapshots: RankSnapshotLike[],
   consecutive = PAUSE_CONSECUTIVE_MISSES,
+  since?: Date,
 ): T {
   const own = snapshots
-    .filter((s) => s.keyword === keyword.keyword && s.language === keyword.language)
+    .filter(
+      (s) =>
+        s.keyword === keyword.keyword &&
+        s.language === keyword.language &&
+        (!since ||
+          (s.checkedAt && new Date(s.checkedAt).getTime() >= since.getTime())),
+    )
     .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
   const byStorefront = new Map<string, RankSnapshotLike[]>();
   for (const snapshot of own) {
@@ -82,8 +100,9 @@ export function evaluatePause<T extends TrackedKeywordLike>(
   if (!allMissed) return keyword;
   return {
     ...keyword,
-    status: "paused",
-    pausedAt: keyword.pausedAt || new Date().toISOString(),
-    pausedReason: `连续 ${consecutive} 次未在榜（${mature.map((l) => l[l.length - 1].storefront).join("、")}）`,
+    status: "pending-pause",
+    pausedReason: `连续 ${consecutive} 次未在榜（${mature
+      .map((l) => storefrontDisplayName(l[l.length - 1].storefront))
+      .join("、")}）`,
   };
 }

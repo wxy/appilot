@@ -168,6 +168,15 @@
 }
 .flash-input { animation: appilot-flash-input 1.1s ease-out; border-radius: 6px; }
 
+/* 关键词 ruby 标注：译文小号、弱化显示在关键词上方。 */
+.ruby-keyword rt {
+  font-size: 0.66em;
+  color: rgb(161 161 170);
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { log } from "../../engine/logger";
 import { appendRankSnapshots } from "../../engine/rank-snapshots";
-import { normalizeTrackedKeyword } from "../../engine/rank-keywords";
+import { evaluatePause, normalizeTrackedKeyword } from "../../engine/rank-keywords";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../../engine/storefronts";
 import { createAiProvider } from "../ai-service";
 import { importAscKeyFileTo } from "../asc-key-file";
@@ -827,6 +827,305 @@ export function registerProjectsHandlers(): void {
     notifyDataChanged("projects");
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
   });
+
+  // 待处理暂停复核队列：列出命中“连续未在榜”但等待人工分类的关键词
+  // （按 关键词 × 平台），并给出规则层的分类建议。
+  ipcMain.handle("projects:pendingPauseList", async (_event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) return [];
+    const { readFullReadme } = await import("../../engine/app-store-discovery");
+    let readme = "";
+    try {
+      readme = project.localPath ? readFullReadme(project.localPath) : "";
+    } catch {
+      readme = "";
+    }
+    const entries: any[] = [];
+    for (const keyword of project.trackedKeywords || []) {
+      const pending = keyword.pendingPausePlatforms || [];
+      // 历史自动暂停（原因含“连续”，且尚未复核）也进入复核队列，便于
+      // 重新分类（例如列为文案缺口）。
+      const pausedLegacy = (keyword.pausedPlatforms || []).filter(
+        () =>
+          !keyword.pauseReviewedAt &&
+          String(keyword.pausedReason || "").includes("连续"),
+      );
+      const platforms = Array.from(new Set([...pending, ...pausedLegacy]));
+      if (platforms.length === 0) continue;
+      // 文案字段（跨产品草稿 + trackName）用于“是否已覆盖”判断。
+      const copyTexts: string[] = [];
+      for (const product of project.storeProducts || []) {
+        copyTexts.push(String(product.trackName || ""));
+        for (const draft of project.storeSubmissionDrafts || []) {
+          if (draft.productId !== product.id) continue;
+          for (const loc of draft.localizations || []) {
+            for (const field of [
+              "name",
+              "subtitle",
+              "promotionalText",
+              "description",
+              "whatsNew",
+              "keywords",
+            ]) {
+              if (String(loc[field] || "")) copyTexts.push(String(loc[field]));
+            }
+          }
+        }
+      }
+      const needle = String(keyword.keyword || "").trim().toLowerCase();
+      const covered = needle
+        ? copyTexts.some((text) => String(text).toLowerCase().includes(needle))
+        : false;
+      const inReadme = needle ? readme.toLowerCase().includes(needle) : false;
+      for (const platform of platforms) {
+        // 用当前快照重新生成原因（商店显示名称），而不是历史缩写。
+        const product = (project.storeProducts || []).find(
+          (p: any) => (p.platform || "unknown") === platform,
+        );
+        const evaluated = evaluatePause(
+          keyword,
+          product?.rankSnapshots || [],
+        );
+        const reason =
+          evaluated.pausedReason ||
+          keyword.pendingPauseReason ||
+          keyword.pausedReason ||
+          "连续未在榜";
+        entries.push({
+          language: keyword.language,
+          keyword: keyword.keyword,
+          translation: keyword.translation || null,
+          platform,
+          reason,
+          state: pending.includes(platform) ? "pending" : "paused",
+          suggestion: covered
+            ? "competitive"
+            : inReadme
+              ? "copy-gap"
+              : "off-topic",
+          suggestionDetail: covered
+            ? "文案中已出现该关键词，排名不佳更可能是竞争或权重原因"
+            : inReadme
+              ? "产品档案提到该关键词，但商店文案未覆盖——可能是文案缺口"
+              : "文案与产品档案均未出现，可能与产品无关",
+        });
+      }
+    }
+    return entries;
+  });
+
+  // 把单个关键词翻译成界面语言（简体中文），并持久化到该关键词的
+  // translation 字段，之后所有显示位置都能用 ruby 标注。
+  ipcMain.handle(
+    "projects:translateKeyword",
+    async (
+      _event,
+      productId: string,
+      language: string,
+      keywordText: string,
+    ) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const project = context.project;
+      const item = (project.trackedKeywords || []).find(
+        (k: any) => k.language === language && k.keyword === keywordText,
+      );
+      if (!item) throw new Error("Keyword not found");
+      if (item.translation && item.translation.trim()) {
+        return { translation: item.translation };
+      }
+      const { createAiProvider } = await import("../ai-service");
+      const provider = await createAiProvider(s);
+      const translated = (
+        await provider.chat(
+          [
+            {
+              role: "system",
+              content: "你是 App Store 关键词翻译助手，只输出译文本身。",
+            },
+            {
+              role: "user",
+              content: `把下面的 App Store 关键词翻译成简体中文（界面语言）。只输出译文，不要解释、不要引号、不要加注。\n关键词：${keywordText}`,
+            },
+          ] as any,
+          { temperature: 0.2, maxTokens: 200 },
+        )
+      )
+        .trim()
+        .replace(/^["'“”]+|["'“”]+$/g, "");
+      if (!translated) throw new Error("翻译失败，请重试");
+      item.translation = translated;
+      s.set("projects", projects);
+      return { translation: translated };
+    },
+  );
+
+  // 批量翻译：为当前项目所有“非中文且缺译文”的关键词补全译文（一次性任务，
+  // 可重入——已有译文的跳过）。逐条持久化，避免中断丢失进度。
+  ipcMain.handle("projects:translateKeywords", async (event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const { createAiProvider } = await import("../ai-service");
+    const provider = await createAiProvider(s);
+    const pending = (project.trackedKeywords || []).filter(
+      (k: any) =>
+        k.language !== "zh-Hans" &&
+        k.language !== "zh-Hant" &&
+        !(k.translation && String(k.translation).trim()),
+    );
+    const total = pending.length;
+    let done = 0;
+    let translated = 0;
+    for (const item of pending) {
+      try {
+        const text = (
+          await provider.chat(
+            [
+              {
+                role: "system",
+                content: "你是 App Store 关键词翻译助手，只输出译文本身。",
+              },
+              {
+                role: "user",
+                content: `把下面的 App Store 关键词翻译成简体中文（界面语言）。只输出译文，不要解释、不要引号、不要加注。\n关键词：${item.keyword}`,
+              },
+            ] as any,
+            { temperature: 0.2, maxTokens: 200 },
+          )
+        )
+          .trim()
+          .replace(/^["'“”]+|["'“”]+$/g, "");
+        if (text) {
+          item.translation = text;
+          translated += 1;
+        }
+      } catch (err: any) {
+        log.warn(`Keyword translation failed for ${item.keyword}: ${err.message}`);
+      }
+      done += 1;
+      if (!event.sender.isDestroyed()) {
+        event.sender.send("projects:translateKeywordsProgress", { done, total });
+      }
+      if (done % 10 === 0 || done === total) s.set("projects", projects);
+    }
+    s.set("projects", projects);
+    notifyDataChanged("projects");
+    return { total, translated };
+  });
+
+  // 处理待处理暂停：resume 恢复跟踪 / pause 最终暂停 / remove 移除（无关词）
+  // / copy-gap 列入文案素材并暂停该平台。
+  ipcMain.handle(
+    "projects:reviewPendingPause",
+    async (
+      _event,
+      productId: string,
+      language: string,
+      keywordText: string,
+      platform: string,
+      action: "resume" | "pause" | "remove" | "copy-gap",
+    ) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
+        const keyword = (project.trackedKeywords || []).find(
+          (item: any) =>
+            item.language === language && item.keyword === keywordText,
+        );
+        if (!keyword) throw new Error("Keyword not found");
+        const pending = (keyword.pendingPausePlatforms || []).filter(
+          (item: string) => item !== platform,
+        );
+        const paused = Array.isArray(keyword.pausedPlatforms)
+          ? keyword.pausedPlatforms
+          : [];
+        const now = new Date().toISOString();
+        if (action === "resume") {
+          // 恢复跟踪：同时从待处理与（历史自动）暂停中移除该平台。
+          keyword.pendingPausePlatforms = pending;
+          if (pending.length === 0) keyword.pendingPauseReason = null;
+          keyword.pausedPlatforms = paused.filter(
+            (item: string) => item !== platform,
+          );
+          keyword.pauseReviewedAt = now;
+          return { trackedKeywords: project.trackedKeywords };
+        }
+        if (action === "pause" || action === "copy-gap") {
+          keyword.pausedPlatforms = paused.includes(platform)
+            ? paused
+            : [...paused, platform];
+          keyword.pausedReason =
+            keyword.pendingPauseReason || keyword.pausedReason || "手动暂停";
+          keyword.pendingPausePlatforms = pending;
+          if (pending.length === 0) keyword.pendingPauseReason = null;
+          keyword.pauseReviewedAt = now;
+          if (action === "copy-gap") {
+            const gaps = Array.isArray(project.copyGapKeywords)
+              ? [...project.copyGapKeywords]
+              : [];
+            if (
+              !gaps.some(
+                (item: any) =>
+                  item.language === language && item.keyword === keywordText,
+              )
+            ) {
+              gaps.push({
+                language,
+                keyword: keywordText,
+                translation: keyword.translation || "",
+                reason: keyword.pendingPauseReason || "排名不佳，文案未覆盖",
+                addedAt: new Date().toISOString(),
+              });
+            }
+            return { trackedKeywords: project.trackedKeywords, copyGapKeywords: gaps };
+          }
+          return { trackedKeywords: project.trackedKeywords };
+        }
+        if (action === "remove") {
+          // 无关词：从池中移除（全局），并记录删除历史。
+          const removedKeywords = Array.isArray(project.removedKeywords)
+            ? [...project.removedKeywords]
+            : [];
+          if (
+            !removedKeywords.some(
+              (item: any) =>
+                item.language === language && item.keyword === keywordText,
+            )
+          ) {
+            removedKeywords.push({
+              language,
+              keyword: keywordText,
+              rationale: keyword.rationale || "",
+              translation: keyword.translation || "",
+              removedAt: new Date().toISOString(),
+            });
+          }
+          return {
+            trackedKeywords: (project.trackedKeywords || []).filter(
+              (item: any) =>
+                !(item.language === language && item.keyword === keywordText),
+            ),
+            removedKeywords,
+          };
+        }
+        return { trackedKeywords: project.trackedKeywords };
+      });
+      s.set("projects", nextProjects);
+      void schedulerTick();
+      notifyDataChanged("projects");
+      return nextProjects.find((project) => project.id === context.project.id) || context.project;
+    },
+  );
 
   ipcMain.handle("projects:restoreTrackedKeyword", async (_event, productId: string, language: string, keyword: string) => {
     const s = await getStore();

@@ -213,8 +213,9 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
       const snapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
       const platformKey = product.platform || "unknown";
 
-      // The shared pool is queried per platform; auto-pause is evaluated per
-      // platform (stored in pausedPlatforms) while a manual pause is global.
+      // The shared pool is queried per platform. 自动暂停已取消：连续未在榜
+      // 的关键词先进入“待处理暂停”复核队列（pendingPausePlatforms），由用户
+      // 在排名页分类处理；最终暂停（pausedPlatforms）只由用户操作产生。
       for (const localization of product.supportedLanguages || []) {
         const localizationCode = localization.code;
         const queryLanguages = localizationCode === "en" ? ["en"] : [localizationCode, "en"];
@@ -223,17 +224,44 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
           const evaluated = evaluatePause(
             enrichKeywordFromSnapshots(keyword, snapshots),
             snapshots,
+            undefined,
+            // 复核/恢复后只统计新快照，避免处理完立刻又回到复核队列。
+            keyword.pauseReviewedAt
+              ? new Date(keyword.pauseReviewedAt)
+              : undefined,
           );
-          const platforms = Array.isArray(keyword.pausedPlatforms)
+          const pendingPlatforms = Array.isArray(keyword.pendingPausePlatforms)
+            ? keyword.pendingPausePlatforms
+            : [];
+          const pausedPlatforms = Array.isArray(keyword.pausedPlatforms)
             ? keyword.pausedPlatforms
             : [];
-          if (evaluated.status === "paused" && !platforms.includes(platformKey)) {
-            keyword.pausedPlatforms = [...platforms, platformKey];
-            keyword.pausedReason = evaluated.pausedReason || null;
-          } else if (evaluated.status !== "paused" && platforms.includes(platformKey)) {
-            keyword.pausedPlatforms = platforms.filter((item: string) => item !== platformKey);
+          if (
+            evaluated.status === "pending-pause" &&
+            !pendingPlatforms.includes(platformKey) &&
+            // 已最终暂停的平台不再重新进入复核队列。
+            !pausedPlatforms.includes(platformKey)
+          ) {
+            keyword.pendingPausePlatforms = [...pendingPlatforms, platformKey];
+            keyword.pendingPauseReason = evaluated.pausedReason || null;
+          } else if (
+            evaluated.status !== "pending-pause" &&
+            pendingPlatforms.includes(platformKey)
+          ) {
+            // 排名恢复后自动解除待处理状态。
+            keyword.pendingPausePlatforms = pendingPlatforms.filter(
+              (item: string) => item !== platformKey,
+            );
+            if ((keyword.pendingPausePlatforms || []).length === 0) {
+              keyword.pendingPauseReason = null;
+            }
           }
-          if ((keyword.pausedPlatforms || []).includes(platformKey)) continue;
+          if (
+            (keyword.pendingPausePlatforms || []).includes(platformKey) ||
+            (keyword.pausedPlatforms || []).includes(platformKey)
+          ) {
+            continue;
+          }
           if (!queryLanguages.includes(keyword.language)) continue;
           for (const storefront of storefrontsForLanguage(localizationCode)) {
             const id = rankTaskId(product.id, keyword.keyword, keyword.language, storefront);
@@ -439,6 +467,9 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       keyword.keyword === task.keyword &&
       keyword.language === task.queryLanguage &&
       keyword.status !== "paused" &&
+      !(keyword.pendingPausePlatforms || []).includes(
+        product.platform || "unknown",
+      ) &&
       !(keyword.pausedPlatforms || []).includes(product.platform || "unknown"),
   );
   if (!isActive) {

@@ -10,6 +10,10 @@ export interface BriefSignal {
   reason: string;
   action: BriefActionKind;
   target: string | null;
+  /** 标题里嵌入的关键词（用于 ruby 译文标注）。 */
+  keyword?: string | null;
+  keywordLanguage?: string | null;
+  translation?: string | null;
 }
 
 export interface BriefActionRecord {
@@ -23,6 +27,7 @@ export function briefRuleSignals(args: {
   rankRows: { keyword: string; language: string; bestRank: number; trend: string }[];
   trackedActiveCount: number;
   pausedCount: number;
+  pendingPauseCount: number;
   languageTotal: number;
   generatedLanguageCount: number;
 }): BriefSignal[] {
@@ -35,6 +40,9 @@ export function briefRuleSignals(args: {
       reason: `${dropped[0].keyword} 最近排名下滑，建议到排名页查看趋势。`,
       action: "keywords",
       target: dropped[0].keyword,
+      keyword: dropped[0].keyword,
+      keywordLanguage: dropped[0].language,
+      translation: (dropped[0] as any).translation ?? null,
     });
   }
   if (args.languageTotal > 0 && args.generatedLanguageCount < args.languageTotal) {
@@ -58,7 +66,16 @@ export function briefRuleSignals(args: {
     signals.push({
       id: "rule-paused",
       title: `处理 ${args.pausedCount} 个暂停关键词`,
-      reason: "有跟踪关键词因连续未入榜被自动暂停，可恢复或删除。",
+      reason: "有跟踪关键词已暂停（人工处理），可恢复或删除。",
+      action: "keywords",
+      target: null,
+    });
+  }
+  if (args.pendingPauseCount > 0) {
+    signals.push({
+      id: "rule-pending-pause",
+      title: `复核 ${args.pendingPauseCount} 个待处理暂停关键词`,
+      reason: "连续未在榜的关键词等待人工分类：恢复 / 暂停 / 移除 / 列为文案缺口。",
       action: "keywords",
       target: null,
     });

@@ -4,6 +4,7 @@ import { formatHumanTime, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { ValueFlash } from "../ui/ValueFlash";
+import { KeywordRuby } from "../ui/KeywordRuby";
 
 export function CompetitorPanel({
   projectId,
@@ -11,6 +12,7 @@ export function CompetitorPanel({
   defaultTerm,
   viewLang,
   rankSnapshots,
+  projectKeywords,
 }: {
   projectId: string;
   product: {
@@ -24,7 +26,15 @@ export function CompetitorPanel({
   viewLang: string;
   /** 自己的关键词排名（product.rankSnapshots），用于与竞品对比。 */
   rankSnapshots: any[];
+  /** 项目关键词池（用于查找译文标注）。 */
+  projectKeywords?: any[];
 }) {
+  const translationByKey = new Map(
+    (projectKeywords || []).map((k: any) => [
+      `${k.language}\u0000${k.keyword}`,
+      k.translation || "",
+    ]),
+  );
   const [competitors, setCompetitors] = useState<any[]>([]);
   const [competitorRanks, setCompetitorRanks] = useState<Record<string, any[]>>({});
   const [trackedKeyword, setTrackedKeyword] = useState("");
@@ -489,7 +499,15 @@ export function CompetitorPanel({
                       : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50",
                   )}
                 >
-                  {link.keyword}
+                  <KeywordRuby
+                    keyword={link.keyword}
+                    translation={translationByKey.get(
+                      `${link.language}\u0000${link.keyword}`,
+                    )}
+                    annotate={
+                      link.language !== "zh-Hans" && link.language !== "zh-Hant"
+                    }
+                  />
                 </button>
               ))}
             </div>

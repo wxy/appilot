@@ -106,6 +106,8 @@ export async function generateStoreSubmissionContent(
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
     includedChanges?: string[];
+    /** 文案缺口关键词：排名不佳但产品相关、当前文案未覆盖，需自然融入。 */
+    copyGapKeywords?: string[];
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
@@ -144,6 +146,9 @@ export async function translateStoreSubmissionContent(
   context: {
     name: string;
     profile?: ProjectProfile;
+    /** 各语言的跟踪关键词（按语言注入目标语言的词，而不是翻译源词）。 */
+    trackedKeywordsByLanguage?: Record<string, string[]>;
+    copyGapKeywordsByLanguage?: Record<string, string[]>;
   },
   source: StoreSubmissionLocalization,
   targetLanguages: string[],
@@ -176,6 +181,7 @@ async function generateGlobalReleasePlan(
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
+    copyGapKeywords?: string[];
   },
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<{
@@ -201,6 +207,9 @@ async function generateGlobalReleasePlan(
       `App name: ${context.name}`,
       `Current description: ${context.description || "N/A"}`,
       `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
+      context.copyGapKeywords && context.copyGapKeywords.length > 0
+        ? `Copy-gap keywords (product-relevant but currently NOT covered by the store copy; weave them naturally into name/subtitle/promotional text/keywords/description where appropriate — do not stack): ${context.copyGapKeywords.join(", ")}`
+        : "",
       `Current submission keywords: ${context.currentSubmissionKeywords
         .map((item) => `${item.language}:${item.text}`)
         .join("; ") || "N/A"}`,
@@ -246,6 +255,7 @@ async function generateLocalizedStoreCopy(
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
     includedChanges?: string[];
+    copyGapKeywords?: string[];
   },
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
@@ -291,6 +301,9 @@ async function generateLocalizedStoreCopy(
         ? `Previous release ${context.previousLocalization?.language || ""} name:\n${context.previousLocalization?.name || "N/A"}\nPrevious release ${context.previousLocalization?.language || ""} subtitle:\n${context.previousLocalization?.subtitle || "N/A"}`
         : "",
       `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
+      context.copyGapKeywords && context.copyGapKeywords.length > 0
+        ? `Copy-gap keywords for this language (ranked poorly because the copy does not cover them; weave the most important ones into name/subtitle/promotional text/keywords where natural — do not stack): ${context.copyGapKeywords.join(", ")}`
+        : "",
       `Current submission keywords: ${context.currentSubmissionKeywords
         .filter((item: { language: string; text: string }) => item.language === language)
         .map((item: { language: string; text: string }) => item.text)
@@ -330,11 +343,15 @@ async function generateTranslatedStoreCopy(
   context: {
     name: string;
     profile?: ProjectProfile;
+    trackedKeywordsByLanguage?: Record<string, string[]>;
+    copyGapKeywordsByLanguage?: Record<string, string[]>;
   },
   primary: StoreSubmissionLocalization,
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<StoreSubmissionLocalization> {
+  const targetTrackedKeywords = (context.trackedKeywordsByLanguage || {})[language] || [];
+  const targetGapKeywords = (context.copyGapKeywordsByLanguage || {})[language] || [];
   const messages = buildArchiveMessages(
     context.profile,
     [
@@ -353,7 +370,10 @@ async function generateTranslatedStoreCopy(
         null,
         2,
       ),
-      "Translate `name`, `subtitle`, and `keywords` too: keep the brand name verbatim and localize the colon phrase, tagline, and keywords so the name+subtitle+keywords set stays coherent in the target language.",
+      "Translate `name`, `subtitle`, `promotionalText`, `description`, and `whatsNew` faithfully; keep the brand name verbatim and localize the colon phrase and tagline.",
+      "For `keywords`: do NOT translate the source keywords verbatim. Build the target-language keyword set from (1) the translated source keywords that still make sense in this market, (2) the target language's tracked keywords, and (3) the target language's copy-gap keywords. Keep it ≤100 characters, comma separated, and prioritize terms that match how users in this language actually search.",
+      "If the target language has copy-gap keywords (ranked poorly because the current copy does not cover them), weave the most important 1-2 into the name/subtitle/promotional text where natural — do not stack or force them.",
+      "After adapting keywords, re-polish the whole set so name + subtitle + keywords stay coherent and read naturally in the target language.",
       "Do not invent new product facts. Translate the provided copy faithfully.",
       "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
     ].join("\n"),
@@ -367,6 +387,12 @@ async function generateTranslatedStoreCopy(
       `Source description:\n${primary.description}`,
       `Source whatsNew:\n${primary.whatsNew}`,
       `Source keywords:\n${primary.keywords}`,
+      targetTrackedKeywords.length > 0
+        ? `Tracked keywords (${language}): ${targetTrackedKeywords.join(", ")}`
+        : "",
+      targetGapKeywords.length > 0
+        ? `Copy-gap keywords (${language}, product-relevant but NOT covered by the current copy — incorporate into keywords, and where natural into name/subtitle/promotional text): ${targetGapKeywords.join(", ")}`
+        : "",
     ],
   );
 
