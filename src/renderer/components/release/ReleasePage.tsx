@@ -89,10 +89,6 @@ export function ReleasePage() {
   const [aligning, setAligning] = useState(false);
   const [applyingAlignment, setApplyingAlignment] = useState(false);
   const [generatingChecklist, setGeneratingChecklist] = useState(false);
-  const [checklistProgress, setChecklistProgress] = useState<{
-    chars: number;
-    phase: "reasoning" | "content";
-  } | null>(null);
   const [showChecklist, setShowChecklist] = useState(false);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
 
@@ -658,7 +654,6 @@ export function ReleasePage() {
   const handleGenerateChecklist = async () => {
     if (!productId || generatingChecklist) return;
     setGeneratingChecklist(true);
-    setChecklistProgress(null);
     setError("");
     try {
       await (window as any).appilot.projects.generatePreReleaseChecklist(productId);
@@ -671,16 +666,22 @@ export function ReleasePage() {
     }
   };
 
-  useEffect(() => {
-    const off = (window as any).appilot?.projects?.onChecklistProgress?.(
-      (progress: any) => {
-        if (progress && typeof progress.chars === "number") {
-          setChecklistProgress(progress);
-        }
-      },
-    );
-    return () => off?.();
-  }, []);
+  const handleToggleChecklistReview = async (
+    checkId: string,
+    reviewed: boolean,
+  ) => {
+    if (!project?.id) return;
+    try {
+      await (window as any).appilot.projects.updateChecklistReview(
+        project.id,
+        checkId,
+        reviewed,
+      );
+      await useProject.getState().load();
+    } catch (e: any) {
+      setError(e.message || "更新核对状态失败。");
+    }
+  };
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
     const rows: {
@@ -1440,9 +1441,11 @@ export function ReleasePage() {
             {showChecklist ? (
               <PreReleaseChecklistPanel
                 checklist={checklist}
-                generating={generatingChecklist}
-                progress={checklistProgress}
-                onGenerate={() => void handleGenerateChecklist()}
+                running={generatingChecklist}
+                onRun={() => void handleGenerateChecklist()}
+                onToggleReview={(checkId, reviewed) =>
+                  void handleToggleChecklistReview(checkId, reviewed)
+                }
               />
             ) : historyDraft ? (
               <HistoryViewer

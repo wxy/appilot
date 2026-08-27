@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {
   parsePlistVersion,
   parsePbxprojVersion,
+  parsePbxprojBuildNumber,
+  buildNumberConsistencyCheck,
   entitlementKeys,
   permissionsCheck,
   pbxprojPermissionKeys,
@@ -32,6 +34,7 @@ const pbxproj = `
 }
 `;
 assert.equal(parsePbxprojVersion(pbxproj), "1.2.6", "从 pbxproj 提取 MARKETING_VERSION");
+assert.equal(parsePbxprojBuildNumber(pbxproj), "17", "从 pbxproj 提取 CURRENT_PROJECT_VERSION");
 assert.deepEqual(
   pbxprojPermissionKeys(pbxproj),
   ["NSCameraUsageDescription"],
@@ -60,6 +63,17 @@ assert.equal(
 );
 assert.equal(versionConsistencyCheck(null, "1.2.6").status, "unknown", "缺代码版本未知");
 assert.equal(versionConsistencyCheck("1.2.6", null).status, "unknown", "缺目标版本未知");
+assert.equal(
+  buildNumberConsistencyCheck("17", "17").status,
+  "pass",
+  "构建号一致通过",
+);
+assert.equal(buildNumberConsistencyCheck("17", "18").status, "fail", "构建号不一致失败");
+assert.equal(
+  buildNumberConsistencyCheck(null, "17").status,
+  "unknown",
+  "缺代码构建号未知",
+);
 
 assert.equal(
   permissionsCheck(["NSCameraUsageDescription"]).status,

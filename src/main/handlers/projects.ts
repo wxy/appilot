@@ -30,6 +30,8 @@ import {
   parsePlistVersion,
   permissionsCheck,
   parsePbxprojVersion,
+  parsePbxprojBuildNumber,
+  buildNumberConsistencyCheck,
   pbxprojPermissionKeys,
   plistPermissionKeys,
   entitlementKeys,
@@ -1207,6 +1209,7 @@ export function registerProjectsHandlers(): void {
         return results;
       };
       let codeVersion: string | null = null;
+      let codeBuildNumber: string | null = null;
       const permissionKeys: string[] = [];
       const capabilityKeys: string[] = [];
       const xcstringsFiles: string[] = [];
@@ -1218,6 +1221,8 @@ export function registerProjectsHandlers(): void {
             permissionKeys.push(...plistPermissionKeys(content));
           } else if (filePath.endsWith(".pbxproj")) {
             codeVersion = codeVersion || parsePbxprojVersion(content);
+            codeBuildNumber =
+              codeBuildNumber || parsePbxprojBuildNumber(content);
             permissionKeys.push(...pbxprojPermissionKeys(content));
           } else if (filePath.endsWith(".entitlements")) {
             capabilityKeys.push(...entitlementKeys(content));
@@ -1236,7 +1241,12 @@ export function registerProjectsHandlers(): void {
             new Date(a.updatedAt || 0).getTime(),
         );
       const targetVersion = drafts[0]?.appVersion || null;
+      const targetBuildNumber = drafts[0]?.buildNumber || null;
       const versionCheck = versionConsistencyCheck(codeVersion, targetVersion);
+      const buildCheck = buildNumberConsistencyCheck(
+        codeBuildNumber,
+        targetBuildNumber,
+      );
       const uniquePermissionKeys = Array.from(new Set(permissionKeys));
       const coverage: Record<string, number> = {};
       for (const key of COMMON_PERMISSION_KEYS) {
@@ -1264,46 +1274,52 @@ export function registerProjectsHandlers(): void {
           ...versionCheck,
         },
         {
+          id: "build-number",
+          label: "构建号一致性（代码 vs 目标）",
+          ...buildCheck,
+        },
+        {
           id: "permissions",
           label: "权限与能力声明（Info.plist / entitlements）",
           ...permCheck,
+        },
+        {
+          id: "prep-gaps",
+          label: "待复核暂停 / 文案缺口",
+          ...(() => {
+            const pendingPauseCount = (project.trackedKeywords || []).filter(
+              (k: any) =>
+                (k.pendingPausePlatforms || []).includes(product.platform),
+            ).length;
+            const copyGapCount = (project.copyGapKeywords || []).length;
+            const openCount = pendingPauseCount + copyGapCount;
+            return {
+              status: (openCount > 0 ? "warn" : "pass") as "warn" | "pass",
+              detail:
+                openCount > 0
+                  ? `${pendingPauseCount} 个关键词待复核暂停，${copyGapCount} 个文案缺口未处理`
+                  : "无待复核暂停关键词、无未处理文案缺口",
+            };
+          })(),
         },
       ];
 
       // ── 发布前素材：截图建议（多语言）。名称/副标题建议属于发布文案，
       // 不在检查单中重复（商店名称/副标题只影响 ASC，与代码无关）。──
-      const latestDraft = drafts[0] || null;
-      const locByName = new Map<string, any>(
-        (latestDraft?.localizations || []).map((loc: any) => [
-          loc.language,
-          loc,
-        ]),
-      );
-      const gapsByLanguage: Record<string, string[]> = {};
-      for (const gap of project.copyGapKeywords || []) {
-        const lang = String(gap.language || "");
-        if (!lang) continue;
-        (gapsByLanguage[lang] = gapsByLanguage[lang] || []).push(
-          String(gap.keyword || ""),
-        );
-      }
-            // 支持语言从“当前分支”的仓库重新检测并与已存语言合并：分支新增语言
+      // 支持语言从“当前分支”的仓库重新检测并与已存语言合并：分支新增语言
       // 无需等 PR 合并即可被识别（本地工作区即当前分支）。检测失败不静默。
       let detectedLanguages: string[] = [];
       let languageDisplayNameFn: (code: string) => string = (code) => code;
-      let detectionNote = "";
       try {
         const { detectLocalizedLanguages, languageDisplayName } = await import(
           "../../engine/app-store-discovery"
         );
         detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
         languageDisplayNameFn = languageDisplayName;
-        detectionNote = `已检测到 ${detectedLanguages.length} 种语言`;
         log.warn(
           `Checklist language detection: ${detectedLanguages.length} languages detected for ${project.localPath}`,
         );
       } catch (err: any) {
-        detectionNote = `语言检测失败：${err.message}`;
         log.warn(`Checklist language detection failed: ${err.message}`);
       }
       const stored = (product.supportedLanguages || []).map((l: any) =>
@@ -1318,108 +1334,40 @@ export function registerProjectsHandlers(): void {
         }));
         project.supportedLanguages = product.supportedLanguages;
       }
-      const inputs: {
-        language: string;
-        currentName: string;
-        currentSubtitle: string;
-        gapKeywords: string[];
-      }[] = languages.filter(Boolean).map((language: string) => {
-        const current = locByName.get(language) || null;
-        return {
-          language,
-          currentName: current?.name || product.trackName || "",
-          currentSubtitle: current?.subtitle || "",
-          gapKeywords: gapsByLanguage[language] || [],
-        };
-      });
-
-      let material: {
-        language: string;
-        screenshots: { name: string; description: string; location: string }[];
-      }[] = [];
-      if (inputs.length > 0) {
-        const { createAiProvider } = await import("../ai-service");
-        const { requestJson } = await import("../../engine/ai/ai-request");
-        const provider = await createAiProvider(s);
-        const prompt = [
-          "你是 App Store 的发布素材顾问。为每个支持语言输出截图建议。",
-          "规则：",
-          "- 必须为输入里的每个语言都输出 screenshots，不要遗漏；",
-          "- 每个语言 3-5 张，覆盖主界面、核心功能、亮点/卖点、典型使用场景等；",
-          "- 每张给出 name（截图名称，用该语言撰写，简短）、description（截图说明，用该语言撰写，一句话）与 location（截图位置：固定用简体中文提示应截哪个页面，如 主屏幕/设置页/历史页/HUD 页 等，不随语言翻译）；",
-          "只输出 JSON：{\"material\":[{\"language\":\"...\",\"screenshots\":[{\"name\":\"...\",\"description\":\"...\",\"location\":\"...\"}]}]}",
-        ].join("\n");
-        const data = await requestJson(
-          provider,
-          [
-            { role: "system", content: prompt },
-            {
-              role: "user",
-              content: `各语言当前信息与缺口关键词：\n${JSON.stringify(
-                { inputs },
-                null,
-                2,
-              )}`,
-            },
-          ] as any,
-          // 11 种语言 × 截图建议输出较大：给足 token，解析失败时 requestJson
-          // 会自动把截断内容送回 AI 修复；onProgress 让按钮实时显示字符数。
-          {
-            temperature: 0.3,
-            maxTokens: 16000,
-            onProgress: (received: { chars: number; phase: string }) => {
-              if (!_event.sender.isDestroyed()) {
-                _event.sender.send("projects:checklistProgress", received);
-              }
-            },
-          },
-        );
-        const byLanguage = new Map<string, any>(
-          (Array.isArray(data?.material) ? data.material : []).map(
-            (item: any) => [String(item?.language || ""), item],
-          ),
-        );
-        material = inputs.map((input) => {
-          const suggestion = byLanguage.get(input.language) || null;
-          return {
-            language: input.language,
-            screenshots: Array.isArray(suggestion?.screenshots)
-              ? suggestion.screenshots
-                  .filter((shot: any) => shot?.name || shot?.description)
-                  .slice(0, 5)
-                  .map((shot: any) => {
-                    const name = String(shot.name || "");
-                    const description = String(shot.description || "");
-                    const rawLocation = String(shot.location || "");
-                    const location =
-                      rawLocation ||
-                      (/设置|settings|偏好/i.test(name + description)
-                        ? "设置页"
-                        : /历史|history|记录|纪录/i.test(name + description)
-                          ? "历史页"
-                          : /主屏|主界面|home|主屏幕/i.test(name + description)
-                            ? "主屏幕"
-                            : /HUD|实时|overlay|浮层/i.test(name + description)
-                              ? "HUD 页"
-                              : "");
-                    return { name, description, location };
-                  })
-              : [],
-          };
-        });
-      }
-
       const now = new Date().toISOString();
       project.preReleaseChecklist = {
         updatedAt: now,
-        detectedLanguages: languages,
-        detectionNote,
         checks,
-        material,
       };
       s.set("projects", projects);
       notifyDataChanged("projects");
       return project.preReleaseChecklist;
+    },
+  );
+
+  // 勾选/取消勾选检查单的“已核对”状态（逐项人工核对）。
+  ipcMain.handle(
+    "projects:updateChecklistReview",
+    async (
+      _event,
+      projectId: string,
+      checkId: string,
+      reviewed: boolean,
+    ) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      checkId = assertNonEmptyString(checkId, "checkId");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const checklist = project.preReleaseChecklist;
+      if (!checklist) throw new Error("Checklist not found");
+      checklist.checks = (checklist.checks || []).map((item: any) =>
+        item.id === checkId ? { ...item, reviewed: Boolean(reviewed) } : item,
+      );
+      s.set("projects", projects);
+      notifyDataChanged("projects");
+      return checklist.checks;
     },
   );
 

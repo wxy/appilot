@@ -142,12 +142,17 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:generateNameSubtitleSuggestions", productId),
     generatePreReleaseChecklist: (productId: string): Promise<any> =>
       ipcRenderer.invoke("projects:generatePreReleaseChecklist", productId),
-    onChecklistProgress: (callback: (progress: any) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, progress: any) =>
-        callback(progress);
-      ipcRenderer.on("projects:checklistProgress", listener);
-      return () => ipcRenderer.removeListener("projects:checklistProgress", listener);
-    },
+    updateChecklistReview: (
+      projectId: string,
+      checkId: string,
+      reviewed: boolean,
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "projects:updateChecklistReview",
+        projectId,
+        checkId,
+        reviewed,
+      ),
     dismissNameSuggestion: (projectId: string, language: string): Promise<boolean> =>
       ipcRenderer.invoke("projects:dismissNameSuggestion", projectId, language),
     onTranslateKeywordsProgress: (callback: (progress: any) => void): (() => void) => {

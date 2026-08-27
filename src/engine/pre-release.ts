@@ -87,6 +87,14 @@ export function parsePbxprojVersion(content: string): string | null {
   );
 }
 
+/** 从 project.pbxproj 文本中提取构建号（CURRENT_PROJECT_VERSION）。 */
+export function parsePbxprojBuildNumber(content: string): string | null {
+  const match = content.match(
+    /CURRENT_PROJECT_VERSION\s*=\s*([^;\s]+)/,
+  );
+  return match ? match[1].replace(/["']/g, "") : null;
+}
+
 /** 从 project.pbxproj 中识别通过 INFOPLIST_KEY_* build settings 声明的权限用途说明。 */
 export function pbxprojPermissionKeys(content: string): string[] {
   return COMMON_PERMISSION_KEYS.filter((key) =>
@@ -151,6 +159,35 @@ export function versionConsistencyCheck(
   return {
     status: "fail",
     detail: `代码版本 v${code} ≠ 目标版本 v${target}`,
+  };
+}
+
+export function buildNumberConsistencyCheck(
+  codeBuildNumber: string | null,
+  targetBuildNumber: string | null,
+): { status: "pass" | "fail" | "unknown"; detail: string } {
+  if (!codeBuildNumber) {
+    return {
+      status: "unknown",
+      detail:
+        "未在仓库中找到构建号（CURRENT_PROJECT_VERSION / CFBundleVersion）",
+    };
+  }
+  if (!targetBuildNumber) {
+    return {
+      status: "unknown",
+      detail: `代码构建号 ${codeBuildNumber}，目标构建号未确定`,
+    };
+  }
+  if (String(codeBuildNumber).trim() === String(targetBuildNumber).trim()) {
+    return {
+      status: "pass",
+      detail: `构建号 ${codeBuildNumber} 一致`,
+    };
+  }
+  return {
+    status: "fail",
+    detail: `代码构建号 ${codeBuildNumber} ≠ 目标构建号 ${targetBuildNumber}`,
   };
 }
 
