@@ -28,6 +28,9 @@ import { getStore } from "../store";
 import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
   parsePlistVersion,
+  parsePlistBundleId,
+  parsePlistBundleVersion,
+  archiveCheck,
   permissionsCheck,
   parsePbxprojVersion,
   parsePbxprojBuildNumber,
@@ -1267,6 +1270,62 @@ export function registerProjectsHandlers(): void {
         );
         permCheck.detail += `，另有 ${Array.from(new Set(capabilityKeys)).length} 项能力`;
       }
+      // 构建产物（Archive）检查：在默认 DerivedData / /tmp 找匹配 bundleId 的
+      // 已构建 .app，核对版本号与构建号。
+      let builtApp: { version: string | null; build: string | null } | null =
+        null;
+      {
+        const os = await import("os");
+        const roots = [
+          path.join(os.homedir(), "Library/Developer/Xcode/DerivedData"),
+          "/tmp",
+        ];
+        const findAppDir = (dir: string, depth: number): string | null => {
+          if (depth > 3 || !dir) return null;
+          let entries: any[] = [];
+          try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+          } catch {
+            return null;
+          }
+          for (const entry of entries) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              if (entry.name.endsWith(".app")) return full;
+              const found = findAppDir(full, depth + 1);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        for (const root of roots) {
+          const appDir = findAppDir(root, 0);
+          if (!appDir) continue;
+          for (const plistPath of [
+            path.join(appDir, "Info.plist"),
+            path.join(appDir, "Contents", "Info.plist"),
+          ]) {
+            try {
+              const content = fs.readFileSync(plistPath, "utf8");
+              if (parsePlistBundleId(content) === product.bundleId) {
+                builtApp = {
+                  version: parsePlistVersion(content),
+                  build: parsePlistBundleVersion(content),
+                };
+                break;
+              }
+            } catch {
+              // 单个 plist 读取失败忽略
+            }
+          }
+          if (builtApp) break;
+        }
+      }
+      const archiveCheckResult = archiveCheck(
+        builtApp,
+        targetVersion,
+        targetBuildNumber,
+      );
       const checks = [
         {
           id: "version-consistency",
@@ -1277,6 +1336,11 @@ export function registerProjectsHandlers(): void {
           id: "build-number",
           label: "构建号一致性（代码 vs 目标）",
           ...buildCheck,
+        },
+        {
+          id: "archive",
+          label: "构建产物（Archive）版本匹配",
+          ...archiveCheckResult,
         },
         {
           id: "permissions",
@@ -1342,32 +1406,6 @@ export function registerProjectsHandlers(): void {
       s.set("projects", projects);
       notifyDataChanged("projects");
       return project.preReleaseChecklist;
-    },
-  );
-
-  // 勾选/取消勾选检查单的“已核对”状态（逐项人工核对）。
-  ipcMain.handle(
-    "projects:updateChecklistReview",
-    async (
-      _event,
-      projectId: string,
-      checkId: string,
-      reviewed: boolean,
-    ) => {
-      projectId = assertNonEmptyString(projectId, "projectId");
-      checkId = assertNonEmptyString(checkId, "checkId");
-      const s = await getStore();
-      const projects: any[] = s.get("projects") || [];
-      const project = projects.find((item: any) => item.id === projectId);
-      if (!project) throw new Error("Project not found");
-      const checklist = project.preReleaseChecklist;
-      if (!checklist) throw new Error("Checklist not found");
-      checklist.checks = (checklist.checks || []).map((item: any) =>
-        item.id === checkId ? { ...item, reviewed: Boolean(reviewed) } : item,
-      );
-      s.set("projects", projects);
-      notifyDataChanged("projects");
-      return checklist.checks;
     },
   );
 

@@ -666,22 +666,6 @@ export function ReleasePage() {
     }
   };
 
-  const handleToggleChecklistReview = async (
-    checkId: string,
-    reviewed: boolean,
-  ) => {
-    if (!project?.id) return;
-    try {
-      await (window as any).appilot.projects.updateChecklistReview(
-        project.id,
-        checkId,
-        reviewed,
-      );
-      await useProject.getState().load();
-    } catch (e: any) {
-      setError(e.message || "更新核对状态失败。");
-    }
-  };
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
     const rows: {
@@ -1443,9 +1427,6 @@ export function ReleasePage() {
                 checklist={checklist}
                 running={generatingChecklist}
                 onRun={() => void handleGenerateChecklist()}
-                onToggleReview={(checkId, reviewed) =>
-                  void handleToggleChecklistReview(checkId, reviewed)
-                }
               />
             ) : historyDraft ? (
               <HistoryViewer

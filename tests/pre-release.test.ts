@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import {
   parsePlistVersion,
+  parsePlistBundleId,
+  parsePlistBundleVersion,
+  archiveCheck,
   parsePbxprojVersion,
   parsePbxprojBuildNumber,
   buildNumberConsistencyCheck,
@@ -22,6 +25,29 @@ const plist = `<?xml version="1.0"?>
 
 assert.equal(parsePlistVersion(plist), "1.2.6", "解析版本号");
 assert.equal(parsePlistVersion("<plist/>"), null, "无版本号返回 null");
+assert.equal(
+  parsePlistBundleId(plist),
+  null,
+  "未声明 CFBundleIdentifier 返回 null",
+);
+const appPlist = `<plist><dict>
+  <key>CFBundleIdentifier</key><string>com.example.app</string>
+  <key>CFBundleVersion</key><string>17</string>
+  <key>CFBundleShortVersionString</key><string>1.2.6</string>
+</dict></plist>`;
+assert.equal(parsePlistBundleId(appPlist), "com.example.app", "解析 CFBundleIdentifier");
+assert.equal(parsePlistBundleVersion(appPlist), "17", "解析 CFBundleVersion");
+assert.equal(
+  archiveCheck({ version: "1.2.6", build: "17" }, "1.2.6", "17").status,
+  "pass",
+  "构建产物与目标一致通过",
+);
+assert.equal(
+  archiveCheck({ version: "1.2.5", build: "16" }, "1.2.6", "17").status,
+  "fail",
+  "构建产物与目标不一致失败",
+);
+assert.equal(archiveCheck(null, "1.2.6", "17").status, "unknown", "未找到构建产物未知");
 
 const pbxproj = `
 // !$*UTF8*$!

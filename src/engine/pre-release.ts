@@ -68,6 +68,22 @@ export function parsePlistVersion(content: string): string | null {
   return match && match[1].trim() ? match[1].trim() : null;
 }
 
+/** 从 Info.plist 文本中提取 CFBundleIdentifier。 */
+export function parsePlistBundleId(content: string): string | null {
+  const match = content.match(
+    /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/,
+  );
+  return match && match[1].trim() ? match[1].trim() : null;
+}
+
+/** 从 Info.plist 文本中提取 CFBundleVersion。 */
+export function parsePlistBundleVersion(content: string): string | null {
+  const match = content.match(
+    /<key>CFBundleVersion<\/key>\s*<string>([^<]*)<\/string>/,
+  );
+  return match && match[1].trim() ? match[1].trim() : null;
+}
+
 /** 列出 Info.plist 文本中已声明的常见权限用途说明键。 */
 export function plistPermissionKeys(content: string): string[] {
   return COMMON_PERMISSION_KEYS.filter((key) =>
@@ -188,6 +204,41 @@ export function buildNumberConsistencyCheck(
   return {
     status: "fail",
     detail: `代码构建号 ${codeBuildNumber} ≠ 目标构建号 ${targetBuildNumber}`,
+  };
+}
+
+/**
+ * 构建产物（Archive）检查：在标准 DerivedData / 临时目录找到已构建的
+ * .app 后，核对版本号与构建号是否与目标一致。找不到产物时返回 unknown
+ * （提示先 Archive）。
+ */
+export function archiveCheck(
+  found: { version: string | null; build: string | null } | null,
+  targetVersion: string | null,
+  targetBuildNumber: string | null,
+): { status: "pass" | "fail" | "unknown"; detail: string } {
+  if (!found) {
+    return {
+      status: "unknown",
+      detail:
+        "未在默认 DerivedData / 临时目录找到已构建的 .app；请确认已 Archive（构建产物可能不在默认路径）",
+    };
+  }
+  const versionOk =
+    !targetVersion ||
+    String(found.version || "").replace(/^v/i, "") ===
+      String(targetVersion).replace(/^v/i, "");
+  const buildOk =
+    !targetBuildNumber || String(found.build || "") === String(targetBuildNumber);
+  if (versionOk && buildOk) {
+    return {
+      status: "pass",
+      detail: `构建产物 v${found.version || "?"}（build ${found.build || "?"}）与目标一致`,
+    };
+  }
+  return {
+    status: "fail",
+    detail: `构建产物 v${found.version || "?"}（build ${found.build || "?"}）≠ 目标版本 ${targetVersion || "?"} / 构建号 ${targetBuildNumber || "?"}`,
   };
 }
 

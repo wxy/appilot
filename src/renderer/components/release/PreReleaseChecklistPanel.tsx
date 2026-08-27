@@ -1,22 +1,19 @@
 import { cn } from "../../lib/utils";
 
 /**
- * 发布前检查单：只做自动检查，并由用户逐项核对（标记“已核对”），
- * 提供核对进度。发布前素材（截图等）已从检查单中移出。
+ * 发布前检查单：单方面自动检查，展示缺漏与提醒。
+ * 发布前素材（截图等）已从检查单中移出，另行处理。
  */
 export function PreReleaseChecklistPanel({
   checklist,
   running,
   onRun,
-  onToggleReview,
 }: {
   checklist: any;
   running: boolean;
   onRun: () => void;
-  onToggleReview: (checkId: string, reviewed: boolean) => void;
 }) {
   const checks = checklist?.checks || [];
-  const reviewedCount = checks.filter((check: any) => check.reviewed).length;
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
@@ -26,7 +23,7 @@ export function PreReleaseChecklistPanel({
             发布前检查单
           </h4>
           <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-            自动检查 · 逐项人工核对
+            单方面自动检查
           </span>
         </div>
         <button
@@ -46,7 +43,7 @@ export function PreReleaseChecklistPanel({
         ) : (
           <>
             <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mb-3">
-              自动检查发现缺漏并提醒；请逐项核对，确认处理后标记“已核对”。
+              自动检查发现缺漏并提醒；发布前素材（截图等）另行处理。
             </p>
             <div className="space-y-2">
               {checks.map((check: any) => {
@@ -69,12 +66,7 @@ export function PreReleaseChecklistPanel({
                 return (
                   <div
                     key={check.id}
-                    className={cn(
-                      "rounded-xl border p-3 transition-colors",
-                      check.reviewed
-                        ? "border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/30 dark:bg-emerald-500/[0.04]"
-                        : "border-zinc-200 dark:border-zinc-700",
-                    )}
+                    className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3"
                   >
                     <div className="flex items-start gap-2">
                       <span
@@ -113,28 +105,11 @@ export function PreReleaseChecklistPanel({
                           </div>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => onToggleReview(check.id, !check.reviewed)}
-                        className={cn(
-                          "shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors",
-                          check.reviewed
-                            ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                            : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-emerald-400/60 hover:text-emerald-600",
-                        )}
-                      >
-                        {check.reviewed ? "✓ 已核对" : "○ 核对"}
-                      </button>
                     </div>
                   </div>
                 );
               })}
             </div>
-            {checks.length > 0 && (
-              <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">
-                已核对 {reviewedCount} / {checks.length}
-              </p>
-            )}
           </>
         )}
       </div>

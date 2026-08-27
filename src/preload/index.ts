@@ -142,17 +142,6 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:generateNameSubtitleSuggestions", productId),
     generatePreReleaseChecklist: (productId: string): Promise<any> =>
       ipcRenderer.invoke("projects:generatePreReleaseChecklist", productId),
-    updateChecklistReview: (
-      projectId: string,
-      checkId: string,
-      reviewed: boolean,
-    ): Promise<any> =>
-      ipcRenderer.invoke(
-        "projects:updateChecklistReview",
-        projectId,
-        checkId,
-        reviewed,
-      ),
     dismissNameSuggestion: (projectId: string, language: string): Promise<boolean> =>
       ipcRenderer.invoke("projects:dismissNameSuggestion", projectId, language),
     onTranslateKeywordsProgress: (callback: (progress: any) => void): (() => void) => {
