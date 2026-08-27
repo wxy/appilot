@@ -1270,56 +1270,62 @@ export function registerProjectsHandlers(): void {
         );
         permCheck.detail += `，另有 ${Array.from(new Set(capabilityKeys)).length} 项能力`;
       }
-      // 构建产物（Archive）检查：在默认 DerivedData / /tmp 找匹配 bundleId 的
-      // 已构建 .app，核对版本号与构建号。
+      // 构建产物（Archive）检查：在默认 Archives（*.xcarchive）、DerivedData
+      // 与 /tmp 中遍历所有 .app，按 bundleId 匹配后核对版本号与构建号。
       let builtApp: { version: string | null; build: string | null } | null =
         null;
       {
         const os = await import("os");
         const roots = [
+          path.join(os.homedir(), "Library/Developer/Xcode/Archives"),
           path.join(os.homedir(), "Library/Developer/Xcode/DerivedData"),
           "/tmp",
         ];
-        const findAppDir = (dir: string, depth: number): string | null => {
-          if (depth > 3 || !dir) return null;
+        const findAppDirs = (dir: string, depth: number): string[] => {
+          if (depth > 6 || !dir) return [];
           let entries: any[] = [];
           try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
           } catch {
-            return null;
+            return [];
           }
+          const results: string[] = [];
           for (const entry of entries) {
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) {
-              if (entry.name.endsWith(".app")) return full;
-              const found = findAppDir(full, depth + 1);
-              if (found) return found;
+              if (entry.name.endsWith(".app")) results.push(full);
+              else results.push(...findAppDirs(full, depth + 1));
+            }
+          }
+          return results;
+        };
+        const findBuiltApp = (): {
+          version: string | null;
+          build: string | null;
+        } | null => {
+          for (const root of roots) {
+            for (const appDir of findAppDirs(root, 0)) {
+              for (const plistPath of [
+                path.join(appDir, "Info.plist"),
+                path.join(appDir, "Contents", "Info.plist"),
+              ]) {
+                try {
+                  const content = fs.readFileSync(plistPath, "utf8");
+                  if (parsePlistBundleId(content) === product.bundleId) {
+                    return {
+                      version: parsePlistVersion(content),
+                      build: parsePlistBundleVersion(content),
+                    };
+                  }
+                } catch {
+                  // 单个 plist 读取失败忽略
+                }
+              }
             }
           }
           return null;
         };
-        for (const root of roots) {
-          const appDir = findAppDir(root, 0);
-          if (!appDir) continue;
-          for (const plistPath of [
-            path.join(appDir, "Info.plist"),
-            path.join(appDir, "Contents", "Info.plist"),
-          ]) {
-            try {
-              const content = fs.readFileSync(plistPath, "utf8");
-              if (parsePlistBundleId(content) === product.bundleId) {
-                builtApp = {
-                  version: parsePlistVersion(content),
-                  build: parsePlistBundleVersion(content),
-                };
-                break;
-              }
-            } catch {
-              // 单个 plist 读取失败忽略
-            }
-          }
-          if (builtApp) break;
-        }
+        builtApp = findBuiltApp();
       }
       const archiveCheckResult = archiveCheck(
         builtApp,
