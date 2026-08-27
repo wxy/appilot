@@ -1271,40 +1271,71 @@ export function registerProjectsHandlers(): void {
         permCheck.detail += `，另有 ${Array.from(new Set(capabilityKeys)).length} 项能力`;
       }
       // 构建产物（Archive）检查：在默认 Archives（*.xcarchive）、DerivedData
-      // 与 /tmp 中遍历所有 .app，按 bundleId 匹配后核对版本号与构建号。
+      // 与 /tmp 中定向遍历 .app（只进入 Build/Products/Applications、xcarchive、
+      // 日期目录与临时 Derived 目录，跳过 DerivedSources 等大目录，保证秒回），
+      // 按 bundleId 匹配后核对版本号与构建号。
       let builtApp: { version: string | null; build: string | null } | null =
         null;
       {
         const os = await import("os");
+        const home = os.homedir();
         const roots = [
-          path.join(os.homedir(), "Library/Developer/Xcode/Archives"),
-          path.join(os.homedir(), "Library/Developer/Xcode/DerivedData"),
-          "/tmp",
+          {
+            root: path.join(home, "Library/Developer/Xcode/Archives"),
+            topFilter: /^\d{4}-\d{2}-\d{2}/,
+          },
+          {
+            root: path.join(home, "Library/Developer/Xcode/DerivedData"),
+            topFilter: null,
+          },
+          { root: "/tmp", topFilter: /Derived/i },
         ];
-        const findAppDirs = (dir: string, depth: number): string[] => {
-          if (depth > 6 || !dir) return [];
-          let entries: any[] = [];
-          try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-          } catch {
-            return [];
-          }
-          const results: string[] = [];
-          for (const entry of entries) {
-            const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              if (entry.name.endsWith(".app")) results.push(full);
-              else results.push(...findAppDirs(full, depth + 1));
+        const findProductApps = (
+          root: string,
+          topFilter: RegExp | null,
+        ): string[] => {
+          const apps: string[] = [];
+          const visit = (dir: string, depth: number) => {
+            if (depth > 5) return;
+            let entries: any[] = [];
+            try {
+              entries = fs.readdirSync(dir, { withFileTypes: true });
+            } catch {
+              return;
             }
-          }
-          return results;
+            for (const entry of entries) {
+              if (!entry.isDirectory()) continue;
+              const full = path.join(dir, entry.name);
+              if (entry.name.endsWith(".app")) {
+                apps.push(full);
+                continue;
+              }
+              if (depth === 0) {
+                if (topFilter && !topFilter.test(entry.name)) continue;
+                visit(full, 1);
+                continue;
+              }
+              const lower = entry.name.toLowerCase();
+              const allowed =
+                entry.name.endsWith(".xcarchive") ||
+                lower === "build" ||
+                lower === "products" ||
+                lower === "applications" ||
+                lower.startsWith("release-") ||
+                lower.startsWith("debug-") ||
+                /^\d{4}-\d{2}-\d{2}/.test(entry.name);
+              if (allowed) visit(full, depth + 1);
+            }
+          };
+          visit(root, 0);
+          return apps;
         };
         const findBuiltApp = (): {
           version: string | null;
           build: string | null;
         } | null => {
-          for (const root of roots) {
-            for (const appDir of findAppDirs(root, 0)) {
+          for (const { root, topFilter } of roots) {
+            for (const appDir of findProductApps(root, topFilter)) {
               for (const plistPath of [
                 path.join(appDir, "Info.plist"),
                 path.join(appDir, "Contents", "Info.plist"),
