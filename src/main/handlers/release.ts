@@ -414,7 +414,30 @@ export function registerReleaseHandlers(): void {
       (item: any) => item.id === draft.id,
     );
     if (existing?.ascSyncedAt) {
-      throw new Error("该文案已按商店上架状态冻结，不可修改");
+      // 冻结文案完全只读：内容未变时视为无操作（UI 的失焦保存等会触发），
+      // 不报错也不改写 updatedAt；内容确实变化时才拒绝。
+      const frozenFields = {
+        appVersion: existing.appVersion,
+        reviewFeedback: existing.reviewFeedback,
+        localizations: existing.localizations,
+        promotionalText: existing.promotionalText,
+        whatsNew: existing.whatsNew,
+        description: existing.description,
+        submissionKeywords: existing.submissionKeywords,
+      };
+      const incomingFields = {
+        appVersion: draft.appVersion,
+        reviewFeedback: draft.reviewFeedback,
+        localizations: draft.localizations,
+        promotionalText: draft.promotionalText,
+        whatsNew: draft.whatsNew,
+        description: draft.description,
+        submissionKeywords: draft.submissionKeywords,
+      };
+      if (JSON.stringify(frozenFields) !== JSON.stringify(incomingFields)) {
+        throw new Error("该文案已按商店上架状态冻结，不可修改");
+      }
+      return existing;
     }
 
     draft.updatedAt = new Date().toISOString();

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { cn } from "../../lib/utils";
 import { languageLabel } from "../../lib/format";
+import { AIProgressButton } from "../ui/AIProgressButton";
 
 /**
  * 发布前检查单（主区域展示）：
@@ -59,14 +60,13 @@ export function PreReleaseChecklistPanel({
             自动检查 + 发布前素材 · 多语言
           </span>
         </div>
-        <button
-          type="button"
+        <AIProgressButton
           onClick={onGenerate}
           disabled={generating}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-50"
-        >
-          {generating ? "生成中…" : checklist ? "重新生成检查单" : "生成发布前检查单"}
-        </button>
+          loading={generating}
+          progress={null}
+          idleLabel={checklist ? "重新生成检查单" : "生成发布前检查单"}
+        />
       </div>
       <div className="p-4 space-y-4">
         {!checklist ? (
