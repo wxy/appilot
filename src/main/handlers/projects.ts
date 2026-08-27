@@ -1062,6 +1062,28 @@ export function registerProjectsHandlers(): void {
           String(gap.keyword || ""),
         );
       }
+      // 支持语言从“当前分支”的仓库重新检测并与已存语言合并：分支新增语言
+      // 无需等 PR 合并即可被识别（本地工作区即当前分支）。
+      let detectedLanguages: string[] = [];
+      try {
+        const { detectLocalizedLanguages, languageDisplayName } = await import(
+          "../../engine/app-store-discovery"
+        );
+        detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
+        const stored = (product.supportedLanguages || []).map((l: any) =>
+          String(l?.code || ""),
+        );
+        const merged = Array.from(new Set([...stored, ...detectedLanguages]));
+        if (merged.length !== stored.length) {
+          product.supportedLanguages = merged.map((code) => ({
+            code,
+            name: languageDisplayName(code),
+          }));
+          project.supportedLanguages = product.supportedLanguages;
+        }
+      } catch {
+        // 检测失败时沿用已存语言
+      }
       const languages = (product.supportedLanguages || []).map((l: any) =>
         String(l?.code || ""),
       );
@@ -1330,11 +1352,23 @@ export function registerProjectsHandlers(): void {
               ? suggestion.screenshots
                   .filter((shot: any) => shot?.name || shot?.description)
                   .slice(0, 5)
-                  .map((shot: any) => ({
-                    name: String(shot.name || ""),
-                    description: String(shot.description || ""),
-                    location: String(shot.location || ""),
-                  }))
+                  .map((shot: any) => {
+                    const name = String(shot.name || "");
+                    const description = String(shot.description || "");
+                    const rawLocation = String(shot.location || "");
+                    const location =
+                      rawLocation ||
+                      (/设置|settings|偏好/i.test(name + description)
+                        ? "设置页"
+                        : /历史|history|记录|纪录/i.test(name + description)
+                          ? "历史页"
+                          : /主屏|主界面|home|主屏幕/i.test(name + description)
+                            ? "主屏幕"
+                            : /HUD|实时|overlay|浮层/i.test(name + description)
+                              ? "HUD 页"
+                              : "");
+                    return { name, description, location };
+                  })
               : [],
           };
         });

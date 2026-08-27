@@ -161,11 +161,45 @@ export function PreReleaseChecklistPanel({
                         <td className="py-2 px-3 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                           {languageLabel(item.language)}
                         </td>
-                        <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200">
-                          {item.suggestedName || "（无）"}
+                        <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              copyText(
+                                `${item.language}:name`,
+                                `名称：${item.suggestedName || "（无）"}`,
+                              )
+                            }
+                            title="点击复制（纯文本）"
+                            className={cn(
+                              "px-2 py-1 rounded-md border text-[11px] text-left transition-all active:scale-95",
+                              copied === `${item.language}:name`
+                                ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                : "border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-sky-400/60 hover:text-sky-700 dark:hover:text-sky-300",
+                            )}
+                          >
+                            {item.suggestedName || "（无）"}
+                          </button>
                         </td>
-                        <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200">
-                          {item.suggestedSubtitle || "（无）"}
+                        <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              copyText(
+                                `${item.language}:subtitle`,
+                                `副标题：${item.suggestedSubtitle || "（无）"}`,
+                              )
+                            }
+                            title="点击复制（纯文本）"
+                            className={cn(
+                              "px-2 py-1 rounded-md border text-[11px] text-left transition-all active:scale-95",
+                              copied === `${item.language}:subtitle`
+                                ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                : "border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-sky-400/60 hover:text-sky-700 dark:hover:text-sky-300",
+                            )}
+                          >
+                            {item.suggestedSubtitle || "（无）"}
+                          </button>
                         </td>
                       </tr>
                     ))}
