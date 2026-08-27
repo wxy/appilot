@@ -1306,7 +1306,7 @@ export function KeywordsPage() {
                           onClick={() => void openPendingReview()}
                           disabled={pendingLoading}
                           className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/40 hover:bg-amber-500/25"
-                          title="连续未在榜的关键词等待人工分类（恢复 / 暂停 / 移除 / 列为文案缺口）"
+                          title="连续未在榜的关键词等待人工分类（恢复 / 暂停 / 移除 / 暂停并列入文案缺口）"
                         >
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
                           待处理暂停 {pendingForCurrent.length}
@@ -1721,9 +1721,10 @@ export function KeywordsPage() {
                           disabled={busy}
                           onClick={() => void actPending(entry, "copy-gap")}
                           className={recBtnClass("copy-gap")}
-                          title="列入下版文案素材（文案缺口）并暂停该平台"
+                          title="暂停该平台，并把关键词列入下版文案素材（文案缺口）"
                         >
-                          列为文案缺口{recommended === "copy-gap" && "（推荐）"}
+                          暂停并列入文案缺口
+                          {recommended === "copy-gap" && "（推荐）"}
                         </button>
                         <button
                           type="button"
