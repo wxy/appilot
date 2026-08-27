@@ -15,6 +15,9 @@ export interface KeywordEntry {
   pausedReason?: string | null;
   /** Platforms where auto-pause applies (per-platform; manual pause is global). */
   pausedPlatforms?: string[];
+  /** Platforms awaiting manual pause review (自动暂停已取消，命中先进复核队列)。 */
+  pendingPausePlatforms?: string[];
+  pendingPauseReason?: string | null;
 }
 
 export interface SubmissionKeywordsEntry {

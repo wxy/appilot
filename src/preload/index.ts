@@ -128,6 +128,23 @@ contextBridge.exposeInMainWorld("appilot", {
     saveSubmissionKeywords: (projectId: string, submissionKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveSubmissionKeywords", projectId, submissionKeywords),
     removeTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
       ipcRenderer.invoke("projects:removeTrackedKeyword", projectId, language, keyword),
+    pendingPauseList: (projectId: string): Promise<any[]> =>
+      ipcRenderer.invoke("projects:pendingPauseList", projectId),
+    reviewPendingPause: (
+      productId: string,
+      language: string,
+      keyword: string,
+      platform: string,
+      action: "resume" | "pause" | "remove" | "copy-gap",
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "projects:reviewPendingPause",
+        productId,
+        language,
+        keyword,
+        platform,
+        action,
+      ),
     restoreTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
       ipcRenderer.invoke("projects:restoreTrackedKeyword", projectId, language, keyword),
     resumePausedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>

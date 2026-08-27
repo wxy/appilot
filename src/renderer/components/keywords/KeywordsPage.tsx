@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
-import { languageLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
+import { languageLabel, platformLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import {
   matrixCellState,
   matrixColumnMeta,
@@ -72,6 +72,10 @@ export function KeywordsPage() {
   >({});
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
+  const [showPendingReview, setShowPendingReview] = useState(false);
+  const [pendingEntries, setPendingEntries] = useState<any[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [pendingActing, setPendingActing] = useState<string | null>(null);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
@@ -217,6 +221,9 @@ export function KeywordsPage() {
   const trackedActive = tracked.filter((k) => k.status !== "paused");
   const pausedForCurrent = tracked.filter(
     (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
+  );
+  const pendingForCurrent = tracked.filter((k) =>
+    (k.pendingPausePlatforms || []).includes(product.platform),
   );
   const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
   const storefronts = isGlobalView
@@ -832,6 +839,51 @@ export function KeywordsPage() {
     await removeTrackedKeyword(product.id, language, kw);
   };
 
+  // 待处理暂停复核：打开队列（仅当前平台），并支持分类处理。
+  const openPendingReview = async () => {
+    if (pendingLoading) return;
+    setPendingLoading(true);
+    try {
+      const entries =
+        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+      setPendingEntries(
+        entries.filter((entry: any) => entry.platform === product.platform),
+      );
+      setShowPendingReview(true);
+    } catch {
+      setPendingEntries([]);
+    } finally {
+      setPendingLoading(false);
+    }
+  };
+
+  const actPending = async (
+    entry: any,
+    action: "resume" | "pause" | "remove" | "copy-gap",
+  ) => {
+    const key = `${entry.language}:${entry.keyword}:${entry.platform}`;
+    setPendingActing(key);
+    try {
+      await (window as any).appilot?.projects?.reviewPendingPause(
+        product.id,
+        entry.language,
+        entry.keyword,
+        entry.platform,
+        action,
+      );
+      await useProject.getState().load();
+      const entries =
+        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+      setPendingEntries(
+        entries.filter((item: any) => item.platform === product.platform),
+      );
+    } catch (e: any) {
+      setError(e.message || "处理失败。");
+    } finally {
+      setPendingActing(null);
+    }
+  };
+
   const restoreTracked = async (language: string, kw: string) => {
     await restoreTrackedKeyword(product.id, language, kw);
   };
@@ -1155,8 +1207,20 @@ export function KeywordsPage() {
                       已暂停 ✕
                     </button>
                   )}
-                  {(pausedForCurrent.length > 0 || removedForCurrent.length > 0 || unranked.length > 0) && (
+                  {(pendingForCurrent.length > 0 || pausedForCurrent.length > 0 || removedForCurrent.length > 0 || unranked.length > 0) && (
                     <span className="flex items-center gap-1.5">
+                      {pendingForCurrent.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => void openPendingReview()}
+                          disabled={pendingLoading}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/40 hover:bg-amber-500/25"
+                          title="连续未在榜的关键词等待人工分类（恢复 / 暂停 / 移除 / 列为文案缺口）"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          待处理暂停 {pendingForCurrent.length}
+                        </button>
+                      )}
                       {pausedForCurrent.length > 0 && (
                         <span className="relative" ref={pausedPopoverRef}>
                           <button
@@ -1413,6 +1477,124 @@ export function KeywordsPage() {
             ) : null}
 
         </>
+      )}
+
+      {showPendingReview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6"
+          onClick={() => setShowPendingReview(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[80vh] overflow-auto rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                待处理暂停复核 · {platformLabel(product.platform)}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowPendingReview(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                这些关键词已连续未在榜，已停止采集等待处理。分类建议来自规则层
+                （文案覆盖 / 产品档案），可自行改判。
+              </p>
+              {pendingEntries.length === 0 ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-6 text-center">
+                  暂无待处理项。
+                </p>
+              ) : (
+                pendingEntries.map((entry) => {
+                  const actKey = `${entry.language}:${entry.keyword}:${entry.platform}`;
+                  const busy = pendingActing === actKey;
+                  const suggestionMeta =
+                    entry.suggestion === "copy-gap"
+                      ? {
+                          label: "可能文案缺口",
+                          cls: "bg-sky-100 dark:bg-sky-500/15 text-sky-700 dark:text-sky-400",
+                        }
+                      : entry.suggestion === "competitive"
+                        ? {
+                            label: "竞争（文案已覆盖）",
+                            cls: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400",
+                          }
+                        : {
+                            label: "可能与产品无关",
+                            cls: "bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-400",
+                          };
+                  return (
+                    <div
+                      key={actKey}
+                      className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3"
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                          {entry.keyword}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
+                          {languageLabel(entry.language)}
+                        </span>
+                        <span
+                          className={cn(
+                            "px-1.5 py-0.5 rounded text-[10px] font-medium",
+                            suggestionMeta.cls,
+                          )}
+                          title={entry.suggestionDetail}
+                        >
+                          {suggestionMeta.label}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                        {entry.reason}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void actPending(entry, "resume")}
+                          className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 disabled:opacity-50"
+                        >
+                          恢复跟踪
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void actPending(entry, "pause")}
+                          className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 disabled:opacity-50"
+                        >
+                          暂停
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void actPending(entry, "copy-gap")}
+                          className="px-2 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 disabled:opacity-50"
+                          title="列入下版文案素材（文案缺口）并暂停该平台"
+                        >
+                          列为文案缺口
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void actPending(entry, "remove")}
+                          className="px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-[11px] text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          移除（无关）
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       <CurationDialog

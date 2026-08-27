@@ -664,6 +664,16 @@ export function ReleasePage() {
       label: "跟踪关键词与排名",
       meta: activeKeywordCount > 0 ? `${activeKeywordCount} 个关键词` : "无",
     });
+    const copyGaps = releaseContext?.copyGapKeywords || [];
+    if (copyGaps.length > 0) {
+      rows.push({
+        label: "文案缺口关键词",
+        meta: `${copyGaps.length} 个：${copyGaps
+          .map((item: any) => item.keyword)
+          .slice(0, 8)
+          .join("、")}${copyGaps.length > 8 ? "…" : ""}`,
+      });
+    }
     const githubRelease = summaryMaterial?.githubRelease;
     if (githubRelease) {
       rows.push({

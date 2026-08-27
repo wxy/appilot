@@ -26,10 +26,10 @@ const enriched = enrichKeywordFromSnapshots(normalized, [snap("us", 8, 1), snap(
 assert.equal(enriched.bestRank, 3);
 assert.ok(enriched.lastSeenAt);
 
-console.log("✅ PASS: evaluatePause pauses only after consecutive misses in every mature storefront");
+console.log("✅ PASS: evaluatePause flags pending-pause after consecutive misses in every mature storefront");
 const misses = Array.from({ length: PAUSE_CONSECUTIVE_MISSES }, (_, i) => snap("us", null, i));
 const paused = evaluatePause({ ...normalized, status: "active" }, misses);
-assert.equal(paused.status, "paused");
+assert.equal(paused.status, "pending-pause");
 assert.match(paused.pausedReason || "", /连续 10 次未在榜/);
 
 const mixed = [...misses.slice(0, PAUSE_CONSECUTIVE_MISSES - 1), snap("us", 5, 99)];

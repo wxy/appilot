@@ -106,6 +106,8 @@ export async function generateStoreSubmissionContent(
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
     includedChanges?: string[];
+    /** 文案缺口关键词：排名不佳但产品相关、当前文案未覆盖，需自然融入。 */
+    copyGapKeywords?: string[];
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
@@ -176,6 +178,7 @@ async function generateGlobalReleasePlan(
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
+    copyGapKeywords?: string[];
   },
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
 ): Promise<{
@@ -201,6 +204,9 @@ async function generateGlobalReleasePlan(
       `App name: ${context.name}`,
       `Current description: ${context.description || "N/A"}`,
       `Tracked keywords: ${context.trackedKeywords.join(", ") || "N/A"}`,
+      context.copyGapKeywords && context.copyGapKeywords.length > 0
+        ? `Copy-gap keywords (product-relevant but currently NOT covered by the store copy; weave them naturally into name/subtitle/promotional text/keywords/description where appropriate — do not stack): ${context.copyGapKeywords.join(", ")}`
+        : "",
       `Current submission keywords: ${context.currentSubmissionKeywords
         .map((item) => `${item.language}:${item.text}`)
         .join("; ") || "N/A"}`,
@@ -246,6 +252,7 @@ async function generateLocalizedStoreCopy(
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
     includedChanges?: string[];
+    copyGapKeywords?: string[];
   },
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,

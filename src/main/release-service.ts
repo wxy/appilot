@@ -158,6 +158,7 @@ export async function generateStoreSubmissionDraft(
       previousLocalization,
       profile,
       includedChanges,
+      copyGapKeywords: (project as any).copyGapKeywords || [],
     },
     onProgress,
     onChars,

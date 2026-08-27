@@ -13,7 +13,7 @@ export interface TrackedKeywordLike {
   keyword: string;
   rationale?: string;
   translation?: string;
-  status?: KeywordStatus;
+  status?: KeywordStatus | "pending-pause";
   source?: KeywordSource;
   addedAt?: string;
   bestRank?: number | null;
@@ -22,6 +22,9 @@ export interface TrackedKeywordLike {
   pausedReason?: string | null;
   /** Platforms where auto-pause applies (per-platform; manual pause is global). */
   pausedPlatforms?: string[];
+  /** Platforms awaiting manual pause review (自动暂停已取消，命中先进入复核队列)。 */
+  pendingPausePlatforms?: string[];
+  pendingPauseReason?: string | null;
 }
 
 export const PAUSE_CONSECUTIVE_MISSES = 10;
@@ -42,6 +45,10 @@ export function normalizeTrackedKeyword(item: any, now = new Date().toISOString(
     pausedAt: item.pausedAt || null,
     pausedReason: item.pausedReason || null,
     pausedPlatforms: Array.isArray(item.pausedPlatforms) ? item.pausedPlatforms : [],
+    pendingPausePlatforms: Array.isArray(item.pendingPausePlatforms)
+      ? item.pendingPausePlatforms
+      : [],
+    pendingPauseReason: item.pendingPauseReason || null,
   };
 }
 
@@ -82,8 +89,7 @@ export function evaluatePause<T extends TrackedKeywordLike>(
   if (!allMissed) return keyword;
   return {
     ...keyword,
-    status: "paused",
-    pausedAt: keyword.pausedAt || new Date().toISOString(),
+    status: "pending-pause",
     pausedReason: `连续 ${consecutive} 次未在榜（${mature.map((l) => l[l.length - 1].storefront).join("、")}）`,
   };
 }

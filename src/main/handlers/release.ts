@@ -159,6 +159,7 @@ export function registerReleaseHandlers(): void {
         drafts: draftSummaries,
         previousDescription: previous?.description || "",
         previousUpdatedAt: previous?.updatedAt || "",
+        copyGapKeywords: project.copyGapKeywords || [],
         release,
       };
     },
