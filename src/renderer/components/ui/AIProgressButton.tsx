@@ -28,13 +28,12 @@ export function AIProgressButton({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-medium shadow-sm transition-all hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50",
-        "h-10 min-w-36 whitespace-nowrap",
-        loading && "py-1",
+        "inline-flex items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-4 text-white font-medium shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-50",
+        "min-h-10 min-w-36 whitespace-nowrap",
       )}
     >
       {loading ? (
-        <span className="flex flex-col items-center text-[11px] leading-tight">
+        <span className="flex flex-col items-center py-0.5 text-[11px] leading-tight">
           <span className="inline-flex items-center gap-1">
             <span className="w-2.5 h-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
             {progress?.phase === "content" ? "生成中" : "思考中"}
@@ -44,7 +43,7 @@ export function AIProgressButton({
       ) : (
         <span className="inline-flex items-center gap-1.5">
           <span aria-hidden="true">✦</span>
-          <span>AI · {idleLabel}</span>
+          <span>{idleLabel}</span>
         </span>
       )}
     </button>
