@@ -547,6 +547,12 @@ export function ReleasePage() {
   const summaryItems: ChangeSummaryItem[] = summaryMaterial
     ? summarizeChanges(summaryMaterial)
     : [];
+  // 代码更新按时间顺序排列（各组以其最早提交时间排序）。
+  const sortedSummaryItems = [...summaryItems].sort(
+    (a, b) =>
+      Date.parse(a.commits[0]?.date || "0") -
+      Date.parse(b.commits[0]?.date || "0"),
+  );
   const summaryPrCount = summaryMaterial?.pullRequests?.length ?? 0;
   const summaryCommitCount = summaryMaterial?.commits?.length ?? 0;
   const sinceMs = summaryMaterial?.sinceDate
@@ -563,6 +569,8 @@ export function ReleasePage() {
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
   // 点击「当前文案」：回到当前文案的完整工作台视图（只读），而不是简化列表视图。
   const handleOpenCurrentCopy = () => {
+    // 关闭检查单视图，回到当前文案的工作单。
+    setShowChecklist(false);
     setHistoryDraft(null);
     if (currentCopy?.releaseTag && currentCopy.releaseTag !== selectedTag) {
       setSelectedTag(currentCopy.releaseTag);
@@ -721,7 +729,10 @@ export function ReleasePage() {
         ),
       });
     }
-    const githubRelease = summaryMaterial?.githubRelease;
+    // 固定素材里的发布公告优先用“最新发布”的公告，而不是当前选中版本
+    // 的（当前文案可能对应较早的 tag，但 AI 需要参考最新公告内容）。
+    const githubRelease =
+      latestRelease?.material?.githubRelease || summaryMaterial?.githubRelease;
     if (githubRelease) {
       rows.push({
         label: "GitHub 发布公告",
@@ -1232,28 +1243,6 @@ export function ReleasePage() {
                     }
                     checked={step > 1}
                     defaultOpen={false}
-                    action={
-                      summaryItems.length > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => void setAllSummaryChecked(checkedCount < summaryItems.length)}
-                          className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
-                          title={
-                            checkedCount === summaryItems.length
-                              ? "取消全部选择"
-                              : checkedCount === 0
-                                ? "全部选择"
-                                : "全部确认"
-                          }
-                        >
-                          {checkedCount === summaryItems.length
-                            ? "已全选"
-                            : checkedCount === 0
-                              ? "未选择"
-                              : "全部确认"}
-                        </button>
-                      ) : undefined
-                    }
                   >
                     {(previousDraft || latestCodeDate) && (
                       <div className="mb-2 space-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
@@ -1270,8 +1259,36 @@ export function ReleasePage() {
                       <p className="text-sm text-zinc-400 dark:text-zinc-500">本次无变更</p>
                     ) : (
                       <>
+                        {summaryItems.length > 0 && (
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                              已选择 {checkedCount} / {summaryItems.length}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void setAllSummaryChecked(checkedCount < summaryItems.length)}
+                              className="inline-flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+                            >
+                              <span
+                                role="checkbox"
+                                aria-checked={checkedCount === summaryItems.length}
+                                className={cn(
+                                  "w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px]",
+                                  checkedCount === summaryItems.length
+                                    ? "bg-amber-500 border-amber-500 text-white"
+                                    : "border-zinc-300 dark:border-zinc-600 text-transparent",
+                                )}
+                              >
+                                ✓
+                              </span>
+                              {checkedCount === summaryItems.length
+                                ? "取消全选"
+                                : "全部选择"}
+                            </button>
+                          </div>
+                        )}
                         <div className="space-y-1">
-                          {summaryItems.map((item) => {
+                          {sortedSummaryItems.map((item) => {
                             const included = summaryChecked.has(item.id);
                             const tone = CHANGE_TYPE_META[item.type].tone;
                             const latestDate = item.commits[item.commits.length - 1]?.date || "";
@@ -1391,7 +1408,13 @@ export function ReleasePage() {
                                     <GithubIcon className="w-3 h-3 text-current" />
                                   </span>
                                 )}
-                                <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                  <input
+                                    type="checkbox"
+                                    checked
+                                    disabled
+                                    className="w-3 h-3 accent-zinc-500"
+                                  />
                                   始终发送
                                 </span>
                               </li>
