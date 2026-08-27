@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import { formatElapsed, formatKilo } from "../../lib/format";
-import { btnPrimary } from "./styles";
 
 export function AIProgressButton({
   onClick,
@@ -28,7 +27,11 @@ export function AIProgressButton({
     <button
       onClick={onClick}
       disabled={disabled || loading}
-      className={cn(btnPrimary, "h-10 min-w-36 whitespace-nowrap", loading && "py-1")}
+      className={cn(
+        "inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-medium shadow-sm transition-all hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50",
+        "h-10 min-w-36 whitespace-nowrap",
+        loading && "py-1",
+      )}
     >
       {loading ? (
         <span className="flex flex-col items-center text-[11px] leading-tight">
@@ -39,7 +42,10 @@ export function AIProgressButton({
           <span className="mt-0.5 font-mono">{formatKilo(chars)} · {formatElapsed(elapsed)}</span>
         </span>
       ) : (
-        idleLabel
+        <span className="inline-flex items-center gap-1.5">
+          <span aria-hidden="true">✦</span>
+          <span>AI · {idleLabel}</span>
+        </span>
       )}
     </button>
   );

@@ -1340,7 +1340,7 @@ export function registerProjectsHandlers(): void {
       }[] = [];
       if (inputs.length > 0) {
         const { createAiProvider } = await import("../ai-service");
-        const { parseJsonObject } = await import("../../engine/ai/ai-request");
+        const { requestJson } = await import("../../engine/ai/ai-request");
         const provider = await createAiProvider(s);
         const prompt = [
           "你是 App Store 的 ASO 与发布素材顾问。为每个支持语言输出发布前素材。",
@@ -1350,7 +1350,8 @@ export function registerProjectsHandlers(): void {
           "- reason 用简体中文说明名称/副标题修改意图。",
           "只输出 JSON：{\"material\":[{\"language\":\"...\",\"suggestedName\":\"...\",\"suggestedSubtitle\":\"...\",\"reason\":\"...\",\"screenshots\":[{\"name\":\"...\",\"description\":\"...\",\"location\":\"...\"}]}]}",
         ].join("\n");
-        const raw = await provider.chat(
+        const data = await requestJson(
+          provider,
           [
             { role: "system", content: prompt },
             {
@@ -1362,9 +1363,10 @@ export function registerProjectsHandlers(): void {
               )}`,
             },
           ] as any,
-          { temperature: 0.3, maxTokens: 8000 },
+          // 11 种语言 × 截图建议输出较大：给足 token，解析失败时 requestJson
+          // 会自动把截断内容送回 AI 修复。
+          { temperature: 0.3, maxTokens: 16000 },
         );
-        const data = parseJsonObject(raw);
         const byLanguage = new Map<string, any>(
           (Array.isArray(data?.material) ? data.material : []).map(
             (item: any) => [String(item?.language || ""), item],
