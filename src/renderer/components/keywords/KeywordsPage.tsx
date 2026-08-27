@@ -890,6 +890,17 @@ export function KeywordsPage() {
         entry.platform,
         action,
       );
+      // 立即从列表移除该条目（已处理），再刷新确认。
+      setPendingEntries((prev) =>
+        prev.filter(
+          (item: any) =>
+            !(
+              item.keyword === entry.keyword &&
+              item.language === entry.language &&
+              item.platform === entry.platform
+            ),
+        ),
+      );
       await useProject.getState().load();
       const entries =
         (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
@@ -1593,6 +1604,24 @@ export function KeywordsPage() {
                 pendingEntries.map((entry) => {
                   const actKey = `${entry.language}:${entry.keyword}:${entry.platform}`;
                   const busy = pendingActing === actKey;
+                  // 根据暂停原因确定默认推荐动作（明显标出）。
+                  const recommended =
+                    entry.suggestion === "copy-gap"
+                      ? "copy-gap"
+                      : entry.suggestion === "off-topic"
+                        ? "remove"
+                        : "pause";
+                  const recBtnClass = (kind: string) =>
+                    cn(
+                      "px-2 py-1 rounded-md text-[11px] font-medium disabled:opacity-50",
+                      recommended === kind
+                        ? kind === "remove"
+                          ? "bg-red-600 text-white ring-2 ring-red-500/30 hover:bg-red-700"
+                          : kind === "copy-gap"
+                            ? "bg-sky-600 text-white ring-2 ring-sky-500/30 hover:bg-sky-700"
+                            : "bg-amber-600 text-white ring-2 ring-amber-500/30 hover:bg-amber-700"
+                        : "border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60",
+                    );
                   const suggestionMeta =
                     entry.suggestion === "copy-gap"
                       ? {
@@ -1641,6 +1670,18 @@ export function KeywordsPage() {
                         </span>
                         <span
                           className={cn(
+                            "px-1.5 py-0.5 rounded text-[10px]",
+                            entry.state === "paused"
+                              ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                              : "bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400",
+                          )}
+                        >
+                          {entry.state === "paused"
+                            ? "已暂停（历史自动）"
+                            : "待处理"}
+                        </span>
+                        <span
+                          className={cn(
                             "px-1.5 py-0.5 rounded text-[10px] font-medium",
                             suggestionMeta.cls,
                           )}
@@ -1657,7 +1698,7 @@ export function KeywordsPage() {
                           type="button"
                           disabled={busy}
                           onClick={() => void actPending(entry, "resume")}
-                          className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 disabled:opacity-50"
+                          className={recBtnClass("resume")}
                         >
                           恢复跟踪
                         </button>
@@ -1665,26 +1706,32 @@ export function KeywordsPage() {
                           type="button"
                           disabled={busy}
                           onClick={() => void actPending(entry, "pause")}
-                          className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 disabled:opacity-50"
+                          className={recBtnClass("pause")}
+                          title={
+                            recommended === "pause"
+                              ? "推荐动作"
+                              : undefined
+                          }
                         >
-                          暂停
+                          {entry.state === "paused" ? "保持暂停" : "暂停"}
+                          {recommended === "pause" && "（推荐）"}
                         </button>
                         <button
                           type="button"
                           disabled={busy}
                           onClick={() => void actPending(entry, "copy-gap")}
-                          className="px-2 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 disabled:opacity-50"
+                          className={recBtnClass("copy-gap")}
                           title="列入下版文案素材（文案缺口）并暂停该平台"
                         >
-                          列为文案缺口
+                          列为文案缺口{recommended === "copy-gap" && "（推荐）"}
                         </button>
                         <button
                           type="button"
                           disabled={busy}
                           onClick={() => void actPending(entry, "remove")}
-                          className="px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-[11px] text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50"
+                          className={recBtnClass("remove")}
                         >
-                          移除（无关）
+                          移除（无关）{recommended === "remove" && "（推荐）"}
                         </button>
                       </div>
                     </div>

@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { log } from "../../engine/logger";
 import { appendRankSnapshots } from "../../engine/rank-snapshots";
-import { normalizeTrackedKeyword } from "../../engine/rank-keywords";
+import { evaluatePause, normalizeTrackedKeyword } from "../../engine/rank-keywords";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../../engine/storefronts";
 import { createAiProvider } from "../ai-service";
 import { importAscKeyFileTo } from "../asc-key-file";
@@ -846,7 +846,15 @@ export function registerProjectsHandlers(): void {
     const entries: any[] = [];
     for (const keyword of project.trackedKeywords || []) {
       const pending = keyword.pendingPausePlatforms || [];
-      if (pending.length === 0) continue;
+      // 历史自动暂停（原因含“连续”，且尚未复核）也进入复核队列，便于
+      // 重新分类（例如列为文案缺口）。
+      const pausedLegacy = (keyword.pausedPlatforms || []).filter(
+        () =>
+          !keyword.pauseReviewedAt &&
+          String(keyword.pausedReason || "").includes("连续"),
+      );
+      const platforms = Array.from(new Set([...pending, ...pausedLegacy]));
+      if (platforms.length === 0) continue;
       // 文案字段（跨产品草稿 + trackName）用于“是否已覆盖”判断。
       const copyTexts: string[] = [];
       for (const product of project.storeProducts || []) {
@@ -872,13 +880,27 @@ export function registerProjectsHandlers(): void {
         ? copyTexts.some((text) => String(text).toLowerCase().includes(needle))
         : false;
       const inReadme = needle ? readme.toLowerCase().includes(needle) : false;
-      for (const platform of pending) {
+      for (const platform of platforms) {
+        // 用当前快照重新生成原因（商店显示名称），而不是历史缩写。
+        const product = (project.storeProducts || []).find(
+          (p: any) => (p.platform || "unknown") === platform,
+        );
+        const evaluated = evaluatePause(
+          keyword,
+          product?.rankSnapshots || [],
+        );
+        const reason =
+          evaluated.pausedReason ||
+          keyword.pendingPauseReason ||
+          keyword.pausedReason ||
+          "连续未在榜";
         entries.push({
           language: keyword.language,
           keyword: keyword.keyword,
           translation: keyword.translation || null,
           platform,
-          reason: keyword.pendingPauseReason || "连续未在榜",
+          reason,
+          state: pending.includes(platform) ? "pending" : "paused",
           suggestion: covered
             ? "competitive"
             : inReadme
@@ -1024,22 +1046,29 @@ export function registerProjectsHandlers(): void {
         const pending = (keyword.pendingPausePlatforms || []).filter(
           (item: string) => item !== platform,
         );
+        const paused = Array.isArray(keyword.pausedPlatforms)
+          ? keyword.pausedPlatforms
+          : [];
+        const now = new Date().toISOString();
         if (action === "resume") {
+          // 恢复跟踪：同时从待处理与（历史自动）暂停中移除该平台。
           keyword.pendingPausePlatforms = pending;
           if (pending.length === 0) keyword.pendingPauseReason = null;
+          keyword.pausedPlatforms = paused.filter(
+            (item: string) => item !== platform,
+          );
+          keyword.pauseReviewedAt = now;
           return { trackedKeywords: project.trackedKeywords };
         }
         if (action === "pause" || action === "copy-gap") {
-          const paused = Array.isArray(keyword.pausedPlatforms)
-            ? keyword.pausedPlatforms
-            : [];
           keyword.pausedPlatforms = paused.includes(platform)
             ? paused
             : [...paused, platform];
           keyword.pausedReason =
-            keyword.pendingPauseReason || "手动暂停";
+            keyword.pendingPauseReason || keyword.pausedReason || "手动暂停";
           keyword.pendingPausePlatforms = pending;
           if (pending.length === 0) keyword.pendingPauseReason = null;
+          keyword.pauseReviewedAt = now;
           if (action === "copy-gap") {
             const gaps = Array.isArray(project.copyGapKeywords)
               ? [...project.copyGapKeywords]
