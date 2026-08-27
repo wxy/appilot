@@ -17,6 +17,7 @@ export function PreReleaseChecklistPanel({
   onGenerate: () => void;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [shotLang, setShotLang] = useState<string | null>(null);
 
   const flashCopied = (key: string) => {
     setCopied(key);
@@ -43,6 +44,9 @@ export function PreReleaseChecklistPanel({
 
   const checks = checklist?.checks || [];
   const material = checklist?.material || [];
+  const activeShotLang = shotLang || material[0]?.language || null;
+  const activeShotMaterial =
+    material.find((item: any) => item.language === activeShotLang) || null;
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
@@ -118,7 +122,7 @@ export function PreReleaseChecklistPanel({
             <div>
               <div className="flex items-center justify-between gap-2 mb-2">
                 <h5 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                  名称 / 副标题（多语言归集）
+                  名称 / 副标题（多语言）
                 </h5>
                 <button
                   type="button"
@@ -133,71 +137,143 @@ export function PreReleaseChecklistPanel({
                   {copied === "json" ? "已复制" : "复制 JSON"}
                 </button>
               </div>
-              <div className="space-y-1.5">
-                {material.map((item: any) => (
-                  <div
-                    key={item.language}
-                    className="flex items-start gap-2 text-[11px]"
-                  >
-                    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
-                      {languageLabel(item.language)}
-                    </span>
-                    <p className="min-w-0 text-zinc-500 dark:text-zinc-400">
-                      名称：
-                      <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                        {item.suggestedName || "（无）"}
-                      </span>
-                      <span className="mx-1.5 text-zinc-300">·</span>
-                      副标题：
-                      <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                        {item.suggestedSubtitle || "（无）"}
-                      </span>
-                    </p>
-                  </div>
-                ))}
+              <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-700">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50/60 dark:bg-zinc-900/40">
+                      <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-zinc-200/70 dark:border-zinc-700/70">
+                        语言
+                      </th>
+                      <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-l border-zinc-200/70 dark:border-zinc-700/70">
+                        名称
+                      </th>
+                      <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-l border-zinc-200/70 dark:border-zinc-700/70">
+                        副标题
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {material.map((item: any) => (
+                      <tr
+                        key={item.language}
+                        className="border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
+                      >
+                        <td className="py-2 px-3 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                          {languageLabel(item.language)}
+                        </td>
+                        <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200">
+                          {item.suggestedName || "（无）"}
+                        </td>
+                        <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200">
+                          {item.suggestedSubtitle || "（无）"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
 
             <div>
-              <h5 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 mb-2">
-                截图建议（点击标签复制纯文本）
-              </h5>
-              <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <h5 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                  截图建议（点击标签复制纯文本）
+                </h5>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mb-2">
                 {material.map((item: any) => (
-                  <div key={`shots:${item.language}`}>
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-1">
-                      {languageLabel(item.language)}
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {(item.screenshots || []).map((shot: any, index: number) => {
-                        const key = `${item.language}:${index}`;
-                        const text = `截图 ${index + 1}：${shot.name}；说明：${shot.description}`;
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            onClick={() => copyText(key, text)}
-                            className={cn(
-                              "px-2 py-1 rounded-lg border text-[11px] text-left transition-all active:scale-95",
-                              copied === key
-                                ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                                : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-sky-400/60 hover:text-sky-700 dark:hover:text-sky-300",
-                            )}
-                            title="点击复制（纯文本）"
-                          >
-                            <span className="block font-medium">
-                              截图 {index + 1}：{shot.name}
-                            </span>
-                            <span className="block text-[10px] text-zinc-400 dark:text-zinc-500">
-                              {shot.description}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <button
+                    key={`tab:${item.language}`}
+                    type="button"
+                    onClick={() => setShotLang(item.language)}
+                    className={cn(
+                      "px-2 py-1 rounded-lg border text-[11px] font-medium transition-colors",
+                      activeShotLang === item.language
+                        ? "border-sky-500 bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                        : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-sky-400/60",
+                    )}
+                  >
+                    {languageLabel(item.language)}
+                  </button>
                 ))}
               </div>
+              {activeShotMaterial && (
+                <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-700">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-zinc-50/60 dark:bg-zinc-900/40">
+                        <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-zinc-200/70 dark:border-zinc-700/70">
+                          #
+                        </th>
+                        <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-l border-zinc-200/70 dark:border-zinc-700/70">
+                          截图名称
+                        </th>
+                        <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-l border-zinc-200/70 dark:border-zinc-700/70">
+                          截图说明
+                        </th>
+                        <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-l border-zinc-200/70 dark:border-zinc-700/70">
+                          截图位置
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(activeShotMaterial.screenshots || []).map(
+                        (shot: any, index: number) => {
+                          const nameKey = `${activeShotLang}:${index}:name`;
+                          const descKey = `${activeShotLang}:${index}:desc`;
+                          return (
+                            <tr
+                              key={index}
+                              className="border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
+                            >
+                              <td className="py-2 px-3 text-zinc-400 whitespace-nowrap">
+                                {index + 1}
+                              </td>
+                              <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    copyText(nameKey, `截图名称：${shot.name}`)
+                                  }
+                                  title="点击复制（纯文本）"
+                                  className={cn(
+                                    "px-2 py-1 rounded-md border text-[11px] text-left transition-all active:scale-95",
+                                    copied === nameKey
+                                      ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                      : "border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-sky-400/60 hover:text-sky-700 dark:hover:text-sky-300",
+                                  )}
+                                >
+                                  {shot.name || "（无）"}
+                                </button>
+                              </td>
+                              <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    copyText(descKey, `截图说明：${shot.description}`)
+                                  }
+                                  title="点击复制（纯文本）"
+                                  className={cn(
+                                    "px-2 py-1 rounded-md border text-[11px] text-left transition-all active:scale-95",
+                                    copied === descKey
+                                      ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                      : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-sky-400/60 hover:text-sky-700 dark:hover:text-sky-300",
+                                  )}
+                                >
+                                  {shot.description || "（无）"}
+                                </button>
+                              </td>
+                              <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300">
+                                {shot.location || "—"}
+                              </td>
+                            </tr>
+                          );
+                        },
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </>
         )}
