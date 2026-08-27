@@ -35,6 +35,7 @@ import {
   entitlementKeys,
   xcstringsLocalizationCount,
   COMMON_PERMISSION_KEYS,
+  capabilityLabel,
   versionConsistencyCheck,
 } from "../../engine/pre-release";
 import {
@@ -1270,7 +1271,10 @@ export function registerProjectsHandlers(): void {
       }
       const permCheck = permissionsCheck(uniquePermissionKeys, coverage);
       if (capabilityKeys.length > 0) {
-        permCheck.detail += `；能力：${capabilityKeys.join("、")}`;
+        permCheck.items.push(
+          ...Array.from(new Set(capabilityKeys)).map(capabilityLabel),
+        );
+        permCheck.detail += `，另有 ${Array.from(new Set(capabilityKeys)).length} 项能力`;
       }
       const checks = [
         {

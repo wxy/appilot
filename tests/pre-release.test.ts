@@ -8,6 +8,8 @@ import {
   plistPermissionKeys,
   versionConsistencyCheck,
   xcstringsLocalizationCount,
+  permissionLabel,
+  capabilityLabel,
 } from "../src/engine/pre-release";
 
 const plist = `<?xml version="1.0"?>
@@ -89,8 +91,18 @@ assert.equal(
 assert(
   permissionsCheck(["NSMotionUsageDescription", "NSCameraUsageDescription"], {
     NSCameraUsageDescription: 11,
-  }).detail.includes("11 语言本地化"),
-  "权限检查带本地化覆盖信息",
+  }).items.some((item) => item.includes("11 语言本地化")),
+  "权限检查输出人类可读条目与本地化覆盖",
 );
+assert(
+  permissionsCheck(["NSCameraUsageDescription"]).items[0].startsWith("相机"),
+  "权限键映射为人类可读名称",
+);
+assert.equal(
+  capabilityLabel("com.apple.developer.weatherkit"),
+  "WeatherKit（天气数据）",
+  "能力键映射为人类可读名称",
+);
+assert.equal(permissionLabel("NSCameraUsageDescription"), "相机", "权限标签映射");
 
 console.log("🎉 All pre-release tests passed!");

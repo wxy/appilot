@@ -21,6 +21,45 @@ export const COMMON_PERMISSION_KEYS = [
   "NSSpeechRecognitionUsageDescription",
 ] as const;
 
+/** 权限用途说明键 → 人类可读名称。 */
+export const PERMISSION_LABELS: Record<string, string> = {
+  NSCameraUsageDescription: "相机",
+  NSMicrophoneUsageDescription: "麦克风",
+  NSPhotoLibraryUsageDescription: "相册（读取）",
+  NSPhotoLibraryAddUsageDescription: "保存到相册",
+  NSLocationWhenInUseUsageDescription: "定位（使用期间）",
+  NSLocationAlwaysUsageDescription: "定位（始终）",
+  NSContactsUsageDescription: "通讯录",
+  NSCalendarsUsageDescription: "日历",
+  NSMotionUsageDescription: "运动与健身",
+  NSBluetoothAlwaysUsageDescription: "蓝牙",
+  NSHealthShareUsageDescription: "健康数据（读取）",
+  NSHealthUpdateUsageDescription: "健康数据（写入）",
+  NSUserTrackingUsageDescription: "广告跟踪（ATT）",
+  NSRemindersUsageDescription: "提醒事项",
+  NSSpeechRecognitionUsageDescription: "语音识别",
+};
+
+/** 能力（entitlements）键 → 人类可读名称。 */
+export const CAPABILITY_LABELS: Record<string, string> = {
+  "com.apple.developer.healthkit": "HealthKit（健康数据）",
+  "com.apple.developer.weatherkit": "WeatherKit（天气数据）",
+  "com.apple.security.app-sandbox": "App Sandbox（沙盒）",
+  "com.apple.developer.icloud-container-identifiers": "iCloud 容器",
+  "com.apple.developer.ubiquity-kvstore-identifier": "iCloud 键值存储",
+  "aps-environment": "推送通知",
+  "application-identifier": "应用标识",
+  "keychain-access-groups": "钥匙串访问组",
+};
+
+export function permissionLabel(key: string): string {
+  return PERMISSION_LABELS[key] || key;
+}
+
+export function capabilityLabel(key: string): string {
+  return CAPABILITY_LABELS[key] || key;
+}
+
 /** 从 Info.plist 文本中提取 CFBundleShortVersionString。 */
 export function parsePlistVersion(content: string): string | null {
   const match = content.match(
@@ -121,19 +160,25 @@ export function permissionsCheck(
 ): {
   status: "pass" | "warn";
   detail: string;
+  items: string[];
 } {
   if (foundKeys.length === 0) {
     return {
       status: "warn",
       detail:
         "未在仓库中发现任何权限用途说明（INFOPLIST_KEY_* / Info.plist / InfoPlist.xcstrings）；如应用使用相机/定位/相册/健康等能力，需补充用途说明",
+      items: [],
     };
   }
-  const parts = foundKeys.map(
-    (key) => `${key}${coverage[key] ? `（${coverage[key]} 语言本地化）` : ""}`,
+  const items = foundKeys.map(
+    (key) =>
+      `${permissionLabel(key)}${
+        coverage[key] ? `（${coverage[key]} 语言本地化）` : ""
+      }`,
   );
   return {
     status: "pass",
-    detail: `已声明权限用途说明：${parts.join("、")}`,
+    detail: `已声明 ${items.length} 项权限用途说明`,
+    items,
   };
 }
