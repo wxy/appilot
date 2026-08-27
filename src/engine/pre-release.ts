@@ -7,11 +7,18 @@ export const COMMON_PERMISSION_KEYS = [
   "NSCameraUsageDescription",
   "NSMicrophoneUsageDescription",
   "NSPhotoLibraryUsageDescription",
+  "NSPhotoLibraryAddUsageDescription",
   "NSLocationWhenInUseUsageDescription",
+  "NSLocationAlwaysUsageDescription",
   "NSContactsUsageDescription",
   "NSCalendarsUsageDescription",
+  "NSMotionUsageDescription",
   "NSBluetoothAlwaysUsageDescription",
+  "NSHealthShareUsageDescription",
+  "NSHealthUpdateUsageDescription",
   "NSUserTrackingUsageDescription",
+  "NSRemindersUsageDescription",
+  "NSSpeechRecognitionUsageDescription",
 ] as const;
 
 /** 从 Info.plist 文本中提取 CFBundleShortVersionString。 */
@@ -61,6 +68,23 @@ export function entitlementKeys(content: string): string[] {
   );
 }
 
+/** 统计 InfoPlist.xcstrings 中某个权限键的本地化语言数（0 = 无本地化/未找到）。 */
+export function xcstringsLocalizationCount(
+  content: string,
+  key: string,
+): number {
+  try {
+    const data = JSON.parse(content);
+    const entry = data?.strings?.[key];
+    const localizations = entry?.localizations;
+    return localizations && typeof localizations === "object"
+      ? Object.keys(localizations).length
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function versionConsistencyCheck(
   codeVersion: string | null,
   targetVersion: string | null,
@@ -91,7 +115,10 @@ export function versionConsistencyCheck(
   };
 }
 
-export function permissionsCheck(foundKeys: string[]): {
+export function permissionsCheck(
+  foundKeys: string[],
+  coverage: Record<string, number> = {},
+): {
   status: "pass" | "warn";
   detail: string;
 } {
@@ -99,18 +126,14 @@ export function permissionsCheck(foundKeys: string[]): {
     return {
       status: "warn",
       detail:
-        "未发现任何权限用途说明；如应用使用相机/定位/相册等能力，需在 Info.plist 补充用途说明",
+        "未在仓库中发现任何权限用途说明（INFOPLIST_KEY_* / Info.plist / InfoPlist.xcstrings）；如应用使用相机/定位/相册/健康等能力，需补充用途说明",
     };
   }
-  const missing = COMMON_PERMISSION_KEYS.filter(
-    (key) => !foundKeys.includes(key),
+  const parts = foundKeys.map(
+    (key) => `${key}${coverage[key] ? `（${coverage[key]} 语言本地化）` : ""}`,
   );
   return {
     status: "pass",
-    detail: `已声明：${foundKeys.join("、")}${
-      missing.length
-        ? `；常见但缺失：${missing.join("、")}（与功能无关可忽略）`
-        : ""
-    }`,
+    detail: `已声明权限用途说明：${parts.join("、")}`,
   };
 }

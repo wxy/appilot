@@ -7,6 +7,7 @@ import {
   pbxprojPermissionKeys,
   plistPermissionKeys,
   versionConsistencyCheck,
+  xcstringsLocalizationCount,
 } from "../src/engine/pre-release";
 
 const plist = `<?xml version="1.0"?>
@@ -64,5 +65,32 @@ assert.equal(
   "有权限声明通过",
 );
 assert.equal(permissionsCheck([]).status, "warn", "无权限声明警告");
+
+const xcstrings = JSON.stringify({
+  strings: {
+    NSCameraUsageDescription: {
+      localizations: {
+        en: { stringUnit: { state: "translated", value: "camera" } },
+        "zh-Hans": { stringUnit: { state: "translated", value: "相机" } },
+      },
+    },
+  },
+});
+assert.equal(
+  xcstringsLocalizationCount(xcstrings, "NSCameraUsageDescription"),
+  2,
+  "统计 xcstrings 本地化语言数",
+);
+assert.equal(
+  xcstringsLocalizationCount(xcstrings, "NSMotionUsageDescription"),
+  0,
+  "未找到的键返回 0",
+);
+assert(
+  permissionsCheck(["NSMotionUsageDescription", "NSCameraUsageDescription"], {
+    NSCameraUsageDescription: 11,
+  }).detail.includes("11 语言本地化"),
+  "权限检查带本地化覆盖信息",
+);
 
 console.log("🎉 All pre-release tests passed!");

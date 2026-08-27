@@ -33,6 +33,8 @@ import {
   pbxprojPermissionKeys,
   plistPermissionKeys,
   entitlementKeys,
+  xcstringsLocalizationCount,
+  COMMON_PERMISSION_KEYS,
   versionConsistencyCheck,
 } from "../../engine/pre-release";
 import {
@@ -1217,7 +1219,8 @@ export function registerProjectsHandlers(): void {
           else if (
             entry.name.endsWith(".plist") ||
             entry.name.endsWith(".pbxproj") ||
-            entry.name.endsWith(".entitlements")
+            entry.name.endsWith(".entitlements") ||
+            entry.name.endsWith(".xcstrings")
           ) {
             results.push(full);
           }
@@ -1226,6 +1229,8 @@ export function registerProjectsHandlers(): void {
       };
       let codeVersion: string | null = null;
       const permissionKeys: string[] = [];
+      const capabilityKeys: string[] = [];
+      const xcstringsFiles: string[] = [];
       for (const filePath of findProjectFiles(project.localPath, 0)) {
         try {
           const content = fs.readFileSync(filePath, "utf8");
@@ -1236,7 +1241,9 @@ export function registerProjectsHandlers(): void {
             codeVersion = codeVersion || parsePbxprojVersion(content);
             permissionKeys.push(...pbxprojPermissionKeys(content));
           } else if (filePath.endsWith(".entitlements")) {
-            permissionKeys.push(...entitlementKeys(content));
+            capabilityKeys.push(...entitlementKeys(content));
+          } else if (filePath.endsWith(".xcstrings")) {
+            xcstringsFiles.push(content);
           }
         } catch {
           // 单个文件读取失败忽略
@@ -1251,9 +1258,20 @@ export function registerProjectsHandlers(): void {
         );
       const targetVersion = drafts[0]?.appVersion || null;
       const versionCheck = versionConsistencyCheck(codeVersion, targetVersion);
-      const permCheck = permissionsCheck(
-        Array.from(new Set(permissionKeys)),
-      );
+      const uniquePermissionKeys = Array.from(new Set(permissionKeys));
+      const coverage: Record<string, number> = {};
+      for (const key of COMMON_PERMISSION_KEYS) {
+        const count = Math.max(
+          ...xcstringsFiles.map((content) =>
+            xcstringsLocalizationCount(content, key),
+          ),
+        );
+        if (count > 0) coverage[key] = count;
+      }
+      const permCheck = permissionsCheck(uniquePermissionKeys, coverage);
+      if (capabilityKeys.length > 0) {
+        permCheck.detail += `；能力：${capabilityKeys.join("、")}`;
+      }
       const checks = [
         {
           id: "version-consistency",
