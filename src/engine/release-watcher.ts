@@ -126,18 +126,45 @@ async function isAncestor(localPath: string, ancestor: string, descendant: strin
  * never touches the user's branches or working tree. Silent no-op when the
  * repo has no remote or the network is unavailable.
  */
-export async function fetchRemoteTags(localPath: string): Promise<boolean> {
+/** 每个仓库串行化的 git 操作队列：后台同步与手动检查并发时不再互相抢占 ref。 */
+const repoGitQueues = new Map<string, Promise<unknown>>();
+
+function enqueueRepoGit<T>(localPath: string, fn: () => Promise<T>): Promise<T> {
+  const previous = repoGitQueues.get(localPath) || Promise.resolve();
+  const run = previous.then(fn, fn);
+  repoGitQueues.set(
+    localPath,
+    run.catch(() => undefined),
+  );
+  return run;
+}
+
+/**
+ * git fetch --tags，带一次重试：并发 fetch 时 refs/remotes/origin/* 的锁竞争
+ * 是瞬时的，重试即可通过；其他失败则抛出。
+ */
+async function fetchTagsWithRetry(localPath: string): Promise<void> {
   try {
-    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
-    if (!remote) return false;
-    // Fetching can legitimately take a while on large/slow remotes; use a
-    // generous timeout so the background sync does not silently give up.
     await git(localPath, ["fetch", "--tags"], 60_000);
-    return true;
   } catch (err: any) {
-    log.warn(`fetchRemoteTags failed for ${localPath}: ${err.message}`);
-    return false;
+    log.warn(`git fetch retry for ${localPath}: ${err.message}`);
+    await git(localPath, ["fetch", "--tags"], 60_000);
   }
+}
+
+export async function fetchRemoteTags(localPath: string): Promise<boolean> {
+  const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(
+    () => "",
+  );
+  if (!remote) return false;
+  return enqueueRepoGit(localPath, () =>
+    fetchTagsWithRetry(localPath)
+      .then(() => true)
+      .catch((err: any) => {
+        log.warn(`fetchRemoteTags failed for ${localPath}: ${err.message}`);
+        return false;
+      }),
+  );
 }
 
 /**
@@ -146,24 +173,34 @@ export async function fetchRemoteTags(localPath: string): Promise<boolean> {
  * is clean (never force, never touch dirty work). Silent no-op on failure.
  */
 export async function syncLocalRepo(localPath: string): Promise<boolean> {
-  try {
-    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
-    if (!remote) return false;
-    await git(localPath, ["fetch", "--tags"], 60_000);
-    const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(() => "");
-    if (branch) {
-      const dirty = await git(localPath, ["status", "--porcelain"]).catch(() => "");
-      if (!dirty) {
-        await git(localPath, ["merge", "--ff-only", `origin/${branch}`]).catch(() => {
-          log.warn(`Fast-forward ${branch} failed; using local state as-is`);
-        });
+  const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(
+    () => "",
+  );
+  if (!remote) return false;
+  return enqueueRepoGit(localPath, async () => {
+    try {
+      await fetchTagsWithRetry(localPath);
+      const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(
+        () => "",
+      );
+      if (branch) {
+        const dirty = await git(localPath, ["status", "--porcelain"]).catch(
+          () => "",
+        );
+        if (!dirty) {
+          await git(localPath, ["merge", "--ff-only", `origin/${branch}`]).catch(
+            () => {
+              log.warn(`Fast-forward ${branch} failed; using local state as-is`);
+            },
+          );
+        }
       }
+      return true;
+    } catch (err: any) {
+      log.warn(`syncLocalRepo failed for ${localPath}: ${err.message}`);
+      return false;
     }
-    return true;
-  } catch (err: any) {
-    log.warn(`syncLocalRepo failed for ${localPath}: ${err.message}`);
-    return false;
-  }
+  });
 }
 
 /** Latest tags first; date is the tag's creatordate. */
