@@ -27,6 +27,12 @@ import { githubSyncCacheEntry, schedulerTick } from "../scheduler";
 import { getStore } from "../store";
 import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
+  parsePlistVersion,
+  permissionsCheck,
+  plistPermissionKeys,
+  versionConsistencyCheck,
+} from "../../engine/pre-release";
+import {
   assertNonEmptyString,
   dedupeProjects,
   normalizeLocalPath,
@@ -1148,6 +1154,184 @@ export function registerProjectsHandlers(): void {
       s.set("projects", projects);
       notifyDataChanged("projects");
       return true;
+    },
+  );
+
+  // 发布前检查单：自动检查（版本一致性、权限用途说明）+ 发布前素材
+  // （名称/副标题/截图建议，多语言），全部持久化到项目。
+  ipcMain.handle(
+    "projects:generatePreReleaseChecklist",
+    async (_event, productId: string) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const { project, product } = context;
+
+      // ── 自动检查：读仓库 Info.plist ──
+      const findInfoPlists = (dir: string, depth: number): string[] => {
+        if (depth > 5 || !dir) return [];
+        let entries: any[] = [];
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return [];
+        }
+        const results: string[] = [];
+        for (const entry of entries) {
+          if (
+            entry.name.startsWith(".") ||
+            entry.name === "node_modules" ||
+            entry.name === ".git" ||
+            entry.name === "DerivedData"
+          ) {
+            continue;
+          }
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) results.push(...findInfoPlists(full, depth + 1));
+          else if (entry.name.endsWith(".plist")) results.push(full);
+        }
+        return results;
+      };
+      let codeVersion: string | null = null;
+      const permissionKeys: string[] = [];
+      for (const plistPath of findInfoPlists(project.localPath, 0)) {
+        try {
+          const content = fs.readFileSync(plistPath, "utf8");
+          codeVersion = codeVersion || parsePlistVersion(content);
+          permissionKeys.push(...plistPermissionKeys(content));
+        } catch {
+          // 单个 plist 读取失败忽略
+        }
+      }
+      const drafts = (project.storeSubmissionDrafts || [])
+        .filter((draft: any) => draft.productId === productId)
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.updatedAt || 0).getTime() -
+            new Date(a.updatedAt || 0).getTime(),
+        );
+      const targetVersion = drafts[0]?.appVersion || null;
+      const versionCheck = versionConsistencyCheck(codeVersion, targetVersion);
+      const permCheck = permissionsCheck(
+        Array.from(new Set(permissionKeys)),
+      );
+      const checks = [
+        {
+          id: "version-consistency",
+          label: "版本一致性（代码 vs 目标）",
+          ...versionCheck,
+        },
+        {
+          id: "permissions",
+          label: "权限用途说明（Info.plist）",
+          ...permCheck,
+        },
+      ];
+
+      // ── 发布前素材：名称/副标题/截图建议（多语言）──
+      const latestDraft = drafts[0] || null;
+      const locByName = new Map<string, any>(
+        (latestDraft?.localizations || []).map((loc: any) => [
+          loc.language,
+          loc,
+        ]),
+      );
+      const gapsByLanguage: Record<string, string[]> = {};
+      for (const gap of project.copyGapKeywords || []) {
+        const lang = String(gap.language || "");
+        if (!lang) continue;
+        (gapsByLanguage[lang] = gapsByLanguage[lang] || []).push(
+          String(gap.keyword || ""),
+        );
+      }
+      const languages = (product.supportedLanguages || []).map((l: any) =>
+        String(l?.code || ""),
+      );
+      const inputs: {
+        language: string;
+        currentName: string;
+        currentSubtitle: string;
+        gapKeywords: string[];
+      }[] = languages.filter(Boolean).map((language: string) => {
+        const current = locByName.get(language) || null;
+        return {
+          language,
+          currentName: current?.name || product.trackName || "",
+          currentSubtitle: current?.subtitle || "",
+          gapKeywords: gapsByLanguage[language] || [],
+        };
+      });
+
+      let material: {
+        language: string;
+        suggestedName: string;
+        suggestedSubtitle: string;
+        screenshots: { name: string; description: string }[];
+      }[] = [];
+      if (inputs.length > 0) {
+        const { createAiProvider } = await import("../ai-service");
+        const { parseJsonObject } = await import("../../engine/ai/ai-request");
+        const provider = await createAiProvider(s);
+        const prompt = [
+          "你是 App Store 的 ASO 与发布素材顾问。为每个支持语言输出发布前素材。",
+          "规则：",
+          "- suggestedName ≤30 字符、suggestedSubtitle ≤30 字符；保留品牌名主体，把该语言最重要的 1-2 个文案缺口关键词自然融入；无缺口时保持当前值；",
+          "- screenshots：3-5 张，覆盖主界面、核心功能、亮点/卖点、典型使用场景等；每张给出 name（截图名称）与 description（截图说明），都用该语言撰写，名称简短、说明一句话；",
+          "- reason 用简体中文说明名称/副标题修改意图。",
+          "只输出 JSON：{\"material\":[{\"language\":\"...\",\"suggestedName\":\"...\",\"suggestedSubtitle\":\"...\",\"reason\":\"...\",\"screenshots\":[{\"name\":\"...\",\"description\":\"...\"}]}]}",
+        ].join("\n");
+        const raw = await provider.chat(
+          [
+            { role: "system", content: prompt },
+            {
+              role: "user",
+              content: `各语言当前信息与缺口关键词：\n${JSON.stringify(
+                { inputs },
+                null,
+                2,
+              )}`,
+            },
+          ] as any,
+          { temperature: 0.3, maxTokens: 8000 },
+        );
+        const data = parseJsonObject(raw);
+        const byLanguage = new Map<string, any>(
+          (Array.isArray(data?.material) ? data.material : []).map(
+            (item: any) => [String(item?.language || ""), item],
+          ),
+        );
+        material = inputs.map((input) => {
+          const suggestion = byLanguage.get(input.language) || null;
+          return {
+            language: input.language,
+            suggestedName:
+              String(suggestion?.suggestedName || "") || input.currentName,
+            suggestedSubtitle:
+              String(suggestion?.suggestedSubtitle || "") ||
+              input.currentSubtitle,
+            screenshots: Array.isArray(suggestion?.screenshots)
+              ? suggestion.screenshots
+                  .filter((shot: any) => shot?.name || shot?.description)
+                  .slice(0, 5)
+                  .map((shot: any) => ({
+                    name: String(shot.name || ""),
+                    description: String(shot.description || ""),
+                  }))
+              : [],
+          };
+        });
+      }
+
+      const now = new Date().toISOString();
+      project.preReleaseChecklist = {
+        updatedAt: now,
+        checks,
+        material,
+      };
+      s.set("projects", projects);
+      notifyDataChanged("projects");
+      return project.preReleaseChecklist;
     },
   );
 
