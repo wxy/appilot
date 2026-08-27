@@ -18,6 +18,7 @@ import path from "path";
 import { log } from "./logger";
 import {
   fetchGitHubRelease,
+  fetchMergedPullRequests,
   fetchPullRequests,
   type GitHubReleaseInfo,
   type GitHubReleaseItem,
@@ -264,6 +265,35 @@ export async function collectReleaseMaterial(
     ]).catch(() => ""),
     git(localPath, ["diff", "--stat", ...rangeArgs]).catch(() => ""),
   ]);
+  // Merge commits ("Merge pull request #N …") are excluded from the content
+  // commits, but their subjects identify PRs. For each merge commit we also
+  // derive the PR's own commits (second-parent range) so the change summary
+  // can map PR rows to real commits even when the branch commits carry no #N.
+  const mergeLog = await git(localPath, [
+    "log",
+    ...rangeArgs,
+    "--merges",
+    "--max-count=20",
+    "--format=%H%x1f%P%x1f%s%x1e",
+  ]).catch(() => "");
+  const mergePrShas = new Map<number, string[]>();
+  for (const record of mergeLog.split("\x1e").filter(Boolean)) {
+    const [sha, parents, subject] = record.split("\x1f");
+    const match = (subject || "").match(/Merge pull request #(\d+)/i);
+    if (!match || !sha) continue;
+    const [p1, p2] = (parents || "").split(/\s+/).filter(Boolean);
+    if (!p1 || !p2) continue;
+    const shas = await git(localPath, [
+      "rev-list",
+      `${p1}..${p2}`,
+      "--max-count=100",
+    ]).catch(() => "");
+    const list = mergePrShas.get(Number(match[1])) || [];
+    for (const item of shas.split(/\s+/).filter(Boolean)) {
+      if (!list.includes(item)) list.push(item);
+    }
+    mergePrShas.set(Number(match[1]), list);
+  }
   const sinceDate = since
     ? await git(localPath, ["log", "-1", "--format=%cI", since]).catch(() => "")
     : "";
@@ -283,20 +313,34 @@ export async function collectReleaseMaterial(
     })
     .filter((commit) => commit.sha && !isMergeCommit(commit.subject));
 
-  const prNumbers = Array.from(
-    new Set(
-      commits.flatMap((commit) =>
-        Array.from(commit.subject.matchAll(/#(\d+)/g), (match) => Number(match[1])),
-      ),
-    ),
-  ).slice(0, 10);
+  const shasByPr = new Map<number, string[]>();
+  const addShas = (number: number, shas: string[]) => {
+    const list = shasByPr.get(number) || [];
+    for (const sha of shas) {
+      if (!list.includes(sha)) list.push(sha);
+    }
+    shasByPr.set(number, list);
+  };
+  for (const commit of commits) {
+    const numbers = Array.from(
+      commit.subject.matchAll(/#(\d+)/g),
+      (match) => Number(match[1]),
+    );
+    for (const number of numbers) addShas(number, [commit.sha]);
+  }
+  for (const [number, shas] of mergePrShas) addShas(number, shas);
+  const prNumbers = Array.from(shasByPr.keys()).slice(0, 10);
 
   return {
     since: since || null,
     sinceDate: sinceDate || null,
     end: endRefs.join(" "),
     commits,
-    pullRequests: prNumbers.map((number) => ({ number, title: null })),
+    pullRequests: prNumbers.map((number) => ({
+      number,
+      title: null,
+      commitShas: shasByPr.get(number) || [],
+    })),
     diffStat: diffOut.slice(0, 800),
     githubRelease: null,
   };
@@ -313,11 +357,12 @@ export function materialToBody(material: ReleaseMaterial): string {
     lines.push("");
   }
   if (material.pullRequests.length > 0) {
-    lines.push(
-      `Pull requests in this release: ${material.pullRequests
-        .map((pr) => `#${pr.number}`)
-        .join(", ")}`,
-    );
+    lines.push("Pull requests in this release:");
+    for (const pr of material.pullRequests) {
+      const count =
+        typeof pr.commits === "number" ? ` (${pr.commits} commits)` : "";
+      lines.push(`- #${pr.number}${pr.title ? ` ${pr.title}` : ""}${count}`);
+    }
   }
   if (material.commits.length > 0) {
     lines.push(
@@ -336,7 +381,11 @@ export function materialToBody(material: ReleaseMaterial): string {
   return lines.join("\n") || `Release ${material.end} (no commits collected)`;
 }
 
-/** Keep only the commits the user chose to feed to the AI (PR list re-derived). */
+/**
+ * Keep only the commits the user chose to feed to the AI. The PR list is
+ * re-derived from PR↔commit membership (subject references plus API/merge
+ * ranges) so unchecked PR rows drop their commits from the material.
+ */
 export function filterMaterial(
   material: ReleaseMaterial,
   includeShas: string[] | null | undefined,
@@ -347,20 +396,77 @@ export function filterMaterial(
   const prByNumber = new Map(
     (material.pullRequests || []).map((pr) => [pr.number, pr] as const),
   );
-  const prNumbers = Array.from(
-    new Set(
-      commits.flatMap((commit) =>
-        Array.from(commit.subject.matchAll(/#(\d+)/g), (match) => Number(match[1])),
-      ),
-    ),
-  ).slice(0, 10);
+  const shaMatches = (local: string, full: string): boolean => {
+    const a = String(local || "").trim().toLowerCase();
+    const b = String(full || "").trim().toLowerCase();
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.length < 7) return false;
+    return b.startsWith(a) || a.startsWith(b);
+  };
+  const keptNumbers = new Set<number>();
+  for (const pr of material.pullRequests || []) {
+    if ((pr.commitShas || []).some((sha) =>
+      Array.from(set).some((local) => shaMatches(local, sha)),
+    )) {
+      keptNumbers.add(pr.number);
+    }
+  }
+  for (const commit of commits) {
+    for (const match of commit.subject.matchAll(/#(\d+)/g)) {
+      keptNumbers.add(Number(match[1]));
+    }
+  }
   return {
     ...material,
     commits,
-    pullRequests: prNumbers.map(
-      (number) => prByNumber.get(number) || { number, title: null },
-    ),
+    pullRequests: Array.from(keptNumbers)
+      .slice(0, 10)
+      .map((number) => prByNumber.get(number) || { number, title: null }),
   };
+}
+
+/**
+ * Resolve the PR list for a release range:
+ * - with a token: authoritative merged-PR list from the GitHub API
+ *   (titles, commit counts, per-PR commit shas), merged with locally derived
+ *   references so nothing is lost;
+ * - without a token: local references (subjects + merge commits) enriched by
+ *   anonymous per-PR fetches when the repo is public.
+ */
+async function resolveReleasePullRequests(
+  localPath: string,
+  material: ReleaseMaterial,
+  githubToken?: string | null,
+  onApiStats?: (requestBytes: number, responseBytes: number) => void,
+): Promise<ReleasePullRequest[]> {
+  if (githubToken && material.commits.length > 0) {
+    const fetched = await fetchMergedPullRequests(
+      localPath,
+      material.sinceDate,
+      githubToken,
+      onApiStats,
+    );
+    if (fetched.length > 0) {
+      const byNumber = new Map(fetched.map((pr) => [pr.number, pr] as const));
+      const merged = [...fetched];
+      for (const local of material.pullRequests) {
+        const existing = byNumber.get(local.number);
+        if (!existing) {
+          merged.push(local);
+        } else if (!existing.commitShas && local.commitShas?.length) {
+          existing.commitShas = local.commitShas;
+        }
+      }
+      return merged;
+    }
+  }
+  return fetchPullRequests(
+    localPath,
+    material.pullRequests,
+    githubToken,
+    onApiStats,
+  );
 }
 
 function firstHeading(content: string): string | null {
@@ -483,6 +589,15 @@ export async function checkForRelease(
 
   const cacheMatches =
     Boolean(releaseTag) && options.githubCache?.tag === releaseTag?.name;
+  const pullRequests =
+    cacheMatches && options.githubCache
+      ? (options.githubCache.pullRequests ?? material.pullRequests)
+      : await resolveReleasePullRequests(
+          localPath,
+          material,
+          githubToken,
+          options.onApiStats,
+        );
   const githubReleases =
     options.githubReleases ?? options.githubCache?.releases ?? null;
   const githubItems =
@@ -501,6 +616,7 @@ export async function checkForRelease(
       const tag = item.tag || `gh-${item.id}`;
       const materialWithRelease: ReleaseMaterial = {
         ...material,
+        pullRequests,
         githubRelease: {
           name: item.name,
           body: item.body,
@@ -527,12 +643,7 @@ export async function checkForRelease(
       extraTags.map(async (tag) => {
         const enriched: ReleaseMaterial = {
           ...material,
-          pullRequests: await fetchPullRequests(
-            localPath,
-            material.pullRequests,
-            githubToken,
-            options.onApiStats,
-          ),
+          pullRequests,
           githubRelease: await fetchGitHubRelease(
             localPath,
             tag.name,
@@ -567,14 +678,7 @@ export async function checkForRelease(
 
   const enrichedMaterial = {
     ...material,
-    pullRequests: cacheMatches
-      ? (options.githubCache?.pullRequests ?? material.pullRequests)
-      : await fetchPullRequests(
-          localPath,
-          material.pullRequests,
-          githubToken,
-          options.onApiStats,
-        ),
+    pullRequests,
     githubRelease: cacheMatches
       ? (options.githubCache?.release ?? material.githubRelease)
       : releaseTag

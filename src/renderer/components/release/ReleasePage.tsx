@@ -550,8 +550,8 @@ export function ReleasePage() {
   // 代码更新按时间顺序排列（各组以其最早提交时间排序）。
   const sortedSummaryItems = [...summaryItems].sort(
     (a, b) =>
-      Date.parse(a.commits[0]?.date || "0") -
-      Date.parse(b.commits[0]?.date || "0"),
+      Date.parse(a.date || a.commits[0]?.date || "0") -
+      Date.parse(b.date || b.commits[0]?.date || "0"),
   );
   const summaryPrCount = summaryMaterial?.pullRequests?.length ?? 0;
   const summaryCommitCount = summaryMaterial?.commits?.length ?? 0;
@@ -1300,11 +1300,10 @@ export function ReleasePage() {
                           {sortedSummaryItems.map((item) => {
                             const included = summaryChecked.has(item.id);
                             const tone = CHANGE_TYPE_META[item.type].tone;
-                            const latestDate = item.commits[item.commits.length - 1]?.date || "";
-                            const subLine =
-                              item.commits.length > 1
-                                ? `${item.refs.join(" · ")} · ${item.commits.length} 次提交${latestDate ? ` · 最新 ${formatHumanTime(latestDate)}` : ""}`
-                                : `${item.refs.join(" · ")}${latestDate ? ` · ${formatHumanTime(latestDate)}` : ""}`;
+                            const latestDate = item.date || item.commits[0]?.date || "";
+                            const subLine = item.github
+                              ? `#${item.prNumber || ""} · ${item.commitCount ?? item.commits.length} 次提交${latestDate ? ` · ${formatHumanTime(latestDate)}` : ""}`
+                              : `${item.commitCount ?? item.commits.length} 条提交${latestDate ? ` · 最新 ${formatHumanTime(latestDate)}` : ""}`;
                             return (
                               <div
                                 key={item.id}

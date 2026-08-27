@@ -4,6 +4,7 @@ import path from "path";
 import { execFileSync } from "child_process";
 import {
   fetchGitHubRelease,
+  fetchMergedPullRequests,
   fetchPullRequests,
 } from "../src/engine/github-api";
 
@@ -37,6 +38,51 @@ async function runTests() {
     const url = typeof input === "string" ? input : String(input);
     calls.push({ url, auth: init?.headers?.Authorization || "" });
     if (status !== 200) return new Response("not found", { status });
+    if (url.includes("/commits")) {
+      const num = url.match(/\/pulls\/(\d+)\/commits/)?.[1] || "0";
+      return new Response(
+        JSON.stringify([
+          { sha: `fullsha-commit-${num}-a` },
+          { sha: `fullsha-commit-${num}-b` },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.includes("/pulls?")) {
+      if (url.includes("page=2") || url.includes("page=3")) {
+        return new Response("[]", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify([
+          {
+            number: 1,
+            title: "PR #1 merged",
+            body: "body",
+            html_url: "https://github.com/owner/repo/pull/1",
+            commits: 2,
+            merged_at: "2026-02-01T00:00:00Z",
+          },
+          {
+            number: 2,
+            title: "PR #2 merged",
+            body: "body2",
+            html_url: "https://github.com/owner/repo/pull/2",
+            commits: 5,
+            merged_at: "2025-12-01T00:00:00Z",
+          },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.includes("/repos/") && !url.includes("/pulls") && !url.includes("/releases")) {
+      return new Response(
+        JSON.stringify({ default_branch: "main" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     if (url.includes("/pulls/")) {
       const num = url.match(/\/pulls\/(\d+)/)?.[1] || "0";
       return new Response(
@@ -88,6 +134,38 @@ async function runTests() {
     await fetchPullRequests(dir, [{ number: 1, title: "local" }], "ghp_other");
     const other = calls.filter((c) => c.url.includes("/pulls/")).length;
     assert(other > same, "different token bypasses the PR cache");
+
+    // fetchMergedPullRequests: merged-PR list + per-PR commit shas + cutoff.
+    const listCallsBefore = calls.length;
+    const merged = await fetchMergedPullRequests(
+      dir,
+      "2026-01-01T00:00:00.000Z",
+      "ghp_secret",
+    );
+    assert(merged.length === 1, "merged PR list filters by merged_at cutoff");
+    assert(merged[0]?.title === "PR #1 merged", "merged PR list carries titles");
+    assert(merged[0]?.commits === 2, "merged PR list carries commit counts");
+    assert(
+      Array.isArray(merged[0]?.commitShas) && merged[0]?.commitShas?.length === 2,
+      "merged PR list fetches per-PR commit shas",
+    );
+    assert(
+      merged[0]?.commitShas?.[0] === "fullsha-commit-1-a",
+      "merged PR commit shas parsed",
+    );
+
+    const listCallsAfterFirst = calls.length;
+    await fetchMergedPullRequests(dir, "2026-01-01T00:00:00.000Z", "ghp_secret");
+    assert(
+      calls.length === listCallsAfterFirst && listCallsAfterFirst > listCallsBefore,
+      "merged PR list cached per repo+cutoff+token",
+    );
+    const repoCallsBefore = calls.filter((c) => c.url.includes("/repos/owner/repo")).length;
+    await fetchMergedPullRequests(dir, "2026-01-01T00:00:00.000Z", "ghp_other");
+    assert(
+      calls.filter((c) => c.url.includes("/repos/owner/repo")).length > repoCallsBefore,
+      "different token bypasses the merged PR cache",
+    );
   } finally {
     globalThis.fetch = origFetch;
   }
