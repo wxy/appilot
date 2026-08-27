@@ -553,7 +553,7 @@ export function ReleasePage() {
       Date.parse(a.date || a.commits[0]?.date || "0") -
       Date.parse(b.date || b.commits[0]?.date || "0"),
   );
-  const summaryPrCount = summaryMaterial?.pullRequests?.length ?? 0;
+  const summaryPrCount = summaryItems.filter((item) => item.github).length;
   const summaryCommitCount = summaryMaterial?.commits?.length ?? 0;
   const sinceMs = summaryMaterial?.sinceDate
     ? Date.now() - new Date(summaryMaterial.sinceDate).getTime()
@@ -1308,7 +1308,7 @@ export function ReleasePage() {
                               <div
                                 key={item.id}
                                 className={cn(
-                                  "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg",
+                                  "w-full flex items-center gap-2.5 py-1.5 rounded-lg",
                                   !included && "opacity-55",
                                 )}
                               >
@@ -1398,7 +1398,7 @@ export function ReleasePage() {
                             {fixedMaterialRows.map((row) => (
                               <li
                                 key={row.label}
-                                className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-zinc-50/60 dark:bg-zinc-800/30"
+                                className="flex items-center gap-2.5 py-1.5 rounded-lg bg-zinc-50/60 dark:bg-zinc-800/30"
                               >
                                 <span className="min-w-0 flex-1">
                                   <span className="block text-xs text-zinc-700 dark:text-zinc-300 truncate">
@@ -1416,13 +1416,11 @@ export function ReleasePage() {
                                     <GithubIcon className="w-3 h-3 text-current" />
                                   </span>
                                 )}
-                                <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800">
-                                  <input
-                                    type="checkbox"
-                                    checked
-                                    disabled
-                                    className="w-3.5 h-3.5 accent-zinc-500"
-                                  />
+                                <span
+                                  title="固定素材始终发送给 AI"
+                                  className="w-4 h-4 shrink-0 rounded border border-zinc-400 dark:border-zinc-500 bg-zinc-400/70 dark:bg-zinc-500/70 flex items-center justify-center text-[10px] text-white select-none"
+                                >
+                                  ✓
                                 </span>
                               </li>
                             ))}

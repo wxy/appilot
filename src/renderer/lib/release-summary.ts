@@ -118,6 +118,10 @@ export function summarizeChanges(
     const prCommits = commits.filter((commit) =>
       shas.some((full) => shaMatches(commit.sha, full)),
     );
+    // A PR row represents this release's content. If none of its commits are
+    // inside the range, its content was already generated (covered by the
+    // previous boundary) — drop it instead of showing a phantom "0 提交" row.
+    if (prCommits.length === 0) return;
     for (const commit of prCommits) matched.add(commit.sha);
     const first = prCommits[0];
     const parsed = first ? parseType(stripPrRef(first.subject)) : null;

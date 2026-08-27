@@ -67,6 +67,14 @@ const withPrList = summarizeChanges({
       mergedAt: "2026-08-08T00:00:00.000Z",
       commitShas: ["aaaaaaa1", "bbbbbb2"],
     },
+    {
+      number: 31,
+      title: "Already covered by previous boundary",
+      url: "https://github.com/owner/repo/pull/31",
+      commits: 5,
+      mergedAt: "2026-08-08T00:00:00.000Z",
+      commitShas: ["ddddddd1", "eeeeeee2"],
+    },
   ],
 } as any);
 assert(withPrList.length === 2, "pr-list: PR row + standalone row");
@@ -75,6 +83,10 @@ assert(withPrList[0].commitCount === 4, "pr-list: API commit count used");
 assert(withPrList[0].commits.length === 2, "pr-list: matched commits kept");
 assert(withPrList[0].prUrl === "https://github.com/owner/repo/pull/30", "pr-list: PR URL kept");
 assert(withPrList[1].commitCount === 1, "pr-list: remaining commit aggregated");
+assert(
+  !withPrList.some((item) => item.prNumber === 31),
+  "pr-list: PR whose commits are all outside the range is dropped",
+);
 
 // Empty + cap.
 assert(summarizeChanges(null).length === 0, "summarize: null material → empty");

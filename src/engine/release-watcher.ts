@@ -100,6 +100,19 @@ export function isMergeCommit(subject: string): boolean {
   return /^Merge\s+(pull\s+request|branch)/i.test(String(subject || "").trim());
 }
 
+/**
+ * Local material uses short shas (%h) while GitHub API / git rev-list return
+ * full shas — compare by prefix so PR↔commit membership survives both forms.
+ */
+function shaMatches(local: string, full: string): boolean {
+  const a = String(local || "").trim().toLowerCase();
+  const b = String(full || "").trim().toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length < 7) return false;
+  return b.startsWith(a) || a.startsWith(b);
+}
+
 async function git(
   localPath: string,
   args: string[],
@@ -329,7 +342,18 @@ export async function collectReleaseMaterial(
     for (const number of numbers) addShas(number, [commit.sha]);
   }
   for (const [number, shas] of mergePrShas) addShas(number, shas);
-  const prNumbers = Array.from(shasByPr.keys()).slice(0, 10);
+  // A PR belongs to this release only when at least one of its commits is
+  // inside the range. PRs whose merge commit landed after the boundary but
+  // whose content was already generated (e.g. a branch merged to master after
+  // the previous copy) must not re-surface as "new" PRs.
+  const localCommitShas = commits.map((commit) => commit.sha);
+  const prNumbers = Array.from(shasByPr.keys())
+    .filter((number) =>
+      (shasByPr.get(number) || []).some((sha) =>
+        localCommitShas.some((local) => shaMatches(local, sha)),
+      ),
+    )
+    .slice(0, 10);
 
   return {
     since: since || null,
@@ -396,14 +420,6 @@ export function filterMaterial(
   const prByNumber = new Map(
     (material.pullRequests || []).map((pr) => [pr.number, pr] as const),
   );
-  const shaMatches = (local: string, full: string): boolean => {
-    const a = String(local || "").trim().toLowerCase();
-    const b = String(full || "").trim().toLowerCase();
-    if (!a || !b) return false;
-    if (a === b) return true;
-    if (a.length < 7) return false;
-    return b.startsWith(a) || a.startsWith(b);
-  };
   const keptNumbers = new Set<number>();
   for (const pr of material.pullRequests || []) {
     if ((pr.commitShas || []).some((sha) =>
@@ -458,7 +474,15 @@ async function resolveReleasePullRequests(
           existing.commitShas = local.commitShas;
         }
       }
-      return merged;
+      // Keep only PRs with content actually inside this release range (see
+      // collectReleaseMaterial): a merged-at-after-boundary PR whose commits
+      // are all covered by the previous copy is not part of this release.
+      const inRangeShas = material.commits.map((commit) => commit.sha);
+      return merged.filter((pr) =>
+        (pr.commitShas || []).some((sha) =>
+          inRangeShas.some((local) => shaMatches(local, sha)),
+        ),
+      );
     }
   }
   return fetchPullRequests(

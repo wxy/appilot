@@ -137,6 +137,10 @@ async function runTests() {
       afterMerge.commits.some((c) => String(c.subject).includes("#7")),
       "branch content commit kept in material",
     );
+    assert(
+      afterMerge.pullRequests.some((pr) => pr.number === 7),
+      "merge-derived PR extracted when its commits are inside the range",
+    );
 
     // collectReleaseMaterial honors an explicit since-boundary.
     const material = await collectReleaseMaterial(dir, boundary);
@@ -166,6 +170,21 @@ async function runTests() {
     assert(
       filteredWithRelease.githubRelease?.name === "v1.2.0 release",
       "filterMaterial: GitHub release preserved after filtering",
+    );
+
+    // A PR whose merge commit is in the range but whose content was already
+    // covered by the boundary (branch merged to master after the previous
+    // copy) must NOT re-surface as a new PR.
+    run(dir, ["checkout", "-qb", "covered-branch"]);
+    commit(dir, "covered.txt", "feat: covered branch work");
+    const coveredTip = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"]).toString().trim();
+    run(dir, ["checkout", "-q", "-"]);
+    run(dir, ["merge", "--no-ff", "-q", "-m", "Merge pull request #40 from wxy/covered-branch", "covered-branch"]);
+    run(dir, ["branch", "-qD", "covered-branch"]);
+    const covered = await collectReleaseMaterial(dir, coveredTip);
+    assert(
+      !covered.pullRequests.some((pr) => pr.number === 40),
+      "PR fully covered by the previous boundary is excluded",
     );
 
     // fetchRemoteTags: a tag published on the remote appears locally after sync.
