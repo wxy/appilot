@@ -145,11 +145,14 @@ export function ReleasePage() {
     }
   };
 
-  const loadReleases = async (force = false) => {
+  const loadReleases = async (force = false, clearFirst = true) => {
     if (!project?.id) return;
-    // 切换项目/平台或刷新时先清空旧数据，统一走载入态，避免显示部分更新。
-    setReleases([]);
-    setChecking(true);
+    // 只有切换项目/平台或首次加载时才清空旧数据走载入态；
+    // 后台发布同步触发的刷新不清空，原地更新，避免整页闪成“正在检查发布状态”。
+    if (clearFirst) {
+      setReleases([]);
+      setChecking(true);
+    }
     setError("");
     try {
       const next = await (window as any).appilot.release.list(project.id, force);
@@ -219,7 +222,7 @@ export function ReleasePage() {
     const handler = (e: Event) => {
       const scope = (e as CustomEvent).detail;
       if (scope === "releases") {
-        void loadReleases(false);
+        void loadReleases(false, false);
       } else if (scope === "asc" && productId) {
         (window as any).appilot?.asc?.status(productId)
           .then(setAscInfo)
