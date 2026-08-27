@@ -1346,6 +1346,9 @@ export function registerProjectsHandlers(): void {
           "你是 App Store 的 ASO 与发布素材顾问。为每个支持语言输出发布前素材。",
           "规则：",
           "- suggestedName ≤30 字符、suggestedSubtitle ≤30 字符；保留品牌名主体，把该语言最重要的 1-2 个文案缺口关键词自然融入；无缺口时保持当前值；",
+          "- 必须为输入里的每个语言都输出 suggestedName 与 suggestedSubtitle，不要遗漏；",
+          "- 有文案缺口的语言：把最重要的 1-2 个缺口词自然融入名称或副标题；",
+          "- 无缺口的语言：若该语言与母本不同（新增语言），把母本名称/副标题本地化到该语言（保留品牌主体、≤30 字符），副标题不要留空；与母本相同则保持当前值；",
           "- screenshots：3-5 张，覆盖主界面、核心功能、亮点/卖点、典型使用场景等；每张给出 name（截图名称）、description（截图说明）与 location（截图位置：指出应截哪个页面，如 主屏幕/设置页/历史页/HUD 页 等），三者都用该语言撰写，名称简短、说明一句话、位置具体；",
           "- reason 用简体中文说明名称/副标题修改意图。",
           "只输出 JSON：{\"material\":[{\"language\":\"...\",\"suggestedName\":\"...\",\"suggestedSubtitle\":\"...\",\"reason\":\"...\",\"screenshots\":[{\"name\":\"...\",\"description\":\"...\",\"location\":\"...\"}]}]}",
@@ -1364,8 +1367,16 @@ export function registerProjectsHandlers(): void {
             },
           ] as any,
           // 11 种语言 × 截图建议输出较大：给足 token，解析失败时 requestJson
-          // 会自动把截断内容送回 AI 修复。
-          { temperature: 0.3, maxTokens: 16000 },
+          // 会自动把截断内容送回 AI 修复；onProgress 让按钮实时显示字符数。
+          {
+            temperature: 0.3,
+            maxTokens: 16000,
+            onProgress: (received: { chars: number; phase: string }) => {
+              if (!_event.sender.isDestroyed()) {
+                _event.sender.send("projects:checklistProgress", received);
+              }
+            },
+          },
         );
         const byLanguage = new Map<string, any>(
           (Array.isArray(data?.material) ? data.material : []).map(

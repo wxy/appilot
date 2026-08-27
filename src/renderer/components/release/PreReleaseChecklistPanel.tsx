@@ -11,10 +11,12 @@ import { AIProgressButton } from "../ui/AIProgressButton";
 export function PreReleaseChecklistPanel({
   checklist,
   generating,
+  progress,
   onGenerate,
 }: {
   checklist: any;
   generating: boolean;
+  progress: { chars: number; phase: "reasoning" | "content" } | null;
   onGenerate: () => void;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
@@ -64,7 +66,7 @@ export function PreReleaseChecklistPanel({
           onClick={onGenerate}
           disabled={generating}
           loading={generating}
-          progress={null}
+          progress={progress}
           idleLabel={checklist ? "重新生成检查单" : "生成发布前检查单"}
         />
       </div>
