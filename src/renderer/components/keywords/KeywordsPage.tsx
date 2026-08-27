@@ -30,6 +30,7 @@ import { CurationDialog } from "./CurationDialog";
 import type { KeywordGeneration, KeywordSuggestion } from "./keywordTypes";
 import { ChartTick, MatrixCellView, RankTooltip } from "./matrix";
 import { CompetitorPanel } from "./CompetitorPanel";
+import { KeywordRuby } from "../ui/KeywordRuby";
 
 export function KeywordsPage() {
   const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, resumePausedKeyword, clearRemovedKeywords } = useProject();
@@ -76,6 +77,7 @@ export function KeywordsPage() {
   const [pendingEntries, setPendingEntries] = useState<any[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [pendingActing, setPendingActing] = useState<string | null>(null);
+  const [translatingKey, setTranslatingKey] = useState<string | null>(null);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
@@ -448,7 +450,13 @@ export function KeywordsPage() {
         )}
         title={keyword.rationale ? `${keyword.keyword} — ${keyword.rationale}` : keyword.keyword}
       >
-        {keyword.keyword}
+        <KeywordRuby
+          keyword={keyword.keyword}
+          translation={keyword.translation}
+          annotate={
+            keyword.language !== "zh-Hans" && keyword.language !== "zh-Hant"
+          }
+        />
         {keyword.language === "en" && (
           <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-sans font-medium text-zinc-500 dark:text-zinc-400 align-middle">
             全局
@@ -881,6 +889,27 @@ export function KeywordsPage() {
       setError(e.message || "处理失败。");
     } finally {
       setPendingActing(null);
+    }
+  };
+
+  const translatePendingKeyword = async (entry: any) => {
+    const key = `${entry.language}:${entry.keyword}:${entry.platform}`;
+    setTranslatingKey(key);
+    try {
+      await (window as any).appilot?.projects?.translateKeyword(
+        product.id,
+        entry.language,
+        entry.keyword,
+      );
+      const entries =
+        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+      setPendingEntries(
+        entries.filter((item: any) => item.platform === product.platform),
+      );
+    } catch (e: any) {
+      setError(e.message || "翻译失败。");
+    } finally {
+      setTranslatingKey(null);
     }
   };
 
@@ -1534,9 +1563,28 @@ export function KeywordsPage() {
                       className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3"
                     >
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                          {entry.keyword}
-                        </span>
+                        <KeywordRuby
+                          keyword={entry.keyword}
+                          translation={entry.translation}
+                          annotate={
+                            entry.language !== "zh-Hans" &&
+                            entry.language !== "zh-Hant"
+                          }
+                          className="text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                        />
+                        {entry.language !== "zh-Hans" &&
+                          entry.language !== "zh-Hant" &&
+                          !entry.translation && (
+                            <button
+                              type="button"
+                              disabled={translatingKey === actKey}
+                              onClick={() => void translatePendingKeyword(entry)}
+                              className="text-[10px] text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-50"
+                              title="翻译为中文"
+                            >
+                              {translatingKey === actKey ? "翻译中…" : "翻译"}
+                            </button>
+                          )}
                         <span className="px-1.5 py-0.5 rounded text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
                           {languageLabel(entry.language)}
                         </span>

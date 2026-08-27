@@ -876,6 +876,7 @@ export function registerProjectsHandlers(): void {
         entries.push({
           language: keyword.language,
           keyword: keyword.keyword,
+          translation: keyword.translation || null,
           platform,
           reason: keyword.pendingPauseReason || "连续未在榜",
           suggestion: covered
@@ -893,6 +894,54 @@ export function registerProjectsHandlers(): void {
     }
     return entries;
   });
+
+  // 把单个关键词翻译成界面语言（简体中文），并持久化到该关键词的
+  // translation 字段，之后所有显示位置都能用 ruby 标注。
+  ipcMain.handle(
+    "projects:translateKeyword",
+    async (
+      _event,
+      productId: string,
+      language: string,
+      keywordText: string,
+    ) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const project = context.project;
+      const item = (project.trackedKeywords || []).find(
+        (k: any) => k.language === language && k.keyword === keywordText,
+      );
+      if (!item) throw new Error("Keyword not found");
+      if (item.translation && item.translation.trim()) {
+        return { translation: item.translation };
+      }
+      const { createAiProvider } = await import("../ai-service");
+      const provider = await createAiProvider(s);
+      const translated = (
+        await provider.chat(
+          [
+            {
+              role: "system",
+              content: "你是 App Store 关键词翻译助手，只输出译文本身。",
+            },
+            {
+              role: "user",
+              content: `把下面的 App Store 关键词翻译成简体中文（界面语言）。只输出译文，不要解释、不要引号、不要加注。\n关键词：${keywordText}`,
+            },
+          ] as any,
+          { temperature: 0.2, maxTokens: 200 },
+        )
+      )
+        .trim()
+        .replace(/^["'“”]+|["'“”]+$/g, "");
+      if (!translated) throw new Error("翻译失败，请重试");
+      item.translation = translated;
+      s.set("projects", projects);
+      return { translation: translated };
+    },
+  );
 
   // 处理待处理暂停：resume 恢复跟踪 / pause 最终暂停 / remove 移除（无关词）
   // / copy-gap 列入文案素材并暂停该平台。
@@ -948,6 +997,7 @@ export function registerProjectsHandlers(): void {
               gaps.push({
                 language,
                 keyword: keywordText,
+                translation: keyword.translation || "",
                 reason: keyword.pendingPauseReason || "排名不佳，文案未覆盖",
                 addedAt: new Date().toISOString(),
               });

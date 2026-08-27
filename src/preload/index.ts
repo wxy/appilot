@@ -130,6 +130,12 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:removeTrackedKeyword", projectId, language, keyword),
     pendingPauseList: (projectId: string): Promise<any[]> =>
       ipcRenderer.invoke("projects:pendingPauseList", projectId),
+    translateKeyword: (
+      productId: string,
+      language: string,
+      keyword: string,
+    ): Promise<{ translation: string }> =>
+      ipcRenderer.invoke("projects:translateKeyword", productId, language, keyword),
     reviewPendingPause: (
       productId: string,
       language: string,
