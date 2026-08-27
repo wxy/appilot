@@ -279,7 +279,7 @@ export function PreReleaseChecklistPanel({
                           截图说明
                         </th>
                         <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-l border-zinc-200/70 dark:border-zinc-700/70">
-                          截图位置
+                          截图位置（界面语言）
                         </th>
                       </tr>
                     </thead>

@@ -1349,7 +1349,7 @@ export function registerProjectsHandlers(): void {
           "- 必须为输入里的每个语言都输出 suggestedName 与 suggestedSubtitle，不要遗漏；",
           "- 有文案缺口的语言：把最重要的 1-2 个缺口词自然融入名称或副标题；",
           "- 无缺口的语言：若该语言与母本不同（新增语言），把母本名称/副标题本地化到该语言（保留品牌主体、≤30 字符），副标题不要留空；与母本相同则保持当前值；",
-          "- screenshots：3-5 张，覆盖主界面、核心功能、亮点/卖点、典型使用场景等；每张给出 name（截图名称）、description（截图说明）与 location（截图位置：指出应截哪个页面，如 主屏幕/设置页/历史页/HUD 页 等），三者都用该语言撰写，名称简短、说明一句话、位置具体；",
+          "- screenshots：3-5 张，覆盖主界面、核心功能、亮点/卖点、典型使用场景等；每张给出 name（截图名称，用该语言撰写，简短）、description（截图说明，用该语言撰写，一句话）与 location（截图位置：固定用简体中文提示应截哪个页面，如 主屏幕/设置页/历史页/HUD 页 等，不随语言翻译）；",
           "- reason 用简体中文说明名称/副标题修改意图。",
           "只输出 JSON：{\"material\":[{\"language\":\"...\",\"suggestedName\":\"...\",\"suggestedSubtitle\":\"...\",\"reason\":\"...\",\"screenshots\":[{\"name\":\"...\",\"description\":\"...\",\"location\":\"...\"}]}]}",
         ].join("\n");
