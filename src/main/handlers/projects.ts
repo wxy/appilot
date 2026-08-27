@@ -1065,35 +1065,9 @@ export function registerProjectsHandlers(): void {
           String(gap.keyword || ""),
         );
       }
-      // 支持语言从“当前分支”的仓库重新检测并与已存语言合并：分支新增语言
-      // 无需等 PR 合并即可被识别（本地工作区即当前分支）。检测失败不静默，
-      // 记日志便于排查。
-      let detectedLanguages: string[] = [];
-      let languageDisplayNameFn: (code: string) => string = (code) => code;
-      try {
-        const { detectLocalizedLanguages, languageDisplayName } = await import(
-          "../../engine/app-store-discovery"
-        );
-        detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
-        languageDisplayNameFn = languageDisplayName;
-        log.warn(
-          `Checklist language detection: ${detectedLanguages.length} languages detected for ${project.localPath}`,
-        );
-      } catch (err: any) {
-        log.warn(`Checklist language detection failed: ${err.message}`);
-      }
-      const stored = (product.supportedLanguages || []).map((l: any) =>
+      const languages = (product.supportedLanguages || []).map((l: any) =>
         String(l?.code || ""),
       );
-      // 直接取并集用于本次生成，并持久化回产品，让整个应用识别新语言。
-      const languages = Array.from(new Set([...stored, ...detectedLanguages]));
-      if (languages.length !== stored.length) {
-        product.supportedLanguages = languages.map((code) => ({
-          code,
-          name: languageDisplayNameFn(code),
-        }));
-        project.supportedLanguages = product.supportedLanguages;
-      }
       const inputs: {
         language: string;
         currentName: string;
@@ -1312,9 +1286,37 @@ export function registerProjectsHandlers(): void {
           String(gap.keyword || ""),
         );
       }
-      const languages = (product.supportedLanguages || []).map((l: any) =>
+            // 支持语言从“当前分支”的仓库重新检测并与已存语言合并：分支新增语言
+      // 无需等 PR 合并即可被识别（本地工作区即当前分支）。检测失败不静默。
+      let detectedLanguages: string[] = [];
+      let languageDisplayNameFn: (code: string) => string = (code) => code;
+      let detectionNote = "";
+      try {
+        const { detectLocalizedLanguages, languageDisplayName } = await import(
+          "../../engine/app-store-discovery"
+        );
+        detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
+        languageDisplayNameFn = languageDisplayName;
+        detectionNote = `已检测到 ${detectedLanguages.length} 种语言`;
+        log.warn(
+          `Checklist language detection: ${detectedLanguages.length} languages detected for ${project.localPath}`,
+        );
+      } catch (err: any) {
+        detectionNote = `语言检测失败：${err.message}`;
+        log.warn(`Checklist language detection failed: ${err.message}`);
+      }
+      const stored = (product.supportedLanguages || []).map((l: any) =>
         String(l?.code || ""),
       );
+      // 直接取并集用于本次生成，并持久化回产品，让整个应用识别新语言。
+      const languages = Array.from(new Set([...stored, ...detectedLanguages]));
+      if (languages.length !== stored.length) {
+        product.supportedLanguages = languages.map((code) => ({
+          code,
+          name: languageDisplayNameFn(code),
+        }));
+        project.supportedLanguages = product.supportedLanguages;
+      }
       const inputs: {
         language: string;
         currentName: string;
@@ -1406,6 +1408,8 @@ export function registerProjectsHandlers(): void {
       const now = new Date().toISOString();
       project.preReleaseChecklist = {
         updatedAt: now,
+        detectedLanguages: languages,
+        detectionNote,
         checks,
         material,
       };

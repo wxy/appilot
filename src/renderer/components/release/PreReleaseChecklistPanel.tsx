@@ -75,6 +75,13 @@ export function PreReleaseChecklistPanel({
           </p>
         ) : (
           <>
+            {checklist.detectedLanguages?.length > 0 && (
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                已识别语言（{checklist.detectedLanguages.length}）：{" "}
+                {checklist.detectedLanguages.join("、")}
+                {checklist.detectionNote ? ` · ${checklist.detectionNote}` : ""}
+              </p>
+            )}
             <div>
               <h5 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 mb-2">
                 自动检查
