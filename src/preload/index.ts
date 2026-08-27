@@ -90,6 +90,12 @@ contextBridge.exposeInMainWorld("appilot", {
     check: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
       ipcRenderer.invoke("readiness:check", projectId, productId, releaseTag),
   },
+  alignment: {
+    check: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("alignment:check", projectId, productId, releaseTag),
+    apply: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("alignment:apply", projectId, productId, releaseTag),
+  },
 
   dialog: {
     selectFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:selectFolder"),

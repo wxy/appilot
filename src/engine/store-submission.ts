@@ -131,6 +131,58 @@ export interface StorePublicCopyUpdate {
   whatsNew?: string;
 }
 
+export interface StoreAlignmentField {
+  language: string;
+  field: string;
+  local: string;
+  store: string;
+}
+
+/**
+ * 把本地文案与商店实际文案逐语言、逐字段比对（只读，不写回）。
+ * store 侧仅比较“确实提供”的字段（ASC 完整六字段 / 公开商店仅
+ * description + whatsNew）；store 值为空的字段跳过（ASC 版本级可选字段
+ * 未设置时商店回退到 App 级，空值不代表“商店为空”）。
+ */
+export function diffDraftAgainstStore(
+  draft: StoreSubmissionDraft,
+  storeByLanguage: {
+    language: string;
+    fields: Partial<
+      Record<
+        "name" | "subtitle" | "promotionalText" | "description" | "whatsNew" | "keywords",
+        string | null | undefined
+      >
+    >;
+  }[],
+): StoreAlignmentField[] {
+  const diffs: StoreAlignmentField[] = [];
+  for (const entry of storeByLanguage) {
+    const local = (draft.localizations || []).find(
+      (loc) =>
+        localeMatchesLocale(entry.language, loc.language || "") ||
+        ((loc as any).locale &&
+          localeMatchesLocale(entry.language, (loc as any).locale)),
+    );
+    if (!local) continue;
+    for (const [field, storeValue] of Object.entries(entry.fields)) {
+      if (storeValue === undefined || storeValue === null) continue;
+      const storeText = String(storeValue || "");
+      if (!storeText) continue;
+      const localText = String((local as any)[field] || "");
+      if (localText !== storeText) {
+        diffs.push({
+          language: entry.language,
+          field,
+          local: localText,
+          store: storeText,
+        });
+      }
+    }
+  }
+  return diffs;
+}
+
 /**
  * Partial freeze without ASC credentials: align description and whats-new per
  * language using the public storefront copy (iTunes lookup). Name/subtitle/

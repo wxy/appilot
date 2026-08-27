@@ -2,6 +2,7 @@ import {
   applyAscSnapshotToDraft,
   applyStorePublicSnapshotToDraft,
   buildStoreRebuildDraft,
+  diffDraftAgainstStore,
   inferAppVersion,
 } from "../src/engine/store-submission";
 import {
@@ -229,5 +230,48 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
   check(draft.submissionKeywords.some((k) => k.language === "zh-Hans"), "提交关键词同步重建");
 }
 
+console.log("✅ PASS: diffDraftAgainstStore 逐语言逐字段比对");
+{
+  const draft = {
+    localizations: [
+      { language: "en", name: "AI Pulse", description: "Track AI costs", whatsNew: "v2", keywords: "ai" },
+      { language: "zh-Hans", name: "AI Pulse 中文", description: "追踪 AI 费用", whatsNew: "v2 中文" },
+    ],
+  } as any;
+  const diffs = diffDraftAgainstStore(draft, [
+    {
+      language: "en",
+      fields: {
+        name: "AI Pulse",
+        description: "Track AI costs faster",
+        whatsNew: "v2",
+        keywords: null,
+      },
+    },
+    {
+      language: "zh-Hans",
+      fields: { description: "追踪 AI 费用", whatsNew: "v2 中文" },
+    },
+    {
+      language: "ja",
+      fields: { description: "日本語" },
+    },
+  ]);
+  check(diffs.length === 1, "只统计确实不同的字段");
+  check(
+    diffs[0]?.language === "en" &&
+      diffs[0]?.field === "description" &&
+      diffs[0]?.local === "Track AI costs" &&
+      diffs[0]?.store === "Track AI costs faster",
+    "差异包含本地值与商店值",
+  );
+  check(
+    diffDraftAgainstStore(draft, [
+      { language: "en", fields: { description: "Track AI costs" } },
+    ]).length === 0,
+    "一致时无差异",
+  );
+}
+
 if (errors) process.exit(1);
-console.log("done");
+console.log("🎉 All store-submission tests passed!");

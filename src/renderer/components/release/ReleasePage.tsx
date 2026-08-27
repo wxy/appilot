@@ -37,6 +37,15 @@ import { ReferenceSection } from "./ReferenceSection";
 import { draftVersionLabel } from "./releaseFormat";
 import { ValueFlash } from "../ui/ValueFlash";
 
+const ALIGNMENT_FIELD_LABEL: Record<string, string> = {
+  name: "名称",
+  subtitle: "副标题",
+  promotionalText: "推广文本",
+  description: "描述",
+  whatsNew: "新增内容",
+  keywords: "关键词",
+};
+
 export function ReleasePage() {
   const { projects, currentProjectId, currentProductId, selectProduct } = useProject();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -69,6 +78,14 @@ export function ReleasePage() {
   const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
   const [ascRefreshing, setAscRefreshing] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [alignment, setAlignment] = useState<{
+    mode: "asc" | "public";
+    versionMatched: boolean;
+    diffs: { language: string; field: string; local: string; store: string }[];
+    applied?: boolean;
+  } | null>(null);
+  const [aligning, setAligning] = useState(false);
+  const [applyingAlignment, setApplyingAlignment] = useState(false);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -419,18 +436,34 @@ export function ReleasePage() {
       )}
     </>
   ) : null;
-  const storeActions = effectiveVersionStatus?.key === "ready-for-sale" && !storeAligned ? (
-    <button
-      type="button"
-      onClick={() => void handleRebuildFromStore()}
-      disabled={rebuilding}
-      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-50"
-      title="从 App Store 回读完整文案，重建本地丢失的文案"
-    >
-      <AppleIcon className="w-3 h-3" />
-      {rebuilding ? "重建中…" : "根据此版本重建文案"}
-    </button>
-  ) : null;
+  const storeActions = (
+    <>
+      {draft && (
+        <button
+          type="button"
+          onClick={() => void handleAlignmentCheck()}
+          disabled={aligning}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-50"
+          title="把本地文案与商店实际文案逐语言比对（有 ASC 凭证时完整字段；否则公开商店的描述/新增内容）"
+        >
+          <AppleIcon className="w-3 h-3" />
+          {aligning ? "校验中…" : "校验与商店对齐"}
+        </button>
+      )}
+      {effectiveVersionStatus?.key === "ready-for-sale" && !storeAligned && (
+        <button
+          type="button"
+          onClick={() => void handleRebuildFromStore()}
+          disabled={rebuilding}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-50"
+          title="从 App Store 回读完整文案，重建本地丢失的文案"
+        >
+          <AppleIcon className="w-3 h-3" />
+          {rebuilding ? "重建中…" : "根据此版本重建文案"}
+        </button>
+      )}
+    </>
+  );
   const alerts =
     effectiveVersionStatus?.key === "not-in-asc" ||
     (effectiveVersionStatus?.key === "unknown" && effectiveVersionStatus.source === "none") ||
@@ -557,6 +590,47 @@ export function ReleasePage() {
       setError(e.message || "从商店重建文案失败。");
     } finally {
       setRebuilding(false);
+    }
+  };
+
+  const handleAlignmentCheck = async () => {
+    if (!project?.id || !productId || !selectedTag || !draft || aligning) return;
+    setAligning(true);
+    setError("");
+    try {
+      const result = await (window as any).appilot.alignment.check(
+        project.id,
+        productId,
+        draft.releaseTag,
+      );
+      setAlignment(result || null);
+    } catch (e: any) {
+      setError(e.message || "对齐校验失败。");
+    } finally {
+      setAligning(false);
+    }
+  };
+
+  const handleAlignmentApply = async () => {
+    if (!project?.id || !productId || !draft || applyingAlignment) return;
+    setApplyingAlignment(true);
+    setError("");
+    try {
+      const result = await (window as any).appilot.alignment.apply(
+        project.id,
+        productId,
+        draft.releaseTag,
+      );
+      setAlignment(result || null);
+      if (result?.applied) {
+        setActive(null);
+        setHistoryDraft(null);
+        await loadReleases(false);
+      }
+    } catch (e: any) {
+      setError(e.message || "应用商店文案失败。");
+    } finally {
+      setApplyingAlignment(false);
     }
   };
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
@@ -918,6 +992,85 @@ export function ReleasePage() {
             checkingGithub={checking}
           />
         </div>
+        {alignment && (
+          <div className="mb-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  与商店对齐
+                </h4>
+                <StatusChip
+                  label={
+                    alignment.mode === "asc"
+                      ? "ASC 完整比对"
+                      : "公开商店部分比对"
+                  }
+                  tone={alignment.mode === "asc" ? "blue" : "amber"}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setAlignment(null)}
+                className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="p-4">
+              {!alignment.versionMatched ? (
+                <p className="text-xs text-amber-600 dark:text-amber-500">
+                  商店当前版本与目标版本不一致，无法核对（可先检查 App Store 版本刷新）。
+                </p>
+              ) : alignment.diffs.length === 0 ? (
+                <p className="text-xs text-emerald-600 dark:text-emerald-500">
+                  {alignment.applied ? "已应用商店文案。" : "本地文案与商店实际文案一致。"}
+                </p>
+              ) : (
+                <>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+                    发现 {alignment.diffs.length} 处差异（
+                    {alignment.mode === "asc" ? "完整字段" : "描述 / 新增内容"}）：
+                  </p>
+                  <div className="max-h-72 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-700 divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {alignment.diffs.map((diff, index) => (
+                      <div key={`${diff.language}:${diff.field}:${index}`} className="px-3 py-2">
+                        <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                          {languageLabel(diff.language)} ·{" "}
+                          {ALIGNMENT_FIELD_LABEL[diff.field] || diff.field}
+                        </p>
+                        <p className="text-[11px] mt-0.5 text-zinc-500 dark:text-zinc-400 line-clamp-3">
+                          <span className="text-zinc-400 dark:text-zinc-500">本地：</span>
+                          {diff.local || "（空）"}
+                        </p>
+                        <p className="text-[11px] text-emerald-700 dark:text-emerald-400 line-clamp-3">
+                          <span className="text-emerald-600/70 dark:text-emerald-500/70">商店：</span>
+                          {diff.store || "（空）"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleAlignmentApply()}
+                      disabled={applyingAlignment}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                    >
+                      {applyingAlignment ? "应用中…" : "应用商店版本"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAlignment(null)}
+                      className="inline-flex items-center px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+                    >
+                      保留本地
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0 space-y-4">
             {step <= 2 && releaseContext && (
