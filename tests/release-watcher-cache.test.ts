@@ -109,6 +109,22 @@ async function runTests() {
       prCallsOtherToken > prCallsSameToken,
       "different token bypasses the PR cache (token-aware key)",
     );
+
+    // 4. Empty cached PR list (written by a pre-PR-fetch build) must not be
+    // trusted — the workbench refetches instead of showing a blank summary.
+    const emptyCacheCalls = calls.length;
+    await checkForRelease(dir, null, undefined, {
+      sync: false,
+      githubCache: {
+        tag: "v1.0.0",
+        release: { name: "cached", body: "cached body", publishedAt: null, url: null },
+        pullRequests: [],
+      },
+    });
+    assert(
+      calls.length > emptyCacheCalls,
+      "empty cached PR list triggers a fresh PR fetch",
+    );
   } finally {
     globalThis.fetch = origFetch;
   }

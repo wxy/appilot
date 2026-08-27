@@ -33,10 +33,14 @@ async function runTests() {
   const dir = setupRepo();
   const calls: { url: string; auth: string }[] = [];
   let status = 200;
+  let rejectToken = false;
   const origFetch = globalThis.fetch;
   globalThis.fetch = (async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : String(input);
     calls.push({ url, auth: init?.headers?.Authorization || "" });
+    if (rejectToken && init?.headers?.Authorization) {
+      return new Response("bad credentials", { status: 401 });
+    }
     if (status !== 200) return new Response("not found", { status });
     if (url.includes("/commits")) {
       const num = url.match(/\/pulls\/(\d+)\/commits/)?.[1] || "0";
@@ -134,6 +138,17 @@ async function runTests() {
     await fetchPullRequests(dir, [{ number: 1, title: "local" }], "ghp_other");
     const other = calls.filter((c) => c.url.includes("/pulls/")).length;
     assert(other > same, "different token bypasses the PR cache");
+
+    // Rejected token ⇒ anonymous retry for public repos.
+    rejectToken = true;
+    const anon = await fetchPullRequests(dir, [{ number: 1, title: "local" }], "ghp_bad");
+    assert(anon[0]?.title === "PR #1 real", "rejected token retries anonymously");
+    assert(anon[0]?.viaToken === false, "anonymous fallback flags viaToken=false");
+    assert(
+      calls.filter((c) => c.url.includes("/pulls/1") && c.auth === "").length >= 1,
+      "anonymous retry sends no Authorization header",
+    );
+    rejectToken = false;
 
     // fetchMergedPullRequests: merged-PR list + per-PR commit shas + cutoff.
     const listCallsBefore = calls.length;

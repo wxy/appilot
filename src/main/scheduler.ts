@@ -168,6 +168,14 @@ function githubSyncTaskId(projectId: string): string {
   return `github-sync:${projectId}`;
 }
 
+/**
+ * Bump when the shape of the cached PR list changes (e.g. new fields like
+ * titles/commit counts/commit shas). Entries written by older builds must not
+ * be trusted — the workbench would otherwise reuse an empty/stale PR list
+ * instead of fetching fresh data.
+ */
+const GITHUB_SYNC_CACHE_PR_SCHEMA = 2;
+
 /** Fresh pre-warmed GitHub data for a project, or null when stale/mismatched. */
 export function githubSyncCacheEntry(
   s: any,
@@ -178,10 +186,14 @@ export function githubSyncCacheEntry(
   if (!entry) return null;
   if (new Date(entry.syncedAt).getTime() < Date.now() - 60 * 60_000) return null;
   if ((entry.lastSeenSha || null) !== (project?.lastReleaseSha || null)) return null;
+  const pullRequests =
+    entry.prSchemaVersion === GITHUB_SYNC_CACHE_PR_SCHEMA
+      ? entry.pullRequests || []
+      : [];
   return {
     tag: entry.tag ?? null,
     release: entry.release ?? null,
-    pullRequests: entry.pullRequests || [],
+    pullRequests,
   };
 }
 
@@ -695,6 +707,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       tag: release?.tag || null,
       release: material?.githubRelease ?? null,
       pullRequests: material?.pullRequests || [],
+      prSchemaVersion: GITHUB_SYNC_CACHE_PR_SCHEMA,
       releases: githubReleases,
       lastSeenSha: project.lastReleaseSha || null,
       syncedAt: new Date().toISOString(),

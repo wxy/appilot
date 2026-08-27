@@ -589,9 +589,14 @@ export async function checkForRelease(
 
   const cacheMatches =
     Boolean(releaseTag) && options.githubCache?.tag === releaseTag?.name;
+  // Only trust cached PR lists that actually carry data. An empty cached list
+  // usually means the sync ran before PR enrichment existed (or the API was
+  // down), so refetch instead of showing a blank summary.
   const pullRequests =
-    cacheMatches && options.githubCache
-      ? (options.githubCache.pullRequests ?? material.pullRequests)
+    cacheMatches &&
+    options.githubCache &&
+    (options.githubCache.pullRequests?.length ?? 0) > 0
+      ? options.githubCache.pullRequests
       : await resolveReleasePullRequests(
           localPath,
           material,

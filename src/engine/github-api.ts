@@ -166,14 +166,22 @@ export async function fetchMergedPullRequests(
         const url =
           `https://api.github.com/repos/${ownerRepo}/pulls` +
           `?state=closed&base=${base}&sort=updated&direction=desc&per_page=100&page=${page}`;
-        const response = await fetch(url, {
+        let response = await fetch(url, {
           headers: githubHeaders(token),
           signal: controller.signal,
         });
+        let effectiveToken = Boolean(token);
+        if (token && (response.status === 401 || response.status === 403)) {
+          response = await fetch(url, {
+            headers: githubHeaders(null),
+            signal: controller.signal,
+          });
+          effectiveToken = false;
+        }
         if (!response.ok) break;
         const raw = await response.text();
         onStats?.(
-          url.length + (token ? token.length + 24 : 0),
+          url.length + (effectiveToken ? token!.length + 24 : 0),
           raw.length,
         );
         const data: any[] = JSON.parse(raw);
@@ -190,7 +198,7 @@ export async function fetchMergedPullRequests(
             title: typeof item.title === "string" ? item.title : null,
             body: typeof item.body === "string" ? item.body : "",
             url: typeof item.html_url === "string" ? item.html_url : null,
-            viaToken: Boolean(token),
+            viaToken: effectiveToken,
             commits: typeof item.commits === "number" ? item.commits : undefined,
             mergedAt,
           });
@@ -390,28 +398,42 @@ export async function fetchPullRequests(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 4000);
       try {
-        const response = await fetch(
-          `https://api.github.com/repos/${ownerRepo}/pulls/${ref.number}`,
-          {
-            headers: {
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              Accept: "application/vnd.github+json",
-              "User-Agent": "appilot",
-            },
+        const url = `https://api.github.com/repos/${ownerRepo}/pulls/${ref.number}`;
+        let response = await fetch(url, {
+          headers: githubHeaders(token),
+          signal: controller.signal,
+        });
+        let effectiveToken = Boolean(token);
+        if (token && (response.status === 401 || response.status === 403)) {
+          // The saved token is rejected (expired/revoked). Retry anonymously
+          // so public repos still surface PR titles under the degradation
+          // ladder; private repos simply keep the locally derived reference.
+          response = await fetch(url, {
+            headers: githubHeaders(null),
             signal: controller.signal,
-          },
-        );
+          });
+          effectiveToken = false;
+        }
         if (!response.ok) return { number: ref.number, title: ref.title };
         const raw = await response.text();
         const data: any = JSON.parse(raw);
-        onStats?.(ref.number.toString().length + (token ? token.length + 24 : 0) + 60, raw.length);
+        onStats?.(
+          ref.number.toString().length + (effectiveToken ? token!.length + 24 : 0) + 60,
+          raw.length,
+        );
         const info = {
           title: typeof data.title === "string" ? data.title : ref.title,
           body: typeof data.body === "string" ? data.body : "",
           url: typeof data.html_url === "string" ? data.html_url : null,
-          viaToken: Boolean(token),
+          viaToken: effectiveToken,
         };
         prInfoCache.set(cacheKey, { at: Date.now(), info });
+        if (!effectiveToken && token) {
+          prInfoCache.set(`${ownerRepo}#${ref.number}#anon`, {
+            at: Date.now(),
+            info,
+          });
+        }
         return { number: ref.number, ...info };
       } catch {
         return { number: ref.number, title: ref.title };
