@@ -160,7 +160,7 @@ export function permissionsCheck(
 ): {
   status: "pass" | "warn";
   detail: string;
-  items: string[];
+  items: { label: string; kind: "permission" | "capability" }[];
 } {
   if (foundKeys.length === 0) {
     return {
@@ -170,12 +170,12 @@ export function permissionsCheck(
       items: [],
     };
   }
-  const items = foundKeys.map(
-    (key) =>
-      `${permissionLabel(key)}${
-        coverage[key] ? `（${coverage[key]} 语言本地化）` : ""
-      }`,
-  );
+  const items = foundKeys.map((key) => ({
+    label: `${permissionLabel(key)}${
+      coverage[key] ? `（${coverage[key]} 语言本地化）` : ""
+    }`,
+    kind: "permission" as const,
+  }));
   return {
     status: "pass",
     detail: `已声明 ${items.length} 项权限用途说明`,

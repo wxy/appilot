@@ -1066,30 +1066,34 @@ export function registerProjectsHandlers(): void {
         );
       }
       // 支持语言从“当前分支”的仓库重新检测并与已存语言合并：分支新增语言
-      // 无需等 PR 合并即可被识别（本地工作区即当前分支）。
+      // 无需等 PR 合并即可被识别（本地工作区即当前分支）。检测失败不静默，
+      // 记日志便于排查。
       let detectedLanguages: string[] = [];
+      let languageDisplayNameFn: (code: string) => string = (code) => code;
       try {
         const { detectLocalizedLanguages, languageDisplayName } = await import(
           "../../engine/app-store-discovery"
         );
         detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
-        const stored = (product.supportedLanguages || []).map((l: any) =>
-          String(l?.code || ""),
+        languageDisplayNameFn = languageDisplayName;
+        log.warn(
+          `Checklist language detection: ${detectedLanguages.length} languages detected for ${project.localPath}`,
         );
-        const merged = Array.from(new Set([...stored, ...detectedLanguages]));
-        if (merged.length !== stored.length) {
-          product.supportedLanguages = merged.map((code) => ({
-            code,
-            name: languageDisplayName(code),
-          }));
-          project.supportedLanguages = product.supportedLanguages;
-        }
-      } catch {
-        // 检测失败时沿用已存语言
+      } catch (err: any) {
+        log.warn(`Checklist language detection failed: ${err.message}`);
       }
-      const languages = (product.supportedLanguages || []).map((l: any) =>
+      const stored = (product.supportedLanguages || []).map((l: any) =>
         String(l?.code || ""),
       );
+      // 直接取并集用于本次生成，并持久化回产品，让整个应用识别新语言。
+      const languages = Array.from(new Set([...stored, ...detectedLanguages]));
+      if (languages.length !== stored.length) {
+        product.supportedLanguages = languages.map((code) => ({
+          code,
+          name: languageDisplayNameFn(code),
+        }));
+        project.supportedLanguages = product.supportedLanguages;
+      }
       const inputs: {
         language: string;
         currentName: string;
@@ -1272,7 +1276,10 @@ export function registerProjectsHandlers(): void {
       const permCheck = permissionsCheck(uniquePermissionKeys, coverage);
       if (capabilityKeys.length > 0) {
         permCheck.items.push(
-          ...Array.from(new Set(capabilityKeys)).map(capabilityLabel),
+          ...Array.from(new Set(capabilityKeys)).map((key) => ({
+            label: capabilityLabel(key),
+            kind: "capability" as const,
+          })),
         );
         permCheck.detail += `，另有 ${Array.from(new Set(capabilityKeys)).length} 项能力`;
       }

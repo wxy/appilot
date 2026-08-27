@@ -113,15 +113,27 @@ export function PreReleaseChecklistPanel({
                           {check.detail}
                         </p>
                         {(check.items || []).length > 0 && (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {(check.items || []).map((item: string) => (
-                              <span
-                                key={item}
-                                className="px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-600 dark:text-zinc-300"
-                              >
-                                {item}
-                              </span>
-                            ))}
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {(check.items || []).map(
+                              (item: { label: string; kind?: string }, index: number) => (
+                                <span
+                                  key={`${item.kind}:${item.label}:${index}`}
+                                  className={cn(
+                                    "px-1.5 py-0.5 rounded-md text-[10px]",
+                                    item.kind === "capability"
+                                      ? "bg-violet-100 dark:bg-violet-500/15 text-violet-700 dark:text-violet-400"
+                                      : "bg-sky-100 dark:bg-sky-500/15 text-sky-700 dark:text-sky-400",
+                                  )}
+                                  title={
+                                    item.kind === "capability"
+                                      ? "能力（entitlements）"
+                                      : "权限用途说明"
+                                  }
+                                >
+                                  {item.label}
+                                </span>
+                              ),
+                            )}
                           </div>
                         )}
                       </div>

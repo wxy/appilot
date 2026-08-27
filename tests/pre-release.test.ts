@@ -91,12 +91,17 @@ assert.equal(
 assert(
   permissionsCheck(["NSMotionUsageDescription", "NSCameraUsageDescription"], {
     NSCameraUsageDescription: 11,
-  }).items.some((item) => item.includes("11 语言本地化")),
+  }).items.some((item) => item.label.includes("11 语言本地化")),
   "权限检查输出人类可读条目与本地化覆盖",
 );
 assert(
-  permissionsCheck(["NSCameraUsageDescription"]).items[0].startsWith("相机"),
+  permissionsCheck(["NSCameraUsageDescription"]).items[0].label.startsWith("相机"),
   "权限键映射为人类可读名称",
+);
+assert.equal(
+  permissionsCheck(["NSCameraUsageDescription"]).items[0].kind,
+  "permission",
+  "权限条目标记 kind=permission",
 );
 assert.equal(
   capabilityLabel("com.apple.developer.weatherkit"),
