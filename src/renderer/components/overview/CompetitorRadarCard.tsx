@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { storefrontDisplayName } from "../../../engine/storefronts";
-import { formatHumanTime } from "../../lib/format";
+import { formatHumanTime, platformLabel } from "../../lib/format";
 
 export function CompetitorRadarCard({ project }: { project: any }) {
   const [competitors, setCompetitors] = useState<any[]>([]);
@@ -55,14 +55,35 @@ export function CompetitorRadarCard({ project }: { project: any }) {
         <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
           {top3.map((competitor) => {
             const items = snapshots[competitor.id] || [];
-            const latest = items[0] || null;
-            const previous = items.find((item: any) => item.date !== latest?.date) || items[1] || null;
+            // 快照按平台分别采集：取最近更新的平台做版本/星级对比，
+            // 避免把 iOS 与 macOS 两个列表的版本变化混在一起。
+            const byPlatform: Record<string, any[]> = {};
+            for (const item of items) {
+              const key = item.platform || "unknown";
+              (byPlatform[key] = byPlatform[key] || []).push(item);
+            }
+            const latestPlatformKey = Object.keys(byPlatform).sort(
+              (a, b) =>
+                new Date(byPlatform[b][0].date).getTime() -
+                new Date(byPlatform[a][0].date).getTime(),
+            )[0];
+            const platformItems = latestPlatformKey
+              ? byPlatform[latestPlatformKey]
+              : [];
+            const latest = platformItems[0] || null;
+            const previous =
+              platformItems.find((item: any) => item.date !== latest?.date) ||
+              platformItems[1] ||
+              null;
             const versionChanged = latest?.version && previous?.version && latest.version !== previous.version;
             const starsDelta = latest?.stars != null && previous?.stars != null ? latest.stars - previous.stars : null;
             const ranks = rankSnapshots[competitor.id] || [];
             const latestRanks = Array.from(
               new Map(
-                ranks.map((r: any) => [`${r.keyword}\u0000${r.storefront}`, r]),
+                ranks.map(
+                  (r: any) =>
+                    [`${r.keyword}\u0000${r.storefront}\u0000${r.platform || "?"}`, r] as const,
+                ),
               ).values(),
             )
               .sort((a: any, b: any) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime())
@@ -73,7 +94,9 @@ export function CompetitorRadarCard({ project }: { project: any }) {
                   <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{competitor.name}</span>
                   {latest?.releaseDate && (
                     <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0">
-                      {latest.country ? `${storefrontDisplayName(latest.country)} · ` : ""}{formatHumanTime(latest.releaseDate)} 发版
+                      {latest.platform ? `${platformLabel(latest.platform)} · ` : ""}
+                      {latest.country ? `${storefrontDisplayName(latest.country)} · ` : ""}
+                      {formatHumanTime(latest.releaseDate)} 发版
                     </span>
                   )}
                 </div>
@@ -90,7 +113,8 @@ export function CompetitorRadarCard({ project }: { project: any }) {
                         key={`${rank.keyword}:${rank.storefront}:${index}`}
                         className="text-[10px] text-zinc-400 dark:text-zinc-500"
                       >
-                        {rank.keyword} · {storefrontDisplayName(rank.storefront)} #
+                        {rank.keyword} · {rank.platform ? `${platformLabel(rank.platform)} · ` : ""}
+                        {storefrontDisplayName(rank.storefront)} #
                         {rank.rank ?? "未上榜"}
                       </span>
                     ))}

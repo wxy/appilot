@@ -29,7 +29,7 @@ contextBridge.exposeInMainWorld("appilot", {
 
   competitors: {
     list: (projectId: string): Promise<any[]> => ipcRenderer.invoke("competitors:list", projectId),
-    save: (projectId: string, competitor: any): Promise<any[]> =>
+    save: (projectId: string, competitor: any): Promise<{ list: any[]; merged: boolean }> =>
       ipcRenderer.invoke("competitors:save", projectId, competitor),
     remove: (projectId: string, competitorId: string): Promise<boolean> =>
       ipcRenderer.invoke("competitors:remove", projectId, competitorId),
@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("readiness:get", projectId, draftId),
     check: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
       ipcRenderer.invoke("readiness:check", projectId, productId, releaseTag),
+  },
+  alignment: {
+    check: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("alignment:check", projectId, productId, releaseTag),
+    apply: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
+      ipcRenderer.invoke("alignment:apply", projectId, productId, releaseTag),
   },
 
   dialog: {
@@ -211,6 +217,10 @@ contextBridge.exposeInMainWorld("appilot", {
 
   scheduler: {
     status: (): Promise<any> => ipcRenderer.invoke("scheduler:status"),
+    setAccel: (enabled: boolean): Promise<boolean> =>
+      ipcRenderer.invoke("scheduler:setAccel", enabled),
+    overview: (): Promise<any> => ipcRenderer.invoke("scheduler:overview"),
+    timeline: (): Promise<any> => ipcRenderer.invoke("scheduler:timeline"),
     list: (): Promise<any> => ipcRenderer.invoke("scheduler:list"),
     runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
   },

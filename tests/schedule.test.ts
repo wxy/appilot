@@ -10,6 +10,7 @@ import {
   prioritizeGroupCompletion,
   pruneRoundMembers,
   rankGroupKey,
+  rebalanceCollapsedTasks,
 } from "../src/main/schedule";
 
 const MIN = 60_000;
@@ -164,6 +165,88 @@ console.log("✅ PASS: markRoundTaskDone completes a round only when every membe
   // A duplicate completion must not double-complete.
   const dup = markRoundTaskDone(third.state, "a", t(4));
   assert.equal(dup.completed, false);
+}
+
+console.log("✅ PASS: rebalanceCollapsedTasks spreads a collapsed batch to stable phases");
+{
+  const now = new Date("2026-08-24T02:00:00Z");
+  const collapsedAt = new Date(now.getTime() + 23 * HOUR).toISOString();
+  const tasks = Array.from({ length: 120 }, (_, i) => ({
+    id: `rank:${i}`,
+    kind: "rank",
+    enabled: true,
+    intervalMinutes: 1440,
+    nextRunAt: collapsedAt,
+  }));
+  const { tasks: next, changed } = rebalanceCollapsedTasks(tasks, now);
+  assert.equal(changed, true, "large same-minute batch is detected");
+  const times = next.map((t) => Date.parse(t.nextRunAt)).sort((a, b) => a - b);
+  assert.equal(next.length, 120);
+  assert.ok(
+    new Set(times.map((ts) => Math.floor(ts / MIN))).size > 100,
+    "rebalanced times are spread across distinct minutes",
+  );
+  assert.ok(times[0] > now.getTime(), "next run stays in the future");
+}
+
+console.log("✅ PASS: rebalanceCollapsedTasks leaves small batches untouched");
+{
+  const now = new Date("2026-08-24T02:00:00Z");
+  const shared = new Date(now.getTime() + 23 * HOUR).toISOString();
+  const tasks = [
+    { id: "a", kind: "rank", enabled: true, intervalMinutes: 1440, nextRunAt: shared },
+    { id: "b", kind: "rank", enabled: true, intervalMinutes: 1440, nextRunAt: shared },
+    { id: "c", kind: "rank", enabled: true, intervalMinutes: 1440, nextRunAt: shared },
+  ];
+  const { tasks: next, changed } = rebalanceCollapsedTasks(tasks, now);
+  assert.equal(changed, false, "small batch is a normal phase collision, not a collapse");
+  assert.deepEqual(next, tasks);
+}
+
+console.log("✅ PASS: rebalanceCollapsedTasks skips overdue and disabled tasks");
+{
+  const now = new Date("2026-08-24T02:00:00Z");
+  const overdueAt = new Date(now.getTime() - HOUR).toISOString();
+  const futureAt = new Date(now.getTime() + 23 * HOUR).toISOString();
+  const tasks = [
+    { id: "a", kind: "rank", enabled: true, intervalMinutes: 1440, nextRunAt: overdueAt },
+    { id: "b", kind: "rank", enabled: false, intervalMinutes: 1440, nextRunAt: futureAt },
+  ];
+  const { tasks: next, changed } = rebalanceCollapsedTasks(tasks, now);
+  assert.equal(changed, false);
+  assert.equal(next[0].nextRunAt, overdueAt);
+  assert.equal(next[1].nextRunAt, futureAt);
+}
+
+console.log("✅ PASS: rebalanceCollapsedTasks threshold scales with enabled task count");
+{
+  const now = new Date("2026-08-24T02:00:00Z");
+  const collapsedAt = new Date(now.getTime() + 23 * HOUR).toISOString();
+  // 3000 个启用任务时阈值按 5% 升到 150：150 个同分钟视为坍缩，
+  // 100 个同分钟不视为坍缩（失败重试批的规模）。
+  const big = Array.from({ length: 3000 }, (_, i) => ({
+    id: `r:${i}`,
+    kind: "rank",
+    enabled: true,
+    intervalMinutes: 1440,
+    nextRunAt: i < 150 ? collapsedAt : new Date(now.getTime() + 25 * HOUR + i * MIN).toISOString(),
+  }));
+  const collapsed = rebalanceCollapsedTasks(big, now);
+  assert.equal(collapsed.changed, true, "150 same-minute tasks trigger at scaled threshold");
+  assert.equal(
+    collapsed.tasks.filter((t) => t.nextRunAt === collapsedAt).length < 10,
+    true,
+    "collapsed batch is re-spread (only phase collisions remain)",
+  );
+  const small = Array.from({ length: 3000 }, (_, i) => ({
+    id: `s:${i}`,
+    kind: "rank",
+    enabled: true,
+    intervalMinutes: 1440,
+    nextRunAt: i < 100 ? collapsedAt : new Date(now.getTime() + 25 * HOUR + i * MIN).toISOString(),
+  }));
+  const untouched = rebalanceCollapsedTasks(small, now);
+  assert.equal(untouched.changed, false, "100 same-minute tasks stay below the scaled threshold");
 }
 
 console.log("\n🎉 All schedule tests passed!");

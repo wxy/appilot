@@ -27,12 +27,14 @@ export function TaskCenterPage() {
     running: boolean;
     nowRunning: any;
     overview: any;
-    timeline: {
-      recent: { hour: number; success: number; failed: number }[];
-      upcoming: { hour: number; count: number }[];
-    };
     tasks: any[];
   } | null>(null);
+  const [timeline, setTimeline] = useState<{
+    recent: { hour: number; success: number; failed: number }[];
+    upcoming: { hour: number; count: number }[];
+  } | undefined>(undefined);
+  const [accel, setAccel] = useState(false);
+  const [accelRemainingMs, setAccelRemainingMs] = useState<number | null>(null);
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
@@ -49,26 +51,88 @@ export function TaskCenterPage() {
           if (!cancelled) setData(null);
         });
     };
+    const refreshTimeline = () => {
+      (window as any).appilot?.scheduler?.timeline()
+        .then((next: any) => {
+          if (!cancelled) setTimeline(next);
+        })
+        .catch(() => undefined);
+    };
     refresh();
-    const timer = window.setInterval(refresh, 15_000);
+    refreshTimeline();
+    // 加速模式下刷新更频繁（5 秒），正常 15 秒。
+    const timer = window.setInterval(refresh, accel ? 5_000 : 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
+  }, [accel]);
+
+  // 读取当前加速模式状态。
+  useEffect(() => {
+    (window as any).appilot?.scheduler?.status()
+      .then((status: any) => {
+        setAccel(Boolean(status?.accel));
+        setAccelRemainingMs(
+          typeof status?.accelRemainingMs === "number" ? status.accelRemainingMs : null,
+        );
+      })
+      .catch(() => undefined);
   }, []);
 
-  // 主进程数据变更推送：任务状态变化时立即刷新（不用等 15 秒轮询）。
+  // 主进程数据变更推送：任务状态变化时立即刷新（节流 1.5 秒，避免每任务全量重拉）。
   useEffect(() => {
+    let last = 0;
     const handler = (e: Event) => {
       if ((e as CustomEvent).detail === "tasks") {
-        (window as any).appilot?.scheduler?.list()
-          .then(setData)
+        // 统计面板轻量、即时刷新；任务列表节流刷新。
+        (window as any).appilot?.scheduler?.overview()
+          .then(({ overview, nowRunning }: any) =>
+            setData((prev) =>
+              prev ? { ...prev, overview, nowRunning } : prev,
+            ),
+          )
           .catch(() => undefined);
+        if (Date.now() - last > 800) {
+          last = Date.now();
+          (window as any).appilot?.scheduler?.list()
+            .then(setData)
+            .catch(() => undefined);
+          (window as any).appilot?.scheduler?.timeline()
+            .then(setTimeline)
+            .catch(() => undefined);
+        }
       }
     };
     window.addEventListener("appilot:data-changed", handler);
     return () => window.removeEventListener("appilot:data-changed", handler);
   }, []);
+
+  // 加速倒计时本地每秒递减，按钮上的秒数即时变化。
+  useEffect(() => {
+    if (!accel) return;
+    const timer = window.setInterval(() => {
+      setAccelRemainingMs((prev) =>
+        prev != null ? Math.max(0, prev - 1000) : prev,
+      );
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [accel]);
+
+  // 倒计时归零：立即触发主进程解除（不用等下一轮调度检测），
+  // 未执行任务会被重新排回未来时段。
+  useEffect(() => {
+    if (!accel || accelRemainingMs == null || accelRemainingMs > 0) return;
+    (window as any).appilot?.scheduler?.setAccel(false)
+      .then(() => {
+        setAccel(false);
+        setAccelRemainingMs(null);
+        (window as any).appilot?.scheduler?.list()
+          .then(setData)
+          .catch(() => undefined);
+      })
+      .catch(() => undefined);
+  }, [accel, accelRemainingMs]);
 
   const projectOptions = Array.from(
     new Set(
@@ -99,7 +163,6 @@ export function TaskCenterPage() {
   const failedGroups = groupTasks(failed);
   const overview = data?.overview;
   const nowRunning = data?.nowRunning;
-  const timeline = data?.timeline;
 
   return (
     <div className="p-10 max-w-7xl mx-auto">
@@ -118,6 +181,49 @@ export function TaskCenterPage() {
               {nowRunning.kind === "github-sync" ? "GitHub 同步" : nowRunning.keyword}
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => {
+              // 未开启 → 开启；已开启 → 延长 5 分钟。
+              (window as any).appilot?.scheduler?.setAccel(true)
+                .then(() => {
+                  setAccel(true);
+                  (window as any).appilot?.scheduler?.list()
+                    .then(setData)
+                    .catch(() => undefined);
+                  (window as any).appilot?.scheduler?.status()
+                    .then((st: any) =>
+                      setAccelRemainingMs(
+                        typeof st?.accelRemainingMs === "number" ? st.accelRemainingMs : null,
+                      ),
+                    )
+                    .catch(() => undefined);
+                })
+                .catch(() => undefined);
+            }}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+              accel
+                ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
+            )}
+            title={
+              accel
+                ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
+                : "开启加速模式，以更快速度处理积压任务"
+            }
+          >
+            {accel ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                {accelRemainingMs != null
+                  ? `加速中 · ${Math.ceil(accelRemainingMs / 1000)} 秒后自动解除`
+                  : "加速模式（开）"}
+              </>
+            ) : (
+              "加速模式"
+            )}
+          </button>
           <span
             className={cn(
               "px-2.5 py-1 rounded-full text-xs font-medium",
@@ -179,7 +285,7 @@ export function TaskCenterPage() {
             label="下次执行"
             value={
               overview.overdue > 0
-                ? `待执行 ×${overview.overdue}`
+                ? `积压 ×${overview.overdue}`
                 : overview.nextDueAt
                   ? formatHumanTime(overview.nextDueAt)
                   : "—"
@@ -189,7 +295,7 @@ export function TaskCenterPage() {
         </div>
       )}
 
-      <TaskTimelineChart timeline={timeline} />
+      <TaskTimelineChart timeline={timeline} accel={accel} />
 
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
         <select
@@ -279,11 +385,13 @@ function niceStep(target: number): number {
 
 function TaskTimelineChart({
   timeline,
+  accel,
 }: {
   timeline?: {
     recent: { hour: number; success: number; failed: number }[];
     upcoming: { hour: number; count: number }[];
   };
+  accel?: boolean;
 }) {
   const [hovered, setHovered] = useState<{
     index: number;
@@ -361,7 +469,9 @@ function TaskTimelineChart({
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">执行时间线</h3>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-          每小时计划任务与实际执行叠加（悬停查看详情）
+          {accel
+            ? "加速模式：从后续时段逐批提取任务执行，处理完自动解除"
+            : "每小时计划任务与实际执行叠加（悬停查看详情）"}
         </p>
       </div>
       <div className="px-6 py-4 relative">
@@ -654,19 +764,27 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             </span>
             <div className="min-w-0">
               <div className="flex items-center gap-1 min-w-0">
-                <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                  {group.kind === "rank"
-                    ? `${group.projectName} · ${group.productName} · ${
-                        group.platform === "ios"
-                          ? "iOS"
-                          : group.platform === "macos"
-                            ? "macOS"
-                            : "未识别"
-                      } · ${languageLabel(group.queryLanguage || "")} · ${
-                        storefrontDisplayName(group.storefront || "")
-                      } · ${group.tasks.length} 个关键词`
-                    : `${group.projectName} · ${KIND_LABELS[group.kind] || group.kind}`}
-                </div>
+                {group.kind === "rank" ? (
+                  <>
+                    <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                      {group.productName} ·{" "}
+                      {group.platform === "ios"
+                        ? "iOS"
+                        : group.platform === "macos"
+                          ? "macOS"
+                          : "未识别"}
+                    </div>
+                    <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                      {storefrontDisplayName(group.storefront || "")} ·{" "}
+                      {languageLabel(group.queryLanguage || "")} ·{" "}
+                      {group.tasks.length} 个关键词
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                    {group.projectName} · {KIND_LABELS[group.kind] || group.kind}
+                  </div>
+                )}
                 {group.kind === "github-sync" && (
                   <span title="依赖 GitHub 凭证" className="shrink-0">
                     <GithubIcon className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />

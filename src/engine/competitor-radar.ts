@@ -6,6 +6,8 @@ export interface Competitor {
   name: string;
   trackId: string | null;
   platform: "ios" | "macos" | "unknown";
+  /** 按平台区分的商店 ID：同一品牌可同时有 iOS / macOS 两个列表。 */
+  trackIds?: { ios?: string | null; macos?: string | null };
   githubUrl: string | null;
   notes: string;
   addedAt: string;
@@ -16,6 +18,8 @@ export interface Competitor {
 export interface CompetitorCandidate {
   trackId: string;
   trackName: string;
+  /** 该候选所属的平台列表（决定用 software 还是 macSoftware 搜索）。 */
+  platform: "ios" | "macos";
   /** 首张截图（App Store 商品图）。 */
   screenshotUrl: string | null;
   subtitle: string | null;
@@ -36,6 +40,8 @@ export interface CompetitorSnapshot {
   date: string;
   /** 采集该快照的商店。 */
   country: string;
+  /** 快照对应的平台列表。 */
+  platform: "ios" | "macos";
   version: string | null;
   releaseDate: string | null;
   price: number | null;
@@ -49,15 +55,72 @@ export interface CompetitorRankSnapshot {
   keyword: string;
   language: string;
   storefront: string;
+  /** 采集平台：ios=software 实体，macos=macSoftware 实体。 */
+  platform: "ios" | "macos";
   rank: number | null;
   checkedAt: string;
 }
 
 export function createCompetitor(input: Omit<Competitor, "id" | "addedAt">): Competitor {
-  const id = input.trackId
-    ? `cid-${input.trackId}`
+  const trackIds = { ...(input.trackIds || {}) };
+  const trackId = input.trackId
+    ? String(input.trackId)
+    : (Object.values(trackIds)[0] ?? null);
+  const id = trackId
+    ? `cid-${trackId}`
     : `cid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  return { ...input, id, addedAt: new Date().toISOString() };
+  return { ...input, trackId, trackIds, id, addedAt: new Date().toISOString() };
+}
+
+/** 竞品名称归一化（用于同名去重/跨平台关联）。 */
+export function normalizeCompetitorName(name: string): string {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * 旧数据迁移：把单 trackId + platform 填进按平台字段，保证既有竞品在
+ * 双平台模型下仍按原平台采集。
+ */
+export function migrateCompetitor(input: any): Competitor {
+  const trackIds = { ...(input?.trackIds || {}) };
+  const platform =
+    input?.platform === "macos" ? "macos" : input?.platform === "ios" ? "ios" : null;
+  if (platform && input?.trackId && !trackIds[platform]) {
+    trackIds[platform] = String(input.trackId);
+  }
+  return { ...input, trackIds };
+}
+
+/** 竞品在指定平台上的商店 ID（该平台未上架时为 null）。 */
+export function competitorTrackIdFor(
+  competitor: Competitor,
+  platform: "ios" | "macos",
+): string | null {
+  const id = migrateCompetitor(competitor).trackIds?.[platform];
+  return id ? String(id) : null;
+}
+
+/** 竞品已关联上架的平台列表。 */
+export function competitorPlatforms(competitor: Competitor): ("ios" | "macos")[] {
+  const migrated = migrateCompetitor(competitor);
+  return (["ios", "macos"] as const).filter(
+    (platform) => Boolean(migrated.trackIds?.[platform]),
+  );
+}
+
+/** 按归一化名称查找同名竞品（同一品牌在另一平台上的列表可挂到它下面）。 */
+export function findCompetitorByName(
+  competitors: Competitor[],
+  name: string,
+): Competitor | null {
+  const target = normalizeCompetitorName(name);
+  if (!target) return null;
+  return (
+    competitors.find((c) => normalizeCompetitorName(c.name) === target) || null
+  );
 }
 
 async function fetchWithTimeout(url: string, timeoutMs = 15_000): Promise<Response> {
@@ -87,6 +150,8 @@ export async function searchCompetitorCandidates(opts: {
   const data = JSON.parse(await res.text());
   const excludedTrack = new Set(opts.excludeTrackIds || []);
   const excludedBundle = new Set(opts.excludeBundleIds || []);
+  const platform: "ios" | "macos" =
+    opts.entity === "macSoftware" ? "macos" : "ios";
   return (Array.isArray(data?.results) ? data.results : [])
     .filter(
       (r: any) =>
@@ -96,6 +161,7 @@ export async function searchCompetitorCandidates(opts: {
     .map((r: any, index: number) => ({
       trackId: String(r.trackId || ""),
       trackName: String(r.trackName || ""),
+      platform,
       screenshotUrl:
         Array.isArray(r.screenshotUrls) && r.screenshotUrls.length > 0
           ? String(r.screenshotUrls[0])
@@ -179,30 +245,35 @@ export async function searchCompetitorCandidatesAcross(opts: {
 export async function collectCompetitorRankSnapshots(
   competitor: Competitor,
 ): Promise<CompetitorRankSnapshot[]> {
-  if (!competitor.trackId || !competitor.linkedKeywords?.length) return [];
+  const migrated = migrateCompetitor(competitor);
+  const platforms = competitorPlatforms(migrated);
+  if (platforms.length === 0 || !competitor.linkedKeywords?.length) return [];
   const { searchAppStoreRank } = await import("./rank-collector");
   const { storefrontsForLanguage } = await import("./storefronts");
-  const productType = competitor.platform === "macos" ? "macos" : "ios";
   const checkedAt = new Date().toISOString();
   const entries: CompetitorRankSnapshot[] = [];
-  for (const link of competitor.linkedKeywords) {
-    // 竞品排名按关联时的视图语言商店采集：中文视图 → cn/sg；英文视图 → us/gb 等。
-    // 全局（en）关键词在某个语言视图里跟踪时，排名也按该视图语言的商店。
-    const storefronts = storefrontsForLanguage(link.language) || [];
-    for (const storefront of storefronts) {
-      const result = await searchAppStoreRank({
-        term: link.keyword,
-        country: storefront,
-        trackId: competitor.trackId,
-        productType,
-      }).catch(() => null);
-      entries.push({
-        keyword: link.keyword,
-        language: link.language,
-        storefront,
-        rank: result?.rank ?? null,
-        checkedAt,
-      });
+  for (const platform of platforms) {
+    const trackId = competitorTrackIdFor(migrated, platform)!;
+    for (const link of competitor.linkedKeywords) {
+      // 竞品排名按关联时的视图语言商店采集：中文视图 → cn/sg；英文视图 → us/gb 等。
+      // 全局（en）关键词在某个语言视图里跟踪时，排名也按该视图语言的商店。
+      const storefronts = storefrontsForLanguage(link.language) || [];
+      for (const storefront of storefronts) {
+        const result = await searchAppStoreRank({
+          term: link.keyword,
+          country: storefront,
+          trackId,
+          productType: platform,
+        }).catch(() => null);
+        entries.push({
+          keyword: link.keyword,
+          language: link.language,
+          storefront,
+          platform,
+          rank: result?.rank ?? null,
+          checkedAt,
+        });
+      }
     }
   }
   return entries;
@@ -212,10 +283,12 @@ export async function fetchCompetitorSnapshot(
   competitor: Competitor,
   token?: string | null,
   country = "us",
+  platform: "ios" | "macos" = "ios",
 ): Promise<CompetitorSnapshot> {
   const snapshot: CompetitorSnapshot = {
     date: new Date().toISOString().slice(0, 10),
     country,
+    platform,
     version: null,
     releaseDate: null,
     price: null,
@@ -225,10 +298,11 @@ export async function fetchCompetitorSnapshot(
     recentReleases: [],
   };
 
-  if (competitor.trackId) {
+  const trackId = competitorTrackIdFor(competitor, platform);
+  if (trackId) {
     try {
       const res = await fetchWithTimeout(
-        `https://itunes.apple.com/lookup?id=${encodeURIComponent(competitor.trackId)}&country=${encodeURIComponent(country)}`,
+        `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
       );
       if (res.ok) {
         const data = JSON.parse(await res.text());

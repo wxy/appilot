@@ -92,6 +92,74 @@ export function nextRunWithinMinutes(
   return candidate.toISOString();
 }
 
+/**
+ * 修复“排期坍缩”：当大量启用任务的下次执行时间落在同一分钟（通常是一次
+ * 性重排/迁移把整批任务设成 now + 间隔 导致），按各自稳定的相位槽重新
+ * 散布到未来，避免某一分钟同时爆发成积压。
+ *
+ * 仅在非加速状态下调用：加速期间当轮拉取的任务会共享同一分钟，不能误伤。
+ * 阈值 100 远高于正常调度产生的同分钟任务量（积压散布 120 分钟窗口下约
+ * 每槽 10 个、失败重试 30 分钟窗口下约每槽 45 个），能精准命中坍缩批次。
+ */
+export function rebalanceCollapsedTasks<
+  T extends {
+    id: string;
+    kind?: string;
+    enabled?: boolean;
+    nextRunAt?: string | null;
+    intervalMinutes?: number;
+  },
+>(
+  tasks: T[],
+  now = new Date(),
+  runsPerDay = 1,
+  minCluster?: number,
+): { tasks: T[]; changed: boolean } {
+  const nowMs = now.getTime();
+  // 阈值随启用任务量动态化：任务池扩大后，失败重试（30 分钟窗口）同一分钟
+  // 的批会变大，固定 100 可能误触发；取 5% 与 100 的较大者，始终高于
+  // 正常调度可产生的同分钟最大批（约 启用数/30）。
+  const enabledCount = tasks.filter((task) => task.enabled).length;
+  const threshold = minCluster ?? Math.max(100, Math.ceil(enabledCount * 0.05));
+  const minuteKey = (ts: string | null | undefined): number | null => {
+    if (!ts) return null;
+    const ms = Date.parse(ts);
+    if (Number.isNaN(ms)) return null;
+    return Math.floor(ms / 60_000);
+  };
+  const byMinute = new Map<number, T[]>();
+  for (const task of tasks) {
+    if (!task.enabled || !task.nextRunAt) continue;
+    const ts = Date.parse(task.nextRunAt);
+    if (Number.isNaN(ts) || ts <= nowMs) continue;
+    const key = minuteKey(task.nextRunAt)!;
+    const list = byMinute.get(key) || [];
+    list.push(task);
+    byMinute.set(key, list);
+  }
+  const collapsedKeys = new Set(
+    [...byMinute.values()]
+      .filter((list) => list.length >= threshold)
+      .map((list) => minuteKey(list[0].nextRunAt)),
+  );
+  if (collapsedKeys.size === 0) return { tasks, changed: false };
+  const next = tasks.map((task) => {
+    const key = minuteKey(task.nextRunAt);
+    if (key == null || !collapsedKeys.has(key)) return task;
+    // 命中坍缩批次：按任务自身的稳定相位重新排到未来。
+    const interval =
+      task.intervalMinutes && task.intervalMinutes > 0
+        ? task.intervalMinutes
+        : 24 * 60;
+    const nextRun =
+      task.kind === "rank"
+        ? nextRankRunAt(task.id, runsPerDay, now)
+        : nextRunAt(task.id, interval, now);
+    return { ...task, nextRunAt: nextRun };
+  });
+  return { tasks: next, changed: true };
+}
+
 /** Stable group key for the rank tasks of one product × platform × language × storefront. */
 export function rankGroupKey(
   productId: string,

@@ -236,6 +236,10 @@ export function registerReleaseHandlers(): void {
     }
     if (release.draft) {
       if (force) {
+        // 已按商店上架冻结的文案完全只读：不允许强制重新生成覆盖。
+        if (existing?.ascSyncedAt) {
+          throw new Error("该文案已按商店上架状态冻结，不可重新生成");
+        }
         // Respect the user's include/exclude checklist: only the checked
         // commits are fed to the AI as release material.
         let generationRelease = release;
@@ -282,16 +286,9 @@ export function registerReleaseHandlers(): void {
       return { release, draft: existing, actionable: Boolean(existing) };
     }
 
-    if (existing) {
-      existing.githubDraftStatus = "published";
-      existing.storeStatus = existing.storeStatus === "released" ? existing.storeStatus : "released";
-      existing.updatedAt = new Date().toISOString();
-      upsertStoreSubmissionDraft(project, existing);
-      s.set("projects", projects);
-      return { release, draft: existing, actionable: false };
-    }
-
-    return { release, draft: null, actionable: false };
+    // 只读查看：读操作不写回草稿（版本/GitHub 状态一律派生），也不应
+    // 改动 updatedAt —— 否则会污染草稿历史排序和“当前文案”的选择。
+    return { release, draft: existing || null, actionable: false };
     },
   );
 
@@ -317,6 +314,10 @@ export function registerReleaseHandlers(): void {
       if (!product) throw new Error("Store product not found");
       const draft = findStoreSubmissionDraft(project, productId, releaseTag);
       if (!draft) throw new Error("Submission draft not found");
+      // 已按商店上架冻结的文案完全只读：翻译也不允许（UI 已禁用，这里兜底）。
+      if (draft.ascSyncedAt) {
+        throw new Error("该文案已按商店上架状态冻结，不可修改");
+      }
 
       const { translateStoreSubmissionContent } = await import("../../engine/ai/release-reviewer");
       const { readRepoDescription } = await import("../../engine/app-store-discovery");
@@ -391,6 +392,12 @@ export function registerReleaseHandlers(): void {
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
     if (!draft?.id || draft.projectId !== projectId) throw new Error("Invalid submission draft");
+    const existing = getStoreSubmissionDrafts(project).find(
+      (item: any) => item.id === draft.id,
+    );
+    if (existing?.ascSyncedAt) {
+      throw new Error("该文案已按商店上架状态冻结，不可修改");
+    }
 
     draft.updatedAt = new Date().toISOString();
     upsertStoreSubmissionDraft(project, draft);

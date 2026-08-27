@@ -24,6 +24,7 @@ import {
   nextRunAt,
   nextRankRunAt,
   nextRunWithinMinutes,
+  rebalanceCollapsedTasks,
   opsSyncTaskId,
   prioritizeGroupCompletion,
   pruneRoundMembers,
@@ -102,6 +103,33 @@ let overdueScattered = false;
 let powerListenersRegistered = false;
 /** How many rank tasks one scheduler tick may execute (throughput vs load). */
 const MAX_RANK_TASKS_PER_TICK = 8;
+const TICK_INTERVAL_MS = 60_000;
+const TICK_INTERVAL_ACCEL_MS = 10_000;
+const TASK_BREAK_MS = 1500;
+const TASK_BREAK_ACCEL_MS = 200;
+const ACCEL_MAX_ROUNDS = 6;
+const ACCEL_MAX_TASKS_PER_TICK = 40;
+const ACCEL_AUTO_OFF_MS = 5 * 60_000;
+let schedulerPaused = false;
+// 单次加速会话中已处理过的任务：添油时跳过，避免执行后被推回未来的任务被反复拉取。
+let accelHandledTaskIds = new Set<string>();
+// 执行记录的写入链：调度 tick 与手动触发并发写时保证串行，避免互相覆盖
+// 导致统计（流量/入榜率）忽清忽恢复。
+let executionsWriteChain: Promise<void> = Promise.resolve();
+function appendExecution(store: AppStore, entry: Record<string, any>): Promise<void> {
+  executionsWriteChain = executionsWriteChain
+    .catch(() => undefined)
+    .then(() => {
+      const executions: any[] = Array.isArray(store.get("rankExecutions"))
+        ? store.get("rankExecutions")
+        : [];
+      executions.push(entry);
+      // 加速会话可能一次写上千条；5000 上限会截断近 24h 数据导致
+      // 流量/入榜率统计波动（"清零又恢复"）。上限放宽并保留足够窗口。
+      store.set("rankExecutions", executions.slice(-20000));
+    });
+  return executionsWriteChain;
+}
 /** What the scheduler is executing right now (for the timeline UI). */
 let nowRunningTask: RunningTaskInfo | null = null;
 
@@ -445,8 +473,17 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
           link.language === task.queryLanguage,
       ),
     );
+    // 只传与当前产品平台一致的竞品 trackId：iOS 产品用 software 实体搜索，
+    // macOS 产品用 macSoftware，避免把另一平台的列表拿来对比。
+    const { competitorTrackIdFor, migrateCompetitor } = await import(
+      "../engine/competitor-radar"
+    );
+    const entityPlatform: "ios" | "macos" =
+      product?.platform === "macos" ? "macos" : "ios";
     const candidateTrackIds = linkedCompetitors
-      .map((competitor: any) => String(competitor.trackId || ""))
+      .map((competitor: any) =>
+        competitorTrackIdFor(migrateCompetitor(competitor), entityPlatform),
+      )
       .filter(Boolean);
     const result = await searchAppStoreRank({
       term: task.keyword,
@@ -473,19 +510,32 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       const rankById: Record<string, any[]> = ranksAll[project.id] || {};
       const checkedAt = new Date().toISOString();
       for (const competitor of linkedCompetitors) {
+        const competitorTrackId = competitorTrackIdFor(
+          migrateCompetitor(competitor),
+          entityPlatform,
+        );
+        // 该竞品未在当前平台（iOS/macOS）上架：不写排名条目，界面按
+        // trackIds 判定为“未上架”，而不是误显示“未上榜”。
+        if (!competitorTrackId) continue;
         const entry = {
           keyword: task.keyword,
           language: task.queryLanguage,
           storefront: task.storefront,
-          rank: result.candidateRanks[String(competitor.trackId)] ?? null,
+          platform: entityPlatform,
+          rank: result.candidateRanks[competitorTrackId] ?? null,
           checkedAt,
         };
-        // 同一 (关键词, 商店) 只保留最新一条，数据量 = 竞品 × 关键词 × 商店。
+        // 同一 (关键词, 商店, 平台) 只保留最新一条。
         const prev = rankById[competitor.id] || [];
         rankById[competitor.id] = [
           ...prev.filter(
             (item: any) =>
-              !(item.keyword === entry.keyword && item.storefront === entry.storefront),
+              !(
+                item.keyword === entry.keyword &&
+                item.storefront === entry.storefront &&
+                // 旧数据无 platform 字段，写入新条目时一并替换。
+                (item.platform == null || item.platform === entry.platform)
+              ),
           ),
           entry,
         ].slice(-300);
@@ -512,11 +562,9 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastDurationMs = durationMs;
-  const executions: any[] = Array.isArray(store.get("rankExecutions"))
-    ? store.get("rankExecutions")
-    : [];
-  executions.push({
+  await appendExecution(store, {
     ts: new Date().toISOString(),
+    taskId: task.id,
     productId: task.productId,
     keyword: task.keyword,
     language: task.queryLanguage,
@@ -527,13 +575,13 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     requestBytes,
     responseBytes,
   });
-  store.set("rankExecutions", executions.slice(-5000));
-  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
       ? nextRunWithinMinutes(taskSeed(task), 30)
       : nextRankRunAt(taskSeed(task), rankRunsPerDay(store));
+  // 在 nextRunAt 更新后再通知界面刷新，避免读取到旧排期。
+  notifyDataChanged("tasks");
 
   if (task.lastStatus === "success") {
     const rounds: Record<string, SchedulerRoundState> = store.get("schedulerRounds") || {};
@@ -640,11 +688,9 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastDurationMs = durationMs;
-  const executions: any[] = Array.isArray(store.get("rankExecutions"))
-    ? store.get("rankExecutions")
-    : [];
-  executions.push({
+  await appendExecution(store, {
     ts: new Date().toISOString(),
+    taskId: task.id,
     productId: task.projectId,
     kind: "github-sync",
     status,
@@ -652,7 +698,6 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
     requestBytes,
     responseBytes,
   });
-  store.set("rankExecutions", executions.slice(-5000));
   notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
@@ -711,7 +756,9 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
     const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
     if (competitors.length > 0) {
       const {
+        competitorPlatforms,
         fetchCompetitorSnapshot,
+        migrateCompetitor,
       } = await import("../engine/competitor-radar");
       const { storefrontsForLanguage } = await import("../engine/storefronts");
       const all: Record<string, Record<string, any[]>> = store.get("competitorSnapshots") || {};
@@ -728,19 +775,33 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
         const effectiveCountries: string[] =
           countries.length > 0 ? countries : ["us"];
         const list = byId[competitor.id] || [];
-        for (const country of effectiveCountries) {
-          const snap = await fetchCompetitorSnapshot(competitor, token, country);
-          const key = `${snap.date}\u0000${country}`;
-          if (!list.some((item: any) => `${item.date}\u0000${item.country}` === key)) {
-            list.push(snap);
+        // 按平台分别采集快照，与排名对齐；未在该平台上架的竞品不采。
+        for (const platform of competitorPlatforms(migrateCompetitor(competitor))) {
+          for (const country of effectiveCountries) {
+            const snap = await fetchCompetitorSnapshot(
+              competitor,
+              token,
+              country,
+              platform,
+            );
+            const key = `${snap.date}\u0000${country}\u0000${platform}`;
+            if (
+              !list.some(
+                (item: any) =>
+                  `${item.date}\u0000${item.country}\u0000${item.platform}` === key,
+              )
+            ) {
+              list.push(snap);
+            }
           }
         }
         list.sort(
           (a: any, b: any) =>
             new Date(b.date).getTime() - new Date(a.date).getTime() ||
-            String(a.country || "").localeCompare(String(b.country || "")),
+            String(a.country || "").localeCompare(String(b.country || "")) ||
+            String(a.platform || "").localeCompare(String(b.platform || "")),
         );
-        byId[competitor.id] = list.slice(0, 90 * 8);
+        byId[competitor.id] = list.slice(0, 90 * 8 * 2);
       }
       all[task.projectId] = byId;
       store.set("competitorSnapshots", all);
@@ -785,9 +846,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
   task.lastRunAt = new Date().toISOString();
   task.executionCount += 1;
   task.lastDurationMs = durationMs;
-  const executions: any[] = Array.isArray(store.get("rankExecutions")) ? store.get("rankExecutions") : [];
-  executions.push({ ts: new Date().toISOString(), productId: task.projectId, kind: "ops-sync", status, durationMs });
-  store.set("rankExecutions", executions.slice(-5000));
+  await appendExecution(store, { ts: new Date().toISOString(), taskId: task.id, productId: task.projectId, kind: "ops-sync", status, durationMs });
   notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
@@ -924,7 +983,35 @@ export async function schedulerTick(): Promise<void> {
     if (draftsChanged) store.set("projects", projectsForMigration);
 
     const now = Date.now();
+    const accel = store.get("schedulerAccel") === true;
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    // 非加速状态下自愈“排期坍缩”：一次性重排/迁移可能把整批任务的下次
+    // 执行时间设成同一分钟，这里按各自稳定相位重新散布，避免未来某一分钟
+    // 同时爆发成积压。加速期间跳过（当轮拉取的任务共享同一分钟）。
+    if (!accel) {
+      const rebalanced = rebalanceCollapsedTasks(
+        tasks,
+        new Date(now),
+        rankRunsPerDay(store),
+      );
+      if (rebalanced.changed) {
+        tasks.splice(0, tasks.length, ...rebalanced.tasks);
+        store.set("scheduledTasks", tasks);
+      }
+    }
+    // 渐进提速：加速不是瞬间满负荷，而是每轮逐步提升到峰值（踩油门）。
+    let accelRound = 0;
+    if (accel) {
+      accelRound = Number(store.get("schedulerAccelRound") || 0) + 1;
+      store.set("schedulerAccelRound", accelRound);
+    }
+    const accelFactor = accel ? Math.min(1, accelRound / ACCEL_MAX_ROUNDS) : 0;
+    const maxPerTick = accel
+      ? Math.round(MAX_RANK_TASKS_PER_TICK + (ACCEL_MAX_TASKS_PER_TICK - MAX_RANK_TASKS_PER_TICK) * accelFactor)
+      : MAX_RANK_TASKS_PER_TICK;
+    const breakMs = accel
+      ? Math.round(TASK_BREAK_MS - (TASK_BREAK_MS - TASK_BREAK_ACCEL_MS) * accelFactor)
+      : TASK_BREAK_MS;
     // Oldest-overdue first: array order is per-project, so an early project can
     // otherwise starve every later project (GloWalk sat enabled but untouched
     // behind ai-pulse's larger task list).
@@ -935,11 +1022,56 @@ export async function schedulerTick(): Promise<void> {
           new Date(task.nextRunAt).getTime() <= now,
       )
       .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime());
+    // 添油战术：加速时不把所有任务一次性提前，而是每轮从未来拉取紧邻的
+    // 未处理任务补足本轮额度——平滑推进，结束后无需把任务推回。
+    if (accel) {
+      const future = tasks
+        .filter(
+          (task) =>
+            task.enabled &&
+            !accelHandledTaskIds.has(task.id) &&
+            new Date(task.nextRunAt).getTime() > now,
+        )
+        .sort(
+          (a, b) =>
+            new Date(a.nextRunAt).getTime() -
+            new Date(b.nextRunAt).getTime(),
+        );
+      const need = maxPerTick - due.length;
+      if (need > 0 && future.length > 0) {
+        const pulled = future.slice(0, need);
+        const nowIso = new Date(now).toISOString();
+        for (const task of pulled) task.nextRunAt = nowIso;
+        due.push(...pulled);
+        store.set("scheduledTasks", tasks);
+      }
+      // 自动解除：超过时限，或所有启用任务都已被加速处理过。
+      const until = store.get("schedulerAccelUntil");
+      const expired = until && Date.now() >= new Date(until).getTime();
+      const allHandled =
+        tasks.filter(
+          (task) => task.enabled && !accelHandledTaskIds.has(task.id),
+        ).length === 0;
+      if (expired || (allHandled && accelRound > 1)) {
+        await disableAccel(store);
+        overdueScattered = false;
+        notifyDataChanged("tasks");
+        due.length = 0;
+      }
+    }
     // Run whole keyword groups back-to-back so a group's round completes as
     // early as possible, then take the tick's throughput cap.
-    const selected = prioritizeGroupCompletion(due).slice(0, MAX_RANK_TASKS_PER_TICK);
+    const selected = prioritizeGroupCompletion(due).slice(
+      0,
+      maxPerTick,
+    );
 
     for (const task of selected) {
+      // 加速到期按任务粒度检查：到期即停，不再执行完整个 round。
+      if (accel) {
+        const until = store.get("schedulerAccelUntil");
+        if (until && Date.now() >= new Date(until).getTime()) break;
+      }
       if (task.kind === "github-sync") {
         await runGithubSyncTask(store, task);
       } else if (task.kind === "ops-sync") {
@@ -951,7 +1083,12 @@ export async function schedulerTick(): Promise<void> {
       } else {
         await runRankTask(store, task);
       }
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // 执行完成才计入“已处理”：早退任务（暂停/删除关键词、产品缺失）不
+      // 计为已处理，避免提前触发 allHandled 自动关闭。
+      accelHandledTaskIds.add(task.id);
+      await new Promise((resolve) =>
+        setTimeout(resolve, breakMs),
+      );
     }
     // Merge the tick's per-task updates into the latest task list instead of
     // overwriting it: concurrent handlers (e.g. projects:remove) may have
@@ -985,25 +1122,33 @@ async function scatterOverdueTasks(store: AppStore): Promise<void> {
   }
 }
 
+async function schedulerLoopOnce(): Promise<void> {
+  const store = await getStore();
+  const accel = store.get("schedulerAccel") === true;
+  // 加速模式跳过积压分散：让任务按序立即处理，而不是散到未来 120 分钟。
+  if (!overdueScattered && !accel) {
+    await scatterOverdueTasks(store);
+    overdueScattered = true;
+  }
+  await schedulerTick();
+  if (schedulerPaused) return;
+  schedulerTimer = setTimeout(
+    () => void schedulerLoopOnce(),
+    accel ? TICK_INTERVAL_ACCEL_MS : TICK_INTERVAL_MS,
+  );
+}
+
 function startSchedulerLoop(): void {
   if (schedulerTimer) return;
-  void (async () => {
-    const store = await getStore();
-    if (!overdueScattered) {
-      await scatterOverdueTasks(store);
-      overdueScattered = true;
-    }
-    schedulerTimer = setInterval(() => {
-      void schedulerTick();
-    }, 60_000);
-    await schedulerTick();
-  })();
+  schedulerPaused = false;
+  void schedulerLoopOnce();
 }
 
 /** Stop the scheduler timer so sleep is not disturbed while the system suspends. */
 export function pauseTaskScheduler(): void {
+  schedulerPaused = true;
   if (schedulerTimer) {
-    clearInterval(schedulerTimer);
+    clearTimeout(schedulerTimer);
     schedulerTimer = null;
   }
 }
@@ -1012,6 +1157,53 @@ export function pauseTaskScheduler(): void {
 export function resumeTaskScheduler(): void {
   overdueScattered = false;
   startSchedulerLoop();
+}
+
+/**
+ * 加速模式：更快的调度节奏（10 秒一轮、每轮最多 40 个任务、任务间 200ms），
+ * 用于快速清空积压（如重建某平台的全部排名数据）。
+ */
+export async function setSchedulerAccel(enabled: boolean): Promise<void> {
+  const store = await getStore();
+  if (enabled) {
+    // 开启或延长：每次点击把截止时间延长 5 分钟（已开启时累加）。
+    const alreadyOn = store.get("schedulerAccel") === true;
+    // 只有从关闭切换到开启时才是全新会话：清空已处理集合、轮次从 0 重新
+    // 爬坡。已开启时点击仅表示延长，必须保留已处理集合，否则已执行过的
+    // 任务会重新进入“可拉取”池而被重复执行。
+    if (!alreadyOn) {
+      accelHandledTaskIds = new Set();
+      store.set("schedulerAccelRound", 0);
+    }
+    const existingUntil = store.get("schedulerAccelUntil");
+    const base =
+      alreadyOn && existingUntil
+        ? new Date(existingUntil).getTime()
+        : Date.now();
+    const until = Math.max(Date.now() + ACCEL_AUTO_OFF_MS, base + ACCEL_AUTO_OFF_MS);
+    store.set("schedulerAccel", true);
+    store.set("schedulerAccelUntil", new Date(until).toISOString());
+  } else {
+    await disableAccel(store);
+  }
+  // 立即应用新的调度节奏。
+  if (schedulerTimer) {
+    clearTimeout(schedulerTimer);
+    schedulerTimer = null;
+  }
+  startSchedulerLoop();
+  return;
+}
+
+/**
+ * 关闭加速：停止加速调度节奏。添油模式下每轮只从未来拉取本轮额度内的
+ * 任务并当场执行，不存在“被提前但未执行”的残留；未处理任务仍保留在原
+ * 排期，之后由正常调度按各自间隔继续执行。
+ */
+async function disableAccel(store: AppStore): Promise<void> {
+  accelHandledTaskIds = new Set();
+  store.set("schedulerAccel", false);
+  store.set("schedulerAccelUntil", null);
 }
 
 export function startTaskScheduler(): void {

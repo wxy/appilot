@@ -37,6 +37,11 @@ export interface ReleaseInfo {
   source: "git-tag" | "git-commits" | "release-draft-file" | "github-release";
   /** Real GitHub release state; null when the release came from local git. */
   githubDraft: boolean | null;
+  /**
+   * 注意：draft 的语义是“可作为文案生成的候选”，不是真实的 GitHub 草案
+   * 状态（真实状态见 githubDraft）。所有 GitHub release 都按候选处理，
+   * 便于已正式发布的版本也可以从头新建文案。
+   */
   draft: boolean;
   commitSha: string | null;
 }

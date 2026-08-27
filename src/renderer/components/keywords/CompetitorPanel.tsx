@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
-import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
+import { formatHumanTime, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { ValueFlash } from "../ui/ValueFlash";
@@ -32,6 +32,7 @@ export function CompetitorPanel({
   const [candidates, setCandidates] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
+  const [addMessage, setAddMessage] = useState("");
   const [refreshingRanks, setRefreshingRanks] = useState(false);
   const [page, setPage] = useState(0);
   const [searchError, setSearchError] = useState("");
@@ -69,7 +70,13 @@ export function CompetitorPanel({
   useEffect(() => {
     setCandidates([]);
     setSearchError("");
+    setPage(0);
   }, [viewLang, defaultTerm]);
+
+  // 切换语言后，跟踪表默认回到该语言下第一个关联关键词。
+  useEffect(() => {
+    setTrackedKeyword("");
+  }, [viewLang]);
 
   // 按语言搜索：该语言对应的全部商店。
   const countryOptions = viewLang ? storefrontsForLanguage(viewLang) : ["us"];
@@ -78,6 +85,8 @@ export function CompetitorPanel({
     if (!term.trim()) return;
     setSearching(true);
     setSearchError("");
+    setAddMessage("");
+    setPage(0);
     setCandidates([]);
     try {
       const results = await (window as any).appilot?.competitors?.search({
@@ -96,23 +105,58 @@ export function CompetitorPanel({
   const handleAdd = async (candidate: any) => {
     setAdding(candidate.trackId);
     try {
-      await (window as any).appilot?.competitors?.save(projectId, {
+      const platform = product?.platform === "macos" ? "macos" : "ios";
+      // 关联搜索框里正在搜索的关键词（用户可能搜了别的词），而不是矩阵选中词。
+      const keyword = term.trim();
+      const language = viewLang || "en";
+      // 搜索结果已带各商店排名：随保存立即回填竞品矩阵，不必等下次抓取。
+      const seedRanks = Object.entries(candidate.ranks || {})
+        .filter(([, rank]) => typeof rank === "number")
+        .map(([storefront, rank]) => ({
+          keyword,
+          language,
+          storefront,
+          platform,
+          rank: rank as number,
+        }));
+      const res = await (window as any).appilot?.competitors?.save(projectId, {
         name: candidate.trackName,
         trackId: candidate.trackId,
-        platform: product?.platform || "unknown",
+        platform,
+        // 按平台写入 trackId：同一品牌可再关联另一平台的列表。
+        trackIds: { [platform]: candidate.trackId },
         githubUrl: null,
         notes: "",
         // 关联当前关键词：之后按 (竞品, 关键词, 商店) 采集竞品排名。
         // 关联语言 = 搜索时的视图语言（中文视图 → cn/sg，英文视图 → us/gb 等），
         // 竞品排名按该语言商店采集，与矩阵中该视图看到的排名一致。
-        linkedKeywords: defaultTerm.trim()
-          ? [{ keyword: defaultTerm.trim(), language: viewLang || "en" }]
+        linkedKeywords: keyword
+          ? [{ keyword, language }]
           : [],
+        seedRanks,
       });
-      load();
+      setAddMessage(
+        res?.merged
+          ? "该竞品已存在，已自动关联当前平台版本，排名已按搜索结果回填。"
+          : "已添加，排名已按搜索结果回填。",
+      );
+      await load();
+      // 定位到当前关键词，让新竞品行出现在跟踪表里。
+      if (keyword) setTrackedKeyword(`${keyword}\u0000${language}`);
     } finally {
       setAdding(null);
     }
+  };
+
+  // 当前视图平台：竞品矩阵只看该平台的排名，避免 iOS/macOS 数据混比。
+  const viewPlatform: "ios" | "macos" =
+    product?.platform === "macos" ? "macos" : "ios";
+  const competitorTrackId = (competitor: any, platform: "ios" | "macos"): string | null => {
+    const ids = { ...(competitor.trackIds || {}) };
+    if (competitor.trackId && competitor.platform === platform) {
+      ids[platform] = competitor.trackId;
+    }
+    return ids[platform] ? String(ids[platform]) : null;
   };
 
   const appStorePageUrl = (candidate: any) =>
@@ -135,11 +179,17 @@ export function CompetitorPanel({
     }
   };
 
-  // 竞品跟踪：按关联关键词查看自己与所有竞品的排名对比。
+  // 竞品跟踪：按 (平台, 当前语言) 下的关联关键词查看自己与竞品的排名对比。
   const linkedKeywords = Array.from(
     new Map(
       competitors
+        // 只统计当前平台已上架竞品关联的关键词：仅在另一平台关联的关键词
+        // 不进入本平台的列表，避免出现“没有竞品”的空关键词。
+        .filter((c: any) => Boolean(competitorTrackId(c, viewPlatform)))
         .flatMap((c: any) => c.linkedKeywords || [])
+        // 只看当前查看语言的关联关键词：切换语言标签后列表随之变化，
+        // 因此竞品关键词前面无需再标语言。
+        .filter((l: any) => l.language === viewLang)
         .map((l: any) => [`${l.keyword}\u0000${l.language}`, l]),
     ).values(),
   );
@@ -152,8 +202,12 @@ export function CompetitorPanel({
   const ownRankByStore = new Map<string, number | null>();
   if (activeLink) {
     for (const s of rankSnapshots || []) {
-      // 只按关键词文本匹配：兼容旧数据中关联语言可能记错的情况。
-      if (s.keyword === activeLink.keyword) {
+      // 按 (关键词, 语言) 匹配，避免同文本关键词（如 zh-Hans/zh-Hant）
+      // 跨语言串数据；旧数据无语言字段时按关键词文本兜底。
+      if (
+        s.keyword === activeLink.keyword &&
+        (s.language == null || s.language === activeLink.language)
+      ) {
         ownRankByStore.set(s.storefront, s.rank);
       }
     }
@@ -163,15 +217,22 @@ export function CompetitorPanel({
     const item = (competitorRanks[competitor.id] || []).find(
       (r: any) =>
         r.keyword === activeLink.keyword &&
-        r.storefront === storefront,
+        r.storefront === storefront &&
+        // 兼容旧数据：无 platform 字段的条目按竞品原平台判定。
+        (r.platform == null
+          ? competitor.platform === viewPlatform
+          : r.platform === viewPlatform),
     );
     return item?.rank ?? null;
   };
-  // 每个关键词最多关联 5 个竞品。
-  const MAX_COMPETITORS_PER_KEYWORD = 5;
-  const defaultKeyword = defaultTerm.trim();
+  // 每个关键词最多关联 10 个竞品。
+  const MAX_COMPETITORS_PER_KEYWORD = 10;
+  const defaultKeyword = term.trim();
   const defaultLinkedCount = competitors.filter((c: any) =>
-    (c.linkedKeywords || []).some((l: any) => l.keyword === defaultKeyword),
+    (c.linkedKeywords || []).some(
+      (l: any) =>
+        l.keyword === defaultKeyword && l.language === (viewLang || "en"),
+    ),
   ).length;
   const atLimit = defaultLinkedCount >= MAX_COMPETITORS_PER_KEYWORD;
   const rankCellClass = (rank: number | null) => {
@@ -184,6 +245,22 @@ export function CompetitorPanel({
   };
   const ownTrackId = String(product?.trackId ?? "");
   const hasSelfInResults = candidates.some((c) => String(c.trackId) === ownTrackId);
+  // “已添加”按 (竞品, 当前关键词) 判定：同一竞品关联了别的关键词时，
+  // 仍可把它再关联到当前关键词（跟踪关系按关键词 × 商店组合）。
+  const isAddedCandidate = (candidate: any) =>
+    competitors.some((c: any) => {
+      const ids = [c.trackId, ...Object.values(c.trackIds || {})]
+        .filter(Boolean)
+        .map(String);
+      return (
+        ids.includes(String(candidate.trackId)) &&
+        (c.linkedKeywords || []).some(
+          (l: any) =>
+            l.keyword === term.trim() &&
+            l.language === (viewLang || "en"),
+        )
+      );
+    });
   const PAGE_SIZE = 12;
   const totalPages = Math.max(1, Math.ceil(candidates.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -214,6 +291,9 @@ export function CompetitorPanel({
       {searchError && (
         <p className="mb-4 text-xs text-red-600 dark:text-red-400">{searchError}</p>
       )}
+      {addMessage && (
+        <p className="mb-4 text-xs text-amber-600 dark:text-amber-400">{addMessage}</p>
+      )}
 
       {candidates.length > 0 && (
         <>
@@ -233,9 +313,7 @@ export function CompetitorPanel({
         >
           {pageCandidates.map((candidate) => {
             const isSelf = String(candidate.trackId) === String(product?.trackId ?? "");
-            const isAdded = competitors.some(
-              (c: any) => String(c.trackId) === String(candidate.trackId),
-            );
+            const isAdded = isAddedCandidate(candidate);
             return (
               <div
                 key={candidate.trackId}
@@ -376,25 +454,34 @@ export function CompetitorPanel({
           </div>
           {linkedKeywords.length === 0 ? (
             <p className="px-4 py-4 text-xs text-zinc-400 dark:text-zinc-500">
-              竞品未关联关键词。添加竞品时使用搜索关键词关联，排名随关键词抓取采集。
+              当前平台没有已上架竞品关联的关键词。添加竞品时使用搜索关键词关联，排名随关键词抓取采集。
             </p>
           ) : activeLink ? (
           (() => {
             const stores = storefrontsForLanguage(activeLink.language);
-            const trackedCompetitors = competitors.filter((c: any) =>
+            const linkedCompetitors = competitors.filter((c: any) =>
               (c.linkedKeywords || []).some(
                 (l: any) =>
                   l.keyword === activeLink.keyword && l.language === activeLink.language,
               ),
             );
+            // 未在当前平台（iOS/macOS）上架的竞品不进入该平台的跟踪表，
+            // 多平台应用两边的视图都会显示。
+            const trackedCompetitors = linkedCompetitors.filter((c: any) =>
+              Boolean(competitorTrackId(c, viewPlatform)),
+            );
             return (
-          <div className="p-4">
-            <div className="flex flex-wrap gap-1.5 mb-3">
+            <div className="p-4">
+              <div className="flex flex-wrap gap-1.5 mb-3">
               {linkedKeywords.map((link: any) => (
                 <button
                   key={`${link.keyword}\u0000${link.language}`}
                   type="button"
-                  onClick={() => setTrackedKeyword(`${link.keyword}\u0000${link.language}`)}
+                  onClick={() => {
+                    setTrackedKeyword(`${link.keyword}\u0000${link.language}`);
+                    // 同步搜索框关键词，方便立即在竞品雷达中搜索该关键词。
+                    setTerm(link.keyword);
+                  }}
                   className={cn(
                     "px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors",
                     activeLink.keyword === link.keyword && activeLink.language === link.language
@@ -402,7 +489,7 @@ export function CompetitorPanel({
                       : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50",
                   )}
                 >
-                  {languageLabel(link.language)} · {link.keyword}
+                  {link.keyword}
                 </button>
               ))}
             </div>
@@ -454,6 +541,21 @@ export function CompetitorPanel({
                           >
                             {c.name}
                           </button>
+                          <span className="flex gap-0.5">
+                            {(["ios", "macos"] as const).map((p) => (
+                              <span
+                                key={p}
+                                className={cn(
+                                  "px-1 py-px rounded text-[9px] font-medium leading-none",
+                                  competitorTrackId(c, p)
+                                    ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600",
+                                )}
+                              >
+                                {p === "macos" ? "macOS" : "iOS"}
+                              </span>
+                            ))}
+                          </span>
                           <button
                             type="button"
                             onClick={() => void handleRemove(c.id)}
@@ -468,9 +570,13 @@ export function CompetitorPanel({
                           {(() => {
                             const latestRankAt = (competitorRanks[c.id] || []).reduce(
                               (latest: string | null, r: any) =>
-                                !latest || new Date(r.checkedAt).getTime() > new Date(latest).getTime()
-                                  ? r.checkedAt
-                                  : latest,
+                                r.platform != null && r.platform !== viewPlatform
+                                  ? latest
+                                  : !latest ||
+                                      new Date(r.checkedAt).getTime() >
+                                        new Date(latest).getTime()
+                                    ? r.checkedAt
+                                    : latest,
                               null,
                             );
                             return latestRankAt

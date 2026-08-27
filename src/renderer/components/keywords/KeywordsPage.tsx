@@ -93,6 +93,8 @@ export function KeywordsPage() {
   }, []);
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
+  // 行内删除的二次确认状态：key = language:keyword，置空表示未武装。
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
   const [runningDue, setRunningDue] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -105,7 +107,7 @@ export function KeywordsPage() {
   const isGlobalView = viewLang === "global";
   const activeViewLang = isGlobalView
     ? "global"
-    : litLangs.includes(viewLang)
+    : viewLang
       ? viewLang
       : litLangs[0] || "";
 
@@ -183,19 +185,12 @@ export function KeywordsPage() {
     );
   };
 
-  useEffect(() => {
-    if (litLangs.length > 0 && viewLang !== "global" && !litLangs.includes(viewLang)) {
-      setViewLang(litLangs[0] || "");
-    }
-  }, [litLangs, viewLang]);
-
   // Apply navigation params from the overview page: locate a keyword in a
   // language view, and/or narrow the matrix scope.
   useEffect(() => {
     if (!product) return;
     if (urlLang && languageOptions.some((option) => option.code === urlLang)) {
       setViewLang(urlLang);
-      setLitLangs((prev) => (prev.includes(urlLang) ? prev : [...prev, urlLang]));
     }
     if (urlKeyword) {
       setSelectedKeyword(urlKeyword);
@@ -239,7 +234,7 @@ export function KeywordsPage() {
     storefront,
     meta: matrixColumnMeta(rankSnapshots, storefront),
   }));
-  const storeGridTemplate = `repeat(${matrixColumns.length}, 88px) 44px`;
+  const storeGridTemplate = `repeat(${matrixColumns.length}, 88px)`;
   const RANK_BUCKETS = [
     { key: "top10", label: "TOP10", color: "#15803d", opacity: 1 },
     { key: "r11_50", label: "11–50", color: "#22c55e", opacity: 0.9 },
@@ -268,8 +263,12 @@ export function KeywordsPage() {
     );
   };
   // 分布始终是全局视角：所有语言的关键词 × 全部商店，与当前语言选择无关。
+  // 平台暂停的关键词（pausedPlatforms 含当前产品平台）不计入分布，避免
+  // 把“未采集”虚构成“未进榜”。
   const allTrackedActive = (project.trackedKeywords || []).filter(
-    (k: any) => k.status !== "paused",
+    (k: any) =>
+      k.status !== "paused" &&
+      !(k.pausedPlatforms || []).includes(product.platform),
   );
   const allStorefronts = Array.from(
     new Set(
@@ -409,6 +408,7 @@ export function KeywordsPage() {
       : "尚未查询";
 
   const handleSelectKeyword = (keyword: (typeof matrixRows)[number]) => {
+    setConfirmDeleteKey(null);
     setSelectedKeyword(keyword.keyword);
     const next = new URLSearchParams(searchParams);
     next.set("keyword", keyword.keyword);
@@ -473,6 +473,43 @@ export function KeywordsPage() {
           </span>
         )}
       </span>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation();
+          const key = `${keyword.language}:${keyword.keyword}`;
+          if (confirmDeleteKey === key) {
+            setConfirmDeleteKey(null);
+            void removeTracked(keyword.keyword, keyword.language);
+          } else {
+            setConfirmDeleteKey(key);
+            // 3 秒内未再次点击则自动复位，避免误触。
+            window.setTimeout(() => {
+              setConfirmDeleteKey((current) => (current === key ? null : current));
+            }, 3000);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.stopPropagation();
+            (e.currentTarget as HTMLElement).click();
+          }
+        }}
+        className={cn(
+          "ml-1.5 shrink-0 text-xs cursor-pointer select-none transition-colors",
+          confirmDeleteKey === `${keyword.language}:${keyword.keyword}`
+            ? "text-red-600 dark:text-red-400 font-medium"
+            : "text-zinc-300 hover:text-red-500 dark:text-zinc-600 dark:hover:text-red-400",
+        )}
+        title={
+          confirmDeleteKey === `${keyword.language}:${keyword.keyword}`
+            ? "再次点击确认删除"
+            : "删除关键词（需再次确认）"
+        }
+      >
+        {confirmDeleteKey === `${keyword.language}:${keyword.keyword}` ? "确认删除？" : "✕"}
+      </span>
     </div>
   );
 
@@ -506,26 +543,6 @@ export function KeywordsPage() {
           </div>
         );
       })}
-      <div className="pl-3 pr-5 py-1.5 text-right border-l border-zinc-100 dark:border-zinc-800">
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={(e) => {
-            e.stopPropagation();
-            removeTracked(keyword.keyword, keyword.language);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.stopPropagation();
-              removeTracked(keyword.keyword, keyword.language);
-            }
-          }}
-          className="text-zinc-400 hover:text-red-500 text-xs cursor-pointer"
-          title="移除"
-        >
-          ✕
-        </span>
-      </div>
     </div>
   );
 
@@ -670,35 +687,51 @@ export function KeywordsPage() {
 
   const applyCuration = async () => {
     setCurationConfirm(null);
+    const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
+    const base = latest || project;
+    const currentKeywords = [...(base.trackedKeywords || [])].map((k: any) => ({ ...k }));
+    const keys = new Set(
+      currentKeywords.map((k: any) => `${k.language}\u0000${k.keyword}`),
+    );
+    let changed = false;
     for (const [lang, data] of Object.entries(curation)) {
       for (const item of data.adds) {
         if (item.choice !== "accept") continue;
-        const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
-        const current = latest || project;
-        const existingKeys = new Set(
-          (current.trackedKeywords || []).map((k) => `${k.language}\u0000${k.keyword}`),
-        );
-        if (existingKeys.has(`${lang}\u0000${item.keyword}`)) continue;
-        const next = [
-          ...(current.trackedKeywords || []),
-          {
-            language: lang,
-            keyword: item.keyword,
-            rationale: item.rationale,
-            translation: item.translation || "",
-            status: "active" as const,
-            source: "ai" as const,
-          },
-        ];
-        await (window as any).appilot.projects.saveTrackedKeywords(product.id, next);
-        updateTrackedKeywords(product.id, next);
+        const key = `${lang}\u0000${item.keyword}`;
+        if (keys.has(key)) continue;
+        currentKeywords.push({
+          language: lang,
+          keyword: item.keyword,
+          rationale: item.rationale,
+          translation: item.translation || "",
+          status: "active" as const,
+          source: "ai" as const,
+        });
+        keys.add(key);
+        changed = true;
       }
       for (const item of data.removals) {
-        if (item.choice === "accept") {
-          await removeTracked(item.keyword, lang);
+        if (item.choice !== "accept") continue;
+        const key = `${lang}\u0000${item.keyword}`;
+        const index = currentKeywords.findIndex(
+          (k: any) => `${k.language}\u0000${k.keyword}` === key,
+        );
+        if (index >= 0) {
+          currentKeywords.splice(index, 1);
+          changed = true;
         }
+        keys.delete(key);
       }
     }
+    if (!changed) {
+      setCuration({});
+      setCurationOpen(false);
+      return;
+    }
+    // 一次性保存全部增删：避免每个关键词触发一次完整调度 reconcile +
+    // 全量配置落盘，导致确认后长时间卡顿。
+    await (window as any).appilot.projects.saveTrackedKeywords(product.id, currentKeywords);
+    updateTrackedKeywords(product.id, currentKeywords);
     setCuration({});
     setCurationOpen(false);
   };
@@ -1027,10 +1060,8 @@ export function KeywordsPage() {
                     >
                       <button
                         type="button"
-                        onClick={() => {
-                          setViewLang(option.code);
-                          setLitLangs((prev) => (prev.includes(option.code) ? prev : [...prev, option.code]));
-                        }}
+                        // 只切换查看的语言；点亮/取消点亮只能点 ★（与按钮分离）。
+                        onClick={() => setViewLang(option.code)}
                         title={active ? "当前查看" : "点击查看该语言"}
                         className={cn(
                           "px-3 py-1.5 text-sm transition-colors",
@@ -1236,7 +1267,7 @@ export function KeywordsPage() {
               ref={rightScrollRef}
               onScroll={() => syncScroll("right")}
               className="shrink-0 overflow-auto scrollbar-hidden border-l border-zinc-200 dark:border-zinc-800"
-              style={{ width: Math.min(matrixColumns.length * 88 + 44, 5 * 88 + 44) }}
+              style={{ width: Math.min(matrixColumns.length * 88, 5 * 88) }}
             >
               <div
                 className="grid min-w-max sticky top-0 z-20 bg-white dark:bg-zinc-900 border-b border-zinc-100 dark:border-zinc-800"
@@ -1261,9 +1292,6 @@ export function KeywordsPage() {
                   </div>
                 </div>
                 ))}
-                <div className="pl-3 pr-5 py-2 text-right border-l border-zinc-100 dark:border-zinc-800 text-xs font-medium text-zinc-400 dark:text-zinc-500">
-                  操作
-                </div>
               </div>
               {rowsToRender.map(({ row, dimmed }) => renderRightRow(row, dimmed))}
             </div>
@@ -1406,7 +1434,13 @@ export function KeywordsPage() {
       {project && product && (
         <CompetitorPanel
           projectId={project.id}
-          product={{ platform: product.platform, supportedLanguages: product.supportedLanguages }}
+          product={{
+            platform: product.platform,
+            supportedLanguages: product.supportedLanguages,
+            trackId: product.trackId,
+            bundleId: product.bundleId,
+            trackName: product.trackName,
+          }}
           defaultTerm={selectedKeyword || ""}
           viewLang={currentLang}
           rankSnapshots={rankSnapshots}
