@@ -29,6 +29,38 @@ export function plistPermissionKeys(content: string): string[] {
   );
 }
 
+/** 从 Xcode project.pbxproj 文本中提取版本（MARKETING_VERSION），多 target 取第一个语义版本。 */
+export function parsePbxprojVersion(content: string): string | null {
+  const matches = Array.from(
+    content.matchAll(/MARKETING_VERSION\s*=\s*([^;\s]+)/g),
+  ).map((match) => match[1].replace(/["']/g, ""));
+  return (
+    matches.find((value) => /^\d+(\.\d+)*$/.test(value)) ||
+    matches[0] ||
+    null
+  );
+}
+
+/** 从 project.pbxproj 中识别通过 INFOPLIST_KEY_* build settings 声明的权限用途说明。 */
+export function pbxprojPermissionKeys(content: string): string[] {
+  return COMMON_PERMISSION_KEYS.filter((key) =>
+    content.includes(`INFOPLIST_KEY_${key}`),
+  );
+}
+
+/** 从 entitlements 文本中提取声明的能力键（capabilities）。 */
+export function entitlementKeys(content: string): string[] {
+  const keys = Array.from(
+    content.matchAll(/<key>([^<]+)<\/key>/g),
+  ).map((match) => match[1]);
+  return keys.filter(
+    (key) =>
+      /^(com\.apple|aps-|application-identifier|keychain-access-groups)/.test(
+        key,
+      ),
+  );
+}
+
 export function versionConsistencyCheck(
   codeVersion: string | null,
   targetVersion: string | null,

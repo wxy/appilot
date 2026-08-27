@@ -29,7 +29,10 @@ import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
   parsePlistVersion,
   permissionsCheck,
+  parsePbxprojVersion,
+  pbxprojPermissionKeys,
   plistPermissionKeys,
+  entitlementKeys,
   versionConsistencyCheck,
 } from "../../engine/pre-release";
 import {
@@ -1168,8 +1171,8 @@ export function registerProjectsHandlers(): void {
       if (!context) throw new Error("Store product not found");
       const { project, product } = context;
 
-      // ── 自动检查：读仓库 Info.plist ──
-      const findInfoPlists = (dir: string, depth: number): string[] => {
+      // ── 自动检查：读仓库 Info.plist / project.pbxproj / entitlements ──
+      const findProjectFiles = (dir: string, depth: number): string[] => {
         if (depth > 5 || !dir) return [];
         let entries: any[] = [];
         try {
@@ -1188,20 +1191,33 @@ export function registerProjectsHandlers(): void {
             continue;
           }
           const full = path.join(dir, entry.name);
-          if (entry.isDirectory()) results.push(...findInfoPlists(full, depth + 1));
-          else if (entry.name.endsWith(".plist")) results.push(full);
+          if (entry.isDirectory()) results.push(...findProjectFiles(full, depth + 1));
+          else if (
+            entry.name.endsWith(".plist") ||
+            entry.name.endsWith(".pbxproj") ||
+            entry.name.endsWith(".entitlements")
+          ) {
+            results.push(full);
+          }
         }
         return results;
       };
       let codeVersion: string | null = null;
       const permissionKeys: string[] = [];
-      for (const plistPath of findInfoPlists(project.localPath, 0)) {
+      for (const filePath of findProjectFiles(project.localPath, 0)) {
         try {
-          const content = fs.readFileSync(plistPath, "utf8");
-          codeVersion = codeVersion || parsePlistVersion(content);
-          permissionKeys.push(...plistPermissionKeys(content));
+          const content = fs.readFileSync(filePath, "utf8");
+          if (filePath.endsWith(".plist")) {
+            codeVersion = codeVersion || parsePlistVersion(content);
+            permissionKeys.push(...plistPermissionKeys(content));
+          } else if (filePath.endsWith(".pbxproj")) {
+            codeVersion = codeVersion || parsePbxprojVersion(content);
+            permissionKeys.push(...pbxprojPermissionKeys(content));
+          } else if (filePath.endsWith(".entitlements")) {
+            permissionKeys.push(...entitlementKeys(content));
+          }
         } catch {
-          // 单个 plist 读取失败忽略
+          // 单个文件读取失败忽略
         }
       }
       const drafts = (project.storeSubmissionDrafts || [])
@@ -1224,7 +1240,7 @@ export function registerProjectsHandlers(): void {
         },
         {
           id: "permissions",
-          label: "权限用途说明（Info.plist）",
+          label: "权限与能力声明（Info.plist / entitlements）",
           ...permCheck,
         },
       ];

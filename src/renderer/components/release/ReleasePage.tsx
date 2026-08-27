@@ -25,6 +25,7 @@ import { FieldBlock, FieldHeader } from "../ui/Fields";
 import { AppleIcon, GithubIcon } from "../ui/Icons";
 import { StatusChip } from "../ui/StatusChip";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
+import { PreReleaseChecklistPanel } from "./PreReleaseChecklistPanel";
 import {
   btnPrimary,
   btnSmPrimary,
@@ -88,6 +89,7 @@ export function ReleasePage() {
   const [aligning, setAligning] = useState(false);
   const [applyingAlignment, setApplyingAlignment] = useState(false);
   const [generatingChecklist, setGeneratingChecklist] = useState(false);
+  const [showChecklist, setShowChecklist] = useState(false);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -333,6 +335,15 @@ export function ReleasePage() {
   const batchConfirmed = Boolean(draft?.batchConfirmedAt);
   const draftVersionHint = draft?.appVersion || pendingVersion || inferredVersion;
   const latestRelease = releases[0] || null;
+  // 有新提交/PR 或发布草案 → 视为有新的发布前工作（检查单入口与最新文案草案入口出现）。
+  const hasNewWork = Boolean(
+    latestRelease &&
+    (latestRelease.githubDraft === true ||
+      (latestRelease.material?.commits || []).some(
+        (c: any) =>
+          !/^Merge\s+(pull\s+request|branch)/i.test(String(c?.subject || "")),
+      )),
+  );
   const latestDraftForProduct =
     latestRelease?.submissionDrafts?.find(
       (item: any) => item?.productId === productId,
@@ -359,14 +370,13 @@ export function ReleasePage() {
     selectedRelease &&
     !(currentCopy?.appVersion && inferredVersion && currentCopy.appVersion === inferredVersion),
   );
-  // 最新发布是否还需要一份文案（决定「最新文案草案」入口是否出现）。
+  // 最新发布是否还需要一份文案（决定「最新文案草案」入口是否出现）：
+  // 只要出现新的提交/PR/发布草案（hasNewWork）且最新发布还没有文案草稿，
+  // 就提供「新建/打开」入口——不需要先有 GitHub 发布草案。
   const latestNeedsCopy = Boolean(
     latestRelease &&
-    !(
-      currentCopy?.appVersion &&
-      inferAppVersion(latestRelease) &&
-      currentCopy.appVersion === inferAppVersion(latestRelease)
-    ),
+    hasNewWork &&
+    !latestDraftForProduct,
   );
   const orderedLanguages = availableLanguages.includes(UI_SOURCE_LANGUAGE)
     ? [
@@ -645,19 +655,12 @@ export function ReleasePage() {
     try {
       await (window as any).appilot.projects.generatePreReleaseChecklist(productId);
       await useProject.getState().load();
+      setShowChecklist(true);
     } catch (e: any) {
       setError(e.message || "生成发布前检查单失败。");
     } finally {
       setGeneratingChecklist(false);
     }
-  };
-
-  const copyChecklistMaterial = (item: any) => {
-    const screenshotLines = (item.screenshots || [])
-      .map((shot: any, index: number) => `截图 ${index + 1}：${shot.name}\n说明：${shot.description}`)
-      .join("\n");
-    const text = `语言：${languageLabel(item.language)}\n名称：${item.suggestedName}\n副标题：${item.suggestedSubtitle}\n${screenshotLines}`;
-    void navigator.clipboard?.writeText(text);
   };
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
@@ -1121,153 +1124,6 @@ export function ReleasePage() {
             </div>
           </div>
         )}
-        <div className="mb-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
-          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                发布前检查单
-              </h4>
-              <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                自动检查 + 发布前素材 · 多语言
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => void handleGenerateChecklist()}
-              disabled={generatingChecklist}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-50"
-            >
-              {generatingChecklist
-                ? "生成中…"
-                : checklist
-                  ? "重新生成检查单"
-                  : "生成发布前检查单"}
-            </button>
-          </div>
-          <div className="p-4 space-y-4">
-            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-              自动检查发现缺漏并提醒；素材（名称 / 副标题 / 截图说明）供复制后
-              手工处理。截图建议给出名称与说明，与实拍截图组合后提交商店。
-            </p>
-            {!checklist ? (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">
-                尚未生成发布前检查单。
-              </p>
-            ) : (
-              <>
-                <div>
-                  <h5 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 mb-2">
-                    自动检查
-                  </h5>
-                  <div className="space-y-1.5">
-                    {(checklist.checks || []).map((check: any) => {
-                      const tone =
-                        check.status === "pass"
-                          ? "bg-emerald-500"
-                          : check.status === "fail"
-                            ? "bg-red-500"
-                            : check.status === "warn"
-                              ? "bg-amber-500"
-                              : "bg-zinc-400";
-                      const statusLabel =
-                        check.status === "pass"
-                          ? "通过"
-                          : check.status === "fail"
-                            ? "不通过"
-                            : check.status === "warn"
-                              ? "提醒"
-                              : "未知";
-                      return (
-                        <div key={check.id} className="flex items-start gap-2">
-                          <span
-                            className={cn(
-                              "mt-1.5 w-2 h-2 rounded-full shrink-0",
-                              tone,
-                            )}
-                          />
-                          <div className="min-w-0">
-                            <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                              {check.label}
-                            </span>
-                            <span className="ml-1.5 text-[10px] text-zinc-400">
-                              [{statusLabel}]
-                            </span>
-                            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                              {check.detail}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div>
-                  <h5 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 mb-2">
-                    发布前素材（多语言）
-                  </h5>
-                  {(checklist.material || []).length === 0 ? (
-                    <p className="text-xs text-zinc-400">暂无素材。</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {(checklist.material || []).map((item: any) => (
-                        <div
-                          key={item.language}
-                          className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
-                              {languageLabel(item.language)}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => copyChecklistMaterial(item)}
-                              className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
-                            >
-                              复制本语言素材
-                            </button>
-                          </div>
-                          <div className="mt-2 space-y-1 text-[11px]">
-                            <p className="text-zinc-500 dark:text-zinc-400">
-                              名称：
-                              <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                                {item.suggestedName || "（无）"}
-                              </span>
-                            </p>
-                            <p className="text-zinc-500 dark:text-zinc-400">
-                              副标题：
-                              <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                                {item.suggestedSubtitle || "（无）"}
-                              </span>
-                            </p>
-                          </div>
-                          {(item.screenshots || []).length > 0 && (
-                            <div className="mt-2 space-y-1">
-                              {(item.screenshots || []).map(
-                                (shot: any, index: number) => (
-                                  <div
-                                    key={index}
-                                    className="rounded-lg bg-zinc-50 dark:bg-zinc-800/40 px-2 py-1.5"
-                                  >
-                                    <p className="text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
-                                      截图 {index + 1}：{shot.name}
-                                    </p>
-                                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                                      {shot.description}
-                                    </p>
-                                  </div>
-                                ),
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0 space-y-4">
             {step <= 2 && releaseContext && (
@@ -1311,6 +1167,25 @@ export function ReleasePage() {
                   </button>
                 </div>
               </div>
+            )}
+            {hasNewWork && (
+              <button
+                type="button"
+                onClick={() => setShowChecklist((value) => !value)}
+                className={cn(
+                  "w-full text-left rounded-2xl border px-5 py-4 shadow-sm transition-colors",
+                  showChecklist
+                    ? "border-sky-500 bg-sky-50 dark:bg-sky-500/10 ring-2 ring-sky-500/20"
+                    : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-sky-400/60",
+                )}
+              >
+                <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  发布前检查单
+                </span>
+                <span className="block text-[11px] mt-0.5 text-zinc-400 dark:text-zinc-500">
+                  {showChecklist ? "查看中（点击返回工作单）" : "自动检查 + 发布前素材 · 多语言"}
+                </span>
+              </button>
             )}
             <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
@@ -1543,7 +1418,13 @@ export function ReleasePage() {
           </aside>
 
           <div className="min-w-0 space-y-6">
-            {historyDraft ? (
+            {showChecklist ? (
+              <PreReleaseChecklistPanel
+                checklist={checklist}
+                generating={generatingChecklist}
+                onGenerate={() => void handleGenerateChecklist()}
+              />
+            ) : historyDraft ? (
               <HistoryViewer
                 draft={historyDraft}
                 productTrackName={selectedProduct?.trackName}

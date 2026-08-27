@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import {
   parsePlistVersion,
+  parsePbxprojVersion,
+  entitlementKeys,
   permissionsCheck,
+  pbxprojPermissionKeys,
   plistPermissionKeys,
   versionConsistencyCheck,
 } from "../src/engine/pre-release";
@@ -14,6 +17,28 @@ const plist = `<?xml version="1.0"?>
 
 assert.equal(parsePlistVersion(plist), "1.2.6", "解析版本号");
 assert.equal(parsePlistVersion("<plist/>"), null, "无版本号返回 null");
+
+const pbxproj = `
+// !$*UTF8*$!
+{
+  buildSettings = {
+    MARKETING_VERSION = 1.2.6;
+    CURRENT_PROJECT_VERSION = 17;
+    INFOPLIST_KEY_NSCameraUsageDescription = "相机用于手电筒";
+  };
+}
+`;
+assert.equal(parsePbxprojVersion(pbxproj), "1.2.6", "从 pbxproj 提取 MARKETING_VERSION");
+assert.deepEqual(
+  pbxprojPermissionKeys(pbxproj),
+  ["NSCameraUsageDescription"],
+  "从 pbxproj 识别 INFOPLIST_KEY_ 权限",
+);
+assert.deepEqual(
+  entitlementKeys('<plist><dict><key>com.apple.security.app-sandbox</key><true/></dict></plist>'),
+  ["com.apple.security.app-sandbox"],
+  "从 entitlements 提取能力键",
+);
 assert.deepEqual(
   plistPermissionKeys(plist),
   ["NSCameraUsageDescription"],
