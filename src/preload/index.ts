@@ -136,6 +136,15 @@ contextBridge.exposeInMainWorld("appilot", {
       keyword: string,
     ): Promise<{ translation: string }> =>
       ipcRenderer.invoke("projects:translateKeyword", productId, language, keyword),
+    translateKeywords: (projectId: string): Promise<{ total: number; translated: number }> =>
+      ipcRenderer.invoke("projects:translateKeywords", projectId),
+    onTranslateKeywordsProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) =>
+        callback(progress);
+      ipcRenderer.on("projects:translateKeywordsProgress", listener);
+      return () =>
+        ipcRenderer.removeListener("projects:translateKeywordsProgress", listener);
+    },
     reviewPendingPause: (
       productId: string,
       language: string,

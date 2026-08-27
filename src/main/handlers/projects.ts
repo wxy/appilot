@@ -943,6 +943,62 @@ export function registerProjectsHandlers(): void {
     },
   );
 
+  // 批量翻译：为当前项目所有“非中文且缺译文”的关键词补全译文（一次性任务，
+  // 可重入——已有译文的跳过）。逐条持久化，避免中断丢失进度。
+  ipcMain.handle("projects:translateKeywords", async (event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const { createAiProvider } = await import("../ai-service");
+    const provider = await createAiProvider(s);
+    const pending = (project.trackedKeywords || []).filter(
+      (k: any) =>
+        k.language !== "zh-Hans" &&
+        k.language !== "zh-Hant" &&
+        !(k.translation && String(k.translation).trim()),
+    );
+    const total = pending.length;
+    let done = 0;
+    let translated = 0;
+    for (const item of pending) {
+      try {
+        const text = (
+          await provider.chat(
+            [
+              {
+                role: "system",
+                content: "你是 App Store 关键词翻译助手，只输出译文本身。",
+              },
+              {
+                role: "user",
+                content: `把下面的 App Store 关键词翻译成简体中文（界面语言）。只输出译文，不要解释、不要引号、不要加注。\n关键词：${item.keyword}`,
+              },
+            ] as any,
+            { temperature: 0.2, maxTokens: 200 },
+          )
+        )
+          .trim()
+          .replace(/^["'“”]+|["'“”]+$/g, "");
+        if (text) {
+          item.translation = text;
+          translated += 1;
+        }
+      } catch (err: any) {
+        log.warn(`Keyword translation failed for ${item.keyword}: ${err.message}`);
+      }
+      done += 1;
+      if (!event.sender.isDestroyed()) {
+        event.sender.send("projects:translateKeywordsProgress", { done, total });
+      }
+      if (done % 10 === 0 || done === total) s.set("projects", projects);
+    }
+    s.set("projects", projects);
+    notifyDataChanged("projects");
+    return { total, translated };
+  });
+
   // 处理待处理暂停：resume 恢复跟踪 / pause 最终暂停 / remove 移除（无关词）
   // / copy-gap 列入文案素材并暂停该平台。
   ipcMain.handle(

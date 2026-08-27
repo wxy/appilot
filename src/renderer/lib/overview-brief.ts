@@ -10,6 +10,10 @@ export interface BriefSignal {
   reason: string;
   action: BriefActionKind;
   target: string | null;
+  /** 标题里嵌入的关键词（用于 ruby 译文标注）。 */
+  keyword?: string | null;
+  keywordLanguage?: string | null;
+  translation?: string | null;
 }
 
 export interface BriefActionRecord {
@@ -36,6 +40,9 @@ export function briefRuleSignals(args: {
       reason: `${dropped[0].keyword} 最近排名下滑，建议到排名页查看趋势。`,
       action: "keywords",
       target: dropped[0].keyword,
+      keyword: dropped[0].keyword,
+      keywordLanguage: dropped[0].language,
+      translation: (dropped[0] as any).translation ?? null,
     });
   }
   if (args.languageTotal > 0 && args.generatedLanguageCount < args.languageTotal) {

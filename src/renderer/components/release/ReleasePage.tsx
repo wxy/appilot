@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
@@ -36,6 +36,7 @@ import { HistoryViewer } from "./HistoryViewer";
 import { ReferenceSection } from "./ReferenceSection";
 import { draftVersionLabel } from "./releaseFormat";
 import { ValueFlash } from "../ui/ValueFlash";
+import { KeywordRuby } from "../ui/KeywordRuby";
 
 const ALIGNMENT_FIELD_LABEL: Record<string, string> = {
   name: "名称",
@@ -637,7 +638,7 @@ export function ReleasePage() {
   const fixedMaterialRows = (() => {
     const rows: {
       label: string;
-      meta: string;
+      meta: ReactNode;
       badge?: "github";
       badgeTitle?: string;
     }[] = [];
@@ -668,10 +669,24 @@ export function ReleasePage() {
     if (copyGaps.length > 0) {
       rows.push({
         label: "文案缺口关键词",
-        meta: `${copyGaps.length} 个：${copyGaps
-          .map((item: any) => item.keyword)
-          .slice(0, 8)
-          .join("、")}${copyGaps.length > 8 ? "…" : ""}`,
+        meta: (
+          <>
+            {copyGaps.length} 个：
+            {copyGaps.slice(0, 8).map((item: any, index: number) => (
+              <span key={`${item.language}:${item.keyword}`}>
+                {index > 0 && "、"}
+                <KeywordRuby
+                  keyword={item.keyword}
+                  translation={item.translation}
+                  annotate={
+                    item.language !== "zh-Hans" && item.language !== "zh-Hant"
+                  }
+                />
+              </span>
+            ))}
+            {copyGaps.length > 8 ? "…" : ""}
+          </>
+        ),
       });
     }
     const githubRelease = summaryMaterial?.githubRelease;

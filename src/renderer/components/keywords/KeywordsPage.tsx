@@ -78,6 +78,11 @@ export function KeywordsPage() {
   const [pendingLoading, setPendingLoading] = useState(false);
   const [pendingActing, setPendingActing] = useState<string | null>(null);
   const [translatingKey, setTranslatingKey] = useState<string | null>(null);
+  const [translatingAll, setTranslatingAll] = useState(false);
+  const [translateProgress, setTranslateProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
@@ -227,6 +232,12 @@ export function KeywordsPage() {
   const pendingForCurrent = tracked.filter((k) =>
     (k.pendingPausePlatforms || []).includes(product.platform),
   );
+  const missingTranslationCount = (project.trackedKeywords || []).filter(
+    (k) =>
+      k.language !== "zh-Hans" &&
+      k.language !== "zh-Hant" &&
+      !(k.translation && String(k.translation).trim()),
+  ).length;
   const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
   const storefronts = isGlobalView
     ? Array.from(
@@ -913,6 +924,33 @@ export function KeywordsPage() {
     }
   };
 
+  // 批量补全所有缺译文的关键词（一次性任务，已有译文的跳过）。
+  const runTranslateAll = async () => {
+    if (translatingAll) return;
+    setTranslatingAll(true);
+    setTranslateProgress({ done: 0, total: missingTranslationCount });
+    try {
+      await (window as any).appilot?.projects?.translateKeywords(project.id);
+      await useProject.getState().load();
+    } catch (e: any) {
+      setError(e.message || "批量翻译失败。");
+    } finally {
+      setTranslatingAll(false);
+      setTranslateProgress(null);
+    }
+  };
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onTranslateKeywordsProgress?.(
+      (progress: any) => {
+        if (progress && typeof progress.done === "number") {
+          setTranslateProgress(progress);
+        }
+      },
+    );
+    return () => off?.();
+  }, []);
+
   const restoreTracked = async (language: string, kw: string) => {
     await restoreTrackedKeyword(product.id, language, kw);
   };
@@ -1238,6 +1276,19 @@ export function KeywordsPage() {
                   )}
                   {(pendingForCurrent.length > 0 || pausedForCurrent.length > 0 || removedForCurrent.length > 0 || unranked.length > 0) && (
                     <span className="flex items-center gap-1.5">
+                      {(missingTranslationCount > 0 || translatingAll) && (
+                        <button
+                          type="button"
+                          onClick={() => void runTranslateAll()}
+                          disabled={translatingAll}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors bg-sky-500/15 dark:bg-sky-500/20 text-sky-700 dark:text-sky-400 ring-1 ring-sky-500/40 hover:bg-sky-500/25 disabled:opacity-60"
+                          title="一次性翻译所有非中文关键词（简体中文标注）"
+                        >
+                          {translatingAll
+                            ? `翻译中 ${translateProgress?.done ?? 0}/${translateProgress?.total ?? missingTranslationCount}`
+                            : `补全译文 ${missingTranslationCount}`}
+                        </button>
+                      )}
                       {pendingForCurrent.length > 0 && (
                         <button
                           type="button"
@@ -1664,6 +1715,7 @@ export function KeywordsPage() {
       {project && product && (
         <CompetitorPanel
           projectId={project.id}
+          projectKeywords={project.trackedKeywords || []}
           product={{
             platform: product.platform,
             supportedLanguages: product.supportedLanguages,
