@@ -6,7 +6,7 @@ import { AIProgressButton } from "../ui/AIProgressButton";
 /**
  * 发布前检查单（主区域展示）：
  * - 自动检查：版本一致性、权限与能力声明；
- * - 发布前素材：多语言名称/副标题（JSON 一键复制）、截图建议（每条标签点击复制纯文本）。
+ * - 发布前素材：多语言截图建议（名称/说明标签点击复制纯文本，位置为界面语言）。
  */
 export function PreReleaseChecklistPanel({
   checklist,
@@ -32,17 +32,6 @@ export function PreReleaseChecklistPanel({
   const copyText = (key: string, text: string) => {
     void navigator.clipboard?.writeText(text);
     flashCopied(key);
-  };
-
-  const nameSubtitleJson = () => {
-    const languages: Record<string, { name: string; subtitle: string }> = {};
-    for (const item of checklist?.material || []) {
-      languages[item.language] = {
-        name: item.suggestedName || "",
-        subtitle: item.suggestedSubtitle || "",
-      };
-    }
-    return JSON.stringify({ languages }, null, 2);
   };
 
   const checks = checklist?.checks || [];
@@ -149,95 +138,6 @@ export function PreReleaseChecklistPanel({
                     </div>
                   );
                 })}
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <h5 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                  名称 / 副标题（多语言）
-                </h5>
-                <button
-                  type="button"
-                  onClick={() => copyText("json", nameSubtitleJson())}
-                  className={cn(
-                    "px-2 py-1 rounded-md border text-[11px] font-medium transition-colors",
-                    copied === "json"
-                      ? "border-emerald-400 text-emerald-600 dark:text-emerald-400"
-                      : "border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60",
-                  )}
-                >
-                  {copied === "json" ? "已复制" : "复制 JSON"}
-                </button>
-              </div>
-              <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-700">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-zinc-50/60 dark:bg-zinc-900/40">
-                      <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-zinc-200/70 dark:border-zinc-700/70">
-                        语言
-                      </th>
-                      <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-l border-zinc-200/70 dark:border-zinc-700/70">
-                        名称
-                      </th>
-                      <th className="py-2 px-3 text-left font-medium text-zinc-400 border-b border-l border-zinc-200/70 dark:border-zinc-700/70">
-                        副标题
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {material.map((item: any) => (
-                      <tr
-                        key={item.language}
-                        className="border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
-                      >
-                        <td className="py-2 px-3 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
-                          {languageLabel(item.language)}
-                        </td>
-                        <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              copyText(
-                                `${item.language}:name`,
-                                `名称：${item.suggestedName || "（无）"}`,
-                              )
-                            }
-                            title="点击复制（纯文本）"
-                            className={cn(
-                              "px-2 py-1 rounded-md border text-[11px] text-left transition-all active:scale-95",
-                              copied === `${item.language}:name`
-                                ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                                : "border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-sky-400/60 hover:text-sky-700 dark:hover:text-sky-300",
-                            )}
-                          >
-                            {item.suggestedName || "（无）"}
-                          </button>
-                        </td>
-                        <td className="py-2 px-3 border-l border-zinc-100 dark:border-zinc-800">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              copyText(
-                                `${item.language}:subtitle`,
-                                `副标题：${item.suggestedSubtitle || "（无）"}`,
-                              )
-                            }
-                            title="点击复制（纯文本）"
-                            className={cn(
-                              "px-2 py-1 rounded-md border text-[11px] text-left transition-all active:scale-95",
-                              copied === `${item.language}:subtitle`
-                                ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                                : "border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-sky-400/60 hover:text-sky-700 dark:hover:text-sky-300",
-                            )}
-                          >
-                            {item.suggestedSubtitle || "（无）"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
             </div>
 

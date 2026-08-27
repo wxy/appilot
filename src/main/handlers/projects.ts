@@ -1270,7 +1270,8 @@ export function registerProjectsHandlers(): void {
         },
       ];
 
-      // ── 发布前素材：名称/副标题/截图建议（多语言）──
+      // ── 发布前素材：截图建议（多语言）。名称/副标题建议属于发布文案，
+      // 不在检查单中重复（商店名称/副标题只影响 ASC，与代码无关）。──
       const latestDraft = drafts[0] || null;
       const locByName = new Map<string, any>(
         (latestDraft?.localizations || []).map((loc: any) => [
@@ -1334,24 +1335,19 @@ export function registerProjectsHandlers(): void {
 
       let material: {
         language: string;
-        suggestedName: string;
-        suggestedSubtitle: string;
-        screenshots: { name: string; description: string }[];
+        screenshots: { name: string; description: string; location: string }[];
       }[] = [];
       if (inputs.length > 0) {
         const { createAiProvider } = await import("../ai-service");
         const { requestJson } = await import("../../engine/ai/ai-request");
         const provider = await createAiProvider(s);
         const prompt = [
-          "你是 App Store 的 ASO 与发布素材顾问。为每个支持语言输出发布前素材。",
+          "你是 App Store 的发布素材顾问。为每个支持语言输出截图建议。",
           "规则：",
-          "- suggestedName ≤30 字符、suggestedSubtitle ≤30 字符；保留品牌名主体，把该语言最重要的 1-2 个文案缺口关键词自然融入；无缺口时保持当前值；",
-          "- 必须为输入里的每个语言都输出 suggestedName 与 suggestedSubtitle，不要遗漏；",
-          "- 有文案缺口的语言：把最重要的 1-2 个缺口词自然融入名称或副标题；",
-          "- 无缺口的语言：若该语言与母本不同（新增语言），把母本名称/副标题本地化到该语言（保留品牌主体、≤30 字符），副标题不要留空；与母本相同则保持当前值；",
-          "- screenshots：3-5 张，覆盖主界面、核心功能、亮点/卖点、典型使用场景等；每张给出 name（截图名称，用该语言撰写，简短）、description（截图说明，用该语言撰写，一句话）与 location（截图位置：固定用简体中文提示应截哪个页面，如 主屏幕/设置页/历史页/HUD 页 等，不随语言翻译）；",
-          "- reason 用简体中文说明名称/副标题修改意图。",
-          "只输出 JSON：{\"material\":[{\"language\":\"...\",\"suggestedName\":\"...\",\"suggestedSubtitle\":\"...\",\"reason\":\"...\",\"screenshots\":[{\"name\":\"...\",\"description\":\"...\",\"location\":\"...\"}]}]}",
+          "- 必须为输入里的每个语言都输出 screenshots，不要遗漏；",
+          "- 每个语言 3-5 张，覆盖主界面、核心功能、亮点/卖点、典型使用场景等；",
+          "- 每张给出 name（截图名称，用该语言撰写，简短）、description（截图说明，用该语言撰写，一句话）与 location（截图位置：固定用简体中文提示应截哪个页面，如 主屏幕/设置页/历史页/HUD 页 等，不随语言翻译）；",
+          "只输出 JSON：{\"material\":[{\"language\":\"...\",\"screenshots\":[{\"name\":\"...\",\"description\":\"...\",\"location\":\"...\"}]}]}",
         ].join("\n");
         const data = await requestJson(
           provider,
@@ -1387,11 +1383,6 @@ export function registerProjectsHandlers(): void {
           const suggestion = byLanguage.get(input.language) || null;
           return {
             language: input.language,
-            suggestedName:
-              String(suggestion?.suggestedName || "") || input.currentName,
-            suggestedSubtitle:
-              String(suggestion?.suggestedSubtitle || "") ||
-              input.currentSubtitle,
             screenshots: Array.isArray(suggestion?.screenshots)
               ? suggestion.screenshots
                   .filter((shot: any) => shot?.name || shot?.description)
