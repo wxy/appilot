@@ -87,6 +87,10 @@ export function ReleasePage() {
   } | null>(null);
   const [aligning, setAligning] = useState(false);
   const [applyingAlignment, setApplyingAlignment] = useState(false);
+  const [generatingNameSuggestions, setGeneratingNameSuggestions] = useState(false);
+  const [dismissedNameSuggestions, setDismissedNameSuggestions] = useState<Set<string>>(
+    new Set(),
+  );
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -634,6 +638,41 @@ export function ReleasePage() {
       setApplyingAlignment(false);
     }
   };
+
+  const pendingNameSuggestions = ((project as any).nameSubtitleSuggestions || []).filter(
+    (item: any) =>
+      item.status !== "dismissed" && !dismissedNameSuggestions.has(item.language),
+  );
+
+  const handleGenerateNameSuggestions = async () => {
+    if (!productId || generatingNameSuggestions) return;
+    setGeneratingNameSuggestions(true);
+    setError("");
+    try {
+      await (window as any).appilot.projects.generateNameSubtitleSuggestions(productId);
+      await useProject.getState().load();
+      setDismissedNameSuggestions(new Set());
+    } catch (e: any) {
+      setError(e.message || "生成名称/副标题建议失败。");
+    } finally {
+      setGeneratingNameSuggestions(false);
+    }
+  };
+
+  const handleDismissNameSuggestion = async (language: string) => {
+    if (!project?.id) return;
+    setDismissedNameSuggestions((prev) => new Set(prev).add(language));
+    try {
+      await (window as any).appilot.projects.dismissNameSuggestion(project.id, language);
+    } catch {
+      // 本地已隐藏，忽略持久化失败。
+    }
+  };
+
+  const copyNameSuggestion = (item: any) => {
+    const text = `名称：${item.suggestedName}\n副标题：${item.suggestedSubtitle}`;
+    void navigator.clipboard?.writeText(text);
+  };
   const latestCodeDate = summaryMaterial?.commits?.[0]?.date || "";
   const fixedMaterialRows = (() => {
     const rows: {
@@ -1096,6 +1135,97 @@ export function ReleasePage() {
             </div>
           </div>
         )}
+        <div className="mb-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                名称与副标题建议
+              </h4>
+              <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                发布前 · 多语言 · 结合文案缺口
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleGenerateNameSuggestions()}
+              disabled={generatingNameSuggestions}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-sky-300 dark:border-sky-700 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-50"
+            >
+              {generatingNameSuggestions
+                ? "生成中…"
+                : pendingNameSuggestions.length > 0
+                  ? "重新生成建议"
+                  : "生成名称/副标题建议"}
+            </button>
+          </div>
+          <div className="p-4 space-y-3">
+            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+              基于各语言的文案缺口关键词生成。建议在提交前同步到应用代码
+              （Info.plist / 本地化文件）与商店文案；这里只给出建议，不修改代码。
+            </p>
+            {pendingNameSuggestions.length === 0 ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">
+                暂无待处理的名称/副标题建议（有文案缺口后可生成）。
+              </p>
+            ) : (
+              pendingNameSuggestions.map((item: any) => (
+                <div
+                  key={item.language}
+                  className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3"
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
+                      {languageLabel(item.language)}
+                    </span>
+                    {(item.gapKeywords || []).length > 0 && (
+                      <span className="text-[10px] text-sky-600 dark:text-sky-400">
+                        缺口词：{item.gapKeywords.slice(0, 4).join("、")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 space-y-1 text-[11px]">
+                    <p className="text-zinc-500 dark:text-zinc-400">
+                      名称：<span className="line-through opacity-60">{item.currentName || "（无）"}</span>
+                      <span className="mx-1.5 text-zinc-300">→</span>
+                      <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                        {item.suggestedName || item.currentName || "（无）"}
+                      </span>
+                    </p>
+                    <p className="text-zinc-500 dark:text-zinc-400">
+                      副标题：
+                      <span className="line-through opacity-60">
+                        {item.currentSubtitle || "（无）"}
+                      </span>
+                      <span className="mx-1.5 text-zinc-300">→</span>
+                      <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                        {item.suggestedSubtitle || item.currentSubtitle || "（无）"}
+                      </span>
+                    </p>
+                    {item.reason && (
+                      <p className="text-zinc-400 dark:text-zinc-500">{item.reason}</p>
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => copyNameSuggestion(item)}
+                      className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+                    >
+                      复制建议
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDismissNameSuggestion(item.language)}
+                      className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+                    >
+                      忽略
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0 space-y-4">
             {step <= 2 && releaseContext && (

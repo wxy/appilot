@@ -1021,6 +1021,136 @@ export function registerProjectsHandlers(): void {
     return { total, translated };
   });
 
+  // 名称/副标题修改建议（发布前、多语言）：结合各语言的文案缺口，给出
+  // “当前名称/副标题 → 建议名称/副标题”，提示用户在提交前同步到代码与商店。
+  ipcMain.handle(
+    "projects:generateNameSubtitleSuggestions",
+    async (_event, productId: string) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const { project, product } = context;
+      const drafts = (project.storeSubmissionDrafts || [])
+        .filter((draft: any) => draft.productId === productId)
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.updatedAt || 0).getTime() -
+            new Date(a.updatedAt || 0).getTime(),
+        );
+      const latestDraft = drafts[0] || null;
+      const locByName = new Map<string, any>(
+        (latestDraft?.localizations || []).map((loc: any) => [
+          loc.language,
+          loc,
+        ]),
+      );
+      const gapsByLanguage: Record<string, string[]> = {};
+      for (const gap of project.copyGapKeywords || []) {
+        const lang = String(gap.language || "");
+        if (!lang) continue;
+        (gapsByLanguage[lang] = gapsByLanguage[lang] || []).push(
+          String(gap.keyword || ""),
+        );
+      }
+      const languages = (product.supportedLanguages || []).map((l: any) =>
+        String(l?.code || ""),
+      );
+      const inputs: {
+        language: string;
+        currentName: string;
+        currentSubtitle: string;
+        gapKeywords: string[];
+      }[] = languages.filter(Boolean).map((language: string) => {
+        const current = locByName.get(language) || null;
+        return {
+          language,
+          currentName: current?.name || product.trackName || "",
+          currentSubtitle: current?.subtitle || "",
+          gapKeywords: gapsByLanguage[language] || [],
+        };
+      });
+      if (inputs.length === 0) return [];
+
+      const { createAiProvider } = await import("../ai-service");
+      const { parseJsonObject } = await import("../../engine/ai/ai-request");
+      const provider = await createAiProvider(s);
+      const prompt = [
+        "你是 App Store 的 ASO 顾问。根据每个语言当前的名称/副标题与文案缺口关键词，给出发布前应采用的名称/副标题修改建议。",
+        "规则：",
+        "- 名称 ≤30 字符、副标题 ≤30 字符；",
+        "- 保留品牌名主体（如 “AI Pulse” 部分）不变，只调整描述性后缀；",
+        "- 把该语言最重要的 1-2 个文案缺口关键词自然融入名称或副标题（不堆砌）；",
+        "- 该语言没有缺口关键词时，建议保持当前值（suggestedName=suggestedSubtitle=当前值，reason=无文案缺口）；",
+        "- reason 用简体中文一句话说明修改意图。",
+        "只输出 JSON：{\"suggestions\":[{\"language\":\"...\",\"suggestedName\":\"...\",\"suggestedSubtitle\":\"...\",\"reason\":\"...\"}]}",
+      ].join("\n");
+      const payload = JSON.stringify({ inputs }, null, 2);
+      const raw = await provider.chat(
+        [
+          { role: "system", content: prompt },
+          { role: "user", content: `各语言当前信息与缺口关键词：\n${payload}` },
+        ] as any,
+        { temperature: 0.3, maxTokens: 4000 },
+      );
+      const data = parseJsonObject(raw);
+      const suggestions = Array.isArray(data?.suggestions)
+        ? data.suggestions
+            .filter((item: any) => item?.language)
+            .map((item: any) => ({
+              language: String(item.language),
+              suggestedName: String(item.suggestedName || ""),
+              suggestedSubtitle: String(item.suggestedSubtitle || ""),
+              reason: String(item.reason || ""),
+              gapKeywords: gapsByLanguage[String(item.language)] || [],
+            }))
+        : [];
+      const now = new Date().toISOString();
+      const next = inputs.map((input) => {
+        const suggestion =
+          suggestions.find(
+            (item: any) => item.language === input.language,
+          ) || null;
+        return {
+          language: input.language,
+          currentName: input.currentName,
+          currentSubtitle: input.currentSubtitle,
+          suggestedName: suggestion?.suggestedName || input.currentName,
+          suggestedSubtitle:
+            suggestion?.suggestedSubtitle || input.currentSubtitle,
+          reason: suggestion?.reason || "无文案缺口",
+          gapKeywords: suggestion?.gapKeywords || input.gapKeywords,
+          status: "pending" as const,
+          createdAt: now,
+        };
+      });
+      project.nameSubtitleSuggestions = next;
+      s.set("projects", projects);
+      notifyDataChanged("projects");
+      return next;
+    },
+  );
+
+  // 忽略某语言的名称/副标题建议（下次重新生成时重置）。
+  ipcMain.handle(
+    "projects:dismissNameSuggestion",
+    async (_event, projectId: string, language: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      language = assertNonEmptyString(language, "language");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      project.nameSubtitleSuggestions = (project.nameSubtitleSuggestions || []).map(
+        (item: any) =>
+          item.language === language ? { ...item, status: "dismissed" } : item,
+      );
+      s.set("projects", projects);
+      notifyDataChanged("projects");
+      return true;
+    },
+  );
+
   // 处理待处理暂停：resume 恢复跟踪 / pause 最终暂停 / remove 移除（无关词）
   // / copy-gap 列入文案素材并暂停该平台。
   ipcMain.handle(

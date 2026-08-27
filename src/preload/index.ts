@@ -138,6 +138,10 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:translateKeyword", productId, language, keyword),
     translateKeywords: (projectId: string): Promise<{ total: number; translated: number }> =>
       ipcRenderer.invoke("projects:translateKeywords", projectId),
+    generateNameSubtitleSuggestions: (productId: string): Promise<any[]> =>
+      ipcRenderer.invoke("projects:generateNameSubtitleSuggestions", productId),
+    dismissNameSuggestion: (projectId: string, language: string): Promise<boolean> =>
+      ipcRenderer.invoke("projects:dismissNameSuggestion", projectId, language),
     onTranslateKeywordsProgress: (callback: (progress: any) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: any) =>
         callback(progress);
