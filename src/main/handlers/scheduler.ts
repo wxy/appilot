@@ -251,6 +251,7 @@ export function registerSchedulerHandlers(): void {
             : null;
         return {
           ...task,
+          projectId: context?.project?.id || (task as any).projectId || null,
           projectName: project?.name || "已删除项目",
           productName: isProjectTask
             ? project?.name || ""

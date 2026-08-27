@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { storefrontDisplayName } from "../../../engine/storefronts";
+import { useProject } from "../../stores/project";
 import { taskGroupKey } from "../../lib/task-grouping";
 import {
   formatBytes,
   formatDuration,
-  formatDurationMs,
   formatHumanTime,
   languageLabel,
   platformLabel,
@@ -23,6 +24,8 @@ const KIND_LABELS: Record<string, string> = {
 };
 
 export function TaskCenterPage() {
+  const navigate = useNavigate();
+  const { select, selectProduct } = useProject();
   const [data, setData] = useState<{
     running: boolean;
     nowRunning: any;
@@ -39,6 +42,34 @@ export function TaskCenterPage() {
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+
+  // 任务行点击跳转到对应页面：排名 → 关键词矩阵；GitHub/构建状态 → 发布
+  // 工作台；评论 → 评论页；数据同步 → 总览。没有合适目标的类型不加链接。
+  const openTaskTarget = (group: any) => {
+    const task = group?.tasks?.[0];
+    if (!task) return;
+    if (group.kind === "rank" && task.productId && task.projectId) {
+      select(task.projectId);
+      selectProduct(task.productId);
+      navigate(
+        `/keywords?lang=${encodeURIComponent(task.queryLanguage || "en")}`,
+      );
+    } else if (
+      (group.kind === "github-sync" || group.kind === "build-status") &&
+      task.projectId
+    ) {
+      select(task.projectId);
+      if (task.productId) selectProduct(task.productId);
+      navigate("/release");
+    } else if (group.kind === "reviews-sync" && task.productId) {
+      select(task.projectId);
+      selectProduct(task.productId);
+      navigate("/reviews");
+    } else if (group.kind === "ops-sync" && task.projectId) {
+      select(task.projectId);
+      navigate("/overview");
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -134,23 +165,35 @@ export function TaskCenterPage() {
       .catch(() => undefined);
   }, [accel, accelRemainingMs]);
 
+  // 不同类型任务适用的筛选条件不同：排名任务才有语言维度；GitHub/数据同步
+  // 是项目级任务（无平台/语言）；评论/构建状态是产品级（有平台、无语言）。
+  const typeTasks =
+    typeFilter === "all"
+      ? data?.tasks || []
+      : (data?.tasks || []).filter((task: any) => task.kind === typeFilter);
   const projectOptions = Array.from(
     new Set(
-      (data?.tasks || [])
+      typeTasks
         .map((task: any) => task.projectName)
         .filter((name: string) => name && name !== "已删除项目"),
     ),
   ).sort();
   const platformOptions = Array.from(
-    new Set((data?.tasks || []).map((task: any) => task.platform).filter(Boolean)),
+    new Set(typeTasks.map((task: any) => task.platform).filter(Boolean)),
   ).sort();
   const languageOptions = Array.from(
     new Set(
-      (data?.tasks || [])
+      typeTasks
         .map((task: any) => task.queryLanguage)
         .filter((lang: string) => Boolean(lang)),
     ),
   ).sort();
+  const typeSupportsPlatform =
+    typeFilter === "all" ||
+    typeFilter === "rank" ||
+    typeFilter === "reviews-sync" ||
+    typeFilter === "build-status";
+  const typeSupportsLanguage = typeFilter === "all" || typeFilter === "rank";
   const tasks = (data?.tasks || [])
     .filter((task) => projectFilter === "all" || task.projectName === projectFilter)
     .filter((task) => platformFilter === "all" || task.platform === platformFilter)
@@ -300,7 +343,22 @@ export function TaskCenterPage() {
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
         <select
           value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value;
+            setTypeFilter(value);
+            // 类型切换后，不适用的筛选条件复位并禁用。
+            if (
+              value !== "all" &&
+              value !== "rank" &&
+              value !== "reviews-sync" &&
+              value !== "build-status"
+            ) {
+              setPlatformFilter("all");
+            }
+            if (value !== "all" && value !== "rank") {
+              setLanguageFilter("all");
+            }
+          }}
           className={inputLineClass + " max-w-36"}
         >
           <option value="all">全部类型</option>
@@ -325,7 +383,8 @@ export function TaskCenterPage() {
         <select
           value={platformFilter}
           onChange={(e) => setPlatformFilter(e.target.value)}
-          className={inputLineClass + " max-w-32"}
+          disabled={!typeSupportsPlatform}
+          className={inputLineClass + " max-w-32 disabled:opacity-40"}
         >
           <option value="all">全部平台</option>
           {platformOptions.map((platform) => (
@@ -337,7 +396,8 @@ export function TaskCenterPage() {
         <select
           value={languageFilter}
           onChange={(e) => setLanguageFilter(e.target.value)}
-          className={inputLineClass + " max-w-36"}
+          disabled={!typeSupportsLanguage}
+          className={inputLineClass + " max-w-36 disabled:opacity-40"}
         >
           <option value="all">全部语言</option>
           {languageOptions.map((lang) => (
@@ -349,8 +409,16 @@ export function TaskCenterPage() {
       </div>
 
       <div className="space-y-6">
-        <TaskSection title={`准备进行（${pendingGroups.length} 组）`} groups={pendingGroups} />
-        <TaskSection title={`失败（${failedGroups.length} 组）`} groups={failedGroups} />
+        <TaskSection
+          title={`准备进行（${pendingGroups.length} 组）`}
+          groups={pendingGroups}
+          onOpenTask={openTaskTarget}
+        />
+        <TaskSection
+          title={`失败（${failedGroups.length} 组）`}
+          groups={failedGroups}
+          onOpenTask={openTaskTarget}
+        />
       </div>
     </div>
   );
@@ -666,7 +734,7 @@ function groupTasks(tasks: any[]): any[] {
   return [...map.values()];
 }
 
-type SortKey = "firstRunAt" | "lastDurationMs" | "lastRunAt" | "nextRunAt" | "roundProgress";
+type SortKey = "firstRunAt" | "lastRunAt" | "nextRunAt" | "roundProgress";
 interface SortState {
   key: SortKey;
   dir: "asc" | "desc";
@@ -688,15 +756,20 @@ function compareGroups(sort: SortState) {
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
-    const cmp =
-      sort.key === "lastDurationMs"
-        ? av - bv
-        : new Date(av).getTime() - new Date(bv).getTime();
+    const cmp = new Date(av).getTime() - new Date(bv).getTime();
     return sort.dir === "asc" ? cmp : -cmp;
   };
 }
 
-function TaskSection({ title, groups }: { title: string; groups: any[] }) {
+function TaskSection({
+  title,
+  groups,
+  onOpenTask,
+}: {
+  title: string;
+  groups: any[];
+  onOpenTask?: (group: any) => void;
+}) {
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<SortState>({ key: "lastRunAt", dir: "desc" });
   const pageSize = 20;
@@ -723,7 +796,7 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
       </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,6.5rem))_minmax(0,9.5rem)] items-stretch border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50/30 dark:bg-zinc-900/40">
+      <div className="grid grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,6.5rem))] items-stretch border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50/30 dark:bg-zinc-900/40">
         <span className="px-5 py-2 text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
           任务
         </span>
@@ -731,7 +804,9 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
           <SortHeader label="首次执行" sortKey="firstRunAt" sort={sort} onSort={toggleSort} />
         </div>
         <div className="px-3 py-2 border-l border-zinc-200/70 dark:border-zinc-700/70">
-          <SortHeader label="执行时间" sortKey="lastDurationMs" sort={sort} onSort={toggleSort} />
+          <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+            上轮完成
+          </span>
         </div>
         <div className="px-3 py-2 border-l border-zinc-200/70 dark:border-zinc-700/70">
           <SortHeader label="上次执行" sortKey="lastRunAt" sort={sort} onSort={toggleSort} />
@@ -747,11 +822,23 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
         <div
           key={group.key}
           className={cn(
-            "grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,6.5rem))_minmax(0,9.5rem)] items-stretch border-b border-zinc-100 dark:border-zinc-800 last:border-b-0",
+            "grid grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,6.5rem))] items-stretch border-b border-zinc-100 dark:border-zinc-800 last:border-b-0",
             rowIndex % 2 === 1 && "bg-zinc-50/60 dark:bg-zinc-800/20",
           )}
         >
-          <div className="flex items-start gap-2 min-w-0 px-5 py-3">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpenTask?.(group)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpenTask?.(group);
+              }
+            }}
+            title="点击跳转到对应页面"
+            className="flex items-start gap-2 min-w-0 px-5 py-3 cursor-pointer hover:bg-amber-50/40 dark:hover:bg-amber-500/5 transition-colors"
+          >
             <span
               className={cn(
                 "mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium shrink-0",
@@ -767,7 +854,7 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
                 {group.kind === "rank" ? (
                   <>
                     <div className="text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                      {group.productName} ·{" "}
+                      {group.projectName} ·{" "}
                       {group.platform === "ios"
                         ? "iOS"
                         : group.platform === "macos"
@@ -800,7 +887,9 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
             <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
-              {formatDurationMs(group.lastDurationMs)}
+              {group.round?.lastCompletedAt
+                ? formatHumanTime(group.round.lastCompletedAt)
+                : "—"}
             </div>
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
@@ -818,27 +907,32 @@ function TaskSection({ title, groups }: { title: string; groups: any[] }) {
             </div>
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
-            {group.kind !== "rank" ? (
+            {group.kind !== "rank" || !group.round || group.round.total === 0 ? (
               <div className="text-xs text-zinc-400 dark:text-zinc-500 truncate">—</div>
             ) : (
-              <>
+              <div className="flex flex-col items-end gap-1">
                 <ValueFlash
-                  value={group.round ? `${group.round.done}/${group.round.total}` : "—"}
+                  value={`${group.round.done}/${group.round.total}`}
                   mode="text"
                   className="text-xs text-zinc-600 dark:text-zinc-300 truncate"
                 >
-                  {group.round ? `${group.round.done}/${group.round.total}` : "—"}
+                  {group.round.done}/{group.round.total}
                 </ValueFlash>
-                <div className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-                  {group.round && group.round.total > 0 && group.round.done >= group.round.total
-                    ? "本轮已完成"
-                    : group.round?.lastCompletedAt
-                    ? `上轮完成 ${formatHumanTime(group.round.lastCompletedAt)}`
-                    : group.round && group.round.total > 0
-                      ? "尚未完整完成一轮"
-                      : ""}
+                <div
+                  className="w-20 h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden"
+                  title={`${Math.round((group.round.done / group.round.total) * 100)}%`}
+                >
+                  <div
+                    className="h-full rounded-full bg-emerald-500 transition-all"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.round((group.round.done / group.round.total) * 100),
+                      )}%`,
+                    }}
+                  />
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>
