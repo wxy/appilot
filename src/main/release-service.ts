@@ -92,9 +92,17 @@ export async function generateStoreSubmissionDraft(
   const provider = await createAiProvider(store);
 
   ensureProjectKeywordPool(project);
+  const detectedLanguages = (product.supportedLanguages || [])
+    .map((item: any) => String(item?.code || "").trim())
+    .filter((code: string) => Boolean(code));
+  const language = sourceLanguage || detectedLanguages[0] || "en";
+  // 关键词与文案缺口按“当前生成语言”过滤：母本只接收母本语言的关键词，
+  // 不把其他语言的词混入（翻译各语言时再分别注入该语言自己的词）。
   const trackedKeywords: string[] = Array.from(
     new Set<string>(
-      (project.trackedKeywords || []).map((keyword: any) => String(keyword?.keyword || "").trim()),
+      (project.trackedKeywords || [])
+        .filter((keyword: any) => keyword?.language === language)
+        .map((keyword: any) => String(keyword?.keyword || "").trim()),
     ),
   ).filter(Boolean);
   const recentRankings = (product.rankSnapshots || []).slice(-20).map((snapshot: any) => ({
@@ -103,10 +111,6 @@ export async function generateStoreSubmissionDraft(
     rank: snapshot.rank,
     checkedAt: snapshot.checkedAt,
   }));
-  const detectedLanguages = (product.supportedLanguages || [])
-    .map((item: any) => String(item?.code || "").trim())
-    .filter((code: string) => Boolean(code));
-  const language = sourceLanguage || detectedLanguages[0] || "en";
   const previousDrafts = getStoreSubmissionDrafts(project)
     .filter((item) => item.productId === product.id && item.releaseTag !== release.tag)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -158,7 +162,9 @@ export async function generateStoreSubmissionDraft(
       previousLocalization,
       profile,
       includedChanges,
-      copyGapKeywords: (project as any).copyGapKeywords || [],
+      copyGapKeywords: ((project as any).copyGapKeywords || [])
+        .filter((gap: any) => gap.language === language)
+        .map((gap: any) => gap.keyword),
     },
     onProgress,
     onChars,

@@ -342,11 +342,28 @@ export function registerReleaseHandlers(): void {
       });
 
       const profile = await buildProjectProfileFor(project, product, undefined, description);
+      // 各语言的关键词/文案缺口按语言分组，翻译时只注入目标语言自己的词。
+      const trackedKeywordsByLanguage: Record<string, string[]> = {};
+      for (const k of project.trackedKeywords || []) {
+        const lang = String(k.language || "");
+        if (!lang) continue;
+        (trackedKeywordsByLanguage[lang] =
+          trackedKeywordsByLanguage[lang] || []).push(String(k.keyword || ""));
+      }
+      const copyGapKeywordsByLanguage: Record<string, string[]> = {};
+      for (const g of project.copyGapKeywords || []) {
+        const lang = String(g.language || "");
+        if (!lang) continue;
+        (copyGapKeywordsByLanguage[lang] =
+          copyGapKeywordsByLanguage[lang] || []).push(String(g.keyword || ""));
+      }
       const translations = await translateStoreSubmissionContent(
         provider,
         {
           name: product.trackName || project.name,
           profile,
+          trackedKeywordsByLanguage,
+          copyGapKeywordsByLanguage,
         },
         source,
         targetLanguages,
