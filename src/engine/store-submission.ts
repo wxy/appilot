@@ -247,6 +247,9 @@ export function buildStoreRebuildDraft(input: StoreRebuildInput): StoreSubmissio
 }
 
 export function githubStatusForRelease(release: ReleaseInfo): GitHubReleaseStatus {
+  // 真实 GitHub 草案状态优先；无 GitHub 数据（本地标签/提交）时退回到
+  // draft 字段（“可生成文案的候选”语义）。
+  if (release.githubDraft != null) return release.githubDraft ? "draft" : "published";
   return release.draft ? "draft" : "published";
 }
 
@@ -306,12 +309,4 @@ export function createStoreSubmissionDraft(input: {
     submissionKeywords: input.content.submissionKeywords,
     promotionAngles: input.content.promotionAngles,
   };
-}
-
-export function shouldGenerateSubmission(release: ReleaseInfo): boolean {
-  return release.draft;
-}
-
-export function isPublishedSignal(release: ReleaseInfo): boolean {
-  return !release.draft;
 }

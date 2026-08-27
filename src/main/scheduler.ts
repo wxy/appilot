@@ -575,12 +575,13 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     requestBytes,
     responseBytes,
   });
-  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
       ? nextRunWithinMinutes(taskSeed(task), 30)
       : nextRankRunAt(taskSeed(task), rankRunsPerDay(store));
+  // 在 nextRunAt 更新后再通知界面刷新，避免读取到旧排期。
+  notifyDataChanged("tasks");
 
   if (task.lastStatus === "success") {
     const rounds: Record<string, SchedulerRoundState> = store.get("schedulerRounds") || {};
@@ -1066,7 +1067,11 @@ export async function schedulerTick(): Promise<void> {
     );
 
     for (const task of selected) {
-      accelHandledTaskIds.add(task.id);
+      // 加速到期按任务粒度检查：到期即停，不再执行完整个 round。
+      if (accel) {
+        const until = store.get("schedulerAccelUntil");
+        if (until && Date.now() >= new Date(until).getTime()) break;
+      }
       if (task.kind === "github-sync") {
         await runGithubSyncTask(store, task);
       } else if (task.kind === "ops-sync") {
@@ -1078,6 +1083,9 @@ export async function schedulerTick(): Promise<void> {
       } else {
         await runRankTask(store, task);
       }
+      // 执行完成才计入“已处理”：早退任务（暂停/删除关键词、产品缺失）不
+      // 计为已处理，避免提前触发 allHandled 自动关闭。
+      accelHandledTaskIds.add(task.id);
       await new Promise((resolve) =>
         setTimeout(resolve, breakMs),
       );

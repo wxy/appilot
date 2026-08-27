@@ -285,11 +285,12 @@ export function ReleasePage() {
     : versionQuery
       ? versionStatus
       : null;
-  // 已确认或已按商店冻结的文案只读；没有草稿（或未确认的新草稿）时允许
-  // 从头新建，即使版本已上架——发布状态只是信息，不阻断新建。
+  // 只有“已上架且已按商店冻结”的文案才是完全只读（D2）。整批确定但尚未
+  // 上架时，仍允许填写驳回意见并重新生成；没有草稿（或未确认的新草稿）时
+  // 允许从头新建，即使版本已上架——发布状态只是信息，不阻断新建。
   const versionLocked =
-    Boolean(draft?.batchConfirmedAt) ||
-    (Boolean(draft?.ascSyncedAt) && effectiveVersionStatus?.key === "ready-for-sale");
+    Boolean(draft?.ascSyncedAt) && effectiveVersionStatus?.key === "ready-for-sale";
+  const feedbackReadOnly = versionLocked;
   const githubStatus = release?.githubDraft === true
     ? { label: "发布草案", tone: "blue" as const, source: "GitHub" as const }
     : release?.githubDraft === false
@@ -321,8 +322,16 @@ export function ReleasePage() {
   const availableLanguages = (selectedProduct?.supportedLanguages || [])
     .map((item: any) => String(item?.code || "").trim())
     .filter(Boolean);
+  // 当前文案 = batchConfirmedAt 最新的一份已整批确定文案，与 updatedAt
+  // （会被翻译/保存等操作改写）无关。
   const currentCopy =
-    (releaseContext?.drafts || []).find((item: any) => Boolean(item.batchConfirmedAt)) || null;
+    (releaseContext?.drafts || [])
+      .filter((item: any) => Boolean(item.batchConfirmedAt))
+      .sort(
+        (a: any, b: any) =>
+          new Date(b.batchConfirmedAt).getTime() -
+          new Date(a.batchConfirmedAt).getTime(),
+      )[0] || null;
   // 与商店完全对齐：从商店重建/冻结的文案 ascSyncedAt 存在。手动发布后的
   // 对齐校验后续补上。
   const storeAligned = Boolean(currentCopy?.ascSyncedAt || draft?.ascSyncedAt);
@@ -481,9 +490,7 @@ export function ReleasePage() {
       : selectedRelease?.submissionDrafts?.find(
           (item: any) => item?.productId === productId,
         ) || null;
-  const feedbackReadOnly = versionLocked;
   const isReadOnly =
-    feedbackReadOnly ||
     versionLocked ||
     batchConfirmed ||
     (masterConfirmed && activeLocalization?.language === primaryLanguage);

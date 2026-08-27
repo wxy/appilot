@@ -143,6 +143,12 @@ export function OverviewPage() {
       ),
     ),
   );
+  // 平台暂停的关键词不计入分布（矩阵仍显示，调度不采集）。
+  const distributionKeywords = (product.trackedKeywords || []).filter(
+    (k: any) =>
+      k.status !== "paused" &&
+      !(k.pausedPlatforms || []).includes(product.platform),
+  );
   const distributionData: {
     storefront: string;
     top10: number;
@@ -153,7 +159,7 @@ export function OverviewPage() {
   }[] = allStorefronts
     .map((storefront) => {
       const buckets = { top10: 0, r11_50: 0, r51_100: 0, r101_200: 0, unranked: 0 };
-      for (const row of trackedActive) {
+      for (const row of distributionKeywords) {
         const cell = matrixCellState(rankSnapshots, row.keyword, storefront);
         const rank = cell.rank;
         if (rank == null || cell.beyond200) buckets.unranked += 1;

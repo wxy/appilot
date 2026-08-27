@@ -218,4 +218,35 @@ console.log("✅ PASS: rebalanceCollapsedTasks skips overdue and disabled tasks"
   assert.equal(next[1].nextRunAt, futureAt);
 }
 
+console.log("✅ PASS: rebalanceCollapsedTasks threshold scales with enabled task count");
+{
+  const now = new Date("2026-08-24T02:00:00Z");
+  const collapsedAt = new Date(now.getTime() + 23 * HOUR).toISOString();
+  // 3000 个启用任务时阈值按 5% 升到 150：150 个同分钟视为坍缩，
+  // 100 个同分钟不视为坍缩（失败重试批的规模）。
+  const big = Array.from({ length: 3000 }, (_, i) => ({
+    id: `r:${i}`,
+    kind: "rank",
+    enabled: true,
+    intervalMinutes: 1440,
+    nextRunAt: i < 150 ? collapsedAt : new Date(now.getTime() + 25 * HOUR + i * MIN).toISOString(),
+  }));
+  const collapsed = rebalanceCollapsedTasks(big, now);
+  assert.equal(collapsed.changed, true, "150 same-minute tasks trigger at scaled threshold");
+  assert.equal(
+    collapsed.tasks.filter((t) => t.nextRunAt === collapsedAt).length < 10,
+    true,
+    "collapsed batch is re-spread (only phase collisions remain)",
+  );
+  const small = Array.from({ length: 3000 }, (_, i) => ({
+    id: `s:${i}`,
+    kind: "rank",
+    enabled: true,
+    intervalMinutes: 1440,
+    nextRunAt: i < 100 ? collapsedAt : new Date(now.getTime() + 25 * HOUR + i * MIN).toISOString(),
+  }));
+  const untouched = rebalanceCollapsedTasks(small, now);
+  assert.equal(untouched.changed, false, "100 same-minute tasks stay below the scaled threshold");
+}
+
 console.log("\n🎉 All schedule tests passed!");

@@ -263,8 +263,12 @@ export function KeywordsPage() {
     );
   };
   // 分布始终是全局视角：所有语言的关键词 × 全部商店，与当前语言选择无关。
+  // 平台暂停的关键词（pausedPlatforms 含当前产品平台）不计入分布，避免
+  // 把“未采集”虚构成“未进榜”。
   const allTrackedActive = (project.trackedKeywords || []).filter(
-    (k: any) => k.status !== "paused",
+    (k: any) =>
+      k.status !== "paused" &&
+      !(k.pausedPlatforms || []).includes(product.platform),
   );
   const allStorefronts = Array.from(
     new Set(

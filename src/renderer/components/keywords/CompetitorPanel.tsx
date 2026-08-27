@@ -202,8 +202,12 @@ export function CompetitorPanel({
   const ownRankByStore = new Map<string, number | null>();
   if (activeLink) {
     for (const s of rankSnapshots || []) {
-      // 只按关键词文本匹配：兼容旧数据中关联语言可能记错的情况。
-      if (s.keyword === activeLink.keyword) {
+      // 按 (关键词, 语言) 匹配，避免同文本关键词（如 zh-Hans/zh-Hant）
+      // 跨语言串数据；旧数据无语言字段时按关键词文本兜底。
+      if (
+        s.keyword === activeLink.keyword &&
+        (s.language == null || s.language === activeLink.language)
+      ) {
         ownRankByStore.set(s.storefront, s.rank);
       }
     }

@@ -113,9 +113,14 @@ export function rebalanceCollapsedTasks<
   tasks: T[],
   now = new Date(),
   runsPerDay = 1,
-  minCluster = 100,
+  minCluster?: number,
 ): { tasks: T[]; changed: boolean } {
   const nowMs = now.getTime();
+  // 阈值随启用任务量动态化：任务池扩大后，失败重试（30 分钟窗口）同一分钟
+  // 的批会变大，固定 100 可能误触发；取 5% 与 100 的较大者，始终高于
+  // 正常调度可产生的同分钟最大批（约 启用数/30）。
+  const enabledCount = tasks.filter((task) => task.enabled).length;
+  const threshold = minCluster ?? Math.max(100, Math.ceil(enabledCount * 0.05));
   const minuteKey = (ts: string | null | undefined): number | null => {
     if (!ts) return null;
     const ms = Date.parse(ts);
@@ -134,7 +139,7 @@ export function rebalanceCollapsedTasks<
   }
   const collapsedKeys = new Set(
     [...byMinute.values()]
-      .filter((list) => list.length >= minCluster)
+      .filter((list) => list.length >= threshold)
       .map((list) => minuteKey(list[0].nextRunAt)),
   );
   if (collapsedKeys.size === 0) return { tasks, changed: false };
