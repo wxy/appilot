@@ -34,22 +34,30 @@ export function ReferenceSection({
         </button>
         <span className="flex items-center gap-1.5 shrink-0">
           {action}
-          <svg
-            viewBox="0 0 16 16"
-            fill="none"
-            className={cn(
-              "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
-              open && "rotate-180",
-            )}
+          <button
+            type="button"
+            onClick={() => setOpen(!open)}
+            className="p-1 -m-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            title={open ? "折叠" : "展开"}
+            aria-label={open ? "折叠" : "展开"}
           >
-            <path
-              d="M4 6l4 4 4-4"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              className={cn(
+                "w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 transition-transform duration-200",
+                open && "rotate-180",
+              )}
+            >
+              <path
+                d="M4 6l4 4 4-4"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </span>
       </div>
       {open ? <div className="px-5 pb-5">{children}</div> : null}

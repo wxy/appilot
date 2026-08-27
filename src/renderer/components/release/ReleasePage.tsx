@@ -1245,48 +1245,57 @@ export function ReleasePage() {
                     defaultOpen={false}
                   >
                     {(previousDraft || latestCodeDate) && (
-                      <div className="mb-2 space-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
-                        {previousDraft && (
-                          <p>
-                            上一次文案：{draftVersionLabel(previousDraft)} ·{" "}
-                            {formatHumanTime(previousDraft.updatedAt)} 生成
-                          </p>
+                      <div className="mb-2 flex items-center justify-between gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                        <div className="space-y-0.5">
+                          {previousDraft && (
+                            <p>
+                              上一次文案：{draftVersionLabel(previousDraft)} ·{" "}
+                              {formatHumanTime(previousDraft.updatedAt)} 生成
+                            </p>
+                          )}
+                          {latestCodeDate && (
+                            <p>最新代码更新：{formatHumanTime(latestCodeDate)}</p>
+                          )}
+                        </div>
+                        {summaryItems.length > 0 && (
+                          <span
+                            role="checkbox"
+                            aria-checked={checkedCount === summaryItems.length}
+                            tabIndex={0}
+                            onClick={() =>
+                              void setAllSummaryChecked(
+                                checkedCount < summaryItems.length,
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                void setAllSummaryChecked(
+                                  checkedCount < summaryItems.length,
+                                );
+                              }
+                            }}
+                            title={
+                              checkedCount === summaryItems.length
+                                ? "取消全选"
+                                : "全部选择"
+                            }
+                            className={cn(
+                              "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors cursor-pointer",
+                              checkedCount === summaryItems.length
+                                ? "bg-amber-500 border-amber-500 text-white"
+                                : "border-zinc-300 dark:border-zinc-600",
+                            )}
+                          >
+                            {checkedCount === summaryItems.length ? "✓" : ""}
+                          </span>
                         )}
-                        {latestCodeDate && <p>最新代码更新：{formatHumanTime(latestCodeDate)}</p>}
                       </div>
                     )}
                     {summaryItems.length === 0 ? (
                       <p className="text-sm text-zinc-400 dark:text-zinc-500">本次无变更</p>
                     ) : (
                       <>
-                        {summaryItems.length > 0 && (
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                              已选择 {checkedCount} / {summaryItems.length}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => void setAllSummaryChecked(checkedCount < summaryItems.length)}
-                              className="inline-flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
-                            >
-                              <span
-                                role="checkbox"
-                                aria-checked={checkedCount === summaryItems.length}
-                                className={cn(
-                                  "w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px]",
-                                  checkedCount === summaryItems.length
-                                    ? "bg-amber-500 border-amber-500 text-white"
-                                    : "border-zinc-300 dark:border-zinc-600 text-transparent",
-                                )}
-                              >
-                                ✓
-                              </span>
-                              {checkedCount === summaryItems.length
-                                ? "取消全选"
-                                : "全部选择"}
-                            </button>
-                          </div>
-                        )}
                         <div className="space-y-1">
                           {sortedSummaryItems.map((item) => {
                             const included = summaryChecked.has(item.id);
@@ -1305,25 +1314,15 @@ export function ReleasePage() {
                                 )}
                               >
                                 <span
-                                  role="checkbox"
-                                  aria-checked={included}
-                                  tabIndex={0}
-                                  onClick={() => void toggleSummaryItem(item.id)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === " ") {
-                                      e.preventDefault();
-                                      void toggleSummaryItem(item.id);
-                                    }
-                                  }}
-                                  title={included ? "从 AI 素材中排除" : "作为 AI 素材提供"}
                                   className={cn(
-                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors cursor-pointer",
-                                    included
-                                      ? "bg-amber-500 border-amber-500 text-white"
-                                      : "border-zinc-300 dark:border-zinc-600",
+                                    "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
+                                    tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                                    tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                                    tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
+                                    tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
                                   )}
                                 >
-                                  {included ? "✓" : ""}
+                                  {CHANGE_TYPE_META[item.type].label}
                                 </span>
                                 <span className="min-w-0 flex-1">
                                   <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
@@ -1357,15 +1356,25 @@ export function ReleasePage() {
                                   )
                                 )}
                                 <span
+                                  role="checkbox"
+                                  aria-checked={included}
+                                  tabIndex={0}
+                                  onClick={() => void toggleSummaryItem(item.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      void toggleSummaryItem(item.id);
+                                    }
+                                  }}
+                                  title={included ? "从 AI 素材中排除" : "作为 AI 素材提供"}
                                   className={cn(
-                                    "shrink-0 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium",
-                                    tone === "amber" && "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
-                                    tone === "emerald" && "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-                                    tone === "sky" && "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400",
-                                    tone === "muted" && "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors cursor-pointer",
+                                    included
+                                      ? "bg-amber-500 border-amber-500 text-white"
+                                      : "border-zinc-300 dark:border-zinc-600",
                                   )}
                                 >
-                                  {CHANGE_TYPE_META[item.type].label}
+                                  {included ? "✓" : ""}
                                 </span>
                               </div>
                             );
@@ -1408,14 +1417,13 @@ export function ReleasePage() {
                                     <GithubIcon className="w-3 h-3 text-current" />
                                   </span>
                                 )}
-                                <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800">
                                   <input
                                     type="checkbox"
                                     checked
                                     disabled
-                                    className="w-3 h-3 accent-zinc-500"
+                                    className="w-3.5 h-3.5 accent-zinc-500"
                                   />
-                                  始终发送
                                 </span>
                               </li>
                             ))}
