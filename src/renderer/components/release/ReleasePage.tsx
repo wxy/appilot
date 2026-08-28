@@ -1782,40 +1782,43 @@ export function ReleasePage() {
                       确定文案前需填写
                     </span>
                   </div>
-                  {/* 语言选项卡：点击切换语言；翻译入口在下方对应语言页内 */}
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100/70 dark:bg-zinc-800/40 p-1 inline-flex flex-wrap gap-1">
-                    {orderedLanguages.map((language) => {
-                      const generated = localizations.some((item: any) => item.language === language);
-                      const translating = translatingLanguages.has(language);
-                      return (
-                        <button
-                          key={language}
-                          type="button"
-                          onClick={() => setActiveLanguage(language)}
-                          title={
-                            generated
-                              ? `${languageLabel(language)}文案`
-                              : translating
-                                ? `${languageLabel(language)}翻译进行中`
-                                : `${languageLabel(language)}尚未翻译`
-                          }
-                          className={cn(
-                            "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors",
-                            activeLanguage === language
-                              ? "bg-white dark:bg-zinc-700 text-amber-700 dark:text-amber-300 font-medium shadow-sm"
-                              : "text-zinc-500 dark:text-zinc-400 hover:bg-white/70 dark:hover:bg-zinc-700/50 hover:text-zinc-700 dark:hover:text-zinc-200",
-                          )}
-                        >
-                          {languageLabel(language)}
-                          {translating && (
-                            <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
-                          )}
-                          {generated && !translating && (
-                            <span className="text-emerald-500">✓</span>
-                          )}
-                        </button>
-                      );
-                    })}
+                  {/* 语言选项卡：经典选项卡样式，选项卡栏与下方内容同框，
+                      激活的选项卡下边框与内容分割线重合、连成一体。 */}
+                  <div className="border-b border-zinc-200 dark:border-zinc-800">
+                    <div className="flex flex-wrap -mb-px">
+                      {orderedLanguages.map((language) => {
+                        const generated = localizations.some((item: any) => item.language === language);
+                        const translating = translatingLanguages.has(language);
+                        return (
+                          <button
+                            key={language}
+                            type="button"
+                            onClick={() => setActiveLanguage(language)}
+                            title={
+                              generated
+                                ? `${languageLabel(language)}文案`
+                                : translating
+                                  ? `${languageLabel(language)}翻译进行中`
+                                  : `${languageLabel(language)}尚未翻译`
+                            }
+                            className={cn(
+                              "inline-flex items-center gap-1.5 px-3.5 py-2 text-sm border-b-2 -mb-px rounded-t-lg transition-colors",
+                              activeLanguage === language
+                                ? "border-amber-500 bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
+                                : "border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
+                            )}
+                          >
+                            {languageLabel(language)}
+                            {translating && (
+                              <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+                            )}
+                            {generated && !translating && (
+                              <span className="text-emerald-500">✓</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   {activeLocalization && (
                     <>
