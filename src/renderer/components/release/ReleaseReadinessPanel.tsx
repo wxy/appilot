@@ -197,11 +197,11 @@ export function ReleaseReadinessPanel({
             {storeNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
           </FlowNode>
         </div>
-        {alerts && (
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 dark:border-zinc-800 pt-2.5">
-            {alerts}
-          </div>
-        )}
+        {/* 固定站位：切换视图/发布时提醒内容变化，但占位高度不变，
+            避免流程图下方布局抖动。 */}
+        <div className="mt-3 flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 dark:border-zinc-800 pt-2.5">
+          {alerts || <span className="text-[11px] text-zinc-400/60">暂无提醒</span>}
+        </div>
         {result && (
           (() => {
             const issues = result.items.filter((item) => item.status !== "pass");

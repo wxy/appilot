@@ -213,11 +213,9 @@ export function ReleasePage() {
             new Date(a.batchConfirmedAt).getTime(),
         )[0] || null;
       const currentCopyTag = confirmed
-        ? candidates.find((r: any) =>
-            (r.submissionDrafts || []).some(
-              (d: any) => d?.productId === productId && d?.id === confirmed.id,
-            ),
-          )?.tag || null
+        ? releaseTagForVersion(confirmed.appVersion, candidates) ||
+          confirmed.releaseTag ||
+          null
         : null;
       // 有新提交/PR 或发布草案 → 指向最新文案草案；否则回到当前文案。
       const hasNewWork = Boolean(
@@ -666,6 +664,19 @@ export function ReleasePage() {
     if (active?.draft && project?.id) void persistCurrentDraft();
   };
 
+  // 发布选择：优先找与文案版本号一致的发布。文案的 releaseTag 可能是旧版本
+  // 生成时的遗留（例如 appVersion 1.1.1 但 releaseTag v1.1.0），直接用它会让
+  // 流程图显示错误的发布。
+  const releaseTagForVersion = (appVersion: any, list: any[] = releases) => {
+    const version = String(appVersion || "").replace(/^v/i, "").trim();
+    if (!version) return "";
+    const match = list.find((r: any) => {
+      const t = String(r?.tag || "").replace(/^v/i, "").trim();
+      return Boolean(t) && t === version;
+    });
+    return match?.tag || "";
+  };
+
   // 打开工作中的文案（或进入新建）：左侧「最新文案草案」主入口。
   const switchToWorking = () => {
     saveCurrentDraftIfAny();
@@ -693,8 +704,9 @@ export function ReleasePage() {
       setLoadingDraft(true);
       setActive(null);
       setStep(2);
-      if (currentCopy.releaseTag !== selectedTag) {
-        setSelectedTag(currentCopy.releaseTag);
+      const targetTag = releaseTagForVersion(currentCopy.appVersion) || currentCopy.releaseTag;
+      if (targetTag !== selectedTag) {
+        setSelectedTag(targetTag);
       }
     }
   };
@@ -707,8 +719,9 @@ export function ReleasePage() {
     setViewMode("history");
     setHistoryDraft(item);
     setActive(null);
-    if (item?.releaseTag && item.releaseTag !== selectedTag) {
-      setSelectedTag(item.releaseTag);
+    const targetTag = releaseTagForVersion(item?.appVersion) || item?.releaseTag || "";
+    if (targetTag && targetTag !== selectedTag) {
+      setSelectedTag(targetTag);
     }
   };
 
