@@ -25,7 +25,8 @@ export function LanguageTabs({
     /* 隐藏滚动条（scrollbar-hidden）但保留横向滚动：水平滚动条会在标签条
        底部占一条带、正好形成缝隙；隐藏后标签条与内容页完全贴平。 */
     <div className="scrollbar-hidden relative mx-5 -mb-0.5 z-10 bg-white dark:bg-zinc-900 overflow-x-auto overflow-y-hidden">
-      <div className="flex w-fit gap-0.5 px-1 pt-2 pb-1.5">
+      {/* 无底内边距：标签底边与内容页边框齐平（-mb 重叠已把页面顶边上移）。 */}
+      <div className="flex w-fit gap-0.5 px-1 pt-2">
         {languages.map((language) => {
           const translating = translatingLanguages?.has(language) || false;
           const isGenerated = generated.has(language);
