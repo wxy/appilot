@@ -49,6 +49,11 @@ export function HistoryPanel({
                     {draftVersionLabel(item)}
                     {item.ascSyncedAt && <AppleIcon className="w-3 h-3 text-emerald-500" />}
                   </span>
+                  {!item.batchConfirmedAt && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 shrink-0">
+                      未完成
+                    </span>
+                  )}
                   {isCurrent && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shrink-0">
                       当前

@@ -19,7 +19,6 @@ export function ReleaseReadinessPanel({
   copyNode,
   storeNode,
   alerts,
-  githubActions,
   storeActions,
   onAscRefresh,
   ascRefreshing,
@@ -27,6 +26,8 @@ export function ReleaseReadinessPanel({
   onCheckGithub,
   checkingGithub,
   githubWarning,
+  onToggleChecklist,
+  checklistOpen,
 }: {
   projectId: string;
   productId: string;
@@ -37,8 +38,6 @@ export function ReleaseReadinessPanel({
   copyNode?: ReactNode;
   /** 商店版本节点内容。 */
   storeNode?: ReactNode;
-  /** GitHub 节点动作按钮（根据发布公告新建等）。 */
-  githubActions?: ReactNode;
   /** 商店节点动作按钮（根据此版本重建等）。 */
   storeActions?: ReactNode;
   /** 动态提醒与警告（未创建版本、上架提醒等）。 */
@@ -50,6 +49,10 @@ export function ReleaseReadinessPanel({
   checkingGithub?: boolean;
   /** 权限等导致发布草案不可见时的提示（与当前发布节点是否已加载无关）。 */
   githubWarning?: ReactNode;
+  /** 切换发布前检查单面板（放在商店版本节点内）。 */
+  onToggleChecklist?: () => void;
+  /** 发布前检查单面板当前是否打开（用于按钮文案）。 */
+  checklistOpen?: boolean;
 }) {
   const [result, setResult] = useState<{ checkedAt: string; items: ReadinessCheckItem[] } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -128,7 +131,6 @@ export function ReleaseReadinessPanel({
                     {checkingGithub ? "检查中…" : "检查 GitHub 发布"}
                   </button>
                 )}
-                {githubActions}
               </>
             }
           >
@@ -153,6 +155,17 @@ export function ReleaseReadinessPanel({
             icon={<AppleIcon className="w-3 h-3" />}
             actions={
               <>
+                {onToggleChecklist && (
+                  <button
+                    type="button"
+                    onClick={onToggleChecklist}
+                    className={actionBtnClass}
+                    title="发布前检查单：自动检查 + 发布前素材"
+                  >
+                    <AppleIcon className="w-3 h-3" />
+                    {checklistOpen ? "返回工作单" : "发布前检查单"}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void handleCheck()}
