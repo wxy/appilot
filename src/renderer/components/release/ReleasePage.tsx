@@ -1808,7 +1808,9 @@ export function ReleasePage() {
                   </div>
                   {/* 选项卡栏：无外框，可横向滚动不换行；激活标签底部开放与
                       下方内容页相连（传统 Windows 选项卡页面）。 */}
-                  <div className="flex gap-0.5 -mb-px overflow-x-auto">
+                  {/* 标签栏比内容页稍窄（inline-flex 只占自身宽度），
+                      -mb-px 让底边与内容页框线重叠、看起来一体。 */}
+                  <div className="inline-flex max-w-full gap-0.5 -mb-px overflow-x-auto">
                       {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);

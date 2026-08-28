@@ -49,7 +49,7 @@ export function HistoryViewer({
         {localizations.length > 0 && (
           <>
             {/* 与发布工作台一致的选项卡布局 */}
-            <div className="flex gap-0.5 -mb-px overflow-x-auto">
+            <div className="inline-flex max-w-full gap-0.5 -mb-px overflow-x-auto">
               {tabLanguages.map((item: any) => {
                 const active = item.language === activeLanguage;
                 return (
