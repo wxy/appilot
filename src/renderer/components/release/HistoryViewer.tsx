@@ -15,6 +15,10 @@ export function HistoryViewer({
 }) {
   const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
+  // 临时诊断：历史查看器空白时输出 draft 形状到主日志（console-message 转发）。
+  console.error(
+    `[HistoryViewer] draft=${draft?.id} tag=${draft?.releaseTag} v=${draft?.appVersion} locs=${(draft?.localizations || []).length} resolved=${localizations.length}`,
+  );
   const activeLanguage = localizations.some((item: any) => item.language === language)
     ? language
     : localizations[0]?.language || "";
