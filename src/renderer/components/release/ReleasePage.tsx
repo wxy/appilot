@@ -1810,7 +1810,9 @@ export function ReleasePage() {
                       下方内容页相连（传统 Windows 选项卡页面）。 */}
                   {/* 标签栏比内容页稍窄（右侧留出内容页框线），
                       底边 -mb-px 与内容页框线重叠、看起来一体。 */}
-                  <div className="inline-flex w-fit max-w-[calc(100%-1.5rem)] gap-0.5 -mb-px overflow-x-auto">
+                  {/* 标签栏 + 内容页包在同一容器里，避免 space-y 的间距造成空隙 */}
+                  <div>
+                  <div className="mx-auto inline-flex w-fit max-w-[calc(100%-1.5rem)] gap-0.5 -mb-px overflow-x-auto">
                       {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);
@@ -2014,6 +2016,7 @@ export function ReleasePage() {
                         该语言尚未翻译。
                       </p>
                     )}
+                  </div>
                   </div>
                   </div>
                   {/* 选项卡页面结束；下方为整份文案级操作 */}

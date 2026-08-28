@@ -48,8 +48,9 @@ export function HistoryViewer({
       <div className="p-6 space-y-6">
         {localizations.length > 0 && (
           <>
-            {/* 与发布工作台一致的选项卡布局 */}
-            <div className="inline-flex w-fit max-w-[calc(100%-1.5rem)] gap-0.5 -mb-px overflow-x-auto">
+            {/* 与发布工作台一致的选项卡布局：标签栏 + 内容页同容器，避免 space-y 空隙 */}
+            <div>
+            <div className="mx-auto inline-flex w-fit max-w-[calc(100%-1.5rem)] gap-0.5 -mb-px overflow-x-auto">
               {tabLanguages.map((item: any) => {
                 const active = item.language === activeLanguage;
                 return (
@@ -150,6 +151,7 @@ export function HistoryViewer({
             </>
           )}
               </div>
+            </div>
             </div>
           </>
         )}
