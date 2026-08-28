@@ -1806,10 +1806,10 @@ export function ReleasePage() {
                       确定文案前需填写
                     </span>
                   </div>
-                  {/* 选项卡页面：标签栏与内容页同框；标签栏居中、两侧留空，
-                      可横向滚动（滚动条在页面框内，不打断与内容页的连接）。 */}
-                  <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
-                  <div className="mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto -mb-px px-1.5 pt-1">
+                  {/* 选项卡：标签栏在上、内容页在下；内容页的圆角上边缘上移，
+                      与标签栏底部的滚动栏重合，滚动栏压在该框线上。 */}
+                  <div>
+                  <div className="tab-scrollbar relative z-10 mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto px-1.5 pt-1 -mb-1.5">
                       {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);
@@ -1854,8 +1854,9 @@ export function ReleasePage() {
                         );
                       })}
                     </div>
-                  {/* 内容区：与标签栏同一页面框，激活标签跨过分割线与内容相连 */}
-                  <div className="border-t border-zinc-300 dark:border-zinc-700 p-4 space-y-4">
+                  {/* 内容页（圆角矩形）：上边缘被标签栏压住 */}
+                  <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
+                  <div className="p-4 space-y-4">
                   {activeLocalization && (
                     <>
                       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
@@ -2012,6 +2013,7 @@ export function ReleasePage() {
                         该语言尚未翻译。
                       </p>
                     )}
+                  </div>
                   </div>
                   </div>
                   {/* 选项卡页面结束；下方为整份文案级操作 */}

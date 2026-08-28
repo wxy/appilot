@@ -48,9 +48,9 @@ export function HistoryViewer({
       <div className="p-6 space-y-6">
         {localizations.length > 0 && (
           <>
-            {/* 与发布工作台一致的选项卡布局：标签栏 + 内容页同框，滚动条在框内 */}
-            <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
-            <div className="mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto -mb-px px-1.5 pt-1">
+            {/* 与发布工作台一致：标签栏在上，内容页圆角上边缘压住滚动栏 */}
+            <div>
+            <div className="tab-scrollbar relative z-10 mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto px-1.5 pt-1 -mb-1.5">
               {tabLanguages.map((item: any) => {
                 const active = item.language === activeLanguage;
                 return (
@@ -81,7 +81,8 @@ export function HistoryViewer({
                 );
               })}
             </div>
-            <div className="border-t border-zinc-300 dark:border-zinc-700 p-4 space-y-4">
+            <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
+            <div className="p-4 space-y-4">
                 {loc && (
                   <>
                     <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
@@ -150,6 +151,7 @@ export function HistoryViewer({
             </>
           )}
               </div>
+            </div>
             </div>
           </>
         )}
