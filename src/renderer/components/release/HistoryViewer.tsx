@@ -15,17 +15,15 @@ export function HistoryViewer({
 }) {
   const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
-  // 临时诊断：历史查看器空白时输出 draft 形状到主日志（console-message 转发）。
-  console.error(
-    `[HistoryViewer] draft=${draft?.id} tag=${draft?.releaseTag} v=${draft?.appVersion} locs=${(draft?.localizations || []).length} resolved=${localizations.length}`,
-  );
   const activeLanguage = localizations.some((item: any) => item.language === language)
     ? language
     : localizations[0]?.language || "";
   const loc = localizations.find((item: any) => item.language === activeLanguage) || localizations[0] || null;
-  // 与发布工作台一致：按汉语拼音排序。
-  const tabLanguages = [...localizations].sort((a, b) =>
-    languageLabel(a.language).localeCompare(languageLabel(b.language), "zh-CN"),
+  // 与发布工作台一致：按汉语拼音排序（传语言代码字符串，而不是本地化对象）。
+  const tabLanguages = localizations
+    .map((item: any) => item.language)
+    .sort((a, b) =>
+      languageLabel(a).localeCompare(languageLabel(b), "zh-CN"),
   );
 
   return (
