@@ -1801,7 +1801,7 @@ export function ReleasePage() {
                       盖住内容页顶边线（两侧圆角仍可见）；语言标签在该矩形内滚动。 */}
                   <div>
                   <div className="tab-scrollbar relative mx-5 -mb-0.5 z-10 dark:bg-zinc-900 overflow-x-auto">
-                    <div className="flex w-fit gap-0.5 px-0 pt-2 pb-1.5 -mb-1 bg-white">
+                    <div className="flex w-fit gap-0.5 px-0 pt-2 pb-1.5 -mb-1 bg-white dark:bg-zinc-900">
                       {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);
