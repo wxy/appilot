@@ -2,9 +2,8 @@ import { useState } from "react";
 import { cn } from "../../lib/utils";
 import { formatHumanTime, languageLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
-import { FieldHeader } from "../ui/Fields";
-import { inputClass, inputLineClass } from "../ui/styles";
 import { draftVersionLabel } from "./releaseFormat";
+import { SubmissionCopyFields } from "./SubmissionCopyFields";
 
 export function HistoryViewer({
   draft,
@@ -86,72 +85,12 @@ export function HistoryViewer({
             <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
             <div className="p-4 space-y-4">
                 {loc && (
-                  <>
-                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
-              <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
-                应用信息
-              </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <FieldHeader label="软件名称" text={loc.name || productTrackName || ""} />
-                  <input
-                    value={loc.name || productTrackName || ""}
+                  <SubmissionCopyFields
+                    localization={loc}
                     readOnly
-                    className={inputLineClass}
+                    productTrackName={productTrackName}
                   />
-                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                    {(loc.name || "").length}/30 字符
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <FieldHeader label="软件副标题" text={loc.subtitle || ""} />
-                  <input value={loc.subtitle || ""} readOnly className={inputLineClass} />
-                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                    {(loc.subtitle || "").length}/30 字符
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
-              <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
-                软件版本信息
-              </p>
-              <div className="space-y-1.5">
-                <FieldHeader label="推广文本" text={loc.promotionalText || ""} />
-                <input value={loc.promotionalText || ""} readOnly className={inputLineClass} />
-                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                  {(loc.promotionalText || "").length}/170 字符
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <FieldHeader label="软件描述" text={loc.description || ""} />
-                <textarea
-                  value={(loc.description || "").replace(/^──── 介绍 ────\n?/, "")}
-                  readOnly
-                  className={inputClass + " min-h-40 resize-y"}
-                />
-                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                  {(loc.description || "").replace(/^──── 介绍 ────\n?/, "").length}/4000 字符
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <FieldHeader label="新增内容" text={loc.whatsNew || ""} />
-                <textarea value={loc.whatsNew || ""} readOnly className={inputClass + " min-h-28 resize-y"} />
-                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                  {(loc.whatsNew || "").length}/4000 字符
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <FieldHeader label="关键词（提交字段）" text={loc.keywords || ""} />
-                <input value={loc.keywords || ""} readOnly className={inputLineClass} />
-                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
-                  {(loc.keywords || "").length}/100 字符
-                </p>
-              </div>
-            </div>
-            </>
-          )}
+              )}
               </div>
             </div>
             </div>

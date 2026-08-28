@@ -20,7 +20,7 @@ import {
 import { AIProgressButton } from "../ui/AIProgressButton";
 import { CredentialBadge } from "../ui/CredentialBadge";
 import { EmptyState } from "../ui/EmptyState";
-import { FieldBlock, FieldHeader } from "../ui/Fields";
+import { FieldBlock } from "../ui/Fields";
 import { AppleIcon, GithubIcon } from "../ui/Icons";
 import { StatusChip } from "../ui/StatusChip";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
@@ -33,6 +33,7 @@ import {
 import { HistoryPanel } from "./HistoryPanel";
 import { HistoryViewer } from "./HistoryViewer";
 import { ReferenceSection } from "./ReferenceSection";
+import { SubmissionCopyFields } from "./SubmissionCopyFields";
 import { draftVersionLabel } from "./releaseFormat";
 import { ValueFlash } from "../ui/ValueFlash";
 import { KeywordRuby } from "../ui/KeywordRuby";
@@ -772,16 +773,6 @@ export function ReleasePage() {
       active
         ? "text-white/80"
         : "text-amber-600/70 dark:text-amber-400/70",
-    );
-  // 字段长度计数：接近上限变黄、到上限变红。
-  const charCounterClass = (len: number, max: number) =>
-    cn(
-      "text-[11px] px-1",
-      len >= max
-        ? "text-red-500"
-        : len >= max * 0.9
-          ? "text-amber-600/90 dark:text-amber-500/90"
-          : "text-zinc-400 dark:text-zinc-500",
     );
 
   const handleDeleteDraft = async (target: any) => {
@@ -1860,117 +1851,13 @@ export function ReleasePage() {
                   <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
                   <div className="p-4 space-y-4">
                   {activeLocalization && (
-                    <>
-                      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
-                        <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
-                          应用信息
-                        </p>
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <div className="space-y-1.5">
-                            <FieldHeader label="软件名称" text={activeLocalization.name || ""} />
-                            <input
-                              value={activeLocalization.name || ""}
-                              onChange={(e) => updateLocalizationField("name", e.target.value)}
-                              disabled={isReadOnly}
-                              className={inputLineClass}
-                              placeholder={selectedProduct?.trackName || "未设置名称"}
-                              maxLength={30}
-                            />
-                            {!activeLocalization.name && (
-                              <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
-                                名称未设置，商店当前显示 App 级名称：{selectedProduct?.trackName || "—"}
-                              </p>
-                            )}
-                            <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
-                              建议：名称后加冒号和描述性短句（如 GloWalk: Path of Light）
-                            </p>
-                            <p className={charCounterClass((activeLocalization.name || "").length, 30)}>
-                              {(activeLocalization.name || "").length}/30 字符
-                            </p>
-                          </div>
-                          <div className="space-y-1.5">
-                            <FieldHeader label="软件副标题" text={activeLocalization.subtitle || ""} />
-                            <input
-                              value={activeLocalization.subtitle || ""}
-                              onChange={(e) => updateLocalizationField("subtitle", e.target.value)}
-                              disabled={isReadOnly}
-                              className={inputLineClass}
-                              placeholder={activeLocalization.name ? "未设置副标题" : "未设置副标题"}
-                              maxLength={30}
-                            />
-                            {!activeLocalization.subtitle && (
-                              <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
-                                副标题未设置
-                              </p>
-                            )}
-                            <p className={charCounterClass((activeLocalization.subtitle || "").length, 30)}>
-                              {(activeLocalization.subtitle || "").length}/30 字符
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
-                        <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
-                          软件版本信息
-                        </p>
-                        <div className="space-y-1.5">
-                          <FieldHeader label="推广文本" text={activeLocalization.promotionalText} />
-                          <input
-                            value={activeLocalization.promotionalText}
-                            onChange={(e) => updateLocalizationField("promotionalText", e.target.value)}
-                            disabled={isReadOnly}
-                            className={inputLineClass}
-                            maxLength={170}
-                          />
-                          <p className={charCounterClass(activeLocalization.promotionalText.length, 170)}>
-                            {activeLocalization.promotionalText.length}/170 字符
-                          </p>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <FieldHeader label="软件描述" text={activeLocalization.description} />
-                          <textarea
-                            value={activeLocalization.description}
-                            onChange={(e) => updateLocalizationField("description", e.target.value)}
-                            disabled={isReadOnly}
-                            className={inputClass + " min-h-40 resize-y"}
-                            maxLength={4000}
-                          />
-                          <p className={charCounterClass(activeLocalization.description.length, 4000)}>
-                            {activeLocalization.description.length}/4000 字符
-                          </p>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <FieldHeader label="新增内容" text={activeLocalization.whatsNew} />
-                          <textarea
-                            value={activeLocalization.whatsNew}
-                            onChange={(e) => updateLocalizationField("whatsNew", e.target.value)}
-                            disabled={isReadOnly}
-                            className={inputClass + " min-h-28 resize-y"}
-                            maxLength={4000}
-                          />
-                          <p className={charCounterClass(activeLocalization.whatsNew.length, 4000)}>
-                            {activeLocalization.whatsNew.length}/4000 字符
-                          </p>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <FieldHeader label="关键词（提交字段）" text={activeLocalization.keywords} />
-                          <input
-                            value={activeLocalization.keywords}
-                            onChange={(e) => updateLocalizationField("keywords", e.target.value)}
-                            disabled={isReadOnly}
-                            className={inputLineClass}
-                            maxLength={100}
-                          />
-                          <p className={charCounterClass(activeLocalization.keywords.length, 100)}>
-                            {activeLocalization.keywords.length}/100 字符
-                          </p>
-                        </div>
-                      </div>
-                    </>
+                    <SubmissionCopyFields
+                      localization={activeLocalization}
+                      readOnly={isReadOnly}
+                      onChange={(field, value) => updateLocalizationField(field, value)}
+                      productTrackName={selectedProduct?.trackName}
+                      hints
+                    />
                   )}
                   {/* 内容页内：当前语言页的翻译按钮（母本页无）——
                       未翻译显示「翻译为 X语」，翻译完成后保留为「重新翻译」
