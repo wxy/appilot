@@ -50,7 +50,7 @@ export function HistoryViewer({
           <>
             {/* 与发布工作台一致：顶部缩进矩形盖住内容页顶边线，标签在矩形内滚动 */}
             <div>
-            <div className="tab-scrollbar mx-3 -mb-px z-10 bg-white dark:bg-zinc-900 overflow-x-auto">
+            <div className="tab-scrollbar relative mx-3 -mb-1 z-10 bg-white dark:bg-zinc-900 overflow-x-auto">
               <div className="flex w-fit gap-0.5 px-1 pt-2 pb-1.5">
                 {tabLanguages.map((item: any) => {
                 const active = item.language === activeLanguage;
