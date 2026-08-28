@@ -474,8 +474,9 @@ export function ReleasePage() {
           ? "GitHub Token（classic）缺少 repo / public_repo 权限，发布草案不可见。请改用带 repo 权限的 classic token"
           : "GitHub Token 没有仓库写权限，发布草案不可见（需 Contents 读+写或 repo 权限）"
       : null;
-  const copyNode =
-    viewDraft &&
+  const copyNode = loadingDraft && !viewDraft ? (
+    <span className="text-[11px] text-zinc-400 dark:text-zinc-500">载入中…</span>
+  ) : viewDraft &&
     (masterConfirmed ||
       batchConfirmed ||
       viewDraft?.appVersion ||
@@ -651,6 +652,8 @@ export function ReleasePage() {
     setViewMode("working");
     setHistoryDraft(null);
     if (workTargetRelease) {
+      // 已有草案时立即进入载入态，避免切换瞬间闪现「尚未生成文案」。
+      if (workingDraft) setLoadingDraft(true);
       setActive(null);
       setStep(workingDraft ? 2 : 1);
       if (workTargetRelease.tag !== selectedTag) {
@@ -666,6 +669,7 @@ export function ReleasePage() {
     setViewMode("current");
     setHistoryDraft(null);
     if (currentCopy) {
+      setLoadingDraft(true);
       setActive(null);
       setStep(2);
       if (currentCopy.releaseTag !== selectedTag) {
@@ -711,6 +715,30 @@ export function ReleasePage() {
     }
     switchToWorking();
   };
+
+  // 左侧主入口按钮的选中/未选中样式：选中 = 琥珀高亮 + 圆环 + 「当前」徽标，
+  // 未选中 = 白色卡片 + 边框；两者尺寸与层级保持一致。
+  const entryBtnActive = (active: boolean) =>
+    cn(
+      "w-full text-left rounded-xl px-5 py-4 shadow-sm transition-colors",
+      active
+        ? "bg-amber-100 dark:bg-amber-500/20 ring-2 ring-amber-500/50"
+        : "bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 hover:border-amber-400/60 hover:bg-amber-50/60 dark:hover:bg-amber-500/5",
+    );
+  const entryTextActive = (active: boolean) =>
+    cn(
+      "text-sm font-semibold",
+      active
+        ? "text-amber-800 dark:text-amber-300"
+        : "text-zinc-800 dark:text-zinc-100",
+    );
+  const entrySubActive = (active: boolean) =>
+    cn(
+      "block text-[11px] mt-0.5 truncate",
+      active
+        ? "text-amber-700/80 dark:text-amber-400/80"
+        : "text-zinc-400 dark:text-zinc-500",
+    );
 
   const handleDeleteDraft = async (target: any) => {
     if (!project?.id || !target?.id) return;
@@ -1104,15 +1132,12 @@ export function ReleasePage() {
   };
 
   useEffect(() => {
-    if (
-      viewMode !== "history" &&
-      !draft &&
-      selectedExistingDraft &&
-      selectedRelease?.draft &&
-      project &&
-      selectedTag
-    ) {
+    if (viewMode !== "history" && !draft && selectedExistingDraft && selectedRelease?.draft && project && selectedTag) {
       void handleLoad(false);
+    } else if (!draft && (viewMode === "working" || viewMode === "current")) {
+      // 视图切换后目标没有可加载的草案（如发布列表尚未包含新建草案）时，
+      // 结束载入态，避免一直停在「正在载入文案…」。
+      setLoadingDraft(false);
     }
   }, [draft?.id, selectedExistingDraft?.id, project?.id, selectedTag, viewMode]);
 
@@ -1306,35 +1331,27 @@ export function ReleasePage() {
                     onClick={() =>
                       workingDraft ? switchToWorking() : void handleCreateNew()
                     }
-                    className={cn(
-                      "w-full text-left rounded-xl px-5 py-4 shadow-sm transition-colors",
-                      viewMode === "working"
-                        ? "bg-amber-100 dark:bg-amber-500/20 ring-2 ring-amber-500/40"
-                        : "bg-amber-500 hover:bg-amber-600",
-                    )}
+                    className={entryBtnActive(viewMode === "working")}
                   >
                     <span
-                      className={cn(
-                        "block text-sm font-semibold",
-                        viewMode === "working"
-                          ? "text-amber-800 dark:text-amber-300"
-                          : "text-white",
-                      )}
+                      className="flex items-center justify-between gap-2"
                     >
-                      文案草案
-                      {workingDraft && (
-                        <span className="inline-flex items-center gap-1">
-                          <span className="opacity-70">（工作中）</span>
+                      <span className={entryTextActive(viewMode === "working")}>
+                        <span className="inline-flex items-center gap-1.5">
+                          文案草案
+                          {workingDraft && (
+                            <span className="opacity-70">（工作中）</span>
+                          )}
+                        </span>
+                      </span>
+                      {viewMode === "working" && (
+                        <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500 text-white">
+                          当前
                         </span>
                       )}
                     </span>
                     <span
-                      className={cn(
-                        "block text-[11px] mt-0.5 truncate",
-                        viewMode === "working"
-                          ? "text-amber-700/80 dark:text-amber-400/80"
-                          : "text-white/80",
-                      )}
+                      className={entrySubActive(viewMode === "working")}
                     >
                       {workingDraft
                         ? `${draftVersionLabel(workingDraft)} · ${formatHumanTime(workingDraft.updatedAt)}`
@@ -1571,33 +1588,25 @@ export function ReleasePage() {
                   <button
                     type="button"
                     onClick={switchToCurrent}
-                    className={cn(
-                      "w-full text-left rounded-xl px-5 py-4 shadow-sm transition-colors",
-                      viewMode === "current"
-                        ? "bg-amber-100 dark:bg-amber-500/20 ring-2 ring-amber-500/40"
-                        : "bg-amber-500 hover:bg-amber-600",
-                    )}
+                    className={entryBtnActive(viewMode === "current")}
                   >
                     <span
-                      className={cn(
-                        "block text-sm font-semibold",
-                        viewMode === "current"
-                          ? "text-amber-800 dark:text-amber-300"
-                          : "text-white",
-                      )}
+                      className="flex items-center justify-between gap-2"
                     >
-                      <span className="inline-flex items-center gap-1.5">
-                        最新文案
-                        {currentCopy?.ascSyncedAt && <AppleIcon className="w-3 h-3" />}
+                      <span className={entryTextActive(viewMode === "current")}>
+                        <span className="inline-flex items-center gap-1.5">
+                          最新文案
+                          {currentCopy?.ascSyncedAt && <AppleIcon className="w-3 h-3" />}
+                        </span>
                       </span>
+                      {viewMode === "current" && (
+                        <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500 text-white">
+                          当前
+                        </span>
+                      )}
                     </span>
                     <span
-                      className={cn(
-                        "block text-[11px] mt-0.5 truncate",
-                        viewMode === "current"
-                          ? "text-amber-700/80 dark:text-amber-400/80"
-                          : "text-white/80",
-                      )}
+                      className={entrySubActive(viewMode === "current")}
                     >
                       {`${draftVersionLabel(currentCopy)} · ${formatHumanTime(currentCopy.updatedAt)}`}
                     </span>
