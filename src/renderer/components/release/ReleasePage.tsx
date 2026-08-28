@@ -232,6 +232,8 @@ export function ReleasePage() {
       // 显式点击“检查 GitHub 发布”时跳到最新发布（含新草案）；后台刷新或
       // 首次加载仍保留当前选择，避免打断正在编辑的文案。
       const nextTag = (() => {
+        // 首次进入/切换产品：以视图目标为准（URL 可能残留历史浏览的 tag）。
+        if (resetView) return defaultTag;
         if (
           !force &&
           urlTag &&
@@ -306,11 +308,14 @@ export function ReleasePage() {
   }, [products, currentProductId]);
 
   // Keep the URL's ?tag= in sync with the release selected in the workbench,
-  // so navigating away and back preserves the current draft.
+  // so navigating away and back preserves the current draft. 历史视图是瞬态，
+  // 不写 tag，避免刷新/返回时恢复到历史发布的旧 tag。
   useEffect(() => {
     if (!project?.id || !selectedTag) return;
     const next = new URLSearchParams(searchParams);
-    if (urlTag !== selectedTag) next.set("tag", selectedTag);
+    if (viewMode !== "history" && urlTag !== selectedTag) {
+      next.set("tag", selectedTag);
+    }
     if (viewMode !== "history" && next.get("view") !== viewMode) {
       next.set("view", viewMode);
     }
@@ -476,11 +481,6 @@ export function ReleasePage() {
       {selectedRelease?.tag && (
         <span className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
           {selectedRelease.tag}
-        </span>
-      )}
-      {selectedRelease?.name && selectedRelease.name !== selectedRelease.tag && (
-        <span className="w-full text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
-          {selectedRelease.name}
         </span>
       )}
     </>
@@ -1806,13 +1806,10 @@ export function ReleasePage() {
                       确定文案前需填写
                     </span>
                   </div>
-                  {/* 选项卡栏：无外框，可横向滚动不换行；激活标签底部开放与
-                      下方内容页相连（传统 Windows 选项卡页面）。 */}
-                  {/* 标签栏比内容页稍窄（右侧留出内容页框线），
-                      底边 -mb-px 与内容页框线重叠、看起来一体。 */}
-                  {/* 标签栏 + 内容页包在同一容器里，避免 space-y 的间距造成空隙 */}
-                  <div>
-                  <div className="mx-auto inline-flex w-fit max-w-[calc(100%-1.5rem)] gap-0.5 -mb-px overflow-x-auto">
+                  {/* 选项卡页面：标签栏与内容页同框；标签栏居中、两侧留空，
+                      可横向滚动（滚动条在页面框内，不打断与内容页的连接）。 */}
+                  <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
+                  <div className="mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto -mb-px px-1.5 pt-1">
                       {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);
@@ -1857,9 +1854,8 @@ export function ReleasePage() {
                         );
                       })}
                     </div>
-                  {/* 选项卡内容页（带边框）：当前语言的所有素材 */}
-                  <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
-                  <div className="p-4 space-y-4">
+                  {/* 内容区：与标签栏同一页面框，激活标签跨过分割线与内容相连 */}
+                  <div className="border-t border-zinc-300 dark:border-zinc-700 p-4 space-y-4">
                   {activeLocalization && (
                     <>
                       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
@@ -2016,7 +2012,6 @@ export function ReleasePage() {
                         该语言尚未翻译。
                       </p>
                     )}
-                  </div>
                   </div>
                   </div>
                   {/* 选项卡页面结束；下方为整份文案级操作 */}
