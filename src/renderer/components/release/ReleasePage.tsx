@@ -747,6 +747,16 @@ export function ReleasePage() {
         ? "text-white/80"
         : "text-amber-600/70 dark:text-amber-400/70",
     );
+  // 字段长度计数：接近上限变黄、到上限变红。
+  const charCounterClass = (len: number, max: number) =>
+    cn(
+      "text-[11px] px-1",
+      len >= max
+        ? "text-red-500"
+        : len >= max * 0.9
+          ? "text-amber-600/90 dark:text-amber-500/90"
+          : "text-zinc-400 dark:text-zinc-500",
+    );
 
   const handleDeleteDraft = async (target: any) => {
     if (!project?.id || !target?.id) return;
@@ -1815,6 +1825,7 @@ export function ReleasePage() {
                               disabled={isReadOnly}
                               className={inputLineClass}
                               placeholder={selectedProduct?.trackName || "未设置名称"}
+                              maxLength={30}
                             />
                             {!activeLocalization.name && (
                               <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
@@ -1824,7 +1835,7 @@ export function ReleasePage() {
                             <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
                               建议：名称后加冒号和描述性短句（如 GloWalk: Path of Light）
                             </p>
-                            <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                            <p className={charCounterClass((activeLocalization.name || "").length, 30)}>
                               {(activeLocalization.name || "").length}/30 字符
                             </p>
                           </div>
@@ -1836,13 +1847,14 @@ export function ReleasePage() {
                               disabled={isReadOnly}
                               className={inputLineClass}
                               placeholder={activeLocalization.name ? "未设置副标题" : "未设置副标题"}
+                              maxLength={30}
                             />
                             {!activeLocalization.subtitle && (
                               <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
                                 副标题未设置
                               </p>
                             )}
-                            <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                            <p className={charCounterClass((activeLocalization.subtitle || "").length, 30)}>
                               {(activeLocalization.subtitle || "").length}/30 字符
                             </p>
                           </div>
@@ -1860,8 +1872,9 @@ export function ReleasePage() {
                             onChange={(e) => updateLocalizationField("promotionalText", e.target.value)}
                             disabled={isReadOnly}
                             className={inputLineClass}
+                            maxLength={170}
                           />
-                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                          <p className={charCounterClass(activeLocalization.promotionalText.length, 170)}>
                             {activeLocalization.promotionalText.length}/170 字符
                           </p>
                         </div>
@@ -1873,8 +1886,9 @@ export function ReleasePage() {
                             onChange={(e) => updateLocalizationField("description", e.target.value)}
                             disabled={isReadOnly}
                             className={inputClass + " min-h-40 resize-y"}
+                            maxLength={4000}
                           />
-                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                          <p className={charCounterClass(activeLocalization.description.length, 4000)}>
                             {activeLocalization.description.length}/4000 字符
                           </p>
                         </div>
@@ -1886,8 +1900,9 @@ export function ReleasePage() {
                             onChange={(e) => updateLocalizationField("whatsNew", e.target.value)}
                             disabled={isReadOnly}
                             className={inputClass + " min-h-28 resize-y"}
+                            maxLength={4000}
                           />
-                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                          <p className={charCounterClass(activeLocalization.whatsNew.length, 4000)}>
                             {activeLocalization.whatsNew.length}/4000 字符
                           </p>
                         </div>
@@ -1899,8 +1914,9 @@ export function ReleasePage() {
                             onChange={(e) => updateLocalizationField("keywords", e.target.value)}
                             disabled={isReadOnly}
                             className={inputLineClass}
+                            maxLength={100}
                           />
-                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+                          <p className={charCounterClass(activeLocalization.keywords.length, 100)}>
                             {activeLocalization.keywords.length}/100 字符
                           </p>
                         </div>

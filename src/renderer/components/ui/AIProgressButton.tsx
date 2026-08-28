@@ -31,13 +31,20 @@ export function AIProgressButton({
   retry?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
+  const [peakChars, setPeakChars] = useState(0);
+  const chars = progress?.chars || 0;
   useEffect(() => {
     if (!loading) return;
     setElapsed(0);
     const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000);
     return () => window.clearInterval(timer);
   }, [loading]);
-  const chars = progress?.chars || 0;
+  // 重试/修复会重新发起请求导致 chars 回跳；显示峰值让进度单调递增。
+  useEffect(() => {
+    if (loading) setPeakChars((peak) => Math.max(peak, chars));
+    else setPeakChars(0);
+  }, [loading, chars]);
+  const shownChars = Math.max(chars, peakChars);
 
   if (loading) {
     return (
@@ -51,13 +58,13 @@ export function AIProgressButton({
           "min-h-10 min-w-36 whitespace-nowrap",
         )}
       >
-        <span className="flex flex-col items-center py-0.5 text-[11px] leading-tight">
-          <span className="inline-flex items-center gap-1">
-            <span aria-hidden="true">■</span>
-            {progress?.phase === "content" ? "生成中" : "思考中"}
+          <span className="flex flex-col items-center py-0.5 text-[11px] leading-tight">
+            <span className="inline-flex items-center gap-1">
+              <span aria-hidden="true" className="text-yellow-300">■</span>
+              {progress?.phase === "content" ? "生成中" : "思考中"}
+            </span>
+            <span className="mt-0.5 font-mono">{formatKilo(shownChars)} · {formatElapsed(elapsed)}</span>
           </span>
-          <span className="mt-0.5 font-mono">{formatKilo(chars)} · {formatElapsed(elapsed)}</span>
-        </span>
       </button>
     );
   }
