@@ -265,23 +265,28 @@ export async function listGitHubReleases(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetch(
-        `https://api.github.com/repos/${ownerRepo}/releases?per_page=30`,
-        {
-          headers: {
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            Accept: "application/vnd.github+json",
-            "User-Agent": "appilot",
-          },
+      const url = `https://api.github.com/repos/${ownerRepo}/releases?per_page=30`;
+      let response = await fetch(url, {
+        headers: githubHeaders(token),
+        signal: controller.signal,
+      });
+      let effectiveToken = Boolean(token);
+      if (token && (response.status === 401 || response.status === 403)) {
+        // The saved token is rejected (expired/revoked). Retry anonymously so
+        // published releases still surface; drafts stay invisible without a
+        // token that has push access to the repository.
+        response = await fetch(url, {
+          headers: githubHeaders(null),
           signal: controller.signal,
-        },
-      );
+        });
+        effectiveToken = false;
+      }
       if (!response.ok) return [];
       const raw = await response.text();
       const data: any = JSON.parse(raw);
       if (!Array.isArray(data)) return [];
       onStats?.(
-        repoUrl.length + (token ? token.length + 24 : 0),
+        repoUrl.length + (effectiveToken ? token!.length + 24 : 0),
         raw.length,
       );
       return data
@@ -295,7 +300,7 @@ export async function listGitHubReleases(
           createdAt: typeof item.created_at === "string" ? item.created_at : null,
           publishedAt: typeof item.published_at === "string" ? item.published_at : null,
           url: typeof item.html_url === "string" ? item.html_url : null,
-          viaToken: Boolean(token),
+          viaToken: effectiveToken,
         }))
         .sort((a, b) =>
           String(b.createdAt || "").localeCompare(String(a.createdAt || "")),

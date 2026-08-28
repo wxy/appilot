@@ -180,7 +180,12 @@ const GITHUB_SYNC_CACHE_PR_SCHEMA = 2;
 export function githubSyncCacheEntry(
   s: any,
   project: any,
-): { tag: string | null; release: any | null; pullRequests: any[] } | null {
+): {
+  tag: string | null;
+  release: any | null;
+  pullRequests: any[];
+  releases: any[];
+} | null {
   const all = s.get("githubSyncCache") || {};
   const entry = all?.[project?.id];
   if (!entry) return null;
@@ -194,6 +199,7 @@ export function githubSyncCacheEntry(
     tag: entry.tag ?? null,
     release: entry.release ?? null,
     pullRequests,
+    releases: Array.isArray(entry.releases) ? entry.releases : [],
   };
 }
 

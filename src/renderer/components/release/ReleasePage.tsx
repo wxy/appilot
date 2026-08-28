@@ -154,7 +154,11 @@ export function ReleasePage() {
       const next = await (window as any).appilot.release.list(project.id, force);
       setReleases(next.releases || []);
       setActive((prev: any) => {
-        if (prev?.draft?.releaseTag && next.releases?.some((item: any) => item.tag === prev.draft.releaseTag)) {
+        if (
+          !force &&
+          prev?.draft?.releaseTag &&
+          next.releases?.some((item: any) => item.tag === prev.draft.releaseTag)
+        ) {
           return prev;
         }
         return null;
@@ -192,15 +196,29 @@ export function ReleasePage() {
       const defaultTag = hasNewWork
         ? latest?.tag
         : currentCopyTag || latest?.tag || "";
-      setSelectedTag((current) => {
-        if (urlTag && next.releases?.some((item: any) => item.tag === urlTag)) {
+      // 显式点击“检查 GitHub 发布”时跳到最新发布（含新草案）；后台刷新或
+      // 首次加载仍保留当前选择，避免打断正在编辑的文案。
+      const nextTag = (() => {
+        if (
+          !force &&
+          urlTag &&
+          next.releases?.some((item: any) => item.tag === urlTag)
+        ) {
           return urlTag;
         }
-        if (current && next.releases?.some((item: any) => item.tag === current)) {
-          return current;
+        if (
+          !force &&
+          selectedTag &&
+          next.releases?.some((item: any) => item.tag === selectedTag)
+        ) {
+          return selectedTag;
         }
         return defaultTag;
-      });
+      })();
+      if (force && nextTag && nextTag !== selectedTag) {
+        setActive(null);
+      }
+      setSelectedTag(nextTag);
     } catch (e: any) {
       setError(e.message || "发布列表加载失败。");
     } finally {

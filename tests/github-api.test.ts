@@ -6,6 +6,7 @@ import {
   fetchGitHubRelease,
   fetchMergedPullRequests,
   fetchPullRequests,
+  listGitHubReleases,
 } from "../src/engine/github-api";
 
 let errors = 0;
@@ -48,6 +49,35 @@ async function runTests() {
         JSON.stringify([
           { sha: `fullsha-commit-${num}-a` },
           { sha: `fullsha-commit-${num}-b` },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.includes("/releases?")) {
+      return new Response(
+        JSON.stringify([
+          {
+            id: 2,
+            tag_name: "v1.1.0",
+            name: "v1.1.0 draft",
+            body: "draft body",
+            draft: true,
+            prerelease: false,
+            created_at: "2026-01-02T00:00:00Z",
+            published_at: null,
+            html_url: "https://github.com/owner/repo/releases/tag/v1.1.0",
+          },
+          {
+            id: 1,
+            tag_name: "v1.0.0",
+            name: "v1.0.0",
+            body: "body",
+            draft: false,
+            prerelease: false,
+            created_at: "2026-01-01T00:00:00Z",
+            published_at: "2026-01-01T00:00:00Z",
+            html_url: "https://github.com/owner/repo/releases/tag/v1.0.0",
+          },
         ]),
         { status: 200, headers: { "content-type": "application/json" } },
       );
@@ -181,6 +211,20 @@ async function runTests() {
       calls.filter((c) => c.url.includes("/repos/owner/repo")).length > repoCallsBefore,
       "different token bypasses the merged PR cache",
     );
+
+    // listGitHubReleases: drafts included with a token; rejected token falls
+    // back to anonymous published data for public repos.
+    const rels = await listGitHubReleases(dir, "ghp_secret");
+    assert(rels.length === 2 && rels.some((r) => r.draft), "releases list includes drafts");
+    assert(rels[0]?.tag === "v1.1.0" && rels[0]?.draft === true, "releases sorted newest-first");
+    rejectToken = true;
+    const relsAnon = await listGitHubReleases(dir, "ghp_bad");
+    assert(relsAnon.length === 2, "rejected token retries anonymously");
+    assert(
+      relsAnon.every((r) => r.viaToken === false),
+      "anonymous release fallback flags viaToken=false",
+    );
+    rejectToken = false;
   } finally {
     globalThis.fetch = origFetch;
   }
