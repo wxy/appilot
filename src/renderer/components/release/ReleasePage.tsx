@@ -331,7 +331,9 @@ export function ReleasePage() {
     if (!products.some((item) => item.id === productId)) return;
     let cancelled = false;
     setContextLoading(true);
-    setHistoryDraft(null);
+    // 注意：这里不能清空 historyDraft。点击历史文案会同时改变 selectedTag
+    // （让流程图跟随），若在此重置，第一次点击打开的历史查看器会立刻被
+    // 清掉，必须点第二次。历史状态由视图切换处理器负责清理。
     (window as any).appilot?.release?.context(project.id, productId, selectedTag)
       .then((context: any) => {
         if (!cancelled) {
@@ -1654,7 +1656,9 @@ export function ReleasePage() {
                     <span
                       className={entrySubActive(viewMode === "current")}
                     >
-                      {`${draftVersionLabel(currentCopy)} · ${formatHumanTime(currentCopy.updatedAt)}`}
+                      {`${draftVersionLabel(currentCopy)} · ${(currentCopy.localizations || []).filter(
+                        (item: any) => item?.language,
+                      ).length} 语言 · ${formatHumanTime(currentCopy.updatedAt)}`}
                     </span>
                   </button>
                 </div>
@@ -1814,6 +1818,17 @@ export function ReleasePage() {
                                 : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700",
                             )}
                           >
+                            {language === UI_SOURCE_LANGUAGE ? (
+                              <span
+                                className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
+                                title="界面语言（简体中文）"
+                              />
+                            ) : language === "en" ? (
+                              <span
+                                className="w-1.5 h-1.5 rounded-full bg-sky-500 shrink-0"
+                                title="英文"
+                              />
+                            ) : null}
                             {languageLabel(language)}
                             {translating && (
                               <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />

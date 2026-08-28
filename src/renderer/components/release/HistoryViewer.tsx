@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { cn } from "../../lib/utils";
-import { formatHumanTime, languageLabel } from "../../lib/format";
+import { formatHumanTime, languageLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
 import { FieldHeader } from "../ui/Fields";
 import { inputClass, inputLineClass } from "../ui/styles";
@@ -21,6 +21,10 @@ export function HistoryViewer({
     ? language
     : localizations[0]?.language || "";
   const loc = localizations.find((item: any) => item.language === activeLanguage) || localizations[0] || null;
+  // 与发布工作台一致：按汉语拼音排序。
+  const tabLanguages = [...localizations].sort((a, b) =>
+    languageLabel(a.language).localeCompare(languageLabel(b.language), "zh-CN"),
+  );
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
@@ -42,32 +46,45 @@ export function HistoryViewer({
         )}
       </div>
       <div className="p-6 space-y-6">
-        {localizations.length > 1 && (
-          <div className="flex flex-wrap gap-2">
-            {localizations.map((item: any) => {
-              const active = item.language === activeLanguage;
-              return (
-                <button
-                  key={item.language}
-                  type="button"
-                  onClick={() => setLanguage(item.language)}
-                  className={cn(
-                    "px-3 py-1.5 text-sm rounded-lg border transition-colors",
-                    active
-                      ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600",
-                  )}
-                >
-                  {languageLabel(item.language)}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {loc && (
+        {localizations.length > 0 && (
           <>
-            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
+            {/* 与发布工作台一致的选项卡布局 */}
+            <div className="flex gap-0.5 -mb-px overflow-x-auto">
+              {tabLanguages.map((item: any) => {
+                const active = item.language === activeLanguage;
+                return (
+                  <button
+                    key={item.language}
+                    type="button"
+                    onClick={() => setLanguage(item.language)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm border rounded-t-md shrink-0 whitespace-nowrap transition-colors",
+                      active
+                        ? "border-zinc-300 dark:border-zinc-700 border-b-transparent bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
+                        : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700",
+                    )}
+                  >
+                    {item.language === UI_SOURCE_LANGUAGE ? (
+                      <span
+                        className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
+                        title="界面语言（简体中文）"
+                      />
+                    ) : item.language === "en" ? (
+                      <span
+                        className="w-1.5 h-1.5 rounded-full bg-sky-500 shrink-0"
+                        title="英文"
+                      />
+                    ) : null}
+                    {languageLabel(item.language)}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
+              <div className="p-4 space-y-4">
+                {loc && (
+                  <>
+                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
               <p className="text-[11px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
                 应用信息
               </p>
@@ -128,6 +145,10 @@ export function HistoryViewer({
                 <p className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
                   {(loc.keywords || "").length}/100 字符
                 </p>
+              </div>
+            </div>
+            </>
+          )}
               </div>
             </div>
           </>
