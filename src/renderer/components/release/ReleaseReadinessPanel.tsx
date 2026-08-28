@@ -19,13 +19,15 @@ export function ReleaseReadinessPanel({
   copyNode,
   storeNode,
   alerts,
-  githubActions,
   storeActions,
   onAscRefresh,
   ascRefreshing,
   ascInfo,
   onCheckGithub,
   checkingGithub,
+  githubWarning,
+  onToggleChecklist,
+  checklistOpen,
 }: {
   projectId: string;
   productId: string;
@@ -36,8 +38,6 @@ export function ReleaseReadinessPanel({
   copyNode?: ReactNode;
   /** 商店版本节点内容。 */
   storeNode?: ReactNode;
-  /** GitHub 节点动作按钮（根据发布公告新建等）。 */
-  githubActions?: ReactNode;
   /** 商店节点动作按钮（根据此版本重建等）。 */
   storeActions?: ReactNode;
   /** 动态提醒与警告（未创建版本、上架提醒等）。 */
@@ -47,6 +47,12 @@ export function ReleaseReadinessPanel({
   ascInfo?: { fetchedAt?: string } | null;
   onCheckGithub?: () => void;
   checkingGithub?: boolean;
+  /** 权限等导致发布草案不可见时的提示（与当前发布节点是否已加载无关）。 */
+  githubWarning?: ReactNode;
+  /** 切换发布前检查单面板（放在商店版本节点内）。 */
+  onToggleChecklist?: () => void;
+  /** 发布前检查单面板当前是否打开（用于按钮文案）。 */
+  checklistOpen?: boolean;
 }) {
   const [result, setResult] = useState<{ checkedAt: string; items: ReadinessCheckItem[] } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -125,11 +131,15 @@ export function ReleaseReadinessPanel({
                     {checkingGithub ? "检查中…" : "检查 GitHub 发布"}
                   </button>
                 )}
-                {githubActions}
               </>
             }
           >
             {githubNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+            {githubWarning && (
+              <span className="w-full text-[10px] text-amber-600 dark:text-amber-400">
+                {githubWarning}
+              </span>
+            )}
           </FlowNode>
           <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
             →
@@ -145,6 +155,17 @@ export function ReleaseReadinessPanel({
             icon={<AppleIcon className="w-3 h-3" />}
             actions={
               <>
+                {onToggleChecklist && (
+                  <button
+                    type="button"
+                    onClick={onToggleChecklist}
+                    className={actionBtnClass}
+                    title="发布前检查单：自动检查 + 发布前素材"
+                  >
+                    <AppleIcon className="w-3 h-3" />
+                    {checklistOpen ? "返回工作单" : "发布前检查单"}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void handleCheck()}
@@ -176,11 +197,11 @@ export function ReleaseReadinessPanel({
             {storeNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
           </FlowNode>
         </div>
-        {alerts && (
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 dark:border-zinc-800 pt-2.5">
-            {alerts}
-          </div>
-        )}
+        {/* 固定站位：切换视图/发布时提醒内容变化，但占位高度不变，
+            避免流程图下方布局抖动。 */}
+        <div className="mt-3 flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 dark:border-zinc-800 pt-2.5">
+          {alerts || <span className="text-[11px] text-zinc-400/60">暂无提醒</span>}
+        </div>
         {result && (
           (() => {
             const issues = result.items.filter((item) => item.status !== "pass");

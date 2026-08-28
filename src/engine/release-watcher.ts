@@ -18,6 +18,7 @@ import path from "path";
 import { log } from "./logger";
 import {
   fetchGitHubRelease,
+  fetchMergedPullRequests,
   fetchPullRequests,
   type GitHubReleaseInfo,
   type GitHubReleaseItem,
@@ -99,6 +100,19 @@ export function isMergeCommit(subject: string): boolean {
   return /^Merge\s+(pull\s+request|branch)/i.test(String(subject || "").trim());
 }
 
+/**
+ * Local material uses short shas (%h) while GitHub API / git rev-list return
+ * full shas — compare by prefix so PR↔commit membership survives both forms.
+ */
+function shaMatches(local: string, full: string): boolean {
+  const a = String(local || "").trim().toLowerCase();
+  const b = String(full || "").trim().toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length < 7) return false;
+  return b.startsWith(a) || a.startsWith(b);
+}
+
 async function git(
   localPath: string,
   args: string[],
@@ -126,18 +140,45 @@ async function isAncestor(localPath: string, ancestor: string, descendant: strin
  * never touches the user's branches or working tree. Silent no-op when the
  * repo has no remote or the network is unavailable.
  */
-export async function fetchRemoteTags(localPath: string): Promise<boolean> {
+/** 每个仓库串行化的 git 操作队列：后台同步与手动检查并发时不再互相抢占 ref。 */
+const repoGitQueues = new Map<string, Promise<unknown>>();
+
+function enqueueRepoGit<T>(localPath: string, fn: () => Promise<T>): Promise<T> {
+  const previous = repoGitQueues.get(localPath) || Promise.resolve();
+  const run = previous.then(fn, fn);
+  repoGitQueues.set(
+    localPath,
+    run.catch(() => undefined),
+  );
+  return run;
+}
+
+/**
+ * git fetch --tags，带一次重试：并发 fetch 时 refs/remotes/origin/* 的锁竞争
+ * 是瞬时的，重试即可通过；其他失败则抛出。
+ */
+async function fetchTagsWithRetry(localPath: string): Promise<void> {
   try {
-    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
-    if (!remote) return false;
-    // Fetching can legitimately take a while on large/slow remotes; use a
-    // generous timeout so the background sync does not silently give up.
     await git(localPath, ["fetch", "--tags"], 60_000);
-    return true;
   } catch (err: any) {
-    log.warn(`fetchRemoteTags failed for ${localPath}: ${err.message}`);
-    return false;
+    log.warn(`git fetch retry for ${localPath}: ${err.message}`);
+    await git(localPath, ["fetch", "--tags"], 60_000);
   }
+}
+
+export async function fetchRemoteTags(localPath: string): Promise<boolean> {
+  const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(
+    () => "",
+  );
+  if (!remote) return false;
+  return enqueueRepoGit(localPath, () =>
+    fetchTagsWithRetry(localPath)
+      .then(() => true)
+      .catch((err: any) => {
+        log.warn(`fetchRemoteTags failed for ${localPath}: ${err.message}`);
+        return false;
+      }),
+  );
 }
 
 /**
@@ -146,24 +187,34 @@ export async function fetchRemoteTags(localPath: string): Promise<boolean> {
  * is clean (never force, never touch dirty work). Silent no-op on failure.
  */
 export async function syncLocalRepo(localPath: string): Promise<boolean> {
-  try {
-    const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
-    if (!remote) return false;
-    await git(localPath, ["fetch", "--tags"], 60_000);
-    const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(() => "");
-    if (branch) {
-      const dirty = await git(localPath, ["status", "--porcelain"]).catch(() => "");
-      if (!dirty) {
-        await git(localPath, ["merge", "--ff-only", `origin/${branch}`]).catch(() => {
-          log.warn(`Fast-forward ${branch} failed; using local state as-is`);
-        });
+  const remote = await git(localPath, ["remote", "get-url", "origin"]).catch(
+    () => "",
+  );
+  if (!remote) return false;
+  return enqueueRepoGit(localPath, async () => {
+    try {
+      await fetchTagsWithRetry(localPath);
+      const branch = await git(localPath, ["symbolic-ref", "--short", "HEAD"]).catch(
+        () => "",
+      );
+      if (branch) {
+        const dirty = await git(localPath, ["status", "--porcelain"]).catch(
+          () => "",
+        );
+        if (!dirty) {
+          await git(localPath, ["merge", "--ff-only", `origin/${branch}`]).catch(
+            () => {
+              log.warn(`Fast-forward ${branch} failed; using local state as-is`);
+            },
+          );
+        }
       }
+      return true;
+    } catch (err: any) {
+      log.warn(`syncLocalRepo failed for ${localPath}: ${err.message}`);
+      return false;
     }
-    return true;
-  } catch (err: any) {
-    log.warn(`syncLocalRepo failed for ${localPath}: ${err.message}`);
-    return false;
-  }
+  });
 }
 
 /** Latest tags first; date is the tag's creatordate. */
@@ -227,6 +278,35 @@ export async function collectReleaseMaterial(
     ]).catch(() => ""),
     git(localPath, ["diff", "--stat", ...rangeArgs]).catch(() => ""),
   ]);
+  // Merge commits ("Merge pull request #N …") are excluded from the content
+  // commits, but their subjects identify PRs. For each merge commit we also
+  // derive the PR's own commits (second-parent range) so the change summary
+  // can map PR rows to real commits even when the branch commits carry no #N.
+  const mergeLog = await git(localPath, [
+    "log",
+    ...rangeArgs,
+    "--merges",
+    "--max-count=20",
+    "--format=%H%x1f%P%x1f%s%x1e",
+  ]).catch(() => "");
+  const mergePrShas = new Map<number, string[]>();
+  for (const record of mergeLog.split("\x1e").filter(Boolean)) {
+    const [sha, parents, subject] = record.split("\x1f");
+    const match = (subject || "").match(/Merge pull request #(\d+)/i);
+    if (!match || !sha) continue;
+    const [p1, p2] = (parents || "").split(/\s+/).filter(Boolean);
+    if (!p1 || !p2) continue;
+    const shas = await git(localPath, [
+      "rev-list",
+      `${p1}..${p2}`,
+      "--max-count=100",
+    ]).catch(() => "");
+    const list = mergePrShas.get(Number(match[1])) || [];
+    for (const item of shas.split(/\s+/).filter(Boolean)) {
+      if (!list.includes(item)) list.push(item);
+    }
+    mergePrShas.set(Number(match[1]), list);
+  }
   const sinceDate = since
     ? await git(localPath, ["log", "-1", "--format=%cI", since]).catch(() => "")
     : "";
@@ -246,20 +326,45 @@ export async function collectReleaseMaterial(
     })
     .filter((commit) => commit.sha && !isMergeCommit(commit.subject));
 
-  const prNumbers = Array.from(
-    new Set(
-      commits.flatMap((commit) =>
-        Array.from(commit.subject.matchAll(/#(\d+)/g), (match) => Number(match[1])),
+  const shasByPr = new Map<number, string[]>();
+  const addShas = (number: number, shas: string[]) => {
+    const list = shasByPr.get(number) || [];
+    for (const sha of shas) {
+      if (!list.includes(sha)) list.push(sha);
+    }
+    shasByPr.set(number, list);
+  };
+  for (const commit of commits) {
+    const numbers = Array.from(
+      commit.subject.matchAll(/#(\d+)/g),
+      (match) => Number(match[1]),
+    );
+    for (const number of numbers) addShas(number, [commit.sha]);
+  }
+  for (const [number, shas] of mergePrShas) addShas(number, shas);
+  // A PR belongs to this release only when at least one of its commits is
+  // inside the range. PRs whose merge commit landed after the boundary but
+  // whose content was already generated (e.g. a branch merged to master after
+  // the previous copy) must not re-surface as "new" PRs.
+  const localCommitShas = commits.map((commit) => commit.sha);
+  const prNumbers = Array.from(shasByPr.keys())
+    .filter((number) =>
+      (shasByPr.get(number) || []).some((sha) =>
+        localCommitShas.some((local) => shaMatches(local, sha)),
       ),
-    ),
-  ).slice(0, 10);
+    )
+    .slice(0, 10);
 
   return {
     since: since || null,
     sinceDate: sinceDate || null,
     end: endRefs.join(" "),
     commits,
-    pullRequests: prNumbers.map((number) => ({ number, title: null })),
+    pullRequests: prNumbers.map((number) => ({
+      number,
+      title: null,
+      commitShas: shasByPr.get(number) || [],
+    })),
     diffStat: diffOut.slice(0, 800),
     githubRelease: null,
   };
@@ -276,11 +381,12 @@ export function materialToBody(material: ReleaseMaterial): string {
     lines.push("");
   }
   if (material.pullRequests.length > 0) {
-    lines.push(
-      `Pull requests in this release: ${material.pullRequests
-        .map((pr) => `#${pr.number}`)
-        .join(", ")}`,
-    );
+    lines.push("Pull requests in this release:");
+    for (const pr of material.pullRequests) {
+      const count =
+        typeof pr.commits === "number" ? ` (${pr.commits} commits)` : "";
+      lines.push(`- #${pr.number}${pr.title ? ` ${pr.title}` : ""}${count}`);
+    }
   }
   if (material.commits.length > 0) {
     lines.push(
@@ -299,7 +405,11 @@ export function materialToBody(material: ReleaseMaterial): string {
   return lines.join("\n") || `Release ${material.end} (no commits collected)`;
 }
 
-/** Keep only the commits the user chose to feed to the AI (PR list re-derived). */
+/**
+ * Keep only the commits the user chose to feed to the AI. The PR list is
+ * re-derived from PR↔commit membership (subject references plus API/merge
+ * ranges) so unchecked PR rows drop their commits from the material.
+ */
 export function filterMaterial(
   material: ReleaseMaterial,
   includeShas: string[] | null | undefined,
@@ -310,20 +420,77 @@ export function filterMaterial(
   const prByNumber = new Map(
     (material.pullRequests || []).map((pr) => [pr.number, pr] as const),
   );
-  const prNumbers = Array.from(
-    new Set(
-      commits.flatMap((commit) =>
-        Array.from(commit.subject.matchAll(/#(\d+)/g), (match) => Number(match[1])),
-      ),
-    ),
-  ).slice(0, 10);
+  const keptNumbers = new Set<number>();
+  for (const pr of material.pullRequests || []) {
+    if ((pr.commitShas || []).some((sha) =>
+      Array.from(set).some((local) => shaMatches(local, sha)),
+    )) {
+      keptNumbers.add(pr.number);
+    }
+  }
+  for (const commit of commits) {
+    for (const match of commit.subject.matchAll(/#(\d+)/g)) {
+      keptNumbers.add(Number(match[1]));
+    }
+  }
   return {
     ...material,
     commits,
-    pullRequests: prNumbers.map(
-      (number) => prByNumber.get(number) || { number, title: null },
-    ),
+    pullRequests: Array.from(keptNumbers)
+      .slice(0, 10)
+      .map((number) => prByNumber.get(number) || { number, title: null }),
   };
+}
+
+/**
+ * Resolve the PR list for a release range:
+ * - with a token: authoritative merged-PR list from the GitHub API
+ *   (titles, commit counts, per-PR commit shas), merged with locally derived
+ *   references so nothing is lost;
+ * - without a token: local references (subjects + merge commits) enriched by
+ *   anonymous per-PR fetches when the repo is public.
+ */
+async function resolveReleasePullRequests(
+  localPath: string,
+  material: ReleaseMaterial,
+  githubToken?: string | null,
+  onApiStats?: (requestBytes: number, responseBytes: number) => void,
+): Promise<ReleasePullRequest[]> {
+  if (githubToken && material.commits.length > 0) {
+    const fetched = await fetchMergedPullRequests(
+      localPath,
+      material.sinceDate,
+      githubToken,
+      onApiStats,
+    );
+    if (fetched.length > 0) {
+      const byNumber = new Map(fetched.map((pr) => [pr.number, pr] as const));
+      const merged = [...fetched];
+      for (const local of material.pullRequests) {
+        const existing = byNumber.get(local.number);
+        if (!existing) {
+          merged.push(local);
+        } else if (!existing.commitShas && local.commitShas?.length) {
+          existing.commitShas = local.commitShas;
+        }
+      }
+      // Keep only PRs with content actually inside this release range (see
+      // collectReleaseMaterial): a merged-at-after-boundary PR whose commits
+      // are all covered by the previous copy is not part of this release.
+      const inRangeShas = material.commits.map((commit) => commit.sha);
+      return merged.filter((pr) =>
+        (pr.commitShas || []).some((sha) =>
+          inRangeShas.some((local) => shaMatches(local, sha)),
+        ),
+      );
+    }
+  }
+  return fetchPullRequests(
+    localPath,
+    material.pullRequests,
+    githubToken,
+    onApiStats,
+  );
 }
 
 function firstHeading(content: string): string | null {
@@ -434,7 +601,7 @@ export async function checkForRelease(
   }
   const endRefs = frontierShas.join(" ");
 
-  const material = await collectReleaseMaterial(localPath, lastSeenSha || null, frontierShas);
+  let material = await collectReleaseMaterial(localPath, lastSeenSha || null, frontierShas);
 
   // The release identity is the newest main-line tag (or the head when there
   // are no tags). It stays stable across the generation boundary, so the
@@ -444,26 +611,68 @@ export async function checkForRelease(
   const onMain = await mainLineTags(localPath, allTags, endRefs);
   const releaseTag: GitTagInfo | null = onMain[0] || null;
 
-  const cacheMatches =
-    Boolean(releaseTag) && options.githubCache?.tag === releaseTag?.name;
+  // 上次生成点已覆盖当前发布时（例如同版本文案被删除后重新生成），
+  // 素材会为空。对 GitHub 发布草案回退到最新主分支 tag 作为边界，
+  // 让「自上次文案以来」的提交/PR 在重新生成时仍然可见；已发布/本地 tag
+  // 的「无新提交」仍保持空素材（不虚构变更）。
+  if (material.commits.length === 0) {
+    const candidateReleases =
+      options.githubReleases ?? options.githubCache?.releases ?? null;
+    const frontierIsDraft =
+      candidateReleases?.find((item: any) => item?.draft) !== undefined;
+    const newestTag = onMain[0] || null;
+    if (frontierIsDraft && newestTag) {
+      const fallback = await collectReleaseMaterial(
+        localPath,
+        newestTag.sha,
+        frontierShas,
+      );
+      if (fallback.commits.length > 0) material = fallback;
+    }
+  }
+
   const githubReleases =
     options.githubReleases ?? options.githubCache?.releases ?? null;
   const githubItems =
     githubReleases && githubReleases.length > 0 ? githubReleases : null;
+  const sortedGithubItems = githubItems
+    ? [...githubItems].sort((a, b) => {
+        if (a.draft !== b.draft) return a.draft ? -1 : 1;
+        return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+      })
+    : null;
+  // 缓存匹配以「前沿发布」（草案优先）的 tag 为准：后台同步缓存的 PR 列表
+  // 属于该发布，而 git tag 名（releaseTag）在草案场景下是上一个版本，会
+  // 导致缓存永远匹配不上、每次视图加载都重新走 GitHub API。
+  const frontierTag = sortedGithubItems?.[0]?.tag || releaseTag?.name || null;
+  const cacheMatches =
+    Boolean(frontierTag) && options.githubCache?.tag === frontierTag;
+  // Only trust cached PR lists that actually carry data. An empty cached list
+  // usually means the sync ran before PR enrichment existed (or the API was
+  // down), so refetch instead of showing a blank summary.
+  const pullRequests =
+    !options.force &&
+    cacheMatches &&
+    options.githubCache &&
+    (options.githubCache.pullRequests?.length ?? 0) > 0
+      ? options.githubCache.pullRequests
+      : await resolveReleasePullRequests(
+          localPath,
+          material,
+          githubToken,
+          options.onApiStats,
+        );
 
   if (githubItems) {
     const coveredTags = new Set(
       githubItems.map((item) => item.tag).filter((tag): tag is string => Boolean(tag)),
     );
     const extraTags = onMain.filter((tag) => !coveredTags.has(tag.name));
-    const sorted = [...githubItems].sort((a, b) => {
-      if (a.draft !== b.draft) return a.draft ? -1 : 1;
-      return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
-    });
-    const githubReleasesBuilt = sorted.map((item) => {
+    const githubReleasesBuilt = sortedGithubItems!.map((item) => {
       const tag = item.tag || `gh-${item.id}`;
       const materialWithRelease: ReleaseMaterial = {
         ...material,
+        pullRequests,
         githubRelease: {
           name: item.name,
           body: item.body,
@@ -490,12 +699,7 @@ export async function checkForRelease(
       extraTags.map(async (tag) => {
         const enriched: ReleaseMaterial = {
           ...material,
-          pullRequests: await fetchPullRequests(
-            localPath,
-            material.pullRequests,
-            githubToken,
-            options.onApiStats,
-          ),
+          pullRequests,
           githubRelease: await fetchGitHubRelease(
             localPath,
             tag.name,
@@ -530,14 +734,7 @@ export async function checkForRelease(
 
   const enrichedMaterial = {
     ...material,
-    pullRequests: cacheMatches
-      ? (options.githubCache?.pullRequests ?? material.pullRequests)
-      : await fetchPullRequests(
-          localPath,
-          material.pullRequests,
-          githubToken,
-          options.onApiStats,
-        ),
+    pullRequests,
     githubRelease: cacheMatches
       ? (options.githubCache?.release ?? material.githubRelease)
       : releaseTag

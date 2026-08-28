@@ -123,7 +123,8 @@ contextBridge.exposeInMainWorld("appilot", {
     generateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language),
     curateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:curateKeywords", projectId, language),
     getSubmissionReference: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:getSubmissionReference", projectId, language),
-    extractSubmissionCandidates: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:extractSubmissionCandidates", projectId, language),
+    extractSubmissionCandidates: (projectId: string, language: string, operationId = ""): Promise<any> =>
+      ipcRenderer.invoke("projects:extractSubmissionCandidates", projectId, language, operationId),
     saveTrackedKeywords: (projectId: string, trackedKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveTrackedKeywords", projectId, trackedKeywords),
     saveSubmissionKeywords: (projectId: string, submissionKeywords: any[]): Promise<any> => ipcRenderer.invoke("projects:saveSubmissionKeywords", projectId, submissionKeywords),
     removeTrackedKeyword: (projectId: string, language: string, keyword: string): Promise<any> =>
@@ -138,6 +139,12 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:translateKeyword", productId, language, keyword),
     translateKeywords: (projectId: string): Promise<{ total: number; translated: number }> =>
       ipcRenderer.invoke("projects:translateKeywords", projectId),
+    generateNameSubtitleSuggestions: (productId: string): Promise<any[]> =>
+      ipcRenderer.invoke("projects:generateNameSubtitleSuggestions", productId),
+    generatePreReleaseChecklist: (productId: string): Promise<any> =>
+      ipcRenderer.invoke("projects:generatePreReleaseChecklist", productId),
+    dismissNameSuggestion: (projectId: string, language: string): Promise<boolean> =>
+      ipcRenderer.invoke("projects:dismissNameSuggestion", projectId, language),
     onTranslateKeywordsProgress: (callback: (progress: any) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: any) =>
         callback(progress);
@@ -195,7 +202,8 @@ contextBridge.exposeInMainWorld("appilot", {
   },
 
   release: {
-    list: (projectId: string): Promise<any> => ipcRenderer.invoke("release:list", projectId),
+    list: (projectId: string, force = false): Promise<any> =>
+      ipcRenderer.invoke("release:list", projectId, force),
     context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
       ipcRenderer.invoke("release:context", projectId, productId, releaseTag),
     get: (
@@ -207,6 +215,7 @@ contextBridge.exposeInMainWorld("appilot", {
       includeShas?: string[],
       appVersion?: string,
       includedChanges?: string[],
+      operationId = "",
     ): Promise<any> =>
       ipcRenderer.invoke(
         "release:get",
@@ -218,6 +227,7 @@ contextBridge.exposeInMainWorld("appilot", {
         includeShas,
         appVersion,
         includedChanges,
+        operationId,
       ),
     onGenerateProgress: (callback: (progress: any) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
@@ -236,6 +246,7 @@ contextBridge.exposeInMainWorld("appilot", {
       releaseTag: string,
       targetLanguages: string[],
       sourceLanguage?: string,
+      operationId = "",
     ): Promise<any> =>
       ipcRenderer.invoke(
         "release:translate",
@@ -244,6 +255,7 @@ contextBridge.exposeInMainWorld("appilot", {
         releaseTag,
         targetLanguages,
         sourceLanguage,
+        operationId,
       ),
   },
 
@@ -263,6 +275,8 @@ contextBridge.exposeInMainWorld("appilot", {
     testConnection: (config: AIConfig): Promise<boolean> => ipcRenderer.invoke("ai:testConnection", config),
     listModels: (config: { providerUrl: string; apiKey: string }): Promise<{ models: string[]; error: string }> =>
       ipcRenderer.invoke("ai:listModels", config),
+    cancel: (operationId: string): Promise<boolean> =>
+      ipcRenderer.invoke("ai:cancel", operationId),
   },
 
   stats: {

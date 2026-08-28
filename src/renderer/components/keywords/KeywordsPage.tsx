@@ -65,6 +65,8 @@ export function KeywordsPage() {
     phase: "reasoning" | "content";
   } | null>(null);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesOpId, setCandidatesOpId] = useState("");
+  const [candidatesFailed, setCandidatesFailed] = useState(false);
   const [candidatesAdding, setCandidatesAdding] = useState(false);
   const [viewLang, setViewLang] = useState<string>("");
   const [loadingLangs, setLoadingLangs] = useState<Set<string>>(new Set());
@@ -782,19 +784,36 @@ export function KeywordsPage() {
   };
 
   const extractCandidates = async () => {
+    const operationId = crypto.randomUUID();
+    setCandidatesOpId(operationId);
     setCandidatesLoading(true);
     setSubmissionProgress(null);
     setRemovedCandidateKeys(new Set());
+    setCandidatesFailed(false);
     setError("");
     try {
-      const result = await (window as any).appilot.projects.extractSubmissionCandidates(product.id, currentLang);
+      const result = await (window as any).appilot.projects.extractSubmissionCandidates(
+        product.id,
+        currentLang,
+        operationId,
+      );
       setCandidates(result?.candidates || []);
     } catch (e: any) {
-      setError(e.message || "候选词抽取失败。");
+      if (String(e?.message || "").includes("已取消")) {
+        // 用户主动停止：静默。
+      } else {
+        setError(e.message || "候选词抽取失败。");
+        setCandidatesFailed(true);
+      }
     } finally {
+      setCandidatesOpId("");
       setCandidatesLoading(false);
       setSubmissionProgress(null);
     }
+  };
+
+  const stopCandidates = () => {
+    if (candidatesOpId) void (window as any).appilot?.ai?.cancel(candidatesOpId);
   };
 
   const removeCandidate = (source: string, keyword: string) => {
@@ -1062,11 +1081,13 @@ export function KeywordsPage() {
                         )}
                         <div className="flex items-center justify-between gap-3 pt-1">
                           <AIProgressButton
-                            onClick={extractCandidates}
+                            onStart={() => void extractCandidates()}
+                            onStop={stopCandidates}
                             disabled={!submissionRef}
                             loading={candidatesLoading}
                             progress={submissionProgress}
                             idleLabel="抽取候选词"
+                            retry={candidatesFailed}
                           />
                         </div>
                         {candidates.length > 0 && (
@@ -1147,7 +1168,9 @@ export function KeywordsPage() {
                     )}
                   </div>
                   <AIProgressButton
-                    onClick={handleGenerateAll}
+                    onStart={() => void handleGenerateAll()}
+                    onStop={() => undefined}
+                    stopAvailable={false}
                     loading={loadingLangs.size > 0}
                     progress={activeProgress}
                     idleLabel="为所选语言生成 / 整理"

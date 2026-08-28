@@ -54,8 +54,16 @@ function Layout({ children }: { children: React.ReactNode }) {
         .catch(() => setAiUsage(null));
     };
     refresh();
+    // AI 请求记账后主进程推送 ai-usage 事件，用量即时刷新（轮询兜底）。
+    const handler = (e: Event) => {
+      if ((e as CustomEvent).detail === "ai-usage") refresh();
+    };
+    window.addEventListener("appilot:data-changed", handler);
     const timer = setInterval(refresh, 30_000);
-    return () => clearInterval(timer);
+    return () => {
+      window.removeEventListener("appilot:data-changed", handler);
+      clearInterval(timer);
+    };
   }, []);
 
   // Close dropdowns when clicking outside.

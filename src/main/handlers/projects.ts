@@ -8,6 +8,7 @@ import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../
 import { createAiProvider } from "../ai-service";
 import { importAscKeyFileTo } from "../asc-key-file";
 import { notifyDataChanged } from "../data-sync";
+import { withAiOperation } from "../ai-cancel";
 import {
   ascJwt,
   decryptApiKey,
@@ -26,6 +27,23 @@ import { buildProjectProfileFor } from "../release-service";
 import { githubSyncCacheEntry, schedulerTick } from "../scheduler";
 import { getStore } from "../store";
 import { filterTasksForRemovedProject } from "../task-cleanup";
+import {
+  parsePlistVersion,
+  parsePlistBundleId,
+  parsePlistBundleVersion,
+  archiveCheck,
+  permissionsCheck,
+  parsePbxprojVersion,
+  parsePbxprojBuildNumber,
+  buildNumberConsistencyCheck,
+  pbxprojPermissionKeys,
+  plistPermissionKeys,
+  entitlementKeys,
+  xcstringsLocalizationCount,
+  COMMON_PERMISSION_KEYS,
+  capabilityLabel,
+  versionConsistencyCheck,
+} from "../../engine/pre-release";
 import {
   assertNonEmptyString,
   dedupeProjects,
@@ -704,7 +722,7 @@ export function registerProjectsHandlers(): void {
     return submissionReferenceFor(context.product, context.project, language);
   });
 
-  ipcMain.handle("projects:extractSubmissionCandidates", async (_event, productId: string, language: string) => {
+  ipcMain.handle("projects:extractSubmissionCandidates", async (_event, productId: string, language: string, operationId = "") => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
@@ -725,22 +743,24 @@ export function registerProjectsHandlers(): void {
         source: "submission" as const,
         rationale: "来自商店关键词",
       }));
-    const aiCandidates = await extractSubmissionCandidates(provider, {
-      name: ref.name,
-      subtitle: ref.subtitle,
-      language,
-      uiLanguage: "zh-Hans",
-      profile,
-    }, (received) => {
-      if (!_event.sender.isDestroyed()) {
-        _event.sender.send("projects:submissionProgress", {
-          productId,
-          language,
-          chars: received.chars,
-          phase: received.phase,
-        });
-      }
-    });
+    const aiCandidates = await withAiOperation(operationId, (signal) =>
+      extractSubmissionCandidates(provider, {
+        name: ref.name,
+        subtitle: ref.subtitle,
+        language,
+        uiLanguage: "zh-Hans",
+        profile,
+      }, (received) => {
+        if (!_event.sender.isDestroyed()) {
+          _event.sender.send("projects:submissionProgress", {
+            productId,
+            language,
+            chars: received.chars,
+            phase: received.phase,
+          });
+        }
+      }, signal),
+    );
     return { candidates: [...submissionTerms, ...aiCandidates] };
   });
 
@@ -1020,6 +1040,414 @@ export function registerProjectsHandlers(): void {
     notifyDataChanged("projects");
     return { total, translated };
   });
+
+  // 名称/副标题修改建议（发布前、多语言）：结合各语言的文案缺口，给出
+  // “当前名称/副标题 → 建议名称/副标题”，提示用户在提交前同步到代码与商店。
+  ipcMain.handle(
+    "projects:generateNameSubtitleSuggestions",
+    async (_event, productId: string) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const { project, product } = context;
+      const drafts = (project.storeSubmissionDrafts || [])
+        .filter((draft: any) => draft.productId === productId)
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.updatedAt || 0).getTime() -
+            new Date(a.updatedAt || 0).getTime(),
+        );
+      const latestDraft = drafts[0] || null;
+      const locByName = new Map<string, any>(
+        (latestDraft?.localizations || []).map((loc: any) => [
+          loc.language,
+          loc,
+        ]),
+      );
+      const gapsByLanguage: Record<string, string[]> = {};
+      for (const gap of project.copyGapKeywords || []) {
+        const lang = String(gap.language || "");
+        if (!lang) continue;
+        (gapsByLanguage[lang] = gapsByLanguage[lang] || []).push(
+          String(gap.keyword || ""),
+        );
+      }
+      const languages = (product.supportedLanguages || []).map((l: any) =>
+        String(l?.code || ""),
+      );
+      const inputs: {
+        language: string;
+        currentName: string;
+        currentSubtitle: string;
+        gapKeywords: string[];
+      }[] = languages.filter(Boolean).map((language: string) => {
+        const current = locByName.get(language) || null;
+        return {
+          language,
+          currentName: current?.name || product.trackName || "",
+          currentSubtitle: current?.subtitle || "",
+          gapKeywords: gapsByLanguage[language] || [],
+        };
+      });
+      if (inputs.length === 0) return [];
+
+      const { createAiProvider } = await import("../ai-service");
+      const { parseJsonObject } = await import("../../engine/ai/ai-request");
+      const provider = await createAiProvider(s);
+      const prompt = [
+        "你是 App Store 的 ASO 顾问。根据每个语言当前的名称/副标题与文案缺口关键词，给出发布前应采用的名称/副标题修改建议。",
+        "规则：",
+        "- 名称 ≤30 字符、副标题 ≤30 字符；",
+        "- 保留品牌名主体（如 “AI Pulse” 部分）不变，只调整描述性后缀；",
+        "- 把该语言最重要的 1-2 个文案缺口关键词自然融入名称或副标题（不堆砌）；",
+        "- 该语言没有缺口关键词时，建议保持当前值（suggestedName=suggestedSubtitle=当前值，reason=无文案缺口）；",
+        "- reason 用简体中文一句话说明修改意图。",
+        "只输出 JSON：{\"suggestions\":[{\"language\":\"...\",\"suggestedName\":\"...\",\"suggestedSubtitle\":\"...\",\"reason\":\"...\"}]}",
+      ].join("\n");
+      const payload = JSON.stringify({ inputs }, null, 2);
+      const raw = await provider.chat(
+        [
+          { role: "system", content: prompt },
+          { role: "user", content: `各语言当前信息与缺口关键词：\n${payload}` },
+        ] as any,
+        { temperature: 0.3, maxTokens: 4000 },
+      );
+      const data = parseJsonObject(raw);
+      const suggestions = Array.isArray(data?.suggestions)
+        ? data.suggestions
+            .filter((item: any) => item?.language)
+            .map((item: any) => ({
+              language: String(item.language),
+              suggestedName: String(item.suggestedName || ""),
+              suggestedSubtitle: String(item.suggestedSubtitle || ""),
+              reason: String(item.reason || ""),
+              gapKeywords: gapsByLanguage[String(item.language)] || [],
+            }))
+        : [];
+      const now = new Date().toISOString();
+      const next = inputs.map((input) => {
+        const suggestion =
+          suggestions.find(
+            (item: any) => item.language === input.language,
+          ) || null;
+        return {
+          language: input.language,
+          currentName: input.currentName,
+          currentSubtitle: input.currentSubtitle,
+          suggestedName: suggestion?.suggestedName || input.currentName,
+          suggestedSubtitle:
+            suggestion?.suggestedSubtitle || input.currentSubtitle,
+          reason: suggestion?.reason || "无文案缺口",
+          gapKeywords: suggestion?.gapKeywords || input.gapKeywords,
+          status: "pending" as const,
+          createdAt: now,
+        };
+      });
+      project.nameSubtitleSuggestions = next;
+      s.set("projects", projects);
+      notifyDataChanged("projects");
+      return next;
+    },
+  );
+
+  // 忽略某语言的名称/副标题建议（下次重新生成时重置）。
+  ipcMain.handle(
+    "projects:dismissNameSuggestion",
+    async (_event, projectId: string, language: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      language = assertNonEmptyString(language, "language");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      project.nameSubtitleSuggestions = (project.nameSubtitleSuggestions || []).map(
+        (item: any) =>
+          item.language === language ? { ...item, status: "dismissed" } : item,
+      );
+      s.set("projects", projects);
+      notifyDataChanged("projects");
+      return true;
+    },
+  );
+
+  // 发布前检查单：自动检查（版本一致性、权限用途说明）+ 发布前素材
+  // （名称/副标题/截图建议，多语言），全部持久化到项目。
+  ipcMain.handle(
+    "projects:generatePreReleaseChecklist",
+    async (_event, productId: string) => {
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const { project, product } = context;
+
+      // ── 自动检查：读仓库 Info.plist / project.pbxproj / entitlements ──
+      const findProjectFiles = (dir: string, depth: number): string[] => {
+        if (depth > 5 || !dir) return [];
+        let entries: any[] = [];
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return [];
+        }
+        const results: string[] = [];
+        for (const entry of entries) {
+          if (
+            entry.name.startsWith(".") ||
+            entry.name === "node_modules" ||
+            entry.name === ".git" ||
+            entry.name === "DerivedData"
+          ) {
+            continue;
+          }
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) results.push(...findProjectFiles(full, depth + 1));
+          else if (
+            entry.name.endsWith(".plist") ||
+            entry.name.endsWith(".pbxproj") ||
+            entry.name.endsWith(".entitlements") ||
+            entry.name.endsWith(".xcstrings")
+          ) {
+            results.push(full);
+          }
+        }
+        return results;
+      };
+      let codeVersion: string | null = null;
+      let codeBuildNumber: string | null = null;
+      const permissionKeys: string[] = [];
+      const capabilityKeys: string[] = [];
+      const xcstringsFiles: string[] = [];
+      for (const filePath of findProjectFiles(project.localPath, 0)) {
+        try {
+          const content = fs.readFileSync(filePath, "utf8");
+          if (filePath.endsWith(".plist")) {
+            codeVersion = codeVersion || parsePlistVersion(content);
+            permissionKeys.push(...plistPermissionKeys(content));
+          } else if (filePath.endsWith(".pbxproj")) {
+            codeVersion = codeVersion || parsePbxprojVersion(content);
+            codeBuildNumber =
+              codeBuildNumber || parsePbxprojBuildNumber(content);
+            permissionKeys.push(...pbxprojPermissionKeys(content));
+          } else if (filePath.endsWith(".entitlements")) {
+            capabilityKeys.push(...entitlementKeys(content));
+          } else if (filePath.endsWith(".xcstrings")) {
+            xcstringsFiles.push(content);
+          }
+        } catch {
+          // 单个文件读取失败忽略
+        }
+      }
+      const drafts = (project.storeSubmissionDrafts || [])
+        .filter((draft: any) => draft.productId === productId)
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.updatedAt || 0).getTime() -
+            new Date(a.updatedAt || 0).getTime(),
+        );
+      const targetVersion = drafts[0]?.appVersion || null;
+      const targetBuildNumber = drafts[0]?.buildNumber || null;
+      const versionCheck = versionConsistencyCheck(codeVersion, targetVersion);
+      const buildCheck = buildNumberConsistencyCheck(
+        codeBuildNumber,
+        targetBuildNumber,
+      );
+      const uniquePermissionKeys = Array.from(new Set(permissionKeys));
+      const coverage: Record<string, number> = {};
+      for (const key of COMMON_PERMISSION_KEYS) {
+        const count = Math.max(
+          ...xcstringsFiles.map((content) =>
+            xcstringsLocalizationCount(content, key),
+          ),
+        );
+        if (count > 0) coverage[key] = count;
+      }
+      const permCheck = permissionsCheck(uniquePermissionKeys, coverage);
+      if (capabilityKeys.length > 0) {
+        permCheck.items.push(
+          ...Array.from(new Set(capabilityKeys)).map((key) => ({
+            label: capabilityLabel(key),
+            kind: "capability" as const,
+          })),
+        );
+        permCheck.detail += `，另有 ${Array.from(new Set(capabilityKeys)).length} 项能力`;
+      }
+      // 构建产物（Archive）检查：在默认 Archives（*.xcarchive）、DerivedData
+      // 与 /tmp 中定向遍历 .app（只进入 Build/Products/Applications、xcarchive、
+      // 日期目录与临时 Derived 目录，跳过 DerivedSources 等大目录，保证秒回），
+      // 按 bundleId 匹配后核对版本号与构建号。
+      let builtApp: { version: string | null; build: string | null } | null =
+        null;
+      {
+        const os = await import("os");
+        const home = os.homedir();
+        const roots = [
+          {
+            root: path.join(home, "Library/Developer/Xcode/Archives"),
+            topFilter: /^\d{4}-\d{2}-\d{2}/,
+          },
+          {
+            root: path.join(home, "Library/Developer/Xcode/DerivedData"),
+            topFilter: null,
+          },
+          { root: "/tmp", topFilter: /Derived/i },
+        ];
+        const findProductApps = (
+          root: string,
+          topFilter: RegExp | null,
+        ): string[] => {
+          const apps: string[] = [];
+          const visit = (dir: string, depth: number) => {
+            if (depth > 5) return;
+            let entries: any[] = [];
+            try {
+              entries = fs.readdirSync(dir, { withFileTypes: true });
+            } catch {
+              return;
+            }
+            for (const entry of entries) {
+              if (!entry.isDirectory()) continue;
+              const full = path.join(dir, entry.name);
+              if (entry.name.endsWith(".app")) {
+                apps.push(full);
+                continue;
+              }
+              if (depth === 0) {
+                if (topFilter && !topFilter.test(entry.name)) continue;
+                visit(full, 1);
+                continue;
+              }
+              const lower = entry.name.toLowerCase();
+              const allowed =
+                entry.name.endsWith(".xcarchive") ||
+                lower === "build" ||
+                lower === "products" ||
+                lower === "applications" ||
+                lower.startsWith("release-") ||
+                lower.startsWith("debug-") ||
+                /^\d{4}-\d{2}-\d{2}/.test(entry.name);
+              if (allowed) visit(full, depth + 1);
+            }
+          };
+          visit(root, 0);
+          return apps;
+        };
+        const findBuiltApp = (): {
+          version: string | null;
+          build: string | null;
+        } | null => {
+          for (const { root, topFilter } of roots) {
+            for (const appDir of findProductApps(root, topFilter)) {
+              for (const plistPath of [
+                path.join(appDir, "Info.plist"),
+                path.join(appDir, "Contents", "Info.plist"),
+              ]) {
+                try {
+                  const content = fs.readFileSync(plistPath, "utf8");
+                  if (parsePlistBundleId(content) === product.bundleId) {
+                    return {
+                      version: parsePlistVersion(content),
+                      build: parsePlistBundleVersion(content),
+                    };
+                  }
+                } catch {
+                  // 单个 plist 读取失败忽略
+                }
+              }
+            }
+          }
+          return null;
+        };
+        builtApp = findBuiltApp();
+      }
+      const archiveCheckResult = archiveCheck(
+        builtApp,
+        targetVersion,
+        targetBuildNumber,
+      );
+      const checks = [
+        {
+          id: "version-consistency",
+          label: "版本一致性（代码 vs 目标）",
+          ...versionCheck,
+        },
+        {
+          id: "build-number",
+          label: "构建号一致性（代码 vs 目标）",
+          ...buildCheck,
+        },
+        {
+          id: "archive",
+          label: "构建产物（Archive）版本匹配",
+          ...archiveCheckResult,
+        },
+        {
+          id: "permissions",
+          label: "权限与能力声明（Info.plist / entitlements）",
+          ...permCheck,
+        },
+        {
+          id: "prep-gaps",
+          label: "待复核暂停 / 文案缺口",
+          ...(() => {
+            const pendingPauseCount = (project.trackedKeywords || []).filter(
+              (k: any) =>
+                (k.pendingPausePlatforms || []).includes(product.platform),
+            ).length;
+            const copyGapCount = (project.copyGapKeywords || []).length;
+            const openCount = pendingPauseCount + copyGapCount;
+            return {
+              status: (openCount > 0 ? "warn" : "pass") as "warn" | "pass",
+              detail:
+                openCount > 0
+                  ? `${pendingPauseCount} 个关键词待复核暂停，${copyGapCount} 个文案缺口未处理`
+                  : "无待复核暂停关键词、无未处理文案缺口",
+            };
+          })(),
+        },
+      ];
+
+      // ── 发布前素材：截图建议（多语言）。名称/副标题建议属于发布文案，
+      // 不在检查单中重复（商店名称/副标题只影响 ASC，与代码无关）。──
+      // 支持语言从“当前分支”的仓库重新检测并与已存语言合并：分支新增语言
+      // 无需等 PR 合并即可被识别（本地工作区即当前分支）。检测失败不静默。
+      let detectedLanguages: string[] = [];
+      let languageDisplayNameFn: (code: string) => string = (code) => code;
+      try {
+        const { detectLocalizedLanguages, languageDisplayName } = await import(
+          "../../engine/app-store-discovery"
+        );
+        detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
+        languageDisplayNameFn = languageDisplayName;
+        log.warn(
+          `Checklist language detection: ${detectedLanguages.length} languages detected for ${project.localPath}`,
+        );
+      } catch (err: any) {
+        log.warn(`Checklist language detection failed: ${err.message}`);
+      }
+      const stored = (product.supportedLanguages || []).map((l: any) =>
+        String(l?.code || ""),
+      );
+      // 直接取并集用于本次生成，并持久化回产品，让整个应用识别新语言。
+      const languages = Array.from(new Set([...stored, ...detectedLanguages]));
+      if (languages.length !== stored.length) {
+        product.supportedLanguages = languages.map((code) => ({
+          code,
+          name: languageDisplayNameFn(code),
+        }));
+        project.supportedLanguages = product.supportedLanguages;
+      }
+      const now = new Date().toISOString();
+      project.preReleaseChecklist = {
+        updatedAt: now,
+        checks,
+      };
+      s.set("projects", projects);
+      notifyDataChanged("projects");
+      return project.preReleaseChecklist;
+    },
+  );
 
   // 处理待处理暂停：resume 恢复跟踪 / pause 最终暂停 / remove 移除（无关词）
   // / copy-gap 列入文案素材并暂停该平台。

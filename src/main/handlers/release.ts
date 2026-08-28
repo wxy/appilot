@@ -16,20 +16,33 @@ import { inferAppVersion } from "../../engine/store-submission";
 import { githubSyncCacheEntry } from "../scheduler";
 import { getStore } from "../store";
 import {
-  buildProjectProfileFor,
   generateStoreSubmissionDraft,
   synthesizeReleaseFromDraft,
 } from "../release-service";
 import { assertNonEmptyString, assertStringArray } from "../util";
 import { notifyDataChanged } from "../data-sync";
+import { log } from "../../engine/logger";
+import type { GitHubRepoCapabilities } from "../../engine/github-api";
+import { cancelAiRequest, withAiOperation } from "../ai-cancel";
 
 export function registerReleaseHandlers(): void {
+  ipcMain.handle("ai:cancel", (_event, operationId: string) => {
+    if (!operationId) return false;
+    return cancelAiRequest(operationId);
+  });
+
   async function githubReleaseCandidates(
     project: any,
     token: string | null | undefined,
     cached?: any,
+    force = false,
   ): Promise<any[]> {
     const { listGitHubReleases } = await import("../../engine/github-api");
+    // 非强制刷新时优先用小时级同步缓存，避免每次打开工作台都打 GitHub API；
+    // 缓存新鲜度（1 小时内 + lastSeenSha 一致）由 githubSyncCacheEntry 保证。
+    if (!force && Array.isArray(cached?.releases) && cached.releases.length > 0) {
+      return cached.releases;
+    }
     const fresh = await listGitHubReleases(project.localPath, token);
     if (fresh.length > 0) return fresh;
     return Array.isArray(cached?.releases) ? cached.releases : [];
@@ -48,6 +61,7 @@ export function registerReleaseHandlers(): void {
       project,
       token,
       githubSyncCacheEntry(s, project),
+      Boolean(force),
     );
     const result = await checkForRelease(
       project.localPath,
@@ -60,6 +74,22 @@ export function registerReleaseHandlers(): void {
         githubCache: githubSyncCacheEntry(s, project) ?? undefined,
       },
     );
+    // Draft-release visibility depends on the token's write access to
+    // releases. Live-check on an explicit force refresh; otherwise reuse the
+    // last hourly sync's result so the workbench can warn when drafts are
+    // invisible instead of silently missing them.
+    let githubCapabilities: GitHubRepoCapabilities | null = null;
+    if (force) {
+      const { fetchRepoCapabilities } = await import("../../engine/github-api");
+      githubCapabilities = await fetchRepoCapabilities(project.localPath, token);
+    } else {
+      githubCapabilities = githubSyncCacheEntry(s, project)?.capabilities ?? null;
+    }
+    log.debug(
+      `release:list ${project.name} force=${Boolean(force)} ` +
+        `githubCapabilities=${JSON.stringify(githubCapabilities)} ` +
+        `releases=${result.releases.length} latest=${result.releases[0]?.tag || ""}`,
+    );
     return {
       releases: result.releases.map((release) => ({
         ...release,
@@ -69,6 +99,7 @@ export function registerReleaseHandlers(): void {
         ),
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,
+      githubCapabilities,
     };
   });
 
@@ -94,6 +125,7 @@ export function registerReleaseHandlers(): void {
         project,
         token,
         githubSyncCacheEntry(s, project),
+        false,
       );
       const result = await checkForRelease(
         project.localPath,
@@ -177,6 +209,7 @@ export function registerReleaseHandlers(): void {
       includeShas?: string[],
       appVersion?: string,
       includedChanges?: string[],
+      operationId = "",
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -197,6 +230,7 @@ export function registerReleaseHandlers(): void {
       project,
       token,
       githubSyncCacheEntry(s, project),
+      Boolean(force),
     );
     _event.sender.send("release:generateProgress", {
       kind: "phase",
@@ -249,36 +283,43 @@ export function registerReleaseHandlers(): void {
           const filtered = filterMaterial(release.material, includeShas);
           generationRelease = { ...release, material: filtered, body: materialToBody(filtered) };
         }
-        const draft = await generateStoreSubmissionDraft(
-          s,
-          project,
-          product,
-          generationRelease,
-          existing,
-          (progress) => {
-            if (!_event.sender.isDestroyed()) {
-              _event.sender.send("release:generateProgress", progress);
-            }
-          },
-          language,
-          appVersion,
-          (received) => {
-            if (!_event.sender.isDestroyed()) {
-              _event.sender.send("release:generateProgress", { kind: "chars", ...received });
-            }
-          },
-          includedChanges,
+        const draft = await withAiOperation(operationId, (signal) =>
+          generateStoreSubmissionDraft(
+            s,
+            project,
+            product,
+            generationRelease,
+            existing,
+            (progress) => {
+              if (!_event.sender.isDestroyed()) {
+                _event.sender.send("release:generateProgress", progress);
+              }
+            },
+            language,
+            appVersion,
+            (received) => {
+              if (!_event.sender.isDestroyed()) {
+                _event.sender.send("release:generateProgress", { kind: "chars", ...received });
+              }
+            },
+            includedChanges,
+            signal,
+            () => {
+              if (!_event.sender.isDestroyed()) {
+                _event.sender.send("release:generateProgress", { kind: "retry" });
+              }
+            },
+          ),
         );
         // Re-read before writing: AI generation awaited for seconds, during
         // which concurrent handlers may have replaced the projects array.
         const latestProjects: any[] = s.get("projects") || [];
         const latestProject = latestProjects.find((item: any) => item.id === projectId);
         if (latestProject) {
-          // Remember the tag (+ its commit) we generated for: name@sha identity
-          // so a moved tag redefines the boundary and triggers regeneration.
-          // Remember the HEAD we generated from: what's-new always covers
-          // everything committed after this point.
-          latestProject.lastReleaseSha = release.commitSha || null;
+          // 生成本身不推进「上次生成点」：草案可能被删除后重新生成同一版本，
+          // 提前推进会让「自上次文案以来」的素材为空。边界在整批确定时推进
+          // （见 release:saveDraft），这里只把 release 的 commit 记到草案上。
+          draft.releaseCommitSha = release.commitSha || undefined;
           upsertStoreSubmissionDraft(latestProject, draft);
           s.set("projects", latestProjects);
         }
@@ -302,6 +343,7 @@ export function registerReleaseHandlers(): void {
       releaseTag: string,
       targetLanguages: string[],
       sourceLanguage?: string,
+      operationId = "",
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -321,27 +363,12 @@ export function registerReleaseHandlers(): void {
       }
 
       const { translateStoreSubmissionContent } = await import("../../engine/ai/release-reviewer");
-      const { readRepoDescription } = await import("../../engine/app-store-discovery");
 
       const provider = await createAiProvider(s);
       const source = draft.localizations.find((item: any) => item.language === sourceLanguage)
         || draft.localizations[0];
       if (!source) throw new Error("Source localization not found");
 
-      _event.sender.send("release:generateProgress", {
-        kind: "phase",
-        phase: "read_readme",
-        status: "started",
-      });
-      const description = readRepoDescription(project.localPath);
-      _event.sender.send("release:generateProgress", {
-        kind: "phase",
-        phase: "read_readme",
-        status: "completed",
-        bytes: description.length || 0,
-      });
-
-      const profile = await buildProjectProfileFor(project, product, undefined, description);
       // 各语言的关键词/文案缺口按语言分组，翻译时只注入目标语言自己的词。
       const trackedKeywordsByLanguage: Record<string, string[]> = {};
       for (const k of project.trackedKeywords || []) {
@@ -357,26 +384,36 @@ export function registerReleaseHandlers(): void {
         (copyGapKeywordsByLanguage[lang] =
           copyGapKeywordsByLanguage[lang] || []).push(String(g.keyword || ""));
       }
-      const translations = await translateStoreSubmissionContent(
-        provider,
-        {
-          name: product.trackName || project.name,
-          profile,
-          trackedKeywordsByLanguage,
-          copyGapKeywordsByLanguage,
-        },
-        source,
-        targetLanguages,
-        (progress) => {
-          if (!_event.sender.isDestroyed()) {
-            _event.sender.send("release:generateProgress", progress);
-          }
-        },
-        (received) => {
-          if (!_event.sender.isDestroyed()) {
-            _event.sender.send("release:generateProgress", { kind: "chars", ...received });
-          }
-        },
+      const translations = await withAiOperation(operationId, (signal) =>
+        translateStoreSubmissionContent(
+          provider,
+          {
+            name: product.trackName || project.name,
+            // 翻译不需要整个项目档案（含大段 README/中文上下文）——那会显著
+            // 增加模型回显母本语言的概率。源文与目标语言都在 user 消息里。
+            profile: undefined,
+            trackedKeywordsByLanguage,
+            copyGapKeywordsByLanguage,
+          },
+          source,
+          targetLanguages,
+          (progress) => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", progress);
+            }
+          },
+          (received) => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", { kind: "chars", ...received });
+            }
+          },
+          signal,
+          () => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", { kind: "retry" });
+            }
+          },
+        ),
       );
 
       const latestProjects: any[] = s.get("projects") || [];
@@ -414,10 +451,43 @@ export function registerReleaseHandlers(): void {
       (item: any) => item.id === draft.id,
     );
     if (existing?.ascSyncedAt) {
-      throw new Error("该文案已按商店上架状态冻结，不可修改");
+      // 冻结文案完全只读：内容未变时视为无操作（UI 的失焦保存等会触发），
+      // 不报错也不改写 updatedAt；内容确实变化时才拒绝。
+      const frozenFields = {
+        appVersion: existing.appVersion,
+        reviewFeedback: existing.reviewFeedback,
+        localizations: existing.localizations,
+        promotionalText: existing.promotionalText,
+        whatsNew: existing.whatsNew,
+        description: existing.description,
+        submissionKeywords: existing.submissionKeywords,
+      };
+      const incomingFields = {
+        appVersion: draft.appVersion,
+        reviewFeedback: draft.reviewFeedback,
+        localizations: draft.localizations,
+        promotionalText: draft.promotionalText,
+        whatsNew: draft.whatsNew,
+        description: draft.description,
+        submissionKeywords: draft.submissionKeywords,
+      };
+      if (JSON.stringify(frozenFields) !== JSON.stringify(incomingFields)) {
+        throw new Error("该文案已按商店上架状态冻结，不可修改");
+      }
+      return existing;
     }
 
     draft.updatedAt = new Date().toISOString();
+    // 整批确定是「上次生成点」真正推进的时刻：该版本文案从此冻结，
+    // 下一个版本文案的素材从这条 commit 之后开始收集。仅在新确认时推进，
+    // 避免反复保存已确认草案把边界回退。
+    if (draft.batchConfirmedAt && !existing?.batchConfirmedAt) {
+      const latestProjects: any[] = s.get("projects") || [];
+      const latestProject = latestProjects.find((item: any) => item.id === projectId);
+      if (latestProject) {
+        latestProject.lastReleaseSha = draft.releaseCommitSha || latestProject.lastReleaseSha || null;
+      }
+    }
     upsertStoreSubmissionDraft(project, draft);
     const context = findProductContext(projects, draft.productId);
     if (context) {

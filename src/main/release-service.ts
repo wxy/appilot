@@ -85,6 +85,8 @@ export async function generateStoreSubmissionDraft(
   appVersionOverride?: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   includedChanges?: string[],
+  signal?: AbortSignal,
+  onRetry?: () => void,
 ): Promise<StoreSubmissionDraft> {
   const { generateStoreSubmissionContent } = await import("../engine/ai/release-reviewer");
   const { readRepoDescription } = await import("../engine/app-store-discovery");
@@ -168,6 +170,8 @@ export async function generateStoreSubmissionDraft(
     },
     onProgress,
     onChars,
+    signal,
+    onRetry,
   );
 
   const draft = createStoreSubmissionDraft({

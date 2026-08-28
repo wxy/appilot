@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, shell } from "electron";
 import path from "path";
+import log from "electron-log";
 import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
 import { startTaskScheduler } from "./scheduler";
@@ -35,6 +36,23 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
+  });
+
+  // 渲染进程错误转发到主日志，便于排查界面问题。
+  mainWindow.webContents.on("console-message", (_event, ...args: any[]) => {
+    try {
+      const details = args[0];
+      const isObject = typeof details === "object" && details !== null;
+      const level = isObject ? details.level : args[1];
+      const message = isObject ? details.message : args[2];
+      if (level === "error" || level === 3) {
+        log.error(`[renderer] ${message}`);
+      } else if (level === "warning" || level === 2) {
+        log.warn(`[renderer] ${message}`);
+      }
+    } catch {
+      // 忽略日志转发自身的异常
+    }
   });
 
   // Dev: Vite dev server. Prod: built files

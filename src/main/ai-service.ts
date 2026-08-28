@@ -1,5 +1,6 @@
 import { decryptApiKey } from "./credentials";
 import type { AppStore } from "./store";
+import { notifyDataChanged } from "./data-sync";
 
 /**
  * Single factory for real AI providers (not testConnection): persists every
@@ -22,6 +23,8 @@ export async function createAiProvider(s: AppStore) {
         totalTokens: (prev.totalTokens || 0) + usage.totalTokens,
         estimatedCost: (prev.estimatedCost || 0) + usage.estimatedCost,
       });
+      // 顶部「AI 用量」组件监听此事件即时刷新，而不是等 30 秒轮询。
+      notifyDataChanged("ai-usage");
     },
   });
 }

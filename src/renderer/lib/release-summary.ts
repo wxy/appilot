@@ -1,14 +1,12 @@
 /**
  * Release change summary — rule-based grouping of commit/PR material into a
- * human-checkable coverage list (AI summary is a later upgrade; the item
- * shape stays the same).
+ * human-checkable coverage list. PRs come first (one row per PR, title from
+ * the GitHub API when available) and commits that belong to no PR collapse
+ * into a single count row — per the workbench design, no per-commit detail is
+ * expanded in the summary.
  */
 
 export type ChangeType = "feature" | "fix" | "perf" | "chore";
-
-function isMergeCommit(subject: string): boolean {
-  return /^Merge\s+(pull\s+request|branch)/i.test(String(subject || "").trim());
-}
 
 export interface ChangeSummaryItem {
   id: string;
@@ -22,6 +20,12 @@ export interface ChangeSummaryItem {
   prUrl?: string | null;
   /** Underlying commits (sha / date / body) for on-demand detail inspection. */
   commits: { sha: string; date: string; body: string }[];
+  /** Display commit count: PR API count when known, else matched commits. */
+  commitCount?: number;
+  /** Primary date for ordering (PR mergedAt, else latest matched commit). */
+  date?: string;
+  /** True for the aggregated "commits without a PR" row. */
+  standalone?: boolean;
 }
 
 const TYPE_ORDER: ChangeType[] = ["feature", "fix", "perf", "chore"];
@@ -48,85 +52,143 @@ function parseType(subject: string): { type: ChangeType; title: string } {
   return { type, title };
 }
 
-/** Group commits into a coverage list: PRs aggregate their commits; sort feature→chore. */
+/** Strip trailing "(#N)" / " #N" from a commit subject for display. */
+function stripPrRef(subject: string): string {
+  return String(subject || "")
+    .replace(/\s*\(?#\d+\)?\s*$/, "")
+    .trim();
+}
+
+/**
+ * Local material uses short shas (%h) while GitHub API / git rev-list return
+ * full shas — compare by prefix so PR↔commit membership survives both forms.
+ */
+function shaMatches(local: string, full: string): boolean {
+  const a = String(local || "").trim().toLowerCase();
+  const b = String(full || "").trim().toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length < 7) return false;
+  return b.startsWith(a) || a.startsWith(b);
+}
+
+/**
+ * Build the change coverage list:
+ * - one row per PR (title from GitHub when fetched; commit count shown);
+ * - remaining commits (no PR membership) aggregate into a single count row;
+ * - sorted feature → fix → perf → chore, then by title.
+ */
 export function summarizeChanges(
   material: {
     commits: { sha: string; subject: string; body: string; date: string }[];
-    pullRequests?: { number: number; title: string | null; url?: string | null }[];
+    pullRequests?: {
+      number: number;
+      title: string | null;
+      url?: string | null;
+      commits?: number;
+      mergedAt?: string | null;
+      commitShas?: string[];
+    }[];
   } | null | undefined,
 ): ChangeSummaryItem[] {
   const commits = material?.commits || [];
   const pullRequests = material?.pullRequests || [];
-  const prGroups = new Map<
-    number,
-    {
-      title: string;
-      type: ChangeType;
-      refs: string[];
-      prUrl?: string | null;
-      commits: ChangeSummaryItem["commits"];
-    }
-  >();
-  const standalone: { sha: string; subject: string; date: string; body: string }[] = [];
 
+  // PR ↔ commit membership: API/merge-commit shas plus "#N" in subjects.
+  const shasByPr = new Map<number, Set<string>>();
+  for (const pr of pullRequests) {
+    shasByPr.set(pr.number, new Set(pr.commitShas || []));
+  }
   for (const commit of commits) {
-    // Merge commits carry no content of their own; their changes appear as
-    // the branch commits inside the same range.
-    if (isMergeCommit(commit.subject)) continue;
-    const prMatch = commit.subject.match(/#(\d+)/);
-    if (prMatch) {
-      const number = Number(prMatch[1]);
-      const cleaned = commit.subject.replace(/\s*\(?#\d+\)?\s*$/, "").trim();
-      const parsed = parseType(cleaned);
-      const fetched = pullRequests.find((pr) => pr.number === number);
-      const existing = prGroups.get(number);
-      if (existing) {
-        if (existing.type === "chore" && parsed.type !== "chore") {
-          existing.type = parsed.type;
-          existing.title = fetched?.title || parsed.title;
-        }
-        existing.refs.push(commit.sha);
-        existing.commits.push({ sha: commit.sha, date: commit.date, body: commit.body });
-      } else {
-        prGroups.set(number, {
-          title: fetched?.title || parsed.title || `PR #${number}`,
-          type: parsed.type,
-          prUrl: fetched?.url ?? null,
-          refs: [commit.sha],
-          commits: [{ sha: commit.sha, date: commit.date, body: commit.body }],
-        });
-      }
-    } else {
-      standalone.push({
-        sha: commit.sha,
-        subject: commit.subject,
-        date: commit.date,
-        body: commit.body,
-      });
+    for (const match of commit.subject.matchAll(/#(\d+)/g)) {
+      const number = Number(match[1]);
+      if (!shasByPr.has(number)) shasByPr.set(number, new Set());
+      shasByPr.get(number)!.add(commit.sha);
     }
   }
 
+  const matched = new Set<string>();
   const items: ChangeSummaryItem[] = [];
-  for (const [number, group] of prGroups) {
+  const seen = new Set<number>();
+
+  const pushPrItem = (number: number, fetched?: (typeof pullRequests)[number]) => {
+    if (seen.has(number)) return;
+    seen.add(number);
+    const shas = Array.from(shasByPr.get(number) || []);
+    const prCommits = commits.filter((commit) =>
+      shas.some((full) => shaMatches(commit.sha, full)),
+    );
+    // A PR row represents this release's content. If none of its commits are
+    // inside the range, its content was already generated (covered by the
+    // previous boundary) — drop it instead of showing a phantom "0 提交" row.
+    if (prCommits.length === 0) return;
+    for (const commit of prCommits) matched.add(commit.sha);
+    const first = prCommits[0];
+    const parsed = first ? parseType(stripPrRef(first.subject)) : null;
+    const title =
+      fetched?.title ||
+      (first ? parseType(stripPrRef(first.subject)).title : null) ||
+      `PR #${number}`;
+    const type =
+      first && parsed?.type !== "chore"
+        ? parsed!.type
+        : fetched?.title
+          ? parseType(fetched.title).type
+          : parsed?.type || "chore";
+    const latestDate =
+      prCommits[0]?.date ||
+      fetched?.mergedAt ||
+      "";
     items.push({
-      id: stableId(`#${number}:${group.title}`, group.type),
-      title: group.title,
-      type: group.type,
-      refs: [`#${number}`, ...group.refs],
+      id: stableId(`#${number}:${title}`, type),
+      title,
+      type,
+      refs: [`#${number}`],
       github: true,
       prNumber: number,
-      prUrl: group.prUrl,
-      commits: group.commits,
+      prUrl: fetched?.url ?? null,
+      commits: prCommits.map((commit) => ({
+        sha: commit.sha,
+        date: commit.date,
+        body: commit.body,
+      })),
+      commitCount:
+        typeof fetched?.commits === "number" ? fetched.commits : prCommits.length,
+      date: fetched?.mergedAt || latestDate || undefined,
     });
+  };
+
+  // 1. PRs from the material list (API order when fetched).
+  for (const pr of pullRequests) pushPrItem(pr.number, pr);
+
+  // 2. PRs referenced only in commit subjects (no-token fallback / tests).
+  for (const commit of commits) {
+    if (matched.has(commit.sha)) continue;
+    const numbers = Array.from(
+      commit.subject.matchAll(/#(\d+)/g),
+      (match) => Number(match[1]),
+    );
+    const number = numbers.find((num) => !seen.has(num));
+    if (number !== undefined) pushPrItem(number);
   }
-  for (const commit of standalone) {
-    const parsed = parseType(commit.subject);
+
+  // 3. Remaining commits → single aggregated count row.
+  const standalone = commits.filter((commit) => !matched.has(commit.sha));
+  if (standalone.length > 0) {
+    const latest = standalone[standalone.length - 1]?.date || standalone[0]?.date || "";
     items.push({
-      id: stableId(commit.sha, parsed.type),
-      title: parsed.title,
-      type: parsed.type,
-      refs: [commit.sha],
-      commits: [{ sha: commit.sha, date: commit.date, body: commit.body }],
+      id: stableId("standalone-commits", "chore"),
+      title: "未形成 PR 的提交",
+      type: "chore",
+      refs: [],
+      commits: standalone.map((commit) => ({
+        sha: commit.sha,
+        date: commit.date,
+        body: commit.body,
+      })),
+      commitCount: standalone.length,
+      standalone: true,
+      date: latest || undefined,
     });
   }
 
