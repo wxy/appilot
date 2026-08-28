@@ -265,11 +265,16 @@ export function ReleasePage() {
   }, [project?.id, productId]);
 
   // 主进程数据变更推送：发布/App Store 状态更新时自动刷新工作台。
+  // 用 ref 持有最新的 loadReleases，避免监听器闭包陈旧：切换视图时先保存
+  // 草案会触发数据变更，若旧闭包被调用，会用旧的 selectedTag 把选中发布
+  // 拉回默认值，造成「第一次点击被弹回」。
+  const loadReleasesRef = useRef(loadReleases);
+  loadReleasesRef.current = loadReleases;
   useEffect(() => {
     const handler = (e: Event) => {
       const scope = (e as CustomEvent).detail;
       if (scope === "releases") {
-        void loadReleases(false, false);
+        void loadReleasesRef.current(false, false);
       } else if (scope === "asc" && productId) {
         (window as any).appilot?.asc?.status(productId)
           .then(setAscInfo)
@@ -716,28 +721,28 @@ export function ReleasePage() {
     switchToWorking();
   };
 
-  // 左侧主入口按钮的选中/未选中样式：选中 = 琥珀高亮 + 圆环 + 「当前」徽标，
-  // 未选中 = 白色卡片 + 边框；两者尺寸与层级保持一致。
+  // 左侧主入口按钮：点击哪个就显示哪份文案；选中的按钮实心橙色，
+  // 其余为空心橙色描边，两者尺寸与层级保持一致。
   const entryBtnActive = (active: boolean) =>
     cn(
       "w-full text-left rounded-xl px-5 py-4 shadow-sm transition-colors",
       active
-        ? "bg-amber-100 dark:bg-amber-500/20 ring-2 ring-amber-500/50"
-        : "bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 hover:border-amber-400/60 hover:bg-amber-50/60 dark:hover:bg-amber-500/5",
+        ? "bg-amber-500 text-white"
+        : "border border-amber-500/70 bg-transparent text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10",
     );
   const entryTextActive = (active: boolean) =>
     cn(
       "text-sm font-semibold",
       active
-        ? "text-amber-800 dark:text-amber-300"
-        : "text-zinc-800 dark:text-zinc-100",
+        ? "text-white"
+        : "text-amber-600 dark:text-amber-400",
     );
   const entrySubActive = (active: boolean) =>
     cn(
       "block text-[11px] mt-0.5 truncate",
       active
-        ? "text-amber-700/80 dark:text-amber-400/80"
-        : "text-zinc-400 dark:text-zinc-500",
+        ? "text-white/80"
+        : "text-amber-600/70 dark:text-amber-400/70",
     );
 
   const handleDeleteDraft = async (target: any) => {
@@ -1344,11 +1349,6 @@ export function ReleasePage() {
                           )}
                         </span>
                       </span>
-                      {viewMode === "working" && (
-                        <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500 text-white">
-                          当前
-                        </span>
-                      )}
                     </span>
                     <span
                       className={entrySubActive(viewMode === "working")}
@@ -1599,11 +1599,6 @@ export function ReleasePage() {
                           {currentCopy?.ascSyncedAt && <AppleIcon className="w-3 h-3" />}
                         </span>
                       </span>
-                      {viewMode === "current" && (
-                        <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500 text-white">
-                          当前
-                        </span>
-                      )}
                     </span>
                     <span
                       className={entrySubActive(viewMode === "current")}
