@@ -32,6 +32,7 @@ import {
 } from "../ui/styles";
 import { HistoryPanel } from "./HistoryPanel";
 import { HistoryViewer } from "./HistoryViewer";
+import { LanguageTabs } from "./LanguageTabs";
 import { ReferenceSection } from "./ReferenceSection";
 import { SubmissionCopyFields } from "./SubmissionCopyFields";
 import { draftVersionLabel } from "./releaseFormat";
@@ -1797,55 +1798,17 @@ export function ReleasePage() {
                       确定文案前需填写
                     </span>
                   </div>
-                  {/* 选项卡：内容页顶部放一个两边缩进、无边框的白底矩形，
-                      盖住内容页顶边线（两侧圆角仍可见）；语言标签在该矩形内滚动。 */}
+                  {/* 语言选项卡栏（组件内处理缩进/明暗自适应/横向滚动） */}
                   <div>
-                  <div className="tab-scrollbar relative mx-5 -mb-0.5 z-10 dark:bg-zinc-900 overflow-x-auto">
-                    <div className="flex w-fit gap-0.5 px-0 pt-2 pb-1.5 -mb-1 bg-white dark:bg-zinc-900">
-                      {tabLanguages.map((language) => {
-                        const generated = localizations.some((item: any) => item.language === language);
-                        const translating = translatingLanguages.has(language);
-                        return (
-                          <button
-                            key={language}
-                            type="button"
-                            onClick={() => setActiveLanguage(language)}
-                            title={
-                              generated
-                                ? `${languageLabel(language)}文案`
-                                : translating
-                                  ? `${languageLabel(language)}翻译进行中`
-                                  : `${languageLabel(language)}尚未翻译`
-                            }
-                            className={cn(
-                              "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-t-md shrink-0 whitespace-nowrap transition-colors",
-                              activeLanguage === language
-                                ? "border-zinc-300 dark:border-zinc-700 border-b-0 bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
-                                : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700",
-                            )}
-                          >
-                            {language === UI_SOURCE_LANGUAGE ? (
-                              <span
-                                className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
-                                title="界面语言（简体中文）"
-                              />
-                            ) : language === "en" ? (
-                              <span
-                                className="w-1.5 h-1.5 rounded-full bg-sky-500 shrink-0"
-                                title="英文"
-                              />
-                            ) : null}
-                            {languageLabel(language)}
-                            {translating && (
-                              <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
-                            )}
-                            {generated && !translating && (
-                              <span className="text-emerald-500">✓</span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <LanguageTabs
+                      languages={tabLanguages}
+                      activeLanguage={activeLanguage}
+                      onSelect={setActiveLanguage}
+                      translatingLanguages={translatingLanguages}
+                      generatedLanguages={localizations.map(
+                        (item: any) => item.language,
+                      )}
+                    />
                   </div>
                   {/* 内容页（圆角矩形）：上边缘被标签栏压住 */}
                   <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
@@ -1902,7 +1865,6 @@ export function ReleasePage() {
                         该语言尚未翻译。
                       </p>
                     )}
-                  </div>
                   </div>
                   </div>
                   {/* 选项卡页面结束；下方为整份文案级操作 */}
