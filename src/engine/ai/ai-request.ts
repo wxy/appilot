@@ -34,6 +34,8 @@ export interface AiRequestOptions {
   signal?: AbortSignal;
   /** 报告本次完成的 finish_reason，用于识别输出被截断。 */
   onFinishReason?: (reason: string | undefined) => void;
+  /** 自动修复/重试开始时回调（UI 据此显示「修复中」状态）。 */
+  onRetry?: () => void;
 }
 
 export interface JsonRequestOptions extends AiRequestOptions {
@@ -189,6 +191,7 @@ export async function requestJson(
       );
     }
     log.warn(`AI JSON parse failed (${err.message}); attempting repair`);
+    options.onRetry?.();
     return repairJson(provider, raw, {
       echoChars: options.repairEchoChars,
       onProgress: options.onProgress,

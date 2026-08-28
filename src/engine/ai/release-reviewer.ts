@@ -235,18 +235,19 @@ export async function generateStoreSubmissionContent(
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   signal?: AbortSignal,
+  onRetry?: () => void,
 ): Promise<StoreSubmissionContent> {
   const primaryLanguage = context.language || "en";
 
   onProgress?.({ language: "global", status: "started" });
-  const globalPlan = await generateGlobalReleasePlan(provider, context, onChars, signal);
+  const globalPlan = await generateGlobalReleasePlan(provider, context, onChars, signal, onRetry);
   onProgress?.({ language: "global", status: "completed" });
   const localizations: StoreSubmissionLocalization[] = [];
 
   onProgress?.({ language: primaryLanguage, status: "started" });
   const primaryLocalization = context.baseLocalization && context.reviewFeedback
-    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization, onChars, signal)
-    : await generateLocalizedStoreCopy(provider, context, primaryLanguage, onChars, signal);
+    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization, onChars, signal, onRetry)
+    : await generateLocalizedStoreCopy(provider, context, primaryLanguage, onChars, signal, onRetry);
   onProgress?.({ language: primaryLanguage, status: "completed" });
   localizations.push(primaryLocalization);
 
@@ -279,6 +280,7 @@ export async function translateStoreSubmissionContent(
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   signal?: AbortSignal,
+  onRetry?: () => void,
 ): Promise<StoreSubmissionLocalization[]> {
   const translations: StoreSubmissionLocalization[] = [];
 
@@ -292,6 +294,8 @@ export async function translateStoreSubmissionContent(
       language,
       onChars,
       signal,
+      false,
+      onRetry,
     );
     // 轻量语言安全网：模型明显回显母本/错误语言时，强制重写一次，
     // 明确告知上次输出是源语言；仍失败才抛出，让用户重试。
@@ -301,6 +305,7 @@ export async function translateStoreSubmissionContent(
       log.warn(
         `Translation safety net rejected ${language} (${firstError?.message}); forcing a rewrite`,
       );
+      onRetry?.();
       translation = await generateTranslatedStoreCopy(
         provider,
         context,
@@ -309,6 +314,7 @@ export async function translateStoreSubmissionContent(
         onChars,
         signal,
         true,
+        onRetry,
       );
       validateTranslatedCopy(translation, language, source);
     }
@@ -336,6 +342,7 @@ async function generateGlobalReleasePlan(
   },
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   signal?: AbortSignal,
+  onRetry?: () => void,
 ): Promise<{
   summary: string;
   promotionAngles: string[];
@@ -384,6 +391,7 @@ async function generateGlobalReleasePlan(
     thinking: "disabled",
     onProgress: onChars,
     signal,
+    onRetry,
   });
 
   return {
@@ -413,6 +421,7 @@ async function generateLocalizedStoreCopy(
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   signal?: AbortSignal,
+  onRetry?: () => void,
 ): Promise<StoreSubmissionLocalization> {
   const messages = buildArchiveMessages(
     context.profile,
@@ -483,6 +492,7 @@ async function generateLocalizedStoreCopy(
     thinking: "disabled",
     onProgress: onChars,
     signal,
+    onRetry,
   });
 
   try {
@@ -506,6 +516,7 @@ async function generateTranslatedStoreCopy(
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   signal?: AbortSignal,
   forceTargetLanguage = false,
+  onRetry?: () => void,
 ): Promise<StoreSubmissionLocalization> {
   const targetTrackedKeywords = (context.trackedKeywordsByLanguage || {})[language] || [];
   const targetGapKeywords = (context.copyGapKeywordsByLanguage || {})[language] || [];
@@ -564,6 +575,7 @@ async function generateTranslatedStoreCopy(
     thinking: "disabled",
     onProgress: onChars,
     signal,
+    onRetry,
   });
 
   try {
@@ -590,6 +602,7 @@ async function reviseLocalizedStoreCopy(
   base: StoreSubmissionLocalization,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   signal?: AbortSignal,
+  onRetry?: () => void,
 ): Promise<StoreSubmissionLocalization> {
   const messages = buildArchiveMessages(
     context.profile,
@@ -635,6 +648,7 @@ async function reviseLocalizedStoreCopy(
     thinking: "disabled",
     onProgress: onChars,
     signal,
+    onRetry,
   });
 
   try {

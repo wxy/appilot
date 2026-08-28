@@ -304,6 +304,11 @@ export function registerReleaseHandlers(): void {
             },
             includedChanges,
             signal,
+            () => {
+              if (!_event.sender.isDestroyed()) {
+                _event.sender.send("release:generateProgress", { kind: "retry" });
+              }
+            },
           ),
         );
         // Re-read before writing: AI generation awaited for seconds, during
@@ -403,6 +408,11 @@ export function registerReleaseHandlers(): void {
             }
           },
           signal,
+          () => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", { kind: "retry" });
+            }
+          },
         ),
       );
 

@@ -18,6 +18,7 @@ export function AIProgressButton({
   progress,
   stopAvailable = true,
   retry = false,
+  retrying = false,
 }: {
   onStart: () => void;
   onStop: () => void;
@@ -29,6 +30,8 @@ export function AIProgressButton({
   stopAvailable?: boolean;
   /** 上一次运行失败：空闲文案显示「重试」。 */
   retry?: boolean;
+  /** 正在进行自动修复/重试（JSON 修复或安全网强制重写）：运行图标变黄。 */
+  retrying?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const [peakChars, setPeakChars] = useState(0);
@@ -60,8 +63,13 @@ export function AIProgressButton({
       >
           <span className="flex flex-col items-center py-0.5 text-[11px] leading-tight">
             <span className="inline-flex items-center gap-1">
-              <span aria-hidden="true" className="text-yellow-300">■</span>
-              {progress?.phase === "content" ? "生成中" : "思考中"}
+              <span
+                aria-hidden="true"
+                className={retrying ? "text-yellow-300" : ""}
+              >
+                ■
+              </span>
+              {retrying ? "修复中" : progress?.phase === "content" ? "生成中" : "思考中"}
             </span>
             <span className="mt-0.5 font-mono">{formatKilo(shownChars)} · {formatElapsed(elapsed)}</span>
           </span>

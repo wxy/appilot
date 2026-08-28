@@ -99,10 +99,14 @@ export function ReleasePage() {
   const [generatingChecklist, setGeneratingChecklist] = useState(false);
   const [showChecklist, setShowChecklist] = useState(false);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
-      if (progress?.kind === "chars" && typeof progress.chars === "number") {
+      if (progress?.kind === "retry") {
+        // 自动修复/强制重写开始：运行按钮变黄提示用户。
+        setRetrying(true);
+      } else if (progress?.kind === "chars" && typeof progress.chars === "number") {
         setGenerationProgress({
           chars: progress.chars,
           phase: progress.phase === "content" ? "content" : "reasoning",
@@ -1057,6 +1061,7 @@ export function ReleasePage() {
       }
     } finally {
       setGenerateOpId("");
+      setRetrying(false);
       setGenerating(false);
       setLoadingDraft(false);
     }
@@ -1171,6 +1176,7 @@ export function ReleasePage() {
         return next;
       });
       setTranslateOpId("");
+      setRetrying(false);
     }
   };
 
@@ -1728,6 +1734,7 @@ export function ReleasePage() {
                     progress={generationProgress}
                     idleLabel={summaryItems.length > 0 ? "下一步：生成文案" : "新建文案"}
                     retry={generateFailed}
+                    retrying={retrying}
                   />
                 )}
 
@@ -1776,7 +1783,7 @@ export function ReleasePage() {
                     </span>
                   </div>
                   {/* 语言选项卡：点击切换语言；翻译入口在下方对应语言页内 */}
-                  <div className="flex flex-wrap gap-1 border-b border-zinc-100 dark:border-zinc-800 pb-2">
+                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100/70 dark:bg-zinc-800/40 p-1 inline-flex flex-wrap gap-1">
                     {orderedLanguages.map((language) => {
                       const generated = localizations.some((item: any) => item.language === language);
                       const translating = translatingLanguages.has(language);
@@ -1793,10 +1800,10 @@ export function ReleasePage() {
                                 : `${languageLabel(language)}尚未翻译`
                           }
                           className={cn(
-                            "inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-t-lg border-b-2 transition-colors",
+                            "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors",
                             activeLanguage === language
-                              ? "border-amber-500 text-amber-700 dark:text-amber-400 font-medium"
-                              : "border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300",
+                              ? "bg-white dark:bg-zinc-700 text-amber-700 dark:text-amber-300 font-medium shadow-sm"
+                              : "text-zinc-500 dark:text-zinc-400 hover:bg-white/70 dark:hover:bg-zinc-700/50 hover:text-zinc-700 dark:hover:text-zinc-200",
                           )}
                         >
                           {languageLabel(language)}
@@ -1947,6 +1954,7 @@ export function ReleasePage() {
                                 : `翻译为${languageLabel(activeLanguage)}`
                             }
                             retry={failedTranslation === activeLanguage}
+                            retrying={retrying}
                           />
                           {translatingLanguages.size > 0 &&
                             !translatingLanguages.has(activeLanguage) && (
@@ -2018,6 +2026,7 @@ export function ReleasePage() {
                           progress={generationProgress}
                           idleLabel="重新生成"
                           retry={generateFailed}
+                          retrying={retrying}
                         />
                       </div>
                     )}
