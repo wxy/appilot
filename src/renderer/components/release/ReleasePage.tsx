@@ -1808,9 +1808,9 @@ export function ReleasePage() {
                   </div>
                   {/* 选项卡栏：无外框，可横向滚动不换行；激活标签底部开放与
                       下方内容页相连（传统 Windows 选项卡页面）。 */}
-                  {/* 标签栏比内容页稍窄（inline-flex 只占自身宽度），
-                      -mb-px 让底边与内容页框线重叠、看起来一体。 */}
-                  <div className="inline-flex max-w-full gap-0.5 -mb-px overflow-x-auto">
+                  {/* 标签栏比内容页稍窄（右侧留出内容页框线），
+                      底边 -mb-px 与内容页框线重叠、看起来一体。 */}
+                  <div className="inline-flex w-fit max-w-[calc(100%-1.5rem)] gap-0.5 -mb-px overflow-x-auto">
                       {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);
@@ -1827,9 +1827,9 @@ export function ReleasePage() {
                                   : `${languageLabel(language)}尚未翻译`
                             }
                             className={cn(
-                              "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm border rounded-t-md shrink-0 whitespace-nowrap transition-colors",
+                              "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-t-md shrink-0 whitespace-nowrap transition-colors",
                               activeLanguage === language
-                                ? "border-zinc-300 dark:border-zinc-700 border-b-transparent bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
+                                ? "border-zinc-300 dark:border-zinc-700 border-b-0 bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
                                 : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700",
                             )}
                           >

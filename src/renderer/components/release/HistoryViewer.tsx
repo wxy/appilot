@@ -49,7 +49,7 @@ export function HistoryViewer({
         {localizations.length > 0 && (
           <>
             {/* 与发布工作台一致的选项卡布局 */}
-            <div className="inline-flex max-w-full gap-0.5 -mb-px overflow-x-auto">
+            <div className="inline-flex w-fit max-w-[calc(100%-1.5rem)] gap-0.5 -mb-px overflow-x-auto">
               {tabLanguages.map((item: any) => {
                 const active = item.language === activeLanguage;
                 return (
@@ -58,9 +58,9 @@ export function HistoryViewer({
                     type="button"
                     onClick={() => setLanguage(item.language)}
                     className={cn(
-                      "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm border rounded-t-md shrink-0 whitespace-nowrap transition-colors",
+                      "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-t-md shrink-0 whitespace-nowrap transition-colors",
                       active
-                        ? "border-zinc-300 dark:border-zinc-700 border-b-transparent bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
+                        ? "border-zinc-300 dark:border-zinc-700 border-b-0 bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
                         : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700",
                     )}
                   >
