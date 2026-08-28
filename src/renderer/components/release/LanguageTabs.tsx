@@ -22,9 +22,10 @@ export function LanguageTabs({
 }) {
   const generated = new Set(generatedLanguages || []);
   return (
-    /* 隐藏滚动条（scrollbar-hidden）但保留横向滚动：水平滚动条会在标签条
-       底部占一条带、正好形成缝隙；隐藏后标签条与内容页完全贴平。 */
-    <div className="scrollbar-hidden relative mx-5 -mb-0.5 z-10 bg-white dark:bg-zinc-900 overflow-x-auto overflow-y-hidden">
+    /* 外层 w-fit max-w-full + mx-auto：语言少时标签条贴合内容宽度（顶边线
+       两侧露出、不被遮住），语言多时占满整行并横向滚动。隐藏滚动条避免底部
+       占位形成缝隙。 */
+    <div className="scrollbar-hidden relative mx-auto -mb-0.5 z-10 bg-white dark:bg-zinc-900 w-fit max-w-full overflow-x-auto overflow-y-hidden">
       {/* 无底内边距：标签底边与内容页边框齐平（-mb 重叠已把页面顶边上移）。 */}
       <div className="flex w-fit gap-0.5 px-1 pt-2">
         {languages.map((language) => {
