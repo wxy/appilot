@@ -125,6 +125,23 @@ async function runTests() {
       calls.length > emptyCacheCalls,
       "empty cached PR list triggers a fresh PR fetch",
     );
+
+    // 5. An explicit force check bypasses the cached PR list even when the
+    // cache tag matches — the latest merged PRs are fetched fresh.
+    const forceCalls = calls.length;
+    await checkForRelease(dir, null, "ghp_force", {
+      sync: false,
+      force: true,
+      githubCache: {
+        tag: "v1.0.0",
+        release: { name: "cached", body: "cached body", publishedAt: null, url: null },
+        pullRequests: [{ number: 1, title: "cached PR title" }],
+      },
+    });
+    assert(
+      calls.length > forceCalls,
+      "force check refetches PRs even with a matching cache",
+    );
   } finally {
     globalThis.fetch = origFetch;
   }

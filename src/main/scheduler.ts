@@ -174,7 +174,7 @@ function githubSyncTaskId(projectId: string): string {
  * be trusted — the workbench would otherwise reuse an empty/stale PR list
  * instead of fetching fresh data.
  */
-const GITHUB_SYNC_CACHE_PR_SCHEMA = 2;
+const GITHUB_SYNC_CACHE_PR_SCHEMA = 3;
 
 /** Fresh pre-warmed GitHub data for a project, or null when stale/mismatched. */
 export function githubSyncCacheEntry(

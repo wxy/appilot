@@ -617,6 +617,7 @@ export async function checkForRelease(
   // usually means the sync ran before PR enrichment existed (or the API was
   // down), so refetch instead of showing a blank summary.
   const pullRequests =
+    !options.force &&
     cacheMatches &&
     options.githubCache &&
     (options.githubCache.pullRequests?.length ?? 0) > 0
