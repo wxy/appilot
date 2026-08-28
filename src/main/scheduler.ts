@@ -185,7 +185,11 @@ export function githubSyncCacheEntry(
   release: any | null;
   pullRequests: any[];
   releases: any[];
-  repoPush: boolean | null;
+  capabilities: {
+    push: boolean | null;
+    tokenKind: "fine-grained" | "classic" | "none" | "unknown";
+    contents: "read" | "write" | null;
+  } | null;
 } | null {
   const all = s.get("githubSyncCache") || {};
   const entry = all?.[project?.id];
@@ -201,7 +205,7 @@ export function githubSyncCacheEntry(
     release: entry.release ?? null,
     pullRequests,
     releases: Array.isArray(entry.releases) ? entry.releases : [],
-    repoPush: entry.repoCapabilities?.push ?? null,
+    capabilities: entry.repoCapabilities ?? null,
   };
 }
 

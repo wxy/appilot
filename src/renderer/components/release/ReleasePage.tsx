@@ -58,6 +58,8 @@ export function ReleasePage() {
   const [releases, setReleases] = useState<any[]>([]);
   const [githubCapabilities, setGithubCapabilities] = useState<{
     repoPush: boolean | null;
+    tokenKind?: "fine-grained" | "classic" | "none" | "unknown";
+    contents?: "read" | "write" | null;
   } | null>(null);
   const [selectedTag, setSelectedTag] = useState("");
   const [active, setActive] = useState<any>(null);
@@ -420,7 +422,11 @@ export function ReleasePage() {
   ) : null;
   const githubWarning =
     githubCapabilities?.repoPush === false
-      ? "Token 缺少仓库写权限，发布草案不可见（需在 GitHub Token 中开启 Contents 读+写）"
+      ? githubCapabilities.tokenKind === "fine-grained"
+        ? "GitHub Token（fine-grained）的 Contents 只有读取权限，发布草案不可见。请在 GitHub 设置中将 Contents 权限改为 Read and write，或改用带 repo 权限的 classic token"
+        : githubCapabilities.tokenKind === "classic"
+          ? "GitHub Token（classic）缺少 repo / public_repo 权限，发布草案不可见。请改用带 repo 权限的 classic token"
+          : "GitHub Token 没有仓库写权限，发布草案不可见（需 Contents 读+写或 repo 权限）"
       : null;
   const githubActions = selectedNeedsCopy && !draft && !versionLocked ? (
     <button

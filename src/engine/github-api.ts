@@ -63,9 +63,15 @@ const repoCapCache = new Map<
 const REPO_CAP_TTL_MS = 10 * 60_000;
 
 export interface GitHubRepoCapabilities {
-  /** True when the token has push access to the repo (required to see draft
-   *  releases); null when unknown (no token / offline / non-repo). */
+  /** True when the saved credential can see draft releases (write access on
+   *  releases); false when it is definitely read-only; null when unknown
+   *  (no token / offline / non-repo / unrecognized token type). */
   push: boolean | null;
+  /** Kind of credential observed from the API response headers. */
+  tokenKind: "fine-grained" | "classic" | "none" | "unknown";
+  /** Fine-grained token's Contents permission reported by GitHub, when
+   *  available. `write` is what makes draft releases visible. */
+  contents: "read" | "write" | null;
 }
 
 function tokenTag(token?: string | null): string {
@@ -83,19 +89,24 @@ function githubHeaders(token?: string | null): Record<string, string> {
 }
 
 /**
- * Check what the saved token can do on the repository. Push access is what
- * gates draft-release visibility ("draft releases are only returned to users
- * with push access"), so a false result explains a missing draft cleanly.
+ * Check whether the saved token can see draft releases. GitHub hides drafts
+ * from credentials without push/write access, and the value reported by
+ * `GET /repos` (`permissions.push`) reflects the *account's* access, not the
+ * token's — a fine-grained token with Contents: read on an admin-owned repo
+ * still reports push=true there. So we probe the releases endpoint and read
+ * the token-scope headers instead:
+ *  - fine-grained tokens: `x-accepted-github-permissions: contents=…`
+ *  - classic tokens: `x-oauth-scopes` (repo / public_repo ⇒ write)
  * Cached for 10 minutes; never throws (unknown on failure).
  */
 export async function fetchRepoCapabilities(
   localPath: string,
   token?: string | null,
 ): Promise<GitHubRepoCapabilities> {
-  if (!token) return { push: null };
+  if (!token) return { push: null, tokenKind: "none", contents: null };
   const remote = await getRemoteUrl(localPath);
   const repoUrl = normalizeGitHubUrl(remote);
-  if (!repoUrl) return { push: null };
+  if (!repoUrl) return { push: null, tokenKind: "unknown", contents: null };
   const ownerRepo = repoUrl.replace("https://github.com/", "");
   const key = `${ownerRepo}#${tokenTag(token)}`;
   const cached = repoCapCache.get(key);
@@ -103,30 +114,52 @@ export async function fetchRepoCapabilities(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 4000);
   try {
-    const response = await fetch(`https://api.github.com/repos/${ownerRepo}`, {
-      headers: githubHeaders(token),
-      signal: controller.signal,
-    });
+    const response = await fetch(
+      `https://api.github.com/repos/${ownerRepo}/releases?per_page=1`,
+      {
+        headers: githubHeaders(token),
+        signal: controller.signal,
+      },
+    );
     if (!response.ok) {
       log.warn(`fetchRepoCapabilities failed for ${ownerRepo}: status=${response.status}`);
-      return { push: null };
+      return { push: null, tokenKind: "unknown", contents: null };
     }
-    const data: any = await response.json();
-    const push =
-      data?.permissions?.push === true
-        ? true
-        : data?.permissions?.push === false
-          ? false
-          : null;
-    const value: GitHubRepoCapabilities = { push };
-    log.debug(`fetchRepoCapabilities: ${ownerRepo} → push=${push}`);
+    await response.text(); // drain body so the connection can be reused
+    const value = capabilitiesFromHeaders(response.headers);
+    log.debug(`fetchRepoCapabilities: ${ownerRepo} → ${JSON.stringify(value)}`);
     repoCapCache.set(key, { at: Date.now(), value });
     return value;
   } catch {
-    return { push: null };
+    return { push: null, tokenKind: "unknown", contents: null };
   } finally {
     clearTimeout(timer);
   }
+}
+
+function capabilitiesFromHeaders(headers: Headers): GitHubRepoCapabilities {
+  // Fine-grained tokens report the permission used for the request, e.g.
+  // "contents=read, metadata=read". Contents: write is what unlocks drafts.
+  const accepted = headers.get("x-accepted-github-permissions") || "";
+  const contentsMatch = /(?:^|,\s*)contents=(\w+)/.exec(accepted);
+  if (contentsMatch) {
+    const contents = contentsMatch[1] === "write" ? "write" : "read";
+    return { push: contents === "write", tokenKind: "fine-grained", contents };
+  }
+  // Classic PATs / OAuth tokens return their scopes, e.g. "repo" or
+  // "public_repo"; either grants write access to (public) repositories.
+  const scopes = (headers.get("x-oauth-scopes") || "")
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  if (scopes.length > 0) {
+    return {
+      push: scopes.includes("repo") || scopes.includes("public_repo"),
+      tokenKind: "classic",
+      contents: null,
+    };
+  }
+  return { push: null, tokenKind: "unknown", contents: null };
 }
 
 async function fetchDefaultBranch(

@@ -23,6 +23,7 @@ import {
 import { assertNonEmptyString, assertStringArray } from "../util";
 import { notifyDataChanged } from "../data-sync";
 import { log } from "../../engine/logger";
+import type { GitHubRepoCapabilities } from "../../engine/github-api";
 
 export function registerReleaseHandlers(): void {
   async function githubReleaseCandidates(
@@ -61,19 +62,20 @@ export function registerReleaseHandlers(): void {
         githubCache: githubSyncCacheEntry(s, project) ?? undefined,
       },
     );
-    // Draft-release visibility depends on the token's push access to the
-    // repository. Live-check on an explicit force refresh; otherwise reuse the
+    // Draft-release visibility depends on the token's write access to
+    // releases. Live-check on an explicit force refresh; otherwise reuse the
     // last hourly sync's result so the workbench can warn when drafts are
     // invisible instead of silently missing them.
-    let repoPush: boolean | null = null;
+    let githubCapabilities: GitHubRepoCapabilities | null = null;
     if (force) {
       const { fetchRepoCapabilities } = await import("../../engine/github-api");
-      repoPush = (await fetchRepoCapabilities(project.localPath, token)).push;
+      githubCapabilities = await fetchRepoCapabilities(project.localPath, token);
     } else {
-      repoPush = githubSyncCacheEntry(s, project)?.repoPush ?? null;
+      githubCapabilities = githubSyncCacheEntry(s, project)?.capabilities ?? null;
     }
     log.debug(
-      `release:list ${project.name} force=${Boolean(force)} repoPush=${repoPush} ` +
+      `release:list ${project.name} force=${Boolean(force)} ` +
+        `githubCapabilities=${JSON.stringify(githubCapabilities)} ` +
         `releases=${result.releases.length} latest=${result.releases[0]?.tag || ""}`,
     );
     return {
@@ -85,7 +87,7 @@ export function registerReleaseHandlers(): void {
         ),
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,
-      githubCapabilities: { repoPush },
+      githubCapabilities,
     };
   });
 

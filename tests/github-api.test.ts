@@ -37,10 +37,20 @@ async function runTests() {
   let status = 200;
   let rejectToken = false;
   let repoPushPermission: boolean | null = true;
+  let fineGrainedContents: "read" | "write" | null = null;
   const origFetch = globalThis.fetch;
   globalThis.fetch = (async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : String(input);
     calls.push({ url, auth: init?.headers?.Authorization || "" });
+    const token = String(init?.headers?.Authorization || "").replace(/^Bearer\s+/, "");
+    const releaseHeaders: Record<string, string> = {};
+    if (token.startsWith("github_pat_")) {
+      releaseHeaders["x-accepted-github-permissions"] = `contents=${fineGrainedContents ?? "read"}, metadata=read`;
+    } else if (token.startsWith("ghp_cap_nopush")) {
+      releaseHeaders["x-oauth-scopes"] = "read:org";
+    } else if (token) {
+      releaseHeaders["x-oauth-scopes"] = "repo";
+    }
     if (rejectToken && init?.headers?.Authorization) {
       return new Response("bad credentials", { status: 401 });
     }
@@ -81,7 +91,10 @@ async function runTests() {
             html_url: "https://github.com/owner/repo/releases/tag/v1.0.0",
           },
         ]),
-        { status: 200, headers: { "content-type": "application/json" } },
+        {
+          status: 200,
+          headers: { "content-type": "application/json", ...releaseHeaders },
+        },
       );
     }
     if (url.includes("/pulls?")) {
@@ -237,12 +250,26 @@ async function runTests() {
     );
     rejectToken = false;
 
-    // fetchRepoCapabilities: push access gates draft-release visibility.
+    // fetchRepoCapabilities: token-scope headers gate draft-release
+    // visibility (classic token scopes).
     const caps = await fetchRepoCapabilities(dir, "ghp_secret");
     assert(caps.push === true, "repo capabilities report push access");
-    repoPushPermission = false;
+    assert(caps.tokenKind === "classic", "classic token kind detected from x-oauth-scopes");
     const capsNoPush = await fetchRepoCapabilities(dir, "ghp_cap_nopush");
     assert(capsNoPush.push === false, "repo capabilities report missing push access");
+    assert(capsNoPush.tokenKind === "classic", "read-only classic token still detected as classic");
+
+    // Fine-grained tokens report the Contents permission actually granted to
+    // the token — the reliable signal for draft visibility.
+    fineGrainedContents = "write";
+    const capsFineWrite = await fetchRepoCapabilities(dir, "github_pat_secret_write");
+    assert(capsFineWrite.push === true, "fine-grained Contents: write sees drafts");
+    assert(capsFineWrite.tokenKind === "fine-grained" && capsFineWrite.contents === "write", "fine-grained write permission parsed");
+    fineGrainedContents = "read";
+    const capsFineRead = await fetchRepoCapabilities(dir, "github_pat_secret_read");
+    assert(capsFineRead.push === false, "fine-grained Contents: read hides drafts");
+    assert(capsFineRead.tokenKind === "fine-grained" && capsFineRead.contents === "read", "fine-grained read permission parsed");
+    fineGrainedContents = null;
     repoPushPermission = true;
   } finally {
     globalThis.fetch = origFetch;
