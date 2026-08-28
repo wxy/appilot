@@ -631,8 +631,22 @@ export async function checkForRelease(
     }
   }
 
+  const githubReleases =
+    options.githubReleases ?? options.githubCache?.releases ?? null;
+  const githubItems =
+    githubReleases && githubReleases.length > 0 ? githubReleases : null;
+  const sortedGithubItems = githubItems
+    ? [...githubItems].sort((a, b) => {
+        if (a.draft !== b.draft) return a.draft ? -1 : 1;
+        return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+      })
+    : null;
+  // 缓存匹配以「前沿发布」（草案优先）的 tag 为准：后台同步缓存的 PR 列表
+  // 属于该发布，而 git tag 名（releaseTag）在草案场景下是上一个版本，会
+  // 导致缓存永远匹配不上、每次视图加载都重新走 GitHub API。
+  const frontierTag = sortedGithubItems?.[0]?.tag || releaseTag?.name || null;
   const cacheMatches =
-    Boolean(releaseTag) && options.githubCache?.tag === releaseTag?.name;
+    Boolean(frontierTag) && options.githubCache?.tag === frontierTag;
   // Only trust cached PR lists that actually carry data. An empty cached list
   // usually means the sync ran before PR enrichment existed (or the API was
   // down), so refetch instead of showing a blank summary.
@@ -648,21 +662,13 @@ export async function checkForRelease(
           githubToken,
           options.onApiStats,
         );
-  const githubReleases =
-    options.githubReleases ?? options.githubCache?.releases ?? null;
-  const githubItems =
-    githubReleases && githubReleases.length > 0 ? githubReleases : null;
 
   if (githubItems) {
     const coveredTags = new Set(
       githubItems.map((item) => item.tag).filter((tag): tag is string => Boolean(tag)),
     );
     const extraTags = onMain.filter((tag) => !coveredTags.has(tag.name));
-    const sorted = [...githubItems].sort((a, b) => {
-      if (a.draft !== b.draft) return a.draft ? -1 : 1;
-      return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
-    });
-    const githubReleasesBuilt = sorted.map((item) => {
+    const githubReleasesBuilt = sortedGithubItems!.map((item) => {
       const tag = item.tag || `gh-${item.id}`;
       const materialWithRelease: ReleaseMaterial = {
         ...material,

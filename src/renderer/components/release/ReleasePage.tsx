@@ -612,7 +612,9 @@ export function ReleasePage() {
     batchConfirmed ||
     (masterConfirmed && activeLocalization?.language === primaryLanguage);
   const busy = generating || loadingDraft;
-  const summaryMaterial = selectedRelease?.material || null;
+  // 侧边栏「文案草案」区块的素材始终属于工作目标（最新未定稿发布）；
+  // 工作视图下 selectedRelease 即工作目标，其它视图下也以工作目标为准。
+  const summaryMaterial = workTargetRelease?.material || selectedRelease?.material || null;
   const summaryItems: ChangeSummaryItem[] = summaryMaterial
     ? summarizeChanges(summaryMaterial)
     : [];
@@ -634,6 +636,8 @@ export function ReleasePage() {
         : `${Math.max(1, Math.round(sinceMs / 3600000))} 小时`
       : "";
   const checkedCount = summaryItems.filter((item) => summaryChecked.has(item.id)).length;
+  // 变更摘要勾选仅在工作视图中可交互；其它视图只读展示工作目标的素材。
+  const summaryEditable = viewMode === "working";
   const previousDraft =
     (releaseContext?.drafts || []).find((item: any) => item.releaseTag !== selectedTag) || null;
   const saveCurrentDraftIfAny = () => {
@@ -884,12 +888,13 @@ export function ReleasePage() {
   })();
 
   useEffect(() => {
-    const items = selectedRelease?.material ? summarizeChanges(selectedRelease.material) : [];
-    const stored = draft?.summaryChecklist;
+    const items = summaryMaterial ? summarizeChanges(summaryMaterial) : [];
+    // 勾选清单存在工作目标的草案上；工作视图打开时 draft === workingDraft。
+    const stored = workingDraft?.summaryChecklist;
     setSummaryChecked(
       new Set(stored && stored.length > 0 ? stored : items.map((item) => item.id)),
     );
-  }, [draft?.id, selectedRelease?.tag]);
+  }, [workingDraft?.id, workTargetRelease?.tag, summaryMaterial]);
 
   const persistSummaryChecklist = async (ids: string[]) => {
     const current = active?.draft;
@@ -1339,7 +1344,7 @@ export function ReleasePage() {
                     </span>
                   </button>
                 </div>
-                {viewMode === "working" && selectedRelease && (
+                {selectedRelease && (
                 <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   <ReferenceSection
                     title="变更摘要"
@@ -1369,26 +1374,33 @@ export function ReleasePage() {
                             role="checkbox"
                             aria-checked={checkedCount === summaryItems.length}
                             tabIndex={0}
-                            onClick={() =>
-                              void setAllSummaryChecked(
-                                checkedCount < summaryItems.length,
-                              )
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
+                            onClick={() => {
+                              if (summaryEditable) {
                                 void setAllSummaryChecked(
                                   checkedCount < summaryItems.length,
                                 );
                               }
                             }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                if (summaryEditable) {
+                                  void setAllSummaryChecked(
+                                    checkedCount < summaryItems.length,
+                                  );
+                                }
+                              }
+                            }}
                             title={
-                              checkedCount === summaryItems.length
-                                ? "取消全选"
-                                : "全部选择"
+                              summaryEditable
+                                ? checkedCount === summaryItems.length
+                                  ? "取消全选"
+                                  : "全部选择"
+                                : "切换到工作视图后可调整素材范围"
                             }
                             className={cn(
-                              "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors cursor-pointer",
+                              "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors",
+                              summaryEditable ? "cursor-pointer" : "cursor-not-allowed opacity-60",
                               checkedCount === summaryItems.length
                                 ? "bg-amber-500 border-amber-500 text-white"
                                 : "border-zinc-300 dark:border-zinc-600",
@@ -1465,16 +1477,27 @@ export function ReleasePage() {
                                   role="checkbox"
                                   aria-checked={included}
                                   tabIndex={0}
-                                  onClick={() => void toggleSummaryItem(item.id)}
+                                  onClick={() => {
+                                    if (summaryEditable) void toggleSummaryItem(item.id);
+                                  }}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
-                                      void toggleSummaryItem(item.id);
+                                      if (summaryEditable) void toggleSummaryItem(item.id);
                                     }
                                   }}
-                                  title={included ? "从 AI 素材中排除" : "作为 AI 素材提供"}
+                                  title={
+                                    summaryEditable
+                                      ? included
+                                        ? "从 AI 素材中排除"
+                                        : "作为 AI 素材提供"
+                                      : "切换到工作视图后可调整素材范围"
+                                  }
                                   className={cn(
-                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors cursor-pointer",
+                                    "mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] transition-colors",
+                                    summaryEditable
+                                      ? "cursor-pointer"
+                                      : "cursor-not-allowed opacity-60",
                                     included
                                       ? "bg-amber-500 border-amber-500 text-white"
                                       : "border-zinc-300 dark:border-zinc-600",

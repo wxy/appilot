@@ -30,8 +30,14 @@ export function registerReleaseHandlers(): void {
     project: any,
     token: string | null | undefined,
     cached?: any,
+    force = false,
   ): Promise<any[]> {
     const { listGitHubReleases } = await import("../../engine/github-api");
+    // 非强制刷新时优先用小时级同步缓存，避免每次打开工作台都打 GitHub API；
+    // 缓存新鲜度（1 小时内 + lastSeenSha 一致）由 githubSyncCacheEntry 保证。
+    if (!force && Array.isArray(cached?.releases) && cached.releases.length > 0) {
+      return cached.releases;
+    }
     const fresh = await listGitHubReleases(project.localPath, token);
     if (fresh.length > 0) return fresh;
     return Array.isArray(cached?.releases) ? cached.releases : [];
@@ -50,6 +56,7 @@ export function registerReleaseHandlers(): void {
       project,
       token,
       githubSyncCacheEntry(s, project),
+      Boolean(force),
     );
     const result = await checkForRelease(
       project.localPath,
@@ -113,6 +120,7 @@ export function registerReleaseHandlers(): void {
         project,
         token,
         githubSyncCacheEntry(s, project),
+        false,
       );
       const result = await checkForRelease(
         project.localPath,
@@ -216,6 +224,7 @@ export function registerReleaseHandlers(): void {
       project,
       token,
       githubSyncCacheEntry(s, project),
+      Boolean(force),
     );
     _event.sender.send("release:generateProgress", {
       kind: "phase",
