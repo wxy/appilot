@@ -30,6 +30,10 @@ export interface AiRequestOptions {
   /** Retry once with thinking disabled when the provider returns empty content. */
   retryWithoutThinking?: boolean;
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void;
+  /** 外部取消信号（「停止」按钮）。 */
+  signal?: AbortSignal;
+  /** 报告本次完成的 finish_reason，用于识别输出被截断。 */
+  onFinishReason?: (reason: string | undefined) => void;
 }
 
 export interface JsonRequestOptions extends AiRequestOptions {
@@ -93,6 +97,8 @@ function chatOptions(options: AiRequestOptions) {
     thinking: options.thinking,
     responseFormat: options.json ? ("json_object" as const) : undefined,
     onProgress: options.onProgress,
+    signal: options.signal,
+    onFinishReason: options.onFinishReason,
   };
 }
 
@@ -100,11 +106,20 @@ function chatOptions(options: AiRequestOptions) {
 export async function repairJson(
   provider: AIProvider,
   raw: string,
-  options: { echoChars?: number; onProgress?: AiRequestOptions["onProgress"] } = {},
+  options: {
+    echoChars?: number;
+    onProgress?: AiRequestOptions["onProgress"];
+    signal?: AbortSignal;
+    /** 原请求的 system 提示词：修复时保留任务约束（如目标语言、字段上限）。 */
+    systemContext?: string;
+  } = {},
 ): Promise<any> {
   const echo = raw.slice(0, options.echoChars ?? JSON_REPAIR_ECHO_CHARS);
   const repaired = await provider.chat(
     [
+      ...(options.systemContext
+        ? [{ role: "system" as const, content: options.systemContext }]
+        : []),
       {
         role: "user",
         content: [
@@ -120,10 +135,14 @@ export async function repairJson(
       thinking: "disabled",
       responseFormat: "json_object",
       onProgress: options.onProgress,
+      signal: options.signal,
     },
   );
   return parseJsonObject(repaired);
 }
+
+/** 输出远超字段上限的合理范围时，视为跑飞/被截断，不再进入修复放大消耗。 */
+const TRUNCATED_RAW_CHARS = 20000;
 
 /** Consistent plain-text generation through the layer. */
 export async function requestText(
@@ -152,14 +171,29 @@ export async function requestJson(
   messages: ChatMessage[],
   options: JsonRequestOptions = {},
 ): Promise<any> {
-  const raw = await requestText(provider, messages, { ...options, json: true });
+  let finishReason: string | undefined;
+  const raw = await requestText(provider, messages, {
+    ...options,
+    json: true,
+    onFinishReason: (reason) => {
+      finishReason = reason;
+    },
+  });
   try {
     return parseJsonObject(raw);
   } catch (err: any) {
+    if (finishReason === "length" || raw.length > TRUNCATED_RAW_CHARS) {
+      throw new EngineError(
+        "AI 输出达到长度上限被截断，请重试（可在运行中点击「停止」后调整素材）。",
+        "AI_OUTPUT_TRUNCATED",
+      );
+    }
     log.warn(`AI JSON parse failed (${err.message}); attempting repair`);
     return repairJson(provider, raw, {
       echoChars: options.repairEchoChars,
       onProgress: options.onProgress,
+      signal: options.signal,
+      systemContext: messages.find((m) => m.role === "system")?.content,
     });
   }
 }

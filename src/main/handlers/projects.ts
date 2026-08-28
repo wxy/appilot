@@ -8,6 +8,7 @@ import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "../
 import { createAiProvider } from "../ai-service";
 import { importAscKeyFileTo } from "../asc-key-file";
 import { notifyDataChanged } from "../data-sync";
+import { withAiOperation } from "../ai-cancel";
 import {
   ascJwt,
   decryptApiKey,
@@ -721,7 +722,7 @@ export function registerProjectsHandlers(): void {
     return submissionReferenceFor(context.product, context.project, language);
   });
 
-  ipcMain.handle("projects:extractSubmissionCandidates", async (_event, productId: string, language: string) => {
+  ipcMain.handle("projects:extractSubmissionCandidates", async (_event, productId: string, language: string, operationId = "") => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
@@ -742,22 +743,24 @@ export function registerProjectsHandlers(): void {
         source: "submission" as const,
         rationale: "来自商店关键词",
       }));
-    const aiCandidates = await extractSubmissionCandidates(provider, {
-      name: ref.name,
-      subtitle: ref.subtitle,
-      language,
-      uiLanguage: "zh-Hans",
-      profile,
-    }, (received) => {
-      if (!_event.sender.isDestroyed()) {
-        _event.sender.send("projects:submissionProgress", {
-          productId,
-          language,
-          chars: received.chars,
-          phase: received.phase,
-        });
-      }
-    });
+    const aiCandidates = await withAiOperation(operationId, (signal) =>
+      extractSubmissionCandidates(provider, {
+        name: ref.name,
+        subtitle: ref.subtitle,
+        language,
+        uiLanguage: "zh-Hans",
+        profile,
+      }, (received) => {
+        if (!_event.sender.isDestroyed()) {
+          _event.sender.send("projects:submissionProgress", {
+            productId,
+            language,
+            chars: received.chars,
+            phase: received.phase,
+          });
+        }
+      }, signal),
+    );
     return { candidates: [...submissionTerms, ...aiCandidates] };
   });
 

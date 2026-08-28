@@ -24,8 +24,14 @@ import { assertNonEmptyString, assertStringArray } from "../util";
 import { notifyDataChanged } from "../data-sync";
 import { log } from "../../engine/logger";
 import type { GitHubRepoCapabilities } from "../../engine/github-api";
+import { cancelAiRequest, withAiOperation } from "../ai-cancel";
 
 export function registerReleaseHandlers(): void {
+  ipcMain.handle("ai:cancel", (_event, operationId: string) => {
+    if (!operationId) return false;
+    return cancelAiRequest(operationId);
+  });
+
   async function githubReleaseCandidates(
     project: any,
     token: string | null | undefined,
@@ -204,6 +210,7 @@ export function registerReleaseHandlers(): void {
       includeShas?: string[],
       appVersion?: string,
       includedChanges?: string[],
+      operationId = "",
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -277,25 +284,28 @@ export function registerReleaseHandlers(): void {
           const filtered = filterMaterial(release.material, includeShas);
           generationRelease = { ...release, material: filtered, body: materialToBody(filtered) };
         }
-        const draft = await generateStoreSubmissionDraft(
-          s,
-          project,
-          product,
-          generationRelease,
-          existing,
-          (progress) => {
-            if (!_event.sender.isDestroyed()) {
-              _event.sender.send("release:generateProgress", progress);
-            }
-          },
-          language,
-          appVersion,
-          (received) => {
-            if (!_event.sender.isDestroyed()) {
-              _event.sender.send("release:generateProgress", { kind: "chars", ...received });
-            }
-          },
-          includedChanges,
+        const draft = await withAiOperation(operationId, (signal) =>
+          generateStoreSubmissionDraft(
+            s,
+            project,
+            product,
+            generationRelease,
+            existing,
+            (progress) => {
+              if (!_event.sender.isDestroyed()) {
+                _event.sender.send("release:generateProgress", progress);
+              }
+            },
+            language,
+            appVersion,
+            (received) => {
+              if (!_event.sender.isDestroyed()) {
+                _event.sender.send("release:generateProgress", { kind: "chars", ...received });
+              }
+            },
+            includedChanges,
+            signal,
+          ),
         );
         // Re-read before writing: AI generation awaited for seconds, during
         // which concurrent handlers may have replaced the projects array.
@@ -329,6 +339,7 @@ export function registerReleaseHandlers(): void {
       releaseTag: string,
       targetLanguages: string[],
       sourceLanguage?: string,
+      operationId = "",
     ) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       productId = assertNonEmptyString(productId, "productId");
@@ -384,26 +395,29 @@ export function registerReleaseHandlers(): void {
         (copyGapKeywordsByLanguage[lang] =
           copyGapKeywordsByLanguage[lang] || []).push(String(g.keyword || ""));
       }
-      const translations = await translateStoreSubmissionContent(
-        provider,
-        {
-          name: product.trackName || project.name,
-          profile,
-          trackedKeywordsByLanguage,
-          copyGapKeywordsByLanguage,
-        },
-        source,
-        targetLanguages,
-        (progress) => {
-          if (!_event.sender.isDestroyed()) {
-            _event.sender.send("release:generateProgress", progress);
-          }
-        },
-        (received) => {
-          if (!_event.sender.isDestroyed()) {
-            _event.sender.send("release:generateProgress", { kind: "chars", ...received });
-          }
-        },
+      const translations = await withAiOperation(operationId, (signal) =>
+        translateStoreSubmissionContent(
+          provider,
+          {
+            name: product.trackName || project.name,
+            profile,
+            trackedKeywordsByLanguage,
+            copyGapKeywordsByLanguage,
+          },
+          source,
+          targetLanguages,
+          (progress) => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", progress);
+            }
+          },
+          (received) => {
+            if (!_event.sender.isDestroyed()) {
+              _event.sender.send("release:generateProgress", { kind: "chars", ...received });
+            }
+          },
+          signal,
+        ),
       );
 
       const latestProjects: any[] = s.get("projects") || [];

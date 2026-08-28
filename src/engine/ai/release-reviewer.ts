@@ -13,6 +13,27 @@ export interface ReleaseReview {
   promotionAngles: string[];
 }
 
+/** 目标语言全称（提示词里用全称重复强调，降低模型回显母本的概率）。 */
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: "English (English)",
+  de: "German (Deutsch)",
+  fr: "French (Français)",
+  es: "Spanish (Español)",
+  it: "Italian (Italiano)",
+  nl: "Dutch (Nederlands)",
+  pt: "Portuguese (Português)",
+  "pt-BR": "Brazilian Portuguese (Português do Brasil)",
+  ja: "Japanese (日本語)",
+  ko: "Korean (한국어)",
+  "zh-Hans": "Simplified Chinese (简体中文)",
+  "zh-Hant": "Traditional Chinese (繁體中文)",
+  ru: "Russian (Русский)",
+};
+
+function languageFullName(code: string): string {
+  return LANGUAGE_NAMES[code] || code;
+}
+
 /** Normalize + clamp an AI-generated localization into the store field limits. */
 export function normalizeLocalizedStoreCopy(
   raw: any,
@@ -21,13 +42,115 @@ export function normalizeLocalizedStoreCopy(
 ): StoreSubmissionLocalization {
   return {
     language,
-    name: String(raw?.name || fallbackName || "").trim().slice(0, 30),
-    subtitle: String(raw?.subtitle || "").trim().slice(0, 30),
-    promotionalText: ensureQuotePrefix(String(raw?.promotionalText || "").trim()).slice(0, 170),
-    description: String(raw?.description || "").trim().slice(0, 4000),
-    whatsNew: String(raw?.whatsNew || "").trim().slice(0, 4000),
-    keywords: String(raw?.keywords || "").trim().slice(0, 100),
+    name: clampText(String(raw?.name || fallbackName || ""), 30),
+    subtitle: clampText(String(raw?.subtitle || ""), 30),
+    promotionalText: clampText(ensureQuotePrefix(String(raw?.promotionalText || "").trim()), 170),
+    description: clampText(String(raw?.description || ""), 4000),
+    whatsNew: clampText(String(raw?.whatsNew || ""), 4000),
+    keywords: clampKeywords(String(raw?.keywords || ""), 100),
   };
+}
+
+/** 超长时在句子/单词边界截短，避免中间切断；关键词按逗号从尾部舍弃。 */
+function clampText(value: string, max: number): string {
+  const chars = Array.from(value);
+  if (chars.length <= max) return chars.join("").trim();
+  const cut = chars.slice(0, max).join("");
+  const boundary = Math.max(
+    cut.lastIndexOf("。"),
+    cut.lastIndexOf("．"),
+    cut.lastIndexOf("."),
+    cut.lastIndexOf("！"),
+    cut.lastIndexOf("!"),
+    cut.lastIndexOf("？"),
+    cut.lastIndexOf("?"),
+    cut.lastIndexOf("；"),
+    cut.lastIndexOf(";"),
+    cut.lastIndexOf("，"),
+    cut.lastIndexOf(","),
+    cut.lastIndexOf("、"),
+    cut.lastIndexOf(" "),
+    cut.lastIndexOf("\n"),
+  );
+  if (boundary >= max * 0.5) {
+    return Array.from(cut.slice(0, boundary + 1)).join("").trimEnd();
+  }
+  return cut.trimEnd();
+}
+
+function clampKeywords(value: string, max: number): string {
+  const parts = String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  let out = parts.join(",");
+  while (out.length > max && parts.length > 1) {
+    parts.pop();
+    out = parts.join(",");
+  }
+  return out.slice(0, max);
+}
+
+/**
+ * 轻量语言安全网：目标语言明显回显母本/输出错误语言时拒绝保存。
+ * 纯确定性字符检查，零 AI 成本；正常翻译不受影响。
+ */
+export function validateTranslatedCopy(
+  localization: StoreSubmissionLocalization,
+  targetLanguage: string,
+  source: StoreSubmissionLocalization,
+): void {
+  const compact = (value: any) =>
+    String(value || "").replace(/\s+/g, "").trim();
+  const sample = [
+    localization.name,
+    localization.subtitle,
+    localization.description,
+    localization.whatsNew,
+    localization.keywords,
+  ].map(compact).join("");
+  const sourceSample = [
+    source.name,
+    source.subtitle,
+    source.description,
+    source.whatsNew,
+    source.keywords,
+  ].map(compact).join("");
+  if (sample && sample === sourceSample) {
+    throw new EngineError(
+      `翻译结果与母本相同（疑似未翻译），请重试。`,
+      "AI_BAD_TRANSLATION",
+    );
+  }
+  const hanCount = (sample.match(/\p{Script=Han}/gu) || []).length;
+  const totalChars = sample.length;
+  const isCjkTarget = ["zh-Hans", "zh-Hant", "ja"].includes(targetLanguage);
+  if (!isCjkTarget && totalChars > 0 && hanCount / totalChars > 0.3) {
+    throw new EngineError(
+      `翻译结果包含大量中文字符（疑似回显母本），请重试。`,
+      "AI_BAD_TRANSLATION",
+    );
+  }
+  const requiredScript: Record<string, RegExp> = {
+    ru: /\p{Script=Cyrillic}/u,
+    ko: /\p{Script=Hangul}/u,
+    ja: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u,
+    "zh-Hans": /\p{Script=Han}/u,
+    "zh-Hant": /\p{Script=Han}/u,
+  };
+  const hint = requiredScript[targetLanguage];
+  if (hint && !hint.test(sample)) {
+    throw new EngineError(
+      `翻译结果缺少目标语言的文字（疑似输出为源语言），请重试。`,
+      "AI_BAD_TRANSLATION",
+    );
+  }
+  if (!hint && totalChars > 0 && !/\p{Script=Latin}/u.test(sample)) {
+    throw new EngineError(
+      `翻译结果疑似未使用目标语言，请重试。`,
+      "AI_BAD_TRANSLATION",
+    );
+  }
 }
 
 /** Promotional text is shown above the description; prefix it with "> " so it
@@ -111,18 +234,19 @@ export async function generateStoreSubmissionContent(
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<StoreSubmissionContent> {
   const primaryLanguage = context.language || "en";
 
   onProgress?.({ language: "global", status: "started" });
-  const globalPlan = await generateGlobalReleasePlan(provider, context, onChars);
+  const globalPlan = await generateGlobalReleasePlan(provider, context, onChars, signal);
   onProgress?.({ language: "global", status: "completed" });
   const localizations: StoreSubmissionLocalization[] = [];
 
   onProgress?.({ language: primaryLanguage, status: "started" });
   const primaryLocalization = context.baseLocalization && context.reviewFeedback
-    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization, onChars)
-    : await generateLocalizedStoreCopy(provider, context, primaryLanguage, onChars);
+    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization, onChars, signal)
+    : await generateLocalizedStoreCopy(provider, context, primaryLanguage, onChars, signal);
   onProgress?.({ language: primaryLanguage, status: "completed" });
   localizations.push(primaryLocalization);
 
@@ -154,13 +278,23 @@ export async function translateStoreSubmissionContent(
   targetLanguages: string[],
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<StoreSubmissionLocalization[]> {
   const translations: StoreSubmissionLocalization[] = [];
 
   for (const language of targetLanguages) {
     if (language === source.language) continue;
     onProgress?.({ language, status: "started" });
-    const translation = await generateTranslatedStoreCopy(provider, context, source, language, onChars);
+    const translation = await generateTranslatedStoreCopy(
+      provider,
+      context,
+      source,
+      language,
+      onChars,
+      signal,
+    );
+    // 轻量语言安全网：模型明显回显母本/错误语言时，不保存并提示重试。
+    validateTranslatedCopy(translation, language, source);
     onProgress?.({ language, status: "completed" });
     translations.push(translation);
   }
@@ -184,6 +318,7 @@ async function generateGlobalReleasePlan(
     copyGapKeywords?: string[];
   },
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<{
   summary: string;
   promotionAngles: string[];
@@ -231,6 +366,7 @@ async function generateGlobalReleasePlan(
     maxTokens: 8000,
     thinking: "disabled",
     onProgress: onChars,
+    signal,
   });
 
   return {
@@ -259,6 +395,7 @@ async function generateLocalizedStoreCopy(
   },
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<StoreSubmissionLocalization> {
   const messages = buildArchiveMessages(
     context.profile,
@@ -328,6 +465,7 @@ async function generateLocalizedStoreCopy(
     maxTokens: 32000,
     thinking: "disabled",
     onProgress: onChars,
+    signal,
   });
 
   try {
@@ -349,13 +487,15 @@ async function generateTranslatedStoreCopy(
   primary: StoreSubmissionLocalization,
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<StoreSubmissionLocalization> {
   const targetTrackedKeywords = (context.trackedKeywordsByLanguage || {})[language] || [];
   const targetGapKeywords = (context.copyGapKeywordsByLanguage || {})[language] || [];
   const messages = buildArchiveMessages(
     context.profile,
     [
-      `You are Appilot's App Store translation assistant. Translate the source localization into language: ${language}.`,
+      `You are Appilot's App Store translation assistant. Translate the source localization into language: ${languageFullName(language)} (code ${language}).`,
+      "The ENTIRE output must be written in the target language. Never copy or echo the source language text. If the source is Chinese and the target is Russian, the result MUST be Russian in Cyrillic — Chinese output for a non-Chinese target is a failure.",
       "Keep the meaning and structure consistent with the source.",
       "Respond ONLY with JSON in this shape:",
       JSON.stringify(
@@ -370,8 +510,9 @@ async function generateTranslatedStoreCopy(
         null,
         2,
       ),
+      "Keep the output concise. Every field MUST fit its limit (name ≤30, subtitle ≤30, promotionalText ≤170, keywords ≤100, description ≤4000, whatsNew ≤4000). Prefer shorter over longer; never pad, repeat, or expand. If content does not fit, cut less important parts instead of exceeding the limit.",
       "Translate `name`, `subtitle`, `promotionalText`, `description`, and `whatsNew` faithfully; keep the brand name verbatim and localize the colon phrase and tagline.",
-      "For `keywords`: do NOT translate the source keywords verbatim. Build the target-language keyword set from (1) the translated source keywords that still make sense in this market, (2) the target language's tracked keywords, and (3) the target language's copy-gap keywords. Keep it ≤100 characters, comma separated, and prioritize terms that match how users in this language actually search.",
+      "For `keywords`: do NOT translate the source keywords verbatim. Build the target-language keyword set from (1) the translated source keywords that still make sense in this market, (2) the target language's tracked keywords, and (3) the target language's copy-gap keywords. If no tracked/copy-gap keywords exist for the target language, translate or adapt the source keywords into the target language — never keep them in the source language. Keep it ≤100 characters, comma separated.",
       "If the target language has copy-gap keywords (ranked poorly because the current copy does not cover them), weave the most important 1-2 into the name/subtitle/promotional text where natural — do not stack or force them.",
       "After adapting keywords, re-polish the whole set so name + subtitle + keywords stay coherent and read naturally in the target language.",
       "Do not invent new product facts. Translate the provided copy faithfully.",
@@ -398,9 +539,10 @@ async function generateTranslatedStoreCopy(
 
   const data = await requestJson(provider, messages, {
     temperature: 0.3,
-    maxTokens: 16000,
+    maxTokens: 8000,
     thinking: "disabled",
     onProgress: onChars,
+    signal,
   });
 
   try {
@@ -426,6 +568,7 @@ async function reviseLocalizedStoreCopy(
   language: string,
   base: StoreSubmissionLocalization,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<StoreSubmissionLocalization> {
   const messages = buildArchiveMessages(
     context.profile,
@@ -470,6 +613,7 @@ async function reviseLocalizedStoreCopy(
     maxTokens: 16000,
     thinking: "disabled",
     onProgress: onChars,
+    signal,
   });
 
   try {

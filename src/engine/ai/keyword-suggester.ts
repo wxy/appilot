@@ -233,6 +233,7 @@ export async function extractSubmissionCandidates(
     profile?: ProjectProfile;
   },
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<SubmissionCandidate[]> {
   const messages = buildArchiveMessages(
     context.profile,
@@ -256,6 +257,7 @@ export async function extractSubmissionCandidates(
     maxTokens: 16000,
     thinking: "low",
     onProgress,
+    signal,
   });
   return normalizeSubmissionCandidates(data);
 }

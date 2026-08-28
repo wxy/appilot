@@ -7,7 +7,6 @@ import { inferAppVersion } from "../../../engine/store-submission";
 import { ascStoreLiveVersion, deriveVersionStatus } from "../../../engine/version-status";
 import {
   formatHumanTime,
-  formatKilo,
   languageLabel,
   platformLabel,
   UI_SOURCE_LANGUAGE,
@@ -80,6 +79,10 @@ export function ReleasePage() {
   const [historyDraft, setHistoryDraft] = useState<any>(null);
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
   const translatingRef = useRef<Set<string>>(new Set());
+  const [translateOpId, setTranslateOpId] = useState("");
+  const [generateOpId, setGenerateOpId] = useState("");
+  const [failedTranslation, setFailedTranslation] = useState("");
+  const [generateFailed, setGenerateFailed] = useState(false);
   const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
   const [pendingVersion, setPendingVersion] = useState("");
   const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
@@ -393,7 +396,7 @@ export function ReleasePage() {
         : "muted";
   const localizations = draft ? localizationList(draft) : [];
   const activeLocalization =
-    localizations.find((item: any) => item.language === activeLanguage) || localizations[0] || null;
+    localizations.find((item: any) => item.language === activeLanguage) || null;
   const primaryLanguage = localizations[0]?.language || "";
   const masterConfirmed = Boolean(viewDraft?.masterConfirmedAt);
   const batchConfirmed = Boolean(viewDraft?.batchConfirmedAt);
@@ -1001,9 +1004,12 @@ export function ReleasePage() {
 
   const handleLoad = async (force: boolean) => {
     if (!project || !productId || !selectedTag) return;
+    const operationId = crypto.randomUUID();
     if (force) {
+      setGenerateOpId(operationId);
       setGenerating(true);
       setGenerationProgress(null);
+      setGenerateFailed(false);
     } else {
       setLoadingDraft(true);
     }
@@ -1028,15 +1034,30 @@ export function ReleasePage() {
         summaryItems
           .filter((item) => summaryChecked.has(item.id))
           .map((item) => item.title),
+        operationId,
       );
       setActive(next);
       setStep(2);
     } catch (e: any) {
-      setError(e.message || "发布工作单加载失败。");
+      if (String(e?.message || "").includes("已取消")) {
+        // 用户主动停止：不算错误，静默清理。
+      } else {
+        setError(e.message || "发布工作单加载失败。");
+        if (force) setGenerateFailed(true);
+      }
     } finally {
+      setGenerateOpId("");
       setGenerating(false);
       setLoadingDraft(false);
     }
+  };
+
+  const stopTranslate = () => {
+    if (translateOpId) void (window as any).appilot?.ai?.cancel(translateOpId);
+  };
+
+  const stopGenerate = () => {
+    if (generateOpId) void (window as any).appilot?.ai?.cancel(generateOpId);
   };
 
   const handleProductChange = async (value: string) => {
@@ -1097,17 +1118,17 @@ export function ReleasePage() {
 
   const handleTranslateOne = async (language: string) => {
     if (!project || !draft || !selectedTag || translatingRef.current.has(language)) return;
-    if (
-      !masterConfirmed ||
-      batchConfirmed ||
-      feedbackReadOnly ||
-      localizations.some((item: any) => item.language === language)
-    ) {
-      return;
+    if (!masterConfirmed || batchConfirmed || feedbackReadOnly) return;
+    // 重新翻译会覆盖已有内容，需要确认。
+    if (localizations.some((item: any) => item.language === language)) {
+      if (!window.confirm("将覆盖该语言的现有文案，是否继续？")) return;
     }
 
+    const operationId = crypto.randomUUID();
     translatingRef.current.add(language);
     setTranslatingLanguages((prev) => new Set(prev).add(language));
+    setTranslateOpId(operationId);
+    setFailedTranslation("");
     setError("");
     try {
       const currentDraft = active?.draft;
@@ -1121,11 +1142,17 @@ export function ReleasePage() {
         currentDraft?.releaseTag || draft.releaseTag,
         [language],
         sourceLanguage || currentDraft?.localizations?.[0]?.language || draft.localizations?.[0]?.language,
+        operationId,
       );
       setActive((prev: any) => ({ ...prev, draft: next }));
       setActiveLanguage(language);
     } catch (e: any) {
-      setError(e.message || `${languageLabel(language)} 翻译失败。`);
+      if (String(e?.message || "").includes("已取消")) {
+        // 用户主动停止：不算错误，静默清理。
+      } else {
+        setError(e.message || `${languageLabel(language)} 翻译失败。`);
+        setFailedTranslation(language);
+      }
     } finally {
       translatingRef.current.delete(language);
       setTranslatingLanguages((prev) => {
@@ -1133,6 +1160,7 @@ export function ReleasePage() {
         next.delete(language);
         return next;
       });
+      setTranslateOpId("");
     }
   };
 
@@ -1683,11 +1711,13 @@ export function ReleasePage() {
 
                 {!versionLocked && !draft && (
                   <AIProgressButton
-                    onClick={() => handleLoad(true)}
+                    onStart={() => handleLoad(true)}
+                    onStop={stopGenerate}
                     disabled={busy && !generating}
                     loading={generating}
                     progress={generationProgress}
                     idleLabel={summaryItems.length > 0 ? "下一步：生成文案" : "新建文案"}
+                    retry={generateFailed}
                   />
                 )}
 
@@ -1734,6 +1764,41 @@ export function ReleasePage() {
                     <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
                       确定文案前需填写
                     </span>
+                  </div>
+                  {/* 语言选项卡：点击切换语言；翻译入口在下方对应语言页内 */}
+                  <div className="flex flex-wrap gap-1 border-b border-zinc-100 dark:border-zinc-800 pb-2">
+                    {orderedLanguages.map((language) => {
+                      const generated = localizations.some((item: any) => item.language === language);
+                      const translating = translatingLanguages.has(language);
+                      return (
+                        <button
+                          key={language}
+                          type="button"
+                          onClick={() => setActiveLanguage(language)}
+                          title={
+                            generated
+                              ? `${languageLabel(language)}文案`
+                              : translating
+                                ? `${languageLabel(language)}翻译进行中`
+                                : `${languageLabel(language)}尚未翻译`
+                          }
+                          className={cn(
+                            "inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-t-lg border-b-2 transition-colors",
+                            activeLanguage === language
+                              ? "border-amber-500 text-amber-700 dark:text-amber-400 font-medium"
+                              : "border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300",
+                          )}
+                        >
+                          {languageLabel(language)}
+                          {translating && (
+                            <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+                          )}
+                          {generated && !translating && (
+                            <span className="text-emerald-500">✓</span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                   {activeLocalization && (
                     <>
@@ -1844,62 +1909,47 @@ export function ReleasePage() {
                   )}
 
                   <div className="border-t border-zinc-100 dark:border-zinc-800 pt-5 space-y-4">
-                    <div className="flex flex-wrap gap-2">
-                      {orderedLanguages.map((language) => {
-                        const generated = localizations.some((item: any) => item.language === language);
-                        const translating = translatingLanguages.has(language);
-                        const active = activeLocalization?.language === language;
-                        const clickable =
-                          masterConfirmed &&
-                          !batchConfirmed &&
-                          !feedbackReadOnly &&
-                          !generated &&
-                          !translating;
-                        const chipTitle = generated
-                          ? `${languageLabel(language)}文案`
-                          : clickable
-                            ? `翻译为${languageLabel(language)}文案`
-                            : feedbackReadOnly
-                              ? "正式发布后只读，不可翻译"
-                              : batchConfirmed
-                                ? "整批文案已确定，只读"
-                                : "先确定母本语言，再翻译其他语言";
-                        return (
-                          <button
-                            key={language}
-                            title={chipTitle}
-                            onClick={() => {
-                              if (generated) {
-                                setActiveLanguage(language);
-                              } else if (clickable) {
-                                void handleTranslateOne(language);
-                              }
-                            }}
-                            disabled={generating || (!generated && !clickable)}
-                            className={cn(
-                              "px-3 py-1.5 text-sm rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                              active
-                                ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                                : generated
-                                  ? "border-emerald-500/50 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                                  : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600",
-                            )}
-                          >
-                            {languageLabel(language)}
-                            {translating ? (
-                              <span className="inline-flex items-center gap-1">
-                                <span className="w-2 h-2 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                                {formatKilo(generationProgress?.chars || 0)}
+                    {/* 当前语言页内的翻译按钮：未翻译显示「翻译为 X语」，
+                        翻译完成后保留为「重新翻译」（覆盖前需确认）；运行中可停止。 */}
+                    {activeLanguage !== primaryLanguage &&
+                      (masterConfirmed ? (
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <AIProgressButton
+                            onStart={() => void handleTranslateOne(activeLanguage)}
+                            onStop={stopTranslate}
+                            loading={translatingLanguages.has(activeLanguage)}
+                            progress={generationProgress}
+                            disabled={
+                              translatingLanguages.size > 0 &&
+                              !translatingLanguages.has(activeLanguage)
+                            }
+                            idleLabel={
+                              localizations.some(
+                                (item: any) => item.language === activeLanguage,
+                              )
+                                ? "重新翻译"
+                                : `翻译为${languageLabel(activeLanguage)}`
+                            }
+                            retry={failedTranslation === activeLanguage}
+                          />
+                          {translatingLanguages.size > 0 &&
+                            !translatingLanguages.has(activeLanguage) && (
+                              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                                已有翻译进行中，请稍候
                               </span>
-                            ) : generated ? (
-                              " ✓"
-                            ) : (
-                              ""
                             )}
-                          </button>
-                        );
-                      })}
-                    </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                          先确定母本语言，再翻译其他语言。
+                        </p>
+                      ))}
+                    {activeLocalization === null &&
+                      activeLanguage !== primaryLanguage && (
+                        <p className="text-xs text-amber-600/80 dark:text-amber-500/70">
+                          该语言尚未翻译。
+                        </p>
+                      )}
 
                     {!feedbackReadOnly && !batchConfirmed && (
                       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1945,11 +1995,13 @@ export function ReleasePage() {
                     {!versionLocked && (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <AIProgressButton
-                          onClick={() => handleLoad(true)}
+                          onStart={() => handleLoad(true)}
+                          onStop={stopGenerate}
                           disabled={busy && !generating}
                           loading={generating}
                           progress={generationProgress}
                           idleLabel="重新生成"
+                          retry={generateFailed}
                         />
                       </div>
                     )}

@@ -100,6 +100,10 @@ export class AIProvider {
       thinking?: ThinkingEffort;
       responseFormat?: "json_object";
       onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void;
+      /** 外部取消信号：渲染层「停止」按钮中止正在进行的请求。 */
+      signal?: AbortSignal;
+      /** 报告本次完成的 finish_reason（用于识别输出被截断）。 */
+      onFinishReason?: (reason: string | undefined) => void;
     },
   ): Promise<string> {
     const isDeepSeek = this.config.baseURL.includes("deepseek");
@@ -108,6 +112,9 @@ export class AIProvider {
     let maxTokens = opts?.maxTokens ?? 2000;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (opts?.signal?.aborted) {
+        throw new EngineError("AI 请求已取消", "AI_CANCELLED");
+      }
       let content: string | null = null;
       let finishReason: string | undefined;
       let promptTokens = 0;
@@ -192,20 +199,31 @@ export class AIProvider {
               await consumeStream(
                 await this.client.chat.completions.create({
                   ...attempt,
-                  signal: streamController.signal,
+                  signal: opts?.signal
+                    ? AbortSignal.any([streamController.signal, opts.signal])
+                    : streamController.signal,
                 } as any),
               );
               streamed = true;
               break;
             } catch (err: any) {
+              if (opts?.signal?.aborted) {
+                throw new EngineError("AI 请求已取消", "AI_CANCELLED");
+              }
               log.warn(`AI streaming attempt failed (${err?.message})`);
             } finally {
               clearInterval(idleTimer);
             }
           }
           if (!streamed) {
+            if (opts?.signal?.aborted) {
+              throw new EngineError("AI 请求已取消", "AI_CANCELLED");
+            }
             log.warn("All AI streaming attempts failed; falling back to non-streaming");
-            const response = await this.client.chat.completions.create(request as any);
+            const response = await this.client.chat.completions.create({
+              ...request,
+              signal: opts?.signal,
+            } as any);
             content = response.choices[0]?.message?.content ?? null;
             finishReason = response.choices[0]?.finish_reason;
             promptTokens = response.usage?.prompt_tokens ?? 0;
@@ -214,7 +232,10 @@ export class AIProvider {
             if (content) opts.onProgress({ chars: content.length, phase: "content" });
           }
         } else {
-          const response = await this.client.chat.completions.create(request as any);
+          const response = await this.client.chat.completions.create({
+            ...request,
+            signal: opts?.signal,
+          } as any);
           content = response.choices[0]?.message?.content ?? null;
           finishReason = response.choices[0]?.finish_reason;
           promptTokens = response.usage?.prompt_tokens ?? 0;
@@ -242,6 +263,8 @@ export class AIProvider {
           retryable: status ? status >= 500 : true,
         });
       }
+
+      opts?.onFinishReason?.(finishReason);
 
       if (promptTokens || completionTokens) {
         const prev = this.totalUsage;
