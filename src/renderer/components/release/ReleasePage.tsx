@@ -1806,10 +1806,11 @@ export function ReleasePage() {
                       确定文案前需填写
                     </span>
                   </div>
-                  {/* 选项卡：标签栏在上、内容页在下；内容页圆角上边缘正好
-                      位于滚动栏下方，标签与页面无缝衔接。 */}
+                  {/* 选项卡：内容页顶部放一个两边缩进、无边框的白底矩形，
+                      盖住内容页顶边线（两侧圆角仍可见）；语言标签在该矩形内滚动。 */}
                   <div>
-                  <div className="tab-scrollbar mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto px-1.5 pt-1">
+                  <div className="tab-scrollbar mx-3 -mb-px z-10 bg-white dark:bg-zinc-900 overflow-x-auto">
+                    <div className="flex w-fit gap-0.5 px-1 pt-2 pb-1.5">
                       {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);
@@ -1854,6 +1855,7 @@ export function ReleasePage() {
                         );
                       })}
                     </div>
+                  </div>
                   {/* 内容页（圆角矩形）：上边缘被标签栏压住 */}
                   <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
                   <div className="p-4 space-y-4">
