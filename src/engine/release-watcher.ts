@@ -601,7 +601,7 @@ export async function checkForRelease(
   }
   const endRefs = frontierShas.join(" ");
 
-  const material = await collectReleaseMaterial(localPath, lastSeenSha || null, frontierShas);
+  let material = await collectReleaseMaterial(localPath, lastSeenSha || null, frontierShas);
 
   // The release identity is the newest main-line tag (or the head when there
   // are no tags). It stays stable across the generation boundary, so the
@@ -610,6 +610,26 @@ export async function checkForRelease(
   const allTags = await listGitTags(localPath);
   const onMain = await mainLineTags(localPath, allTags, endRefs);
   const releaseTag: GitTagInfo | null = onMain[0] || null;
+
+  // 上次生成点已覆盖当前发布时（例如同版本文案被删除后重新生成），
+  // 素材会为空。对 GitHub 发布草案回退到最新主分支 tag 作为边界，
+  // 让「自上次文案以来」的提交/PR 在重新生成时仍然可见；已发布/本地 tag
+  // 的「无新提交」仍保持空素材（不虚构变更）。
+  if (material.commits.length === 0) {
+    const candidateReleases =
+      options.githubReleases ?? options.githubCache?.releases ?? null;
+    const frontierIsDraft =
+      candidateReleases?.find((item: any) => item?.draft) !== undefined;
+    const newestTag = onMain[0] || null;
+    if (frontierIsDraft && newestTag) {
+      const fallback = await collectReleaseMaterial(
+        localPath,
+        newestTag.sha,
+        frontierShas,
+      );
+      if (fallback.commits.length > 0) material = fallback;
+    }
+  }
 
   const cacheMatches =
     Boolean(releaseTag) && options.githubCache?.tag === releaseTag?.name;

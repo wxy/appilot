@@ -259,7 +259,10 @@ export function ReleasePage() {
     const resetView = lastProductKey.current !== key;
     lastProductKey.current = key;
     void loadReleases(false, true, resetView);
-  }, [project?.id, productId, searchParams]);
+    // 视图/发布切换只改变 selectedTag，由 release:context 增量加载对应发布
+    // 的素材与草案；不整页重载 release.list，避免出现「检查发布状态」与
+    // 长等待。首次进入或切项目/平台时才调用上面的 loadReleases。
+  }, [project?.id, productId]);
 
   // 主进程数据变更推送：发布/App Store 状态更新时自动刷新工作台。
   useEffect(() => {
@@ -1313,7 +1316,12 @@ export function ReleasePage() {
                           : "text-white",
                       )}
                     >
-                      {workingDraft ? "打开文案草案" : "新建文案草案"}
+                      文案草案
+                      {workingDraft && (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="opacity-70">（工作中）</span>
+                        </span>
+                      )}
                     </span>
                     <span
                       className={cn(
@@ -1325,9 +1333,9 @@ export function ReleasePage() {
                     >
                       {workingDraft
                         ? `${draftVersionLabel(workingDraft)} · ${formatHumanTime(workingDraft.updatedAt)}`
-                        : workTargetRelease?.name ||
-                          workTargetRelease?.tag ||
-                          "为最新发布创建文案"}
+                        : workTargetRelease?.name
+                          ? `尚无草案，点击新建 · ${workTargetRelease.name}`
+                          : "尚无草案，点击新建"}
                     </span>
                   </button>
                 </div>

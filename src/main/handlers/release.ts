@@ -293,11 +293,10 @@ export function registerReleaseHandlers(): void {
         const latestProjects: any[] = s.get("projects") || [];
         const latestProject = latestProjects.find((item: any) => item.id === projectId);
         if (latestProject) {
-          // Remember the tag (+ its commit) we generated for: name@sha identity
-          // so a moved tag redefines the boundary and triggers regeneration.
-          // Remember the HEAD we generated from: what's-new always covers
-          // everything committed after this point.
-          latestProject.lastReleaseSha = release.commitSha || null;
+          // 生成本身不推进「上次生成点」：草案可能被删除后重新生成同一版本，
+          // 提前推进会让「自上次文案以来」的素材为空。边界在整批确定时推进
+          // （见 release:saveDraft），这里只把 release 的 commit 记到草案上。
+          draft.releaseCommitSha = release.commitSha || undefined;
           upsertStoreSubmissionDraft(latestProject, draft);
           s.set("projects", latestProjects);
         }
@@ -460,6 +459,16 @@ export function registerReleaseHandlers(): void {
     }
 
     draft.updatedAt = new Date().toISOString();
+    // 整批确定是「上次生成点」真正推进的时刻：该版本文案从此冻结，
+    // 下一个版本文案的素材从这条 commit 之后开始收集。仅在新确认时推进，
+    // 避免反复保存已确认草案把边界回退。
+    if (draft.batchConfirmedAt && !existing?.batchConfirmedAt) {
+      const latestProjects: any[] = s.get("projects") || [];
+      const latestProject = latestProjects.find((item: any) => item.id === projectId);
+      if (latestProject) {
+        latestProject.lastReleaseSha = draft.releaseCommitSha || latestProject.lastReleaseSha || null;
+      }
+    }
     upsertStoreSubmissionDraft(project, draft);
     const context = findProductContext(projects, draft.productId);
     if (context) {
