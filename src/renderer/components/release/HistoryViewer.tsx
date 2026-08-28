@@ -48,9 +48,9 @@ export function HistoryViewer({
       <div className="p-6 space-y-6">
         {localizations.length > 0 && (
           <>
-            {/* 与发布工作台一致：标签栏在上，内容页圆角上边缘压住滚动栏 */}
+            {/* 与发布工作台一致：内容页圆角上边缘正好位于滚动栏下方 */}
             <div>
-            <div className="tab-scrollbar relative z-10 mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto px-1.5 pt-1 -mb-1.5">
+            <div className="tab-scrollbar mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto px-1.5 pt-1">
               {tabLanguages.map((item: any) => {
                 const active = item.language === activeLanguage;
                 return (

@@ -1806,10 +1806,10 @@ export function ReleasePage() {
                       确定文案前需填写
                     </span>
                   </div>
-                  {/* 选项卡：标签栏在上、内容页在下；内容页的圆角上边缘上移，
-                      与标签栏底部的滚动栏重合，滚动栏压在该框线上。 */}
+                  {/* 选项卡：标签栏在上、内容页在下；内容页圆角上边缘正好
+                      位于滚动栏下方，标签与页面无缝衔接。 */}
                   <div>
-                  <div className="tab-scrollbar relative z-10 mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto px-1.5 pt-1 -mb-1.5">
+                  <div className="tab-scrollbar mx-auto flex w-fit max-w-full gap-0.5 overflow-x-auto px-1.5 pt-1">
                       {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);
