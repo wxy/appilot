@@ -22,8 +22,10 @@ export function LanguageTabs({
 }) {
   const generated = new Set(generatedLanguages || []);
   return (
-    <div className="tab-scrollbar relative mx-5 -mb-0.5 z-10 dark:bg-zinc-900 overflow-x-auto overflow-y-hidden">
-      <div className="flex w-fit gap-0.5 px-0 pt-2 pb-1.5 -mb-1 bg-white dark:bg-zinc-900">
+    /* 背景放在外层条上，用外层自身 -mb 覆盖内容页顶边线；内层不再用负边距，
+       避免 overflow-y-hidden 把延伸裁掉导致缝隙。 */
+    <div className="tab-scrollbar relative mx-5 -mb-0.5 z-10 bg-white dark:bg-zinc-900 overflow-x-auto overflow-y-hidden">
+      <div className="flex w-fit gap-0.5 px-1 pt-2 pb-1.5">
         {languages.map((language) => {
           const translating = translatingLanguages?.has(language) || false;
           const isGenerated = generated.has(language);

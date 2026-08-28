@@ -32,9 +32,8 @@ import {
 } from "../ui/styles";
 import { HistoryPanel } from "./HistoryPanel";
 import { HistoryViewer } from "./HistoryViewer";
-import { LanguageTabs } from "./LanguageTabs";
+import { CopyTabPage } from "./CopyTabPage";
 import { ReferenceSection } from "./ReferenceSection";
-import { SubmissionCopyFields } from "./SubmissionCopyFields";
 import { draftVersionLabel } from "./releaseFormat";
 import { ValueFlash } from "../ui/ValueFlash";
 import { KeywordRuby } from "../ui/KeywordRuby";
@@ -1799,74 +1798,65 @@ export function ReleasePage() {
                     </span>
                   </div>
                   {/* 语言选项卡栏（组件内处理缩进/明暗自适应/横向滚动） */}
-                  <div>
-                    <LanguageTabs
-                      languages={tabLanguages}
-                      activeLanguage={activeLanguage}
-                      onSelect={setActiveLanguage}
-                      translatingLanguages={translatingLanguages}
-                      generatedLanguages={localizations.map(
-                        (item: any) => item.language,
-                      )}
-                    />
-                  </div>
-                  {/* 内容页（圆角矩形）：上边缘被标签栏压住 */}
-                  <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
-                  <div className="p-4 space-y-4">
-                  {activeLocalization && (
-                    <SubmissionCopyFields
-                      localization={activeLocalization}
-                      readOnly={isReadOnly}
-                      onChange={(field, value) => updateLocalizationField(field, value)}
-                      productTrackName={selectedProduct?.trackName}
-                      hints
-                    />
-                  )}
-                  {/* 内容页内：当前语言页的翻译按钮（母本页无）——
-                      未翻译显示「翻译为 X语」，翻译完成后保留为「重新翻译」
-                      （覆盖前需确认）；运行中可停止。 */}
-                  {activeLanguage !== primaryLanguage &&
-                    (masterConfirmed ? (
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <AIProgressButton
-                          onStart={() => void handleTranslateOne(activeLanguage)}
-                          onStop={stopTranslate}
-                          loading={translatingLanguages.has(activeLanguage)}
-                          progress={generationProgress}
-                          disabled={
-                            translatingLanguages.size > 0 &&
-                            !translatingLanguages.has(activeLanguage)
-                          }
-                          idleLabel={
-                            localizations.some(
-                              (item: any) => item.language === activeLanguage,
-                            )
-                              ? "重新翻译"
-                              : `翻译为${languageLabel(activeLanguage)}`
-                          }
-                          retry={failedTranslation === activeLanguage}
-                          retrying={retrying}
-                        />
-                        {translatingLanguages.size > 0 &&
-                          !translatingLanguages.has(activeLanguage) && (
-                            <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                              已有翻译进行中，请稍候
-                            </span>
-                          )}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                        先确定母本语言，再翻译其他语言。
-                      </p>
-                    ))}
-                  {activeLocalization === null &&
-                    activeLanguage !== primaryLanguage && (
-                      <p className="text-xs text-amber-600/80 dark:text-amber-500/70">
-                        该语言尚未翻译。
-                      </p>
+                  {/* 语言选项卡页面：标签栏 + 文案字段一体（组件内处理缩进/明暗自适应/滚动） */}
+                  <CopyTabPage
+                    languages={tabLanguages}
+                    activeLanguage={activeLanguage}
+                    onSelect={setActiveLanguage}
+                    localization={activeLocalization}
+                    readOnly={isReadOnly}
+                    onChange={(field, value) => updateLocalizationField(field, value)}
+                    productTrackName={selectedProduct?.trackName}
+                    hints
+                    translatingLanguages={translatingLanguages}
+                    generatedLanguages={localizations.map(
+                      (item: any) => item.language,
                     )}
-                  </div>
-                  </div>
+                    footer={
+                      <>
+                        {activeLanguage !== primaryLanguage &&
+                          (masterConfirmed ? (
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <AIProgressButton
+                                onStart={() => void handleTranslateOne(activeLanguage)}
+                                onStop={stopTranslate}
+                                loading={translatingLanguages.has(activeLanguage)}
+                                progress={generationProgress}
+                                disabled={
+                                  translatingLanguages.size > 0 &&
+                                  !translatingLanguages.has(activeLanguage)
+                                }
+                                idleLabel={
+                                  localizations.some(
+                                    (item: any) => item.language === activeLanguage,
+                                  )
+                                    ? "重新翻译"
+                                    : `翻译为${languageLabel(activeLanguage)}`
+                                }
+                                retry={failedTranslation === activeLanguage}
+                                retrying={retrying}
+                              />
+                              {translatingLanguages.size > 0 &&
+                                !translatingLanguages.has(activeLanguage) && (
+                                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                                    已有翻译进行中，请稍候
+                                  </span>
+                                )}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                              先确定母本语言，再翻译其他语言。
+                            </p>
+                          ))}
+                        {activeLocalization === null &&
+                          activeLanguage !== primaryLanguage && (
+                            <p className="text-xs text-amber-600/80 dark:text-amber-500/70">
+                              该语言尚未翻译。
+                            </p>
+                          )}
+                      </>
+                    }
+                  />
                   {/* 选项卡页面结束；下方为整份文案级操作 */}
                   <div className="border-t border-zinc-100 dark:border-zinc-800 pt-5 space-y-4">
 
