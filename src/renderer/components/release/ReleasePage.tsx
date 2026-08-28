@@ -173,9 +173,12 @@ export function ReleasePage() {
           (r?.submissionDrafts || []).some(
             (d: any) => d?.productId === productId && d?.batchConfirmedAt,
           );
-        const workTarget = (next.releases || []).find(
-          (r: any) => !hasConfirmedFor(r),
-        );
+        // 工作目标 = 前沿发布（列表第一项）。最新发布已定稿且没有更新的
+        // 发布时，不存在工作目标；绝不回退到旧的未覆盖发布。
+        const workTarget =
+          (next.releases || [])[0] && !hasConfirmedFor((next.releases || [])[0])
+            ? (next.releases || [])[0]
+            : null;
         const urlView = searchParams.get("view");
         setViewMode(
           urlView === "working" || urlView === "current"
@@ -429,14 +432,14 @@ export function ReleasePage() {
           new Date(b.batchConfirmedAt).getTime() -
           new Date(a.batchConfirmedAt).getTime(),
       )[0] || null;
-  // 工作目标 = 列表中第一个还没有已确定文案的发布（草案或正式发布都算）；
-  // 一旦最新发布已定稿，工作目标落到下一个未覆盖的发布，否则没有工作。
+  // 工作目标 = 前沿发布（列表第一项：草案优先、再按时间）。最新发布已定稿
+  // 且没有更新的发布时不存在工作目标，绝不回退到旧的未覆盖发布。
   const hasConfirmedCopyFor = (r: any) =>
     (r?.submissionDrafts || []).some(
       (d: any) => d?.productId === productId && d?.batchConfirmedAt,
     );
   const workTargetRelease =
-    releases.find((r: any) => !hasConfirmedCopyFor(r)) || null;
+    releases[0] && !hasConfirmedCopyFor(releases[0]) ? releases[0] : null;
   // 工作目标上的文案草案（未确定）：按最近更新取一份。
   const workingDraft =
     (workTargetRelease?.submissionDrafts || [])
@@ -462,6 +465,10 @@ export function ReleasePage() {
         ...availableLanguages.filter((language) => language !== UI_SOURCE_LANGUAGE),
       ]
     : availableLanguages;
+  // 选项卡按汉语拼音音序排列（zh-CN localeCompare 对中文按拼音排序）。
+  const tabLanguages = [...orderedLanguages].sort((a, b) =>
+    languageLabel(a).localeCompare(languageLabel(b), "zh-CN"),
+  );
   // 流程状态栏：GitHub 发布 → 本地文案草案 → 商店版本，每个节点标注自身状态。
   const githubNode = githubStatus ? (
     <>
@@ -1782,11 +1789,10 @@ export function ReleasePage() {
                       确定文案前需填写
                     </span>
                   </div>
-                  {/* 选项卡页面：整页带边框，上方凸起标签栏，激活标签与内容页连成一体
-                      （传统 Windows 选项卡页面样式）。 */}
-                  <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden">
-                    <div className="flex flex-wrap gap-0.5 bg-zinc-100 dark:bg-zinc-800 px-2 pt-2 border-b border-zinc-300 dark:border-zinc-700">
-                      {orderedLanguages.map((language) => {
+                  {/* 选项卡栏：无外框，可横向滚动不换行；激活标签底部开放与
+                      下方内容页相连（传统 Windows 选项卡页面）。 */}
+                  <div className="flex gap-0.5 -mb-px overflow-x-auto">
+                      {tabLanguages.map((language) => {
                         const generated = localizations.some((item: any) => item.language === language);
                         const translating = translatingLanguages.has(language);
                         return (
@@ -1802,10 +1808,10 @@ export function ReleasePage() {
                                   : `${languageLabel(language)}尚未翻译`
                             }
                             className={cn(
-                              "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm border rounded-t-md -mb-px transition-colors",
+                              "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm border rounded-t-md shrink-0 whitespace-nowrap transition-colors",
                               activeLanguage === language
-                                ? "border-zinc-300 dark:border-zinc-700 border-b-white dark:border-b-zinc-900 bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
-                                : "border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600",
+                                ? "border-zinc-300 dark:border-zinc-700 border-b-transparent bg-white dark:bg-zinc-900 text-amber-700 dark:text-amber-400 font-medium"
+                                : "border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700",
                             )}
                           >
                             {languageLabel(language)}
@@ -1819,8 +1825,9 @@ export function ReleasePage() {
                         );
                       })}
                     </div>
-                  {/* 选项卡内容页：当前语言的所有素材 */}
-                  <div className="bg-white dark:bg-zinc-900 p-4 space-y-4">
+                  {/* 选项卡内容页（带边框）：当前语言的所有素材 */}
+                  <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
+                  <div className="p-4 space-y-4">
                   {activeLocalization && (
                     <>
                       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
