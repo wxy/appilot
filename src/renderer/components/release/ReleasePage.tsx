@@ -416,13 +416,12 @@ export function ReleasePage() {
       {release?.tag && (
         <span className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{release.tag}</span>
       )}
-      {githubCapabilities?.repoPush === false && (
-        <span className="w-full text-[10px] text-amber-600 dark:text-amber-400">
-          Token 缺少仓库写权限，发布草案不可见（需在 GitHub Token 中开启 Contents 读+写）
-        </span>
-      )}
     </>
   ) : null;
+  const githubWarning =
+    githubCapabilities?.repoPush === false
+      ? "Token 缺少仓库写权限，发布草案不可见（需在 GitHub Token 中开启 Contents 读+写）"
+      : null;
   const githubActions = selectedNeedsCopy && !draft && !versionLocked ? (
     <button
       type="button"
@@ -1085,6 +1084,7 @@ export function ReleasePage() {
             ascInfo={ascInfo}
             onCheckGithub={() => void loadReleases(true)}
             checkingGithub={checking}
+            githubWarning={githubWarning}
           />
         </div>
         {alignment && (

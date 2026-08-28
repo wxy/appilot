@@ -107,7 +107,10 @@ export async function fetchRepoCapabilities(
       headers: githubHeaders(token),
       signal: controller.signal,
     });
-    if (!response.ok) return { push: null };
+    if (!response.ok) {
+      log.warn(`fetchRepoCapabilities failed for ${ownerRepo}: status=${response.status}`);
+      return { push: null };
+    }
     const data: any = await response.json();
     const push =
       data?.permissions?.push === true
@@ -116,6 +119,7 @@ export async function fetchRepoCapabilities(
           ? false
           : null;
     const value: GitHubRepoCapabilities = { push };
+    log.debug(`fetchRepoCapabilities: ${ownerRepo} → push=${push}`);
     repoCapCache.set(key, { at: Date.now(), value });
     return value;
   } catch {
@@ -330,6 +334,7 @@ export async function listGitHubReleases(
         // The saved token is rejected (expired/revoked). Retry anonymously so
         // published releases still surface; drafts stay invisible without a
         // token that has push access to the repository.
+        log.warn(`listGitHubReleases token rejected for ${ownerRepo}: status=${response.status}`);
         response = await fetch(url, {
           headers: githubHeaders(null),
           signal: controller.signal,
@@ -340,6 +345,9 @@ export async function listGitHubReleases(
       const raw = await response.text();
       const data: any = JSON.parse(raw);
       if (!Array.isArray(data)) return [];
+      log.debug(
+        `listGitHubReleases: ${ownerRepo} → ${data.length} releases (${data.filter((item: any) => item?.draft).length} drafts, viaToken=${effectiveToken})`,
+      );
       onStats?.(
         repoUrl.length + (effectiveToken ? token!.length + 24 : 0),
         raw.length,

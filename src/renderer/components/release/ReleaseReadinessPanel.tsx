@@ -26,6 +26,7 @@ export function ReleaseReadinessPanel({
   ascInfo,
   onCheckGithub,
   checkingGithub,
+  githubWarning,
 }: {
   projectId: string;
   productId: string;
@@ -47,6 +48,8 @@ export function ReleaseReadinessPanel({
   ascInfo?: { fetchedAt?: string } | null;
   onCheckGithub?: () => void;
   checkingGithub?: boolean;
+  /** 权限等导致发布草案不可见时的提示（与当前发布节点是否已加载无关）。 */
+  githubWarning?: ReactNode;
 }) {
   const [result, setResult] = useState<{ checkedAt: string; items: ReadinessCheckItem[] } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -130,6 +133,11 @@ export function ReleaseReadinessPanel({
             }
           >
             {githubNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+            {githubWarning && (
+              <span className="w-full text-[10px] text-amber-600 dark:text-amber-400">
+                {githubWarning}
+              </span>
+            )}
           </FlowNode>
           <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
             →

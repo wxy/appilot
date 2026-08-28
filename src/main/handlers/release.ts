@@ -22,6 +22,7 @@ import {
 } from "../release-service";
 import { assertNonEmptyString, assertStringArray } from "../util";
 import { notifyDataChanged } from "../data-sync";
+import { log } from "../../engine/logger";
 
 export function registerReleaseHandlers(): void {
   async function githubReleaseCandidates(
@@ -71,6 +72,10 @@ export function registerReleaseHandlers(): void {
     } else {
       repoPush = githubSyncCacheEntry(s, project)?.repoPush ?? null;
     }
+    log.debug(
+      `release:list ${project.name} force=${Boolean(force)} repoPush=${repoPush} ` +
+        `releases=${result.releases.length} latest=${result.releases[0]?.tag || ""}`,
+    );
     return {
       releases: result.releases.map((release) => ({
         ...release,
