@@ -22,9 +22,9 @@ export function LanguageTabs({
 }) {
   const generated = new Set(generatedLanguages || []);
   return (
-    /* 背景放在外层条上，用外层自身 -mb 覆盖内容页顶边线；内层不再用负边距，
-       避免 overflow-y-hidden 把延伸裁掉导致缝隙。 */
-    <div className="tab-scrollbar relative mx-5 -mb-0.5 z-10 bg-white dark:bg-zinc-900 overflow-x-auto overflow-y-hidden">
+    /* 隐藏滚动条（scrollbar-hidden）但保留横向滚动：水平滚动条会在标签条
+       底部占一条带、正好形成缝隙；隐藏后标签条与内容页完全贴平。 */
+    <div className="scrollbar-hidden relative mx-5 -mb-0.5 z-10 bg-white dark:bg-zinc-900 overflow-x-auto overflow-y-hidden">
       <div className="flex w-fit gap-0.5 px-1 pt-2 pb-1.5">
         {languages.map((language) => {
           const translating = translatingLanguages?.has(language) || false;

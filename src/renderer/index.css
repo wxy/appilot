@@ -149,23 +149,6 @@
   display: none;
 }
 
-/* 语言选项卡栏的滚动条：细（4px）、轨道透明，不打断标签与内容页的连接。 */
-.tab-scrollbar {
-  scrollbar-width: thin;
-}
-.tab-scrollbar::-webkit-scrollbar {
-  height: 4px;
-}
-.tab-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.tab-scrollbar::-webkit-scrollbar-thumb {
-  @apply bg-zinc-300 dark:bg-zinc-600 rounded-full;
-}
-.tab-scrollbar::-webkit-scrollbar-thumb:hover {
-  @apply bg-zinc-400 dark:bg-zinc-500;
-}
-
 /* 数据局部更新反馈：按元素类型分别动画。 */
 @keyframes appilot-flash-bg {
   0% { background-color: rgba(16, 185, 129, 0.5); }
