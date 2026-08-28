@@ -56,6 +56,9 @@ export function ReleasePage() {
   const products = project?.storeProducts || [];
   const [productId, setProductId] = useState(currentProductId || products[0]?.id || "");
   const [releases, setReleases] = useState<any[]>([]);
+  const [githubCapabilities, setGithubCapabilities] = useState<{
+    repoPush: boolean | null;
+  } | null>(null);
   const [selectedTag, setSelectedTag] = useState("");
   const [active, setActive] = useState<any>(null);
   const [checking, setChecking] = useState(false);
@@ -153,6 +156,7 @@ export function ReleasePage() {
     try {
       const next = await (window as any).appilot.release.list(project.id, force);
       setReleases(next.releases || []);
+      setGithubCapabilities(next.githubCapabilities || null);
       setActive((prev: any) => {
         if (
           !force &&
@@ -411,6 +415,11 @@ export function ReleasePage() {
       <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
       {release?.tag && (
         <span className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{release.tag}</span>
+      )}
+      {githubCapabilities?.repoPush === false && (
+        <span className="w-full text-[10px] text-amber-600 dark:text-amber-400">
+          Token 缺少仓库写权限，发布草案不可见（需在 GitHub Token 中开启 Contents 读+写）
+        </span>
       )}
     </>
   ) : null;

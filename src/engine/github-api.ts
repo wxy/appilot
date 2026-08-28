@@ -56,6 +56,18 @@ const mergedPrCache = new Map<
 >();
 const MERGED_PR_TTL_MS = 30 * 60_000;
 
+const repoCapCache = new Map<
+  string,
+  { at: number; value: GitHubRepoCapabilities }
+>();
+const REPO_CAP_TTL_MS = 10 * 60_000;
+
+export interface GitHubRepoCapabilities {
+  /** True when the token has push access to the repo (required to see draft
+   *  releases); null when unknown (no token / offline / non-repo). */
+  push: boolean | null;
+}
+
 function tokenTag(token?: string | null): string {
   return token
     ? `t${crypto.createHash("sha256").update(token).digest("hex").slice(0, 12)}`
@@ -68,6 +80,49 @@ function githubHeaders(token?: string | null): Record<string, string> {
     Accept: "application/vnd.github+json",
     "User-Agent": "appilot",
   };
+}
+
+/**
+ * Check what the saved token can do on the repository. Push access is what
+ * gates draft-release visibility ("draft releases are only returned to users
+ * with push access"), so a false result explains a missing draft cleanly.
+ * Cached for 10 minutes; never throws (unknown on failure).
+ */
+export async function fetchRepoCapabilities(
+  localPath: string,
+  token?: string | null,
+): Promise<GitHubRepoCapabilities> {
+  if (!token) return { push: null };
+  const remote = await getRemoteUrl(localPath);
+  const repoUrl = normalizeGitHubUrl(remote);
+  if (!repoUrl) return { push: null };
+  const ownerRepo = repoUrl.replace("https://github.com/", "");
+  const key = `${ownerRepo}#${tokenTag(token)}`;
+  const cached = repoCapCache.get(key);
+  if (cached && Date.now() - cached.at < REPO_CAP_TTL_MS) return cached.value;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const response = await fetch(`https://api.github.com/repos/${ownerRepo}`, {
+      headers: githubHeaders(token),
+      signal: controller.signal,
+    });
+    if (!response.ok) return { push: null };
+    const data: any = await response.json();
+    const push =
+      data?.permissions?.push === true
+        ? true
+        : data?.permissions?.push === false
+          ? false
+          : null;
+    const value: GitHubRepoCapabilities = { push };
+    repoCapCache.set(key, { at: Date.now(), value });
+    return value;
+  } catch {
+    return { push: null };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchDefaultBranch(

@@ -185,6 +185,7 @@ export function githubSyncCacheEntry(
   release: any | null;
   pullRequests: any[];
   releases: any[];
+  repoPush: boolean | null;
 } | null {
   const all = s.get("githubSyncCache") || {};
   const entry = all?.[project?.id];
@@ -200,6 +201,7 @@ export function githubSyncCacheEntry(
     release: entry.release ?? null,
     pullRequests,
     releases: Array.isArray(entry.releases) ? entry.releases : [],
+    repoPush: entry.repoCapabilities?.push ?? null,
   };
 }
 
@@ -678,6 +680,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
     if (!project?.localPath) throw new Error("Project not found");
     const { fetchRemoteTags, checkForRelease } = await import("../engine/release-watcher");
     const { listGitHubReleases } = await import("../engine/github-api");
+    const { fetchRepoCapabilities } = await import("../engine/github-api");
     // Background sync must never touch the worktree or local branches: fetch
     // only updates remote-tracking refs and tags.
     await fetchRemoteTags(project.localPath);
@@ -693,6 +696,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
         responseBytes += pb;
       },
     );
+    const repoCapabilities = await fetchRepoCapabilities(project.localPath, token);
     const result = await checkForRelease(
       project.localPath,
       project.lastReleaseSha || null,
@@ -715,6 +719,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       pullRequests: material?.pullRequests || [],
       prSchemaVersion: GITHUB_SYNC_CACHE_PR_SCHEMA,
       releases: githubReleases,
+      repoCapabilities,
       lastSeenSha: project.lastReleaseSha || null,
       syncedAt: new Date().toISOString(),
     };

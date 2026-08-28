@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { execFileSync } from "child_process";
 import {
+  fetchRepoCapabilities,
   fetchGitHubRelease,
   fetchMergedPullRequests,
   fetchPullRequests,
@@ -35,6 +36,7 @@ async function runTests() {
   const calls: { url: string; auth: string }[] = [];
   let status = 200;
   let rejectToken = false;
+  let repoPushPermission: boolean | null = true;
   const origFetch = globalThis.fetch;
   globalThis.fetch = (async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : String(input);
@@ -113,7 +115,16 @@ async function runTests() {
     }
     if (url.includes("/repos/") && !url.includes("/pulls") && !url.includes("/releases")) {
       return new Response(
-        JSON.stringify({ default_branch: "main" }),
+        JSON.stringify({
+          default_branch: "main",
+          permissions: {
+            push: repoPushPermission,
+            admin: false,
+            maintain: false,
+            triage: false,
+            pull: true,
+          },
+        }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
@@ -225,6 +236,14 @@ async function runTests() {
       "anonymous release fallback flags viaToken=false",
     );
     rejectToken = false;
+
+    // fetchRepoCapabilities: push access gates draft-release visibility.
+    const caps = await fetchRepoCapabilities(dir, "ghp_secret");
+    assert(caps.push === true, "repo capabilities report push access");
+    repoPushPermission = false;
+    const capsNoPush = await fetchRepoCapabilities(dir, "ghp_cap_nopush");
+    assert(capsNoPush.push === false, "repo capabilities report missing push access");
+    repoPushPermission = true;
   } finally {
     globalThis.fetch = origFetch;
   }

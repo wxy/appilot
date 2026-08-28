@@ -201,7 +201,8 @@ contextBridge.exposeInMainWorld("appilot", {
   },
 
   release: {
-    list: (projectId: string): Promise<any> => ipcRenderer.invoke("release:list", projectId),
+    list: (projectId: string, force = false): Promise<any> =>
+      ipcRenderer.invoke("release:list", projectId, force),
     context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
       ipcRenderer.invoke("release:context", projectId, productId, releaseTag),
     get: (

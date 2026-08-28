@@ -60,6 +60,17 @@ export function registerReleaseHandlers(): void {
         githubCache: githubSyncCacheEntry(s, project) ?? undefined,
       },
     );
+    // Draft-release visibility depends on the token's push access to the
+    // repository. Live-check on an explicit force refresh; otherwise reuse the
+    // last hourly sync's result so the workbench can warn when drafts are
+    // invisible instead of silently missing them.
+    let repoPush: boolean | null = null;
+    if (force) {
+      const { fetchRepoCapabilities } = await import("../../engine/github-api");
+      repoPush = (await fetchRepoCapabilities(project.localPath, token)).push;
+    } else {
+      repoPush = githubSyncCacheEntry(s, project)?.repoPush ?? null;
+    }
     return {
       releases: result.releases.map((release) => ({
         ...release,
@@ -69,6 +80,7 @@ export function registerReleaseHandlers(): void {
         ),
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,
+      githubCapabilities: { repoPush },
     };
   });
 
