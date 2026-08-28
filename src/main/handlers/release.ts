@@ -16,7 +16,6 @@ import { inferAppVersion } from "../../engine/store-submission";
 import { githubSyncCacheEntry } from "../scheduler";
 import { getStore } from "../store";
 import {
-  buildProjectProfileFor,
   generateStoreSubmissionDraft,
   synthesizeReleaseFromDraft,
 } from "../release-service";
@@ -359,27 +358,12 @@ export function registerReleaseHandlers(): void {
       }
 
       const { translateStoreSubmissionContent } = await import("../../engine/ai/release-reviewer");
-      const { readRepoDescription } = await import("../../engine/app-store-discovery");
 
       const provider = await createAiProvider(s);
       const source = draft.localizations.find((item: any) => item.language === sourceLanguage)
         || draft.localizations[0];
       if (!source) throw new Error("Source localization not found");
 
-      _event.sender.send("release:generateProgress", {
-        kind: "phase",
-        phase: "read_readme",
-        status: "started",
-      });
-      const description = readRepoDescription(project.localPath);
-      _event.sender.send("release:generateProgress", {
-        kind: "phase",
-        phase: "read_readme",
-        status: "completed",
-        bytes: description.length || 0,
-      });
-
-      const profile = await buildProjectProfileFor(project, product, undefined, description);
       // 各语言的关键词/文案缺口按语言分组，翻译时只注入目标语言自己的词。
       const trackedKeywordsByLanguage: Record<string, string[]> = {};
       for (const k of project.trackedKeywords || []) {
@@ -400,7 +384,9 @@ export function registerReleaseHandlers(): void {
           provider,
           {
             name: product.trackName || project.name,
-            profile,
+            // 翻译不需要整个项目档案（含大段 README/中文上下文）——那会显著
+            // 增加模型回显母本语言的概率。源文与目标语言都在 user 消息里。
+            profile: undefined,
             trackedKeywordsByLanguage,
             copyGapKeywordsByLanguage,
           },

@@ -285,7 +285,7 @@ export async function translateStoreSubmissionContent(
   for (const language of targetLanguages) {
     if (language === source.language) continue;
     onProgress?.({ language, status: "started" });
-    const translation = await generateTranslatedStoreCopy(
+    let translation = await generateTranslatedStoreCopy(
       provider,
       context,
       source,
@@ -293,8 +293,25 @@ export async function translateStoreSubmissionContent(
       onChars,
       signal,
     );
-    // 轻量语言安全网：模型明显回显母本/错误语言时，不保存并提示重试。
-    validateTranslatedCopy(translation, language, source);
+    // 轻量语言安全网：模型明显回显母本/错误语言时，强制重写一次，
+    // 明确告知上次输出是源语言；仍失败才抛出，让用户重试。
+    try {
+      validateTranslatedCopy(translation, language, source);
+    } catch (firstError: any) {
+      log.warn(
+        `Translation safety net rejected ${language} (${firstError?.message}); forcing a rewrite`,
+      );
+      translation = await generateTranslatedStoreCopy(
+        provider,
+        context,
+        source,
+        language,
+        onChars,
+        signal,
+        true,
+      );
+      validateTranslatedCopy(translation, language, source);
+    }
     onProgress?.({ language, status: "completed" });
     translations.push(translation);
   }
@@ -488,6 +505,7 @@ async function generateTranslatedStoreCopy(
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   signal?: AbortSignal,
+  forceTargetLanguage = false,
 ): Promise<StoreSubmissionLocalization> {
   const targetTrackedKeywords = (context.trackedKeywordsByLanguage || {})[language] || [];
   const targetGapKeywords = (context.copyGapKeywordsByLanguage || {})[language] || [];
@@ -496,6 +514,9 @@ async function generateTranslatedStoreCopy(
     [
       `You are Appilot's App Store translation assistant. Translate the source localization into language: ${languageFullName(language)} (code ${language}).`,
       "The ENTIRE output must be written in the target language. Never copy or echo the source language text. If the source is Chinese and the target is Russian, the result MUST be Russian in Cyrillic — Chinese output for a non-Chinese target is a failure.",
+      forceTargetLanguage
+        ? "Your previous attempt returned the SOURCE language text instead of the target language — that is a failure. Rewrite EVERY field entirely in the target language (for Russian: Cyrillic script). Use the source only for meaning; the output must be fully in the target language."
+        : "",
       "Keep the meaning and structure consistent with the source.",
       "Respond ONLY with JSON in this shape:",
       JSON.stringify(
