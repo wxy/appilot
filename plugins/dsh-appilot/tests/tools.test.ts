@@ -10,6 +10,10 @@ import { checkReleaseReadiness } from '../src/tools/check-release-readiness';
 import { syncReleaseStatus } from '../src/tools/sync-release-status';
 import { createGenerateStoreCopyTool } from '../src/tools/generate-store-copy';
 import { createReviseStoreCopyTool } from '../src/tools/revise-store-copy';
+import { createRegisterProjectTool } from '../src/tools/register-project';
+import { createListProjectsTool } from '../src/tools/list-projects';
+import { createGetReleaseDraftTool } from '../src/tools/get-release-draft';
+import { memoryProjectStore } from '../src/storage';
 
 /** 最小的 exec 环境（工具未使用 exec 的额外字段）。 */
 function execFor() {
@@ -21,6 +25,10 @@ function execFor() {
     agent: { inject: async () => {} },
     signal: new AbortController().signal,
   } as any;
+}
+
+function basenameOf(p: string) {
+  return p.split('/').pop() || p;
 }
 
 async function callTool(tool: any, args: unknown) {
@@ -110,6 +118,31 @@ async function main() {
     /APILOT_AI_BASE_URL/,
   );
   console.log('✅ PASS: revise_store_copy fails cleanly without credentials');
+
+  // 存储闭环：register → list → 按名引用（内存 store）
+  const store = memoryProjectStore();
+  const registerTool = createRegisterProjectTool(store);
+  const listTool = createListProjectsTool(store);
+  const draftByName = createGetReleaseDraftTool(store);
+  const registered = await callTool(registerTool, { path: repo });
+  assert.equal(registered.registered, true);
+  assert.equal(registered.record.name, basenameOf(repo));
+  console.log('✅ PASS: register_project saves a project record');
+
+  const listed = await callTool(listTool, {});
+  assert.equal(listed.count, 1);
+  assert.equal(listed.projects[0].name, basenameOf(repo));
+  console.log('✅ PASS: list_projects returns the registered project');
+
+  const draftRef = await callTool(draftByName, { project: basenameOf(repo) });
+  assert.equal(draftRef.versionTag, 'v1.0.0');
+  console.log('✅ PASS: get_release_draft resolves by registered project name');
+
+  await assert.rejects(
+    () => callTool(draftByName, { project: 'nope' }),
+    /未找到已注册项目/,
+  );
+  console.log('✅ PASS: get_release_draft rejects unknown project name');
 
   console.log('\n🎉 All @appilot/dsh tool tests passed!');
 }
