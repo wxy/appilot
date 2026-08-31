@@ -99,6 +99,7 @@ export interface RunningTaskInfo {
 
 let schedulerTimer: NodeJS.Timeout | null = null;
 let schedulerRunning = false;
+const activeTaskRuns = new Set<string>();
 let overdueScattered = false;
 let powerListenersRegistered = false;
 /** How many rank tasks one scheduler tick may execute (throughput vs load). */
@@ -671,7 +672,7 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   const startedAt = Date.now();
   nowRunningTask = {
     kind: "github-sync",
-    keyword: "GitHub 同步",
+    keyword: "GitHub 发布监听",
     language: "",
     storefront: "",
     startedAt: new Date().toISOString(),
@@ -757,12 +758,12 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
     requestBytes,
     responseBytes,
   });
-  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
       ? nextRunWithinMinutes(task.id, 30)
       : nextRunAt(task.id, task.intervalMinutes || 60);
+  notifyDataChanged("tasks");
 }
 
 async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void> {
@@ -906,12 +907,12 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
   task.executionCount += 1;
   task.lastDurationMs = durationMs;
   await appendExecution(store, { ts: new Date().toISOString(), taskId: task.id, productId: task.projectId, kind: "ops-sync", status, durationMs });
-  notifyDataChanged("tasks");
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt =
     task.lastStatus === "failed"
       ? nextRunWithinMinutes(task.id, 30)
       : nextRunAt(task.id, task.intervalMinutes);
+  notifyDataChanged("tasks");
 }
 
 async function runReviewsSyncTask(store: AppStore, task: ReviewsSyncTask): Promise<void> {
@@ -1024,6 +1025,38 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   task.nextRunAt = nextRunAt(task.id, task.intervalMinutes);
 }
 
+/** Run one scheduled task while preventing duplicate immediate/scheduled runs. */
+async function runScheduledTask(
+  store: AppStore,
+  task: ScheduledTask,
+): Promise<boolean> {
+  if (activeTaskRuns.has(task.id)) return false;
+  activeTaskRuns.add(task.id);
+  try {
+    switch (task.kind) {
+      case "github-sync":
+        await runGithubSyncTask(store, task as GithubSyncTask);
+        return true;
+      case "ops-sync":
+        await runOpsSyncTask(store, task as OpsSyncTask);
+        return true;
+      case "reviews-sync":
+        await runReviewsSyncTask(store, task as ReviewsSyncTask);
+        return true;
+      case "build-status":
+        await runBuildStatusTask(store, task as BuildStatusTask);
+        return true;
+      case "rank":
+        await runRankTask(store, task as RankScheduledTask);
+        return true;
+      default:
+        return false;
+    }
+  } finally {
+    activeTaskRuns.delete(task.id);
+  }
+}
+
 export async function schedulerTick(): Promise<void> {
   if (schedulerRunning) return;
   schedulerRunning = true;
@@ -1044,6 +1077,7 @@ export async function schedulerTick(): Promise<void> {
     const now = Date.now();
     const accel = store.get("schedulerAccel") === true;
     const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+    const touchedTaskIds = new Set<string>();
     // 非加速状态下自愈“排期坍缩”：一次性重排/迁移可能把整批任务的下次
     // 执行时间设成同一分钟，这里按各自稳定相位重新散布，避免未来某一分钟
     // 同时爆发成积压。加速期间跳过（当轮拉取的任务共享同一分钟）。
@@ -1132,15 +1166,15 @@ export async function schedulerTick(): Promise<void> {
         if (until && Date.now() >= new Date(until).getTime()) break;
       }
       if (task.kind === "github-sync") {
-        await runGithubSyncTask(store, task);
+        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
       } else if (task.kind === "ops-sync") {
-        await runOpsSyncTask(store, task);
+        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
       } else if (task.kind === "reviews-sync") {
-        await runReviewsSyncTask(store, task);
+        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
       } else if (task.kind === "build-status") {
-        await runBuildStatusTask(store, task);
+        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
       } else {
-        await runRankTask(store, task);
+        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
       }
       // 执行完成才计入“已处理”：早退任务（暂停/删除关键词、产品缺失）不
       // 计为已处理，避免提前触发 allHandled 自动关闭。
@@ -1149,11 +1183,15 @@ export async function schedulerTick(): Promise<void> {
         setTimeout(resolve, breakMs),
       );
     }
-    // Merge the tick's per-task updates into the latest task list instead of
-    // overwriting it: concurrent handlers (e.g. projects:remove) may have
-    // removed or replaced tasks while this tick was running.
+    // Merge only tasks this tick actually executed. Copying the entire startup
+    // snapshot back lets a manual run that finished during this tick lose its
+    // freshly persisted lastRunAt/nextRunAt.
     const latestTasks: ScheduledTask[] = store.get("scheduledTasks") || [];
-    const byId = new Map(tasks.map((task) => [task.id, task]));
+    const byId = new Map(
+      tasks
+        .filter((task) => touchedTaskIds.has(task.id))
+        .map((task) => [task.id, task]),
+    );
     const merged = latestTasks.map((task) => byId.get(task.id) || task);
     for (const task of byId.values()) {
       if (!merged.some((item) => item.id === task.id)) merged.push(task);
@@ -1276,27 +1314,41 @@ export function startTaskScheduler(): void {
 
 export async function runOpsSyncNow(projectId: string): Promise<boolean> {
   const store = await getStore();
-  const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
-  const task = tasks.find((item) => item.id === opsSyncTaskId(projectId)) as OpsSyncTask | undefined;
-  if (!task) return false;
-  await runOpsSyncTask(store, task);
-  return true;
+  return runTaskById(store, opsSyncTaskId(projectId));
 }
 
 export async function runReviewsSyncNow(productId: string): Promise<boolean> {
   const store = await getStore();
-  const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
-  const task = tasks.find((item) => item.id === reviewsSyncTaskId(productId)) as ReviewsSyncTask | undefined;
-  if (!task) return false;
-  await runReviewsSyncTask(store, task);
-  return true;
+  return runTaskById(store, reviewsSyncTaskId(productId));
 }
 
 export async function runBuildStatusNow(productId: string): Promise<boolean> {
   const store = await getStore();
+  return runTaskById(store, buildStatusTaskId(productId));
+}
+
+/** Trigger any scheduled task to run immediately (by its ID). */
+export async function runTaskNow(taskId: string): Promise<boolean> {
+  const store = await getStore();
+  return runTaskById(store, taskId);
+}
+
+/** Read the task immediately before execution, then persist its final state. */
+async function runTaskById(store: AppStore, taskId: string): Promise<boolean> {
   const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
-  const task = tasks.find((item) => item.id === buildStatusTaskId(productId)) as BuildStatusTask | undefined;
-  if (!task) return false;
-  await runBuildStatusTask(store, task);
-  return true;
+  const task = tasks.find((item) => item.id === taskId);
+  if (!task || !task.enabled) return false;
+  const ran = await runScheduledTask(store, task);
+  // Runners mutate their task snapshot without persisting it. That is safe in
+  // scheduler ticks (merged there), but immediate runs own the final write.
+  if (ran) {
+    const all: ScheduledTask[] = store.get("scheduledTasks") || [];
+    const idx = all.findIndex((item) => item.id === taskId);
+    if (idx >= 0) {
+      all[idx] = task;
+      store.set("scheduledTasks", all);
+      notifyDataChanged("tasks");
+    }
+  }
+  return ran;
 }

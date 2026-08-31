@@ -16,7 +16,7 @@ import { inputLineClass } from "../ui/styles";
 import { ValueFlash } from "../ui/ValueFlash";
 
 const KIND_LABELS: Record<string, string> = {
-  "github-sync": "GitHub 同步",
+  "github-sync": "GitHub 发布监听",
   "ops-sync": "数据同步",
   "reviews-sync": "评论采集",
   "build-status": "构建状态",
@@ -98,6 +98,12 @@ export function TaskCenterPage() {
       window.clearInterval(timer);
     };
   }, [accel]);
+
+  const refreshNow = () => {
+    (window as any).appilot?.scheduler?.list()
+      .then((next: any) => setData(next))
+      .catch(() => undefined);
+  };
 
   // 读取当前加速模式状态。
   useEffect(() => {
@@ -213,7 +219,7 @@ export function TaskCenterPage() {
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">任务中心</h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            后台采集与 GitHub 同步的调度健康度、执行负载与时间线。
+            后台数据采集与同步的调度健康度、执行负载与时间线。
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -221,7 +227,7 @@ export function TaskCenterPage() {
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
               正在执行{" "}
-              {nowRunning.kind === "github-sync" ? "GitHub 同步" : nowRunning.keyword}
+              {nowRunning.kind === "github-sync" ? "GitHub 发布监听" : nowRunning.keyword}
             </span>
           )}
           <button
@@ -413,11 +419,13 @@ export function TaskCenterPage() {
           title={`准备进行（${pendingGroups.length} 组）`}
           groups={pendingGroups}
           onOpenTask={openTaskTarget}
+          onRunComplete={refreshNow}
         />
         <TaskSection
           title={`失败（${failedGroups.length} 组）`}
           groups={failedGroups}
           onOpenTask={openTaskTarget}
+          onRunComplete={refreshNow}
         />
       </div>
     </div>
@@ -765,13 +773,16 @@ function TaskSection({
   title,
   groups,
   onOpenTask,
+  onRunComplete,
 }: {
   title: string;
   groups: any[];
   onOpenTask?: (group: any) => void;
+  onRunComplete?: () => void;
 }) {
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<SortState>({ key: "lastRunAt", dir: "desc" });
+  const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const pageSize = 20;
   useEffect(() => {
     setPage(0);
@@ -789,6 +800,21 @@ function TaskSection({
       // Timestamps read best newest-first; next runs read best soonest-first.
       return { key, dir: key === "nextRunAt" ? "asc" : "desc" };
     });
+  };
+
+  const handleRunNow = async (taskId: string) => {
+    if (runningIds.has(taskId)) return;
+    setRunningIds((prev) => new Set(prev).add(taskId));
+    try {
+      await (window as any).appilot?.scheduler?.runTaskNow(taskId);
+    } finally {
+      setRunningIds((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+      onRunComplete?.();
+    }
   };
 
   return (
@@ -900,11 +926,44 @@ function TaskSection({
             </div>
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
-            <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">
-              <ValueFlash value={group.nextRunAt} mode="text">
-                {formatHumanTime(group.nextRunAt)}
-              </ValueFlash>
-            </div>
+            {group.tasks.length > 0 && (
+              (() => {
+                const running = group.tasks.some((t: any) => runningIds.has(t.id));
+                return (
+                  <div className="flex items-center justify-end gap-1">
+                    <div className="min-w-0 text-xs text-zinc-600 dark:text-zinc-300 truncate">
+                      <ValueFlash value={group.nextRunAt} mode="text">
+                        {formatHumanTime(group.nextRunAt)}
+                      </ValueFlash>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={running}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRunNow(group.tasks[0].id);
+                      }}
+                      className={cn(
+                        "w-5 h-5 shrink-0 rounded-full flex items-center justify-center transition-colors",
+                        running
+                          ? "text-amber-500 cursor-wait"
+                          : "text-zinc-400 dark:text-zinc-500 hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400",
+                      )}
+                      title="立即执行此任务"
+                      aria-label="立即执行此任务"
+                    >
+                      {running ? (
+                        <span className="block w-3 h-3 rounded-full border-[1.5px] border-amber-500/25 border-t-amber-500 animate-spin" />
+                      ) : (
+                        <svg viewBox="0 0 12 12" className="w-3 h-3" fill="currentColor" aria-hidden="true">
+                          <path d="M3.4 2.2a.55.55 0 0 1 .83-.48l6 3.8a.55.55 0 0 1 0 .96l-6 3.8a.55.55 0 0 1-.83-.48V2.2Z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                );
+              })()
+            )}
           </div>
           <div className="min-w-0 px-3 py-3 text-right border-l border-zinc-100 dark:border-zinc-800">
             {group.kind !== "rank" || !group.round || group.round.total === 0 ? (

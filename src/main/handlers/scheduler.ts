@@ -274,4 +274,9 @@ export function registerSchedulerHandlers(): void {
     await schedulerTick();
     return true;
   });
+
+  ipcMain.handle("scheduler:runTaskNow", async (_event, taskId: string) => {
+    const { runTaskNow } = await import("../scheduler");
+    return runTaskNow(taskId);
+  });
 }
