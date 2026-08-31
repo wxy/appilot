@@ -4,7 +4,7 @@ import {
   findCompetitorByName,
   migrateCompetitor,
   searchCompetitorCandidatesAcross,
-} from "../../engine/competitor-radar";
+} from "@appilot/core/competitor-radar";
 import { runOpsSyncNow } from "../scheduler";
 import { getStore } from "../store";
 import { assertNonEmptyString } from "../util";
@@ -192,7 +192,7 @@ export function registerCompetitorsHandlers(): void {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
     const list = competitorsFor(s, projectId);
-    const { collectCompetitorRankSnapshots } = await import("../../engine/competitor-radar");
+    const { collectCompetitorRankSnapshots } = await import("@appilot/core/competitor-radar");
     const ranksAll: Record<string, Record<string, any[]>> =
       s.get("competitorRankSnapshots") || {};
     const rankById: Record<string, any[]> = ranksAll[projectId] || {};

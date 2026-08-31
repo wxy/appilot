@@ -1,6 +1,6 @@
-import { normalizeTrackedKeyword } from "../engine/rank-keywords";
-import { submissionDraftId } from "../engine/store-submission";
-import type { StoreSubmissionDraft } from "../engine/store-submission";
+import { normalizeTrackedKeyword } from "@appilot/core/rank-keywords";
+import { submissionDraftId } from "@appilot/core/store-submission";
+import type { StoreSubmissionDraft } from "@appilot/core/store-submission";
 
 /** Shared project-shape helpers used by both IPC handlers and the scheduler. */
 

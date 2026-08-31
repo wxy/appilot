@@ -1,4 +1,4 @@
-import { log } from "../engine/logger";
+import { log } from "@appilot/core/logger";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
 export interface AppStore {

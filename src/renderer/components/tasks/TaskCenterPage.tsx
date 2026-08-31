@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { storefrontDisplayName } from "../../../engine/storefronts";
+import { storefrontDisplayName } from "@appilot/core/storefronts";
 import { useProject } from "../../stores/project";
 import { taskGroupKey } from "../../lib/task-grouping";
 import {

@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { storefrontDisplayName, storefrontsForLanguage } from "../../../engine/storefronts";
+import { storefrontDisplayName, storefrontsForLanguage } from "@appilot/core/storefronts";
 import { languageLabel, platformLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import {
   matrixCellState,

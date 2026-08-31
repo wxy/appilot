@@ -1,13 +1,13 @@
-import { log } from "../engine/logger";
+import { log } from "@appilot/core/logger";
 import { powerMonitor } from "electron";
 import { notifyDataChanged } from "./data-sync";
 import {
   enrichKeywordFromSnapshots,
   evaluatePause,
   normalizeTrackedKeyword,
-} from "../engine/rank-keywords";
-import { appendRankSnapshots } from "../engine/rank-snapshots";
-import { storefrontsForLanguage } from "../engine/storefronts";
+} from "@appilot/core/rank-keywords";
+import { appendRankSnapshots } from "@appilot/core/rank-snapshots";
+import { storefrontsForLanguage } from "@appilot/core/storefronts";
 import { resolveEffectiveCredentials } from "./credentials";
 import {
   ensureProjectKeywordPool,
@@ -503,7 +503,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     return;
   }
 
-  const { searchAppStoreRank } = await import("../engine/rank-collector");
+  const { searchAppStoreRank } = await import("@appilot/core/rank-collector");
   const entity = await resolveRankEntity(product);
   const startedAt = Date.now();
   nowRunningTask = {
@@ -532,7 +532,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     // 只传与当前产品平台一致的竞品 trackId：iOS 产品用 software 实体搜索，
     // macOS 产品用 macSoftware，避免把另一平台的列表拿来对比。
     const { competitorTrackIdFor, migrateCompetitor } = await import(
-      "../engine/competitor-radar"
+      "@appilot/core/competitor-radar"
     );
     const entityPlatform: "ios" | "macos" =
       product?.platform === "macos" ? "macos" : "ios";
@@ -683,9 +683,9 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   let status: "success" | "failed" = "success";
   try {
     if (!project?.localPath) throw new Error("Project not found");
-    const { fetchRemoteTags, checkForRelease } = await import("../engine/release-watcher");
-    const { listGitHubReleases } = await import("../engine/github-api");
-    const { fetchRepoCapabilities } = await import("../engine/github-api");
+    const { fetchRemoteTags, checkForRelease } = await import("@appilot/core/release-watcher");
+    const { listGitHubReleases } = await import("@appilot/core/github-api");
+    const { fetchRepoCapabilities } = await import("@appilot/core/github-api");
     // Background sync must never touch the worktree or local branches: fetch
     // only updates remote-tracking refs and tags.
     await fetchRemoteTags(project.localPath);
@@ -782,14 +782,14 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
   try {
     if (!project?.localPath) throw new Error("Project not found");
     const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
-    const { fetchTrafficSnapshot } = await import("../engine/gh-traffic");
+    const { fetchTrafficSnapshot } = await import("@appilot/core/gh-traffic");
     const snapshot = await fetchTrafficSnapshot(project.localPath, token);
     const opsStatusStore: Record<string, any> = store.get("opsStatus") || {};
     const opsSyncedAt = new Date().toISOString();
     if (snapshot) {
       const syncEntry = githubSyncCacheEntry(store, project);
       if (syncEntry?.tag) {
-        const { fetchReleaseAssetDownloads } = await import("../engine/gh-traffic");
+        const { fetchReleaseAssetDownloads } = await import("@appilot/core/gh-traffic");
         const assets = await fetchReleaseAssetDownloads(project.localPath, syncEntry.tag, token);
         if (assets) {
           snapshot.assetTag = assets.tag;
@@ -819,8 +819,8 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
         competitorPlatforms,
         fetchCompetitorSnapshot,
         migrateCompetitor,
-      } = await import("../engine/competitor-radar");
-      const { storefrontsForLanguage } = await import("../engine/storefronts");
+      } = await import("@appilot/core/competitor-radar");
+      const { storefrontsForLanguage } = await import("@appilot/core/storefronts");
       const all: Record<string, Record<string, any[]>> = store.get("competitorSnapshots") || {};
       const byId: Record<string, any[]> = all[task.projectId] || {};
       for (const competitor of competitors) {
@@ -869,7 +869,7 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
     }
 
     const { fetchIssues, mergeFeedbackItems, normalizeIssue, reviewsToFeedbackItems } =
-      await import("../engine/feedback-inbox");
+      await import("@appilot/core/feedback-inbox");
     const issues = await fetchIssues(project.localPath, token, 30);
     const reviewItems: any[] = [];
     const reviewsStore: Record<string, any> = store.get("reviews") || {};
@@ -920,7 +920,7 @@ async function runReviewsSyncTask(store: AppStore, task: ReviewsSyncTask): Promi
   const product = context?.product;
   const project = context?.project;
   if (!project || !product?.trackId) return;
-  const { storefrontsForLanguage } = await import("../engine/storefronts");
+  const { storefrontsForLanguage } = await import("@appilot/core/storefronts");
   const countries: string[] = [];
   for (const loc of product.supportedLanguages || []) {
     for (const country of storefrontsForLanguage(loc.code)) {
@@ -933,7 +933,7 @@ async function runReviewsSyncTask(store: AppStore, task: ReviewsSyncTask): Promi
   for (const country of Object.keys(perProduct)) {
     for (const review of perProduct[country]?.items || []) existingIds.add(review.id);
   }
-  const { fetchAllStorefrontReviews } = await import("../engine/review-collector");
+  const { fetchAllStorefrontReviews } = await import("@appilot/core/review-collector");
   const { reviews, fetchedAt } = await fetchAllStorefrontReviews(product.trackId, countries, [...existingIds]);
   for (const review of reviews) {
     const list = perProduct[review.country]?.items || [];
@@ -957,7 +957,7 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   const creds = resolveEffectiveCredentials(store, project.id);
   if (!creds.ascIssuerId || !creds.ascKeyId || !creds.ascPrivateKeyPath) return;
   const fs = await import("fs");
-  const { createAscClient } = await import("../engine/asc-api");
+  const { createAscClient } = await import("@appilot/core/asc-api");
   const client = createAscClient({
     issuerId: creds.ascIssuerId,
     keyId: creds.ascKeyId,
@@ -995,7 +995,7 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   // to already-live versions whose local draft has not been frozen yet.
   const liveVersions = sorted.filter((v) => v.appStoreState === "READY_FOR_SALE");
   if (liveVersions.length > 0) {
-    const { applyAscSnapshotToDraft } = await import("../engine/store-submission");
+    const { applyAscSnapshotToDraft } = await import("@appilot/core/store-submission");
     const projects: any[] = store.get("projects") || [];
     let changed = false;
     for (const project of projects) {

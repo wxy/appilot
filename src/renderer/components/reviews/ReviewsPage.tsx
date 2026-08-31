@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { storefrontDisplayName } from "../../../engine/storefronts";
-import type { Review } from "../../../engine/review-collector";
-import type { FeedbackTheme } from "../../../engine/feedback-inbox";
+import { storefrontDisplayName } from "@appilot/core/storefronts";
+import type { Review } from "@appilot/core/review-collector";
+import type { FeedbackTheme } from "@appilot/core/feedback-inbox";
 import { useProject } from "../../stores/project";
 import { reviewStats } from "../../lib/review-stats";
 import { formatHumanTime } from "../../lib/format";
