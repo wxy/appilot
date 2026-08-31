@@ -648,7 +648,7 @@ export function OverviewPage() {
             <div className="p-8 text-center text-sm text-zinc-400 dark:text-zinc-500">暂无排名数据</div>
           ) : (
             <ul>
-              {rankRows.slice(0, 5).map((row, index) => (
+              {rankRowsWithTranslation.slice(0, 5).map((row, index) => (
                 <Link
                   key={`${row.language}:${row.keyword}`}
                   to={`/keywords?keyword=${encodeURIComponent(row.keyword)}&lang=${encodeURIComponent(row.language)}`}
@@ -661,7 +661,13 @@ export function OverviewPage() {
                     {index + 1}
                   </span>
                   <span className="min-w-0 flex-1 font-mono text-[13px] text-zinc-800 dark:text-zinc-200 truncate">
-                    {row.keyword}
+                    <KeywordRuby
+                      keyword={row.keyword}
+                      translation={row.translation}
+                      annotate={
+                        row.language !== "zh-Hans" && row.language !== "zh-Hant"
+                      }
+                    />
                   </span>
                   {row.language === "en" ? (
                     <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">

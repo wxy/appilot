@@ -507,6 +507,7 @@ export function CompetitorPanel({
                     annotate={
                       link.language !== "zh-Hans" && link.language !== "zh-Hant"
                     }
+                    chip={false}
                   />
                 </button>
               ))}
