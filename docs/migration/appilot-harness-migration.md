@@ -299,3 +299,21 @@ settings/sidebar/jobs/workflow-run/plan/deliverables… 各有浏览器端 `clie
 - 引用改写量实测：`@engine` 别名仅配置层 2 处（可删除）；`src/` 内相对路径
   `../engine` 43 处；renderer 不直接引用 engine（0 文件）；测试经
   `../src/engine/*` 引用（随测试迁移一并改写）。
+
+## 14. Phase 2 进度（2026-08-31）
+
+**已交付并验证**：`plugins/dsh-appilot`（`@appilot/dsh`）首个插件，4 个只读工具
+（resolve_current_project / get_project_context / get_release_draft /
+check_release_readiness），全部走 `@appilot/core` 同一代码路径。
+
+- 形态：ESM 插件；`@deepseek-ai/cordis` + `dsh-tools` 为 peer 依赖（宿主提供）。
+- 验证：tsc 零错误；单元测试 5 断言；**真实 Harness headless 端到端**——模型调用
+  `resolve_current_project` 返回正确项目信息（会话日志含工具调用记录）。
+- 本机验证方式：`dsh --profile headless --patch plugins/dsh-appilot/dev.cordis.yml "…"`
+  （需先 `npm run build -w @appilot/dsh` 生成 dist）。
+
+**待办（后续轮次）**：
+- 工具补齐：`sync_release_status` / `generate_store_copy` / `revise_store_copy`
+- 插件组拆分（域插件 + Group 元插件 + profile）
+- 存储/凭据适配（ctx.storage / ctx.credentials，Phase 4）
+- UI spike：conversation 节点渲染 recharts 图表（验证 §12 结论）
