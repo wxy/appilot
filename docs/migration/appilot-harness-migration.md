@@ -318,7 +318,14 @@ check_release_readiness），全部走 `@appilot/core` 同一代码路径。
 `sync_release_status` 已在真实 Harness headless 会话端到端验证（正确返回
 v0.4.4 / v0.3.0 等 tag）。
 
+**插件组拆分已落地（2026-08-31）**：`plugins/dsh-appilot` 重构为元插件 +
+  域子插件（`src/domain/project.ts` / `src/domain/release.ts`），元插件用
+  `ctx.plugin()` 组合；每个域插件独立可安装。已在真实 Harness headless 会话验证：
+  同一会话内 project 域与 release 域的工具都被挂载调用。loader 级 Group +
+  profile 声明式条目留待 Phase 6。
+
 **待办（后续轮次）**：
-- 插件组拆分（域插件 + Group 元插件 + profile）
+- 更多域插件：keywords / reviews / workbench-ui
+- 插件组拆分为独立 npm 包（按域发布，用户可按需安装）
 - 存储/凭据适配（ctx.storage / ctx.credentials，Phase 4：AI/GitHub/ASC 凭据迁入）
 - UI spike：conversation 节点渲染 recharts 图表（验证 §12 结论）
