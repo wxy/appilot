@@ -349,8 +349,15 @@ v0.4.4 / v0.3.0 等 tag）。
   组合，依赖域包）。用户可按需只装某个域包；已在 headless 会话端到端验证跨域包协作
   （register_project → get_release_draft by name → v0.4.4）。
 
+**Phase 6 profile 已落地（2026-08-31）**：`profiles/appilot`（bundles = dsh-base +
+  dsh-web-app + @appilot/dsh），`@appilot/dsh` 补充 `dsh.bundle`（patch 声明）与
+  `./client` 导出。已在本机验证：`--dump-config` 组合出 appilot 条目；`dsh
+  --profile appilot --port 3099` 启动 Web 表层（HTTP 200）。面向非 Harness 用户
+  的分发（CLI/桌面壳）可作为下一步。
+
 **待办（后续轮次）**：
-- Phase 6 profile：`dsh --profile appilot` 定制发行版（loader 级 Group + 声明式条目）
+- `appilot` CLI 启动器 / 桌面壳包装（面向非 Harness 用户）
+- web profile 部署验证 client bundle；工作台 UI 三阶段（卡片→节点→命令/设置页）
 - web profile 部署验证 client bundle；工作台 UI 三阶段（卡片→节点→命令/设置页）
 - 其他工具支持按项目名引用（generate/revise/readiness）
 - GitHub/ASC 凭据同样走 ctx.credentials
