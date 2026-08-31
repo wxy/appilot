@@ -50,6 +50,20 @@ ctx.slots.inject('tool.call.toolview', function* () {
 - 本前端已内置 dsh-client-ui-* 全家桶（约 30 个浏览器插件），卡片可用宿主 CSS 变量
   （`--dsw-alias-*`）适配主题。
 
+## 3.5 可见入口 demo 已实现（2026-08-31）
+
+`client/client.js` 新增两类可见入口（对照 Harness 自带插件模式）：
+
+1. **`conversation.input.dock`**（输入区可展开面板）：头部点击展开/收起；展开后
+   两列布局——左列操作按钮（经 `conversation.send()` 触发 agent 执行 Appilot
+   工具，结果以 toolview 卡片呈现），右列信息面板（项目概览 + SVG 图表）。
+   注入模式参照 QueueDock（`ctx.sessions.scope(sessionId).get('conversation')`）。
+2. **`settings.section`**（设置页）：出现在设置导航的 Appilot 页（项目/凭据概览）。
+   注册模式参照 dsh-client-ui-agent-preset。
+
+已验证：Web 表层以 HTTP 200 服务更新后的 client.js（含新入口代码）。
+浏览器端实际渲染需在真实 Web 会话中查看（本环境无浏览器）。
+
 ## 4. 待办/开放项（后续 UI 阶段）
 
 1. **第三方 client bundle 构建路径**：web profile 需要该包的已构建 client 导出；
