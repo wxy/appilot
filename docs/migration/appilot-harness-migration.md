@@ -338,7 +338,14 @@ v0.4.4 / v0.3.0 等 tag）。
   验证：register → list（1 个项目）→ get_release_draft(by name) → v0.4.4。
   持久化在 web profile 部署时自动激活（ctx.get 可选读取，无需 inject）。
 
+**UI 能力已验证（2026-08-31，见 docs/migration/appilot-harness-ui.md）**：客户端
+  插件机制（`dsh.client` 声明 + `window.__ModuleLoader__` + keyed slots）确认可注册
+  自定义 React 卡片（`tool.call.toolview` 按工具名），**图表/表格/自定义交互均可渲染**
+  （用户评审判断成立）。骨架已落地 `plugins/dsh-appilot/client/client.js`（含 SVG
+  条形图组件 + 3 张工具卡片）；web profile 部署验证列为开放项。
+
 **待办（后续轮次）**：
+- web profile 部署验证 client bundle；工作台 UI 三阶段（卡片→节点→命令/设置页）
 - 其他工具支持按项目名引用（generate/revise/readiness）
 - GitHub/ASC 凭据同样走 ctx.credentials
 - 更多域插件：keywords / reviews / workbench-ui
