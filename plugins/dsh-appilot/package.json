@@ -25,6 +25,9 @@
     "typescript": "^5.7.0"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-connection",
@@ -34,5 +37,10 @@
       ],
       "platform": "web"
     }
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
   }
 }
