@@ -1,12 +1,26 @@
-# Appilot → DeepSeek Harness 迁移设计（v1）
+# Appilot → DeepSeek Harness 迁移设计（v1.1）
 
 日期：2026-08-31
-状态：待评审
-作者：codex 会话结论 + 本次盘点核实
+状态：待评审（v1.1 已纳入插件组决策 / 交互模式 / UI 能力修正）
+作者：codex 会话结论 + 本次盘点核实 + 用户评审讨论
 
 > 决策背景：v0.4.4 已作为独立版 Electron 里程碑发布。产品战略转向
 > 「Harness 插件为主」，独立 Electron 版保留并继续发布 DMG。
 > 仓库策略已确认：**现有仓库内改造为 npm workspaces monorepo，不新建仓库**。
+
+> **会话分叉记录（v1.1）**：本设计文档是「打包发布」线程（v0.4.4 发布完毕，git 已封印）
+> 与「插件版开发」线程的分界。此后工作只围绕插件版：monorepo 化 + DSH 插件。
+> 独立版仅保持可发布状态（DMG 流程不变），不再新增独立版专属功能。
+
+> **v1.1 新增决策（用户评审确认）**：
+> 1. **插件组形态**：按功能域拆分为一组小插件 + 一个 Group 元插件组合，再配 profile。
+>    见 §10「插件组拆分设计」。
+> 2. **交互三模式**：AI 对话工具（主）→ Web UI 插件（界面）→ 定制 profile（启动即工作台）。
+>    分阶段交付。见 §11「交互模式」。
+> 3. **UI 能力修正**：Harness Web 前端是完整浏览器应用（`dsh-web-app` bundle +
+>    `dsh-web-frontend` dist + 约 30 个 `dsh-client-ui-*` 浏览器插件 + `webPlugins`
+>    装载服务），**可渲染图表/表格/自定义交互**，不存在「只能一对一对话」的硬限制。
+>    真实约束是 0.1.x 插件 UI 注册 API 的对外成熟度与工作量。见 §12。
 
 ---
 
@@ -224,3 +238,64 @@ electron-vite 的 root 配置调整；预计可在数轮内完成，无逻辑改
 2. Phase 2 完成后：`plugins/dsh-appilot` 可被安装到本机 DSH，`resolve_current_project`
    等 7 个工具可用，且 `generate_store_copy` 与 desktop 走同一 core 代码路径。
 3. 迁移期间 desktop 版本可持续发布（v0.4.4 已发布；v0.4.5+ 均从 monorepo 出包）。
+
+## 10. 插件组拆分设计（v1.1）
+
+Harness 原生支持插件组（`cordis-plugin-group` / `Group`，Cordis loader 一等公民；
+DSH 自身即由数十个小插件组合而成）。Appilot 按功能域拆分，用户可整装或按需安装：
+
+```text
+@appilot/project      项目识别/上下文（resolve_current_project、get_project_context）
+@appilot/release      发布草稿/文案生成与修订/readiness（get_release_draft、
+                      check_release_readiness、generate_store_copy、revise_store_copy）
+@appilot/keywords     关键词/排名/竞品（关键词工具集、竞品查询）
+@appilot/reviews      评论洞察/反馈收件箱（主题聚类、反馈查询）
+@appilot/workbench-ui 界面插件（后置，注册 conversation 节点/命令/设置页）
+
+组合层：
+@appilot/appilot      Group 元插件：组合上面全部（装一个=全功能）
+profiles/appilot      定制 profile：bundles=[dsh-base, dsh-web-app, @appilot/*]
+                      + 默认 patch，`dsh --profile appilot` 启动即工作台
+```
+
+拆分原则：按功能域（数据流天然低耦合），不按文件；core 内的领域逻辑保持单一
+代码路径（任何插件调用的生成/修订逻辑与 desktop 完全相同）。
+
+## 11. 交互模式（v1.1）
+
+| 模式 | 机制 | 阶段 |
+|---|---|---|
+| AI 对话（主） | `dsh-tools` 注册工具，Agent 对话中自动调用 | Phase 2 交付 |
+| Web UI 插件 | `dsh-client-ui-*` 同款浏览器插件：注册 conversation 节点/命令/设置页/侧边栏 | Phase 3 交付 |
+| 定制 profile | `profiles/appilot` 预装整套 + 默认界面；未来桌面壳包装 | Phase 6 交付 |
+
+三种模式不互斥；profile 决定默认组合，tools 决定 agent 能力，UI 插件决定人机界面。
+
+## 12. UI 能力与风险修正（v1.1）
+
+**已核实**：Harness Web 表层 = `dsh-web-app`（浏览器 bundle）+ `dsh-web-frontend`
+（构建好的前端 dist）+ 约 30 个 `dsh-client-ui-*` 浏览器插件（conversation/commands/
+settings/sidebar/jobs/workflow-run/plan/deliverables… 各有浏览器端 `client.js` 实现），
+装载走 `webPlugins` 服务（`__DSH_BOOT__` 入口图 + lazy-CJS module table）。
+→ 前端是完整 Web 应用，**图表（recharts 等）、表格、画布、自定义交互均可实现**。
+
+**真实约束（非能力限制）**：
+1. 0.1.x 插件 UI 注册 API 的对外文档与稳定性：第三方插件注册自定义视图的具体入口
+   需 spike 验证（webPlugins 对**外部**插件的暴露面）。
+2. 工作量：在 Harness Web 内重建关键词矩阵/趋势图 = 完整前端工程投入。
+3. 布局/主题集成：初期适配 Harness UI 体系，独立品牌靠 profile 定制。
+
+**Phase 2 spike 新增验证项**：注册一个自定义 conversation 节点渲染 recharts 图表
+的最小 demo，证明图表/表格可行性后，再定 workbench UI 路线。
+
+## 13. Phase 1 范围调整（v1.1）
+
+- T5（desktop 整体迁入 `apps/desktop`）**推迟**到 core 抽取验证通过之后单独执行，
+  降低一次性改动风险。
+- core 发布形态：`packages/core` 用 tsc 编译到 `dist/`（declaration 开启），
+  desktop 通过 `dependencies: {"@appilot/core": "workspace:*"}` 引用；
+  electron-vite `externalizeDepsPlugin` 外部化后运行时加载编译产物；
+  electron-builder 会把 workspace 包打进 asar。
+- 引用改写量实测：`@engine` 别名仅配置层 2 处（可删除）；`src/` 内相对路径
+  `../engine` 43 处；renderer 不直接引用 engine（0 文件）；测试经
+  `../src/engine/*` 引用（随测试迁移一并改写）。
