@@ -26,13 +26,27 @@ source .release.env
 npm run dist:mac -- -c.mac.notarize=true
 ```
 
-产出两个分架构 DMG（已 Developer ID 签名 + 公证，`.app` 内部已 staple）：
+产出两个分架构 DMG（已 Developer ID 签名；`.app` 内部已公证 + staple）：
 
 - `dist/Appilot-0.4.4-arm64.dmg`（Apple Silicon）
 - `dist/Appilot-0.4.4-x64.dmg`（Intel）
 
-> electron-builder 26 在 `-c.mac.notarize=true` 下会连 DMG 一起公证并贴票；
-> 若验证时发现 DMG 无票，再手动 `xcrun notarytool submit` + `stapler staple` 补一次。
+> 实测（electron-builder 26.15.3）：`-c.mac.notarize=true` 只公证 `.app`，
+> DMG 本身无票，必须再手动公证 + 贴票，否则用户打开 DMG 仍有「来自互联网」提示。
+
+### DMG 级公证 + 贴票（必须）
+
+```bash
+source .release.env
+for dmg in dist/Appilot-0.4.4-arm64.dmg dist/Appilot-0.4.4-x64.dmg; do
+  xcrun notarytool submit "$dmg" \
+    --apple-id "$APPLE_ID" \
+    --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+    --team-id "$APPLE_TEAM_ID" \
+    --wait
+  xcrun stapler staple "$dmg"
+done
+```
 
 ## 验证
 
