@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createGetReleaseDraftTool } from '../src/get-release-draft';
 import { checkReleaseReadiness } from '../src/check-release-readiness';
-import { syncReleaseStatus } from '../src/sync-release-status';
+import { createSyncReleaseStatusTool } from '../src/sync-release-status';
 import { createGenerateStoreCopyTool } from '../src/generate-store-copy';
 import { createReviseStoreCopyTool } from '../src/revise-store-copy';
 import { memoryProjectStore } from '@appilot/dsh-common';
@@ -81,7 +81,7 @@ async function main() {
   }
   console.log('✅ PASS: check_release_readiness returns checks array');
 
-  const status = await callTool(syncReleaseStatus, { path: repo });
+  const status = await callTool(createSyncReleaseStatusTool(), { path: repo });
   assert.equal(status.latestTag.name, 'v1.0.0');
   assert.ok(Array.isArray(status.githubReleases));
   console.log('✅ PASS: sync_release_status returns latest tag + release list');
