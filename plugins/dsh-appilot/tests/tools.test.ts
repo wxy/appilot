@@ -51,7 +51,9 @@ async function main() {
   assert.equal(typeof resolved.repo.dirty, 'boolean');
   assert.equal(
     resolved.repo.headSha,
-    execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim(),
+    execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo })
+      .toString()
+      .trim(),
   );
   console.log('✅ PASS: resolve_current_project resolves fixture repo + github url');
 
