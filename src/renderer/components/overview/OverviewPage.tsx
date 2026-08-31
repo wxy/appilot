@@ -24,9 +24,8 @@ import { CredentialBadge } from "../ui/CredentialBadge";
 import { EmptyState } from "../ui/EmptyState";
 import { StatusChip } from "../ui/StatusChip";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
-import { CompetitorRadarCard } from "./CompetitorRadarCard";
 import { FeedbackThemesCard } from "./FeedbackThemesCard";
-import { TrafficCard } from "./TrafficCard";
+import { ProjectActivityCard } from "./ProjectActivityCard";
 import { ValueFlash } from "../ui/ValueFlash";
 import {
   MetricBlock,
@@ -556,9 +555,8 @@ export function OverviewPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        <TrafficCard project={project} />
-        <CompetitorRadarCard project={project} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <ProjectActivityCard project={project} />
         <FeedbackThemesCard project={project} />
       </div>
 
