@@ -17,7 +17,7 @@
  * @deepseek-ai/dsh-client-ui-agent-preset（settings.section）。
  */
 window.__ModuleLoader__.load({
-  id: '@appilot/dsh-client',
+  id: '@appilot/dsh',
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
