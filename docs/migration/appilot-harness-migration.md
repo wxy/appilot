@@ -344,7 +344,13 @@ v0.4.4 / v0.3.0 等 tag）。
   （用户评审判断成立）。骨架已落地 `plugins/dsh-appilot/client/client.js`（含 SVG
   条形图组件 + 3 张工具卡片）；web profile 部署验证列为开放项。
 
+**域插件已拆为独立 npm 包（2026-08-31）**：`@appilot/dsh-common`（凭据/存储/工具）、
+  `@appilot/dsh-project`（项目域）、`@appilot/dsh-release`（发布域）、`@appilot/dsh`（元插件
+  组合，依赖域包）。用户可按需只装某个域包；已在 headless 会话端到端验证跨域包协作
+  （register_project → get_release_draft by name → v0.4.4）。
+
 **待办（后续轮次）**：
+- Phase 6 profile：`dsh --profile appilot` 定制发行版（loader 级 Group + 声明式条目）
 - web profile 部署验证 client bundle；工作台 UI 三阶段（卡片→节点→命令/设置页）
 - 其他工具支持按项目名引用（generate/revise/readiness）
 - GitHub/ASC 凭据同样走 ctx.credentials

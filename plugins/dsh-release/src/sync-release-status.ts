@@ -1,6 +1,6 @@
 import { resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '../jsonify.js';
+import { jsonify } from '@appilot/dsh-common';
 import { collectRepoInfo } from '@appilot/core/git-info';
 import { listGitTags } from '@appilot/core/release-watcher';
 import { listGitHubReleases } from '@appilot/core/github-api';

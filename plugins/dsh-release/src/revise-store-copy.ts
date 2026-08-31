@@ -1,6 +1,6 @@
 import { basename, resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '../jsonify.js';
+import { jsonify } from '@appilot/dsh-common';
 import { AIProvider } from '@appilot/core/ai/ai-provider';
 import { generateStoreSubmissionContent } from '@appilot/core/ai/release-reviewer';
 import { collectRepoInfo } from '@appilot/core/git-info';
@@ -10,45 +10,24 @@ import {
   detectApplePlatform,
   detectLocalizedLanguages,
 } from '@appilot/core/app-store-discovery';
-import type { ReleaseInfo } from '@appilot/core/release-watcher';
+import type { StoreSubmissionLocalization } from '@appilot/core/store-submission';
 import {
   envCredentialReader,
   type CredentialReader,
-} from '../credentials.js';
-
-/** 由 git 状态构造最小 ReleaseInfo（MVP：本地 tag 驱动）。 */
-export function releaseFromGit(
-  repo: { githubUrl: string | null; headMessage: string | null },
-  tags: { name: string; sha: string; date: string }[],
-  versionTag?: string,
-): ReleaseInfo {
-  const tag = versionTag || tags[0]?.name || '';
-  return {
-    id: tag,
-    tag,
-    name: tag || null,
-    publishedAt: tags[0]?.date ?? new Date().toISOString(),
-    url: repo.githubUrl ? `${repo.githubUrl}/releases/tag/${tag}` : '',
-    body: repo.headMessage || '',
-    material: null,
-    source: 'git-tag',
-    githubDraft: null,
-    draft: true,
-    commitSha: tags[0]?.sha ?? null,
-  };
-}
+} from '@appilot/dsh-common';
+import { releaseFromGit } from './generate-store-copy.js';
 
 /**
- * 生成单语言 App Store 文案。凭据经 reader 解析（宿主 ctx.credentials →
- * 环境变量）；刻意不接收参数传入 apiKey——工具参数对模型可见，防泄漏。
+ * 按审核反馈修订既有商店文案。凭据经 reader 解析（宿主 ctx.credentials →
+ * 环境变量）；不接受参数传 key。
  */
-export function createGenerateStoreCopyTool(
+export function createReviseStoreCopyTool(
   reader: CredentialReader = envCredentialReader,
 ) {
   return defineTool({
-    name: 'generate_store_copy',
+    name: 'revise_store_copy',
     description:
-      'Generate App Store copy (name/subtitle/description/whatsNew/keywords) for a repository release using the @appilot/core AI pipeline. Credentials come from ctx.credentials / APILOT_AI_* env vars. One language per call.',
+      'Revise existing App Store copy for a repository release according to reviewer/author feedback, using the same @appilot/core pipeline as the desktop app. Pass the existing copy fields and the feedback; credentials from ctx.credentials / APILOT_AI_* env vars.',
     parameters: {
       path: {
         type: 'string',
@@ -57,11 +36,23 @@ export function createGenerateStoreCopyTool(
       },
       language: {
         type: 'string',
-        description: 'Store language code (en, zh-Hans, ja, ...); defaults to en.',
+        required: true,
+        description: 'Store language code of the copy being revised (en, zh-Hans, ja, ...).',
       },
       versionTag: {
         type: 'string',
-        description: 'The release tag to draft copy for; defaults to the latest git tag.',
+        description: 'The release tag this copy belongs to; defaults to the latest git tag.',
+      },
+      existingName: { type: 'string', required: true, description: 'Existing App Store name.' },
+      existingSubtitle: { type: 'string', description: 'Existing subtitle.' },
+      existingPromotionalText: { type: 'string', description: 'Existing promotional text.' },
+      existingDescription: { type: 'string', required: true, description: 'Existing description.' },
+      existingWhatsNew: { type: 'string', description: 'Existing What\'s New text.' },
+      existingKeywords: { type: 'string', description: 'Existing keyword list.' },
+      reviewFeedback: {
+        type: 'string',
+        required: true,
+        description: 'Reviewer/author feedback the revision must address.',
       },
     },
     output: {
@@ -81,7 +72,15 @@ export function createGenerateStoreCopyTool(
         description: repo.description || '',
         readme: repo.description || undefined,
       });
-      const language = args.language || 'en';
+      const baseLocalization: StoreSubmissionLocalization = {
+        language: args.language,
+        name: args.existingName,
+        subtitle: args.existingSubtitle ?? '',
+        promotionalText: args.existingPromotionalText ?? '',
+        description: args.existingDescription,
+        whatsNew: args.existingWhatsNew ?? '',
+        keywords: args.existingKeywords ?? '',
+      };
       const baseURL =
         (await reader('APILOT_AI_BASE_URL')) ||
         (await reader('OPENAI_BASE_URL')) ||
@@ -100,16 +99,18 @@ export function createGenerateStoreCopyTool(
       const result = await generateStoreSubmissionContent(provider, {
         name: profile.name,
         description: profile.description,
-        language,
+        language: args.language,
         trackedKeywords: profile.trackedKeywords ?? [],
         currentSubmissionKeywords: [],
         recentRankings: [],
         release: releaseFromGit(repo, tags, args.versionTag),
+        reviewFeedback: args.reviewFeedback,
+        baseLocalization,
         profile,
       });
       return jsonify({
         path,
-        language,
+        language: args.language,
         versionTag: args.versionTag || tags[0]?.name || '',
         summary: result.summary,
         localizations: result.localizations,

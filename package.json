@@ -6,14 +6,15 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "npm run build:core && electron-vite dev",
-    "build": "npm run build:core && electron-vite build",
+    "build": "npm run build:core && npm run build:plugins && electron-vite build",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
     "preview": "electron-vite preview",
     "typecheck": "npm run build:core && tsc --noEmit && npm run typecheck --workspace=@appilot/dsh",
-    "test": "npm run build:core && npm test --workspace=@appilot/dsh && npm test --workspace=@appilot/core && tsx tests/asc-key-file.test.ts && tsx tests/asc-status.test.ts && tsx tests/format.test.ts && tsx tests/matrix-helpers.test.ts && tsx tests/matrix.test.ts && tsx tests/overview-brief.test.ts && tsx tests/overview-data.test.ts && tsx tests/release-format.test.ts && tsx tests/release-summary.test.ts && tsx tests/review-stats.test.ts && tsx tests/schedule-ops.test.ts && tsx tests/schedule.test.ts && tsx tests/scheduler-status.test.ts && tsx tests/store-submission.test.ts && tsx tests/task-cleanup.test.ts && tsx tests/task-grouping.test.ts && tsx tests/trend-series.test.ts && tsx tests/util.test.ts",
-    "test:ci": "npm run build:core && npm test --workspace=@appilot/dsh && npm test --workspace=@appilot/core && tsx tests/asc-key-file.test.ts && tsx tests/asc-status.test.ts && tsx tests/format.test.ts && tsx tests/matrix-helpers.test.ts && tsx tests/matrix.test.ts && tsx tests/overview-brief.test.ts && tsx tests/overview-data.test.ts && tsx tests/release-format.test.ts && tsx tests/release-summary.test.ts && tsx tests/review-stats.test.ts && tsx tests/schedule-ops.test.ts && tsx tests/schedule.test.ts && tsx tests/scheduler-status.test.ts && tsx tests/store-submission.test.ts && tsx tests/task-cleanup.test.ts && tsx tests/task-grouping.test.ts && tsx tests/trend-series.test.ts && tsx tests/util.test.ts",
-    "build:core": "npm run build --workspace=@appilot/core"
+    "test": "npm run build:core && npm test -w @appilot/dsh-project && npm test -w @appilot/dsh-release && npm test --workspace=@appilot/core && tsx tests/asc-key-file.test.ts && tsx tests/asc-status.test.ts && tsx tests/format.test.ts && tsx tests/matrix-helpers.test.ts && tsx tests/matrix.test.ts && tsx tests/overview-brief.test.ts && tsx tests/overview-data.test.ts && tsx tests/release-format.test.ts && tsx tests/release-summary.test.ts && tsx tests/review-stats.test.ts && tsx tests/schedule-ops.test.ts && tsx tests/schedule.test.ts && tsx tests/scheduler-status.test.ts && tsx tests/store-submission.test.ts && tsx tests/task-cleanup.test.ts && tsx tests/task-grouping.test.ts && tsx tests/trend-series.test.ts && tsx tests/util.test.ts",
+    "test:ci": "npm run build:core && npm test -w @appilot/dsh-project && npm test -w @appilot/dsh-release && npm test --workspace=@appilot/core && tsx tests/asc-key-file.test.ts && tsx tests/asc-status.test.ts && tsx tests/format.test.ts && tsx tests/matrix-helpers.test.ts && tsx tests/matrix.test.ts && tsx tests/overview-brief.test.ts && tsx tests/overview-data.test.ts && tsx tests/release-format.test.ts && tsx tests/release-summary.test.ts && tsx tests/review-stats.test.ts && tsx tests/schedule-ops.test.ts && tsx tests/schedule.test.ts && tsx tests/scheduler-status.test.ts && tsx tests/store-submission.test.ts && tsx tests/task-cleanup.test.ts && tsx tests/task-grouping.test.ts && tsx tests/trend-series.test.ts && tsx tests/util.test.ts",
+    "build:core": "npm run build --workspace=@appilot/core",
+    "build:plugins": "npm run build -w @appilot/dsh-common && npm run build -w @appilot/dsh-project && npm run build -w @appilot/dsh-release && npm run build -w @appilot/dsh"
   },
   "dependencies": {
     "@appilot/core": "0.4.4",
