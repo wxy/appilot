@@ -312,8 +312,13 @@ check_release_readiness），全部走 `@appilot/core` 同一代码路径。
 - 本机验证方式：`dsh --profile headless --patch plugins/dsh-appilot/dev.cordis.yml "…"`
   （需先 `npm run build -w @appilot/dsh` 生成 dist）。
 
+**工具已补齐（2026-08-31，插件共 7 个工具）**：新增 `sync_release_status`
+（git tag + GitHub release 状态）、`generate_store_copy` / `revise_store_copy`
+（@appilot/core AI 管线；凭据走 `APILOT_AI_*` 环境变量，不接受参数传 key 防泄漏）。
+`sync_release_status` 已在真实 Harness headless 会话端到端验证（正确返回
+v0.4.4 / v0.3.0 等 tag）。
+
 **待办（后续轮次）**：
-- 工具补齐：`sync_release_status` / `generate_store_copy` / `revise_store_copy`
 - 插件组拆分（域插件 + Group 元插件 + profile）
-- 存储/凭据适配（ctx.storage / ctx.credentials，Phase 4）
+- 存储/凭据适配（ctx.storage / ctx.credentials，Phase 4：AI/GitHub/ASC 凭据迁入）
 - UI spike：conversation 节点渲染 recharts 图表（验证 §12 结论）
