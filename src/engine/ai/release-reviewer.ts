@@ -245,9 +245,14 @@ export async function generateStoreSubmissionContent(
   const localizations: StoreSubmissionLocalization[] = [];
 
   onProgress?.({ language: primaryLanguage, status: "started" });
-  const primaryLocalization = context.baseLocalization && context.reviewFeedback
-    ? await reviseLocalizedStoreCopy(provider, context, primaryLanguage, context.baseLocalization, onChars, signal, onRetry)
-    : await generateLocalizedStoreCopy(provider, context, primaryLanguage, onChars, signal, onRetry);
+  const primaryLocalization = await generateLocalizedStoreCopy(
+    provider,
+    context,
+    primaryLanguage,
+    onChars,
+    signal,
+    onRetry,
+  );
   onProgress?.({ language: primaryLanguage, status: "completed" });
   localizations.push(primaryLocalization);
 
@@ -412,6 +417,8 @@ async function generateLocalizedStoreCopy(
     recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
     release: ReleaseInfo;
     reviewFeedback?: string;
+    /** 有旧文案时传入：重新生成按意见修订，而不是从头全新编写。 */
+    baseLocalization?: StoreSubmissionLocalization;
     previousDescription?: string;
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
@@ -423,10 +430,16 @@ async function generateLocalizedStoreCopy(
   signal?: AbortSignal,
   onRetry?: () => void,
 ): Promise<StoreSubmissionLocalization> {
+  const revising = Boolean(context.baseLocalization);
   const messages = buildArchiveMessages(
     context.profile,
     [
-      `You are Appilot's App Store localization writer for language: ${language}.`,
+      revising
+        ? `You are Appilot's App Store localization rewriter for language: ${language}.`
+        : `You are Appilot's App Store localization writer for language: ${language}.`,
+      revising
+        ? "Revise the existing copy below according to the reviewer/author feedback while preserving its structure and formatting."
+        : "Write fresh App Store copy based on the materials below.",
       "Respond ONLY with JSON in this shape:",
       JSON.stringify(
         {
@@ -444,7 +457,9 @@ async function generateLocalizedStoreCopy(
       "- `name`: keep the app's brand name verbatim, append a colon and a short descriptive phrase containing high-value search terms (e.g. `GloWalk: Path of Light`). Total ≤30 characters.",
       "- `subtitle`: a compact tagline (≤30 characters) that complements the name and adds searchable terms.",
       "- `keywords`: cover terms NOT already in the name or subtitle (Apple indexes those automatically); prioritize tracked keywords, current rankings, and release features. Total ≤100 characters.",
-      "Base the description on the current app description/README context, not only the release announcement.",
+      revising
+        ? "Revise `name`, `subtitle`, and `keywords` together so they stay a coherent ASO set. When the feedback asks for different keywords or says the keyword field does not match the app, rebuild the keyword set from the app description/README, tracked keywords, and copy-gap keywords below instead of keeping the existing list. Do not just reorder or reword the old keywords."
+        : "Base the description on the current app description/README context, not only the release announcement.",
       context.includedChanges?.length
         ? "whatsNew 必须严格只包含本次确认的变更项，不得添加未列出的内容，也不得加版本标题。"
         : "Use the release body primarily for whatsNew. For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
@@ -454,6 +469,16 @@ async function generateLocalizedStoreCopy(
       `Language: ${language}`,
       `App name: ${context.name}`,
       `Current description/README: ${context.description || "N/A"}`,
+      ...(context.baseLocalization
+        ? [
+            `Existing name:\n${context.baseLocalization.name}`,
+            `Existing subtitle:\n${context.baseLocalization.subtitle}`,
+            `Existing promotionalText:\n${context.baseLocalization.promotionalText}`,
+            `Existing description:\n${context.baseLocalization.description}`,
+            `Existing whatsNew:\n${context.baseLocalization.whatsNew}`,
+            `Existing keywords:\n${context.baseLocalization.keywords}`,
+          ]
+        : []),
       context.previousDescription
         ? `Previous release description:\n${context.previousDescription}`
         : "",
@@ -496,7 +521,11 @@ async function generateLocalizedStoreCopy(
   });
 
   try {
-    return normalizeLocalizedStoreCopy(data, language, context.name);
+    return normalizeLocalizedStoreCopy(
+      data,
+      language,
+      context.baseLocalization?.name || context.name,
+    );
   } catch (err: any) {
     log.warn(`Localized store copy generation failed for ${language}: ${err.message}`);
     throw new EngineError(`AI 无法解析 ${language} 的商店文案，请重试。`, "AI_EMPTY_RESPONSE");
@@ -583,78 +612,5 @@ async function generateTranslatedStoreCopy(
   } catch (err: any) {
     log.warn(`Translated store copy generation failed for ${language}: ${err.message}`);
     throw new EngineError(`AI 无法解析 ${language} 的翻译文案，请重试。`, "AI_EMPTY_RESPONSE");
-  }
-}
-
-async function reviseLocalizedStoreCopy(
-  provider: AIProvider,
-  context: {
-    name: string;
-    description: string;
-    trackedKeywords: string[];
-    currentSubmissionKeywords: { language: string; text: string }[];
-    recentRankings: { keyword: string; storefront: string; rank: number | null; checkedAt: string }[];
-    release: ReleaseInfo;
-    reviewFeedback?: string;
-    profile?: ProjectProfile;
-  },
-  language: string,
-  base: StoreSubmissionLocalization,
-  onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
-  signal?: AbortSignal,
-  onRetry?: () => void,
-): Promise<StoreSubmissionLocalization> {
-  const messages = buildArchiveMessages(
-    context.profile,
-    [
-      `You are Appilot's App Store localization rewriter for language: ${language}.`,
-      "Revise the existing copy according to the reviewer/author feedback while preserving its structure and formatting.",
-      "Respond ONLY with JSON in this shape:",
-      JSON.stringify(
-        {
-          name: "app name with ': short descriptive phrase', max 30 chars",
-          subtitle: "short tagline, max 30 chars",
-          promotionalText: "keep the leading '> ' if present, max 170 chars",
-          description: "max 4000 characters",
-          whatsNew: "max 4000 characters",
-          keywords: "comma separated keywords, max 100 chars",
-        },
-        null,
-        2,
-      ),
-      "Revise `name`, `subtitle`, and `keywords` together so they stay a coherent ASO set (name+subtitle+keywords). Keep the brand name verbatim.",
-      "Do not discard the existing structure or section markers.",
-      "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
-    ].join("\n"),
-    [
-      `Language: ${language}`,
-      `App name: ${context.name}`,
-      `Existing name:\n${base.name}`,
-      `Existing subtitle:\n${base.subtitle}`,
-      `Existing promotionalText:\n${base.promotionalText}`,
-      `Existing description:\n${base.description}`,
-      `Existing whatsNew:\n${base.whatsNew}`,
-      `Existing keywords:\n${base.keywords}`,
-      context.reviewFeedback
-        ? `Reviewer feedback / required changes:\n${context.reviewFeedback}`
-        : "",
-      `Release body:\n${context.release.body || "N/A"}`,
-    ],
-  );
-
-  const data = await requestJson(provider, messages, {
-    temperature: 0.3,
-    maxTokens: 16000,
-    thinking: "disabled",
-    onProgress: onChars,
-    signal,
-    onRetry,
-  });
-
-  try {
-    return normalizeLocalizedStoreCopy(data, language, base.name || context.name);
-  } catch (err: any) {
-    log.warn(`Revised store copy generation failed for ${language}: ${err.message}`);
-    throw new EngineError(`AI 无法解析 ${language} 的修订文案，请重试。`, "AI_EMPTY_RESPONSE");
   }
 }

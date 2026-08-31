@@ -348,6 +348,9 @@ export function KeywordsPage() {
   const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
     ? selectedKeyword
     : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
+  const chartKeywordMeta = matrixRows.find(
+    (keyword) => keyword.keyword === chartKeyword,
+  );
   const chartSnapshots = rankSnapshots
     .filter(
       (snapshot) =>
@@ -1567,8 +1570,17 @@ export function KeywordsPage() {
                       </ResponsiveContainer>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <h4 className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                        {chartKeyword} · 排名趋势（{chartSeriesMeta.length} 个商店）
+                      <h4 className="text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center gap-1.5">
+                        <KeywordRuby
+                          keyword={chartKeyword}
+                          translation={chartKeywordMeta?.translation}
+                          annotate={Boolean(
+                            chartKeywordMeta &&
+                              chartKeywordMeta.language !== "zh-Hans" &&
+                              chartKeywordMeta.language !== "zh-Hant",
+                          )}
+                        />
+                        排名趋势（{chartSeriesMeta.length} 个商店）
                       </h4>
                       <span className="text-[10px] text-zinc-400 dark:text-zinc-500">位置越高越好</span>
                       {chartSeriesMeta.map((series, index) => (

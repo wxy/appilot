@@ -1,4 +1,4 @@
-# 0.3.0 发布流程（本机打包，macOS）
+# 0.4.4 发布流程（本机打包，macOS）
 
 > 构建环境说明：Appilot 是 Electron 应用（TypeScript + React + electron-vite），
 > 不是 Xcode 工程。日常开发用 VS Code，打包用 npm + electron-builder 在本机完成，
@@ -26,35 +26,21 @@ source .release.env
 npm run dist:mac -- -c.mac.notarize=true
 ```
 
-产出两个分架构 DMG（Developer ID 签名；`.app` 内部已公证 + staple）：
+产出两个分架构 DMG（已 Developer ID 签名 + 公证，`.app` 内部已 staple）：
 
-- `dist/Appilot-0.3.0-arm64.dmg`（Apple Silicon）
-- `dist/Appilot-0.3.0-x64.dmg`（Intel）
+- `dist/Appilot-0.4.4-arm64.dmg`（Apple Silicon）
+- `dist/Appilot-0.4.4-x64.dmg`（Intel）
 
-### DMG 级公证 + 贴票（推荐）
-
-electron-builder 只公证了 `.app`，DMG 本身没有票。为了让用户打开 DMG 时也没有
-「来自互联网」提示，把 DMG 再提交一次公证并贴票（两个架构各一次）：
-
-```bash
-source .release.env
-for dmg in dist/Appilot-0.3.0-arm64.dmg dist/Appilot-0.3.0-x64.dmg; do
-  xcrun notarytool submit "$dmg" \
-    --apple-id "$APPLE_ID" \
-    --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-    --team-id "$APPLE_TEAM_ID" \
-    --wait
-  xcrun stapler staple "$dmg"
-done
-```
+> electron-builder 26 在 `-c.mac.notarize=true` 下会连 DMG 一起公证并贴票；
+> 若验证时发现 DMG 无票，再手动 `xcrun notarytool submit` + `stapler staple` 补一次。
 
 ## 验证
 
 ```bash
 codesign --verify --deep --strict --verbose=2 "dist/mac-arm64/Appilot.app"
 xcrun stapler validate "dist/mac-arm64/Appilot.app"
-xcrun stapler validate "dist/Appilot-0.3.0-arm64.dmg"
-xcrun stapler validate "dist/Appilot-0.3.0-x64.dmg"
+xcrun stapler validate "dist/Appilot-0.4.4-arm64.dmg"
+xcrun stapler validate "dist/Appilot-0.4.4-x64.dmg"
 ```
 
 ## 冒烟清单
@@ -71,9 +57,12 @@ xcrun stapler validate "dist/Appilot-0.3.0-x64.dmg"
 ## 打 tag 与上传
 
 ```bash
-git tag -a v0.3.0 -m "v0.3.0: 里程碑版本"
-git push origin v0.3.0
-gh release create v0.3.0 dist/Appilot-0.3.0.dmg --draft
+git tag -a v0.4.4 -m "v0.4.4: 里程碑版本"
+git push origin v0.4.4
+gh release create v0.4.4 \
+  dist/Appilot-0.4.4-arm64.dmg \
+  dist/Appilot-0.4.4-x64.dmg \
+  --draft
 ```
 
 检查 draft release（标题、说明、附件）后点发布。

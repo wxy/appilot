@@ -8,20 +8,27 @@ export function KeywordRuby({
   keyword,
   translation,
   annotate,
+  chip = true,
   className,
 }: {
   keyword: string;
   translation?: string | null;
   /** 是否需要标注（关键词语言 ≠ 界面语言）。 */
   annotate: boolean;
+  /**
+   * 是否渲染关键词底色标签。默认开启；外层已有胶囊/标签容器时（如竞品
+   * 筛选按钮）传 false，避免双层嵌套。
+   */
+  chip?: boolean;
   className?: string;
 }) {
   const showAnnotation = annotate && Boolean(translation && translation.trim());
+  const classNames = cn("ruby-keyword", chip && "ruby-chip", className);
   if (!showAnnotation) {
-    return <span className={className}>{keyword}</span>;
+    return <span className={classNames}>{keyword}</span>;
   }
   return (
-    <ruby className={cn("ruby-keyword", className)}>
+    <ruby className={classNames}>
       {keyword}
       <rt>{translation}</rt>
     </ruby>

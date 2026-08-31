@@ -73,7 +73,10 @@ contextBridge.exposeInMainWorld("appilot", {
     snapshots: (projectId: string): Promise<any[]> => ipcRenderer.invoke("traffic:snapshots", projectId),
     sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("traffic:sync", projectId),
   },
-
+  activity: {
+    commits: (projectId: string): Promise<Record<string, number>> =>
+      ipcRenderer.invoke("activity:commits", projectId),
+  },
   asc: {
     sync: (productId: string): Promise<boolean> => ipcRenderer.invoke("asc:sync", productId),
     status: (productId: string): Promise<any> => ipcRenderer.invoke("asc:status", productId),
@@ -267,6 +270,8 @@ contextBridge.exposeInMainWorld("appilot", {
     timeline: (): Promise<any> => ipcRenderer.invoke("scheduler:timeline"),
     list: (): Promise<any> => ipcRenderer.invoke("scheduler:list"),
     runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
+    runTaskNow: (taskId: string): Promise<boolean> =>
+      ipcRenderer.invoke("scheduler:runTaskNow", taskId),
   },
 
   ai: {

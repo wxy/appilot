@@ -168,13 +168,41 @@
 }
 .flash-input { animation: appilot-flash-input 1.1s ease-out; border-radius: 6px; }
 
-/* 关键词 ruby 标注：译文小号、弱化显示在关键词上方。 */
+/* 关键词标签：统一用圆角底色标签突出关键词，方便在排名、总览中快速定位。
+   ruby 译文（rt）用另一组强调色与关键词本体区分。
+   nowrap 让长关键词整体换行而不是在词中断开，保持圆角完整。 */
+.ruby-keyword {
+  ruby-position: over;
+  -webkit-ruby-position: over;
+}
+.ruby-chip {
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: rgb(236 253 245);
+  box-shadow: inset 0 0 0 1px rgb(16 185 129 / 0.18);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  white-space: nowrap;
+}
+.dark .ruby-chip {
+  background: rgb(16 185 129 / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(16 185 129 / 0.28);
+}
 .ruby-keyword rt {
-  font-size: 0.66em;
-  color: rgb(161 161 170);
+  font-size: 0.7em;
+  line-height: 1.25;
+  color: rgb(67 56 202);
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: 0;
+  background: rgb(224 231 255 / 0.85);
+  border-radius: 4px;
+  padding: 0 4px 1px;
+  margin-bottom: 1px;
+}
+.dark .ruby-keyword rt {
+  color: rgb(165 180 252);
+  background: rgb(99 102 241 / 0.22);
 }
 
 @media (prefers-reduced-motion: reduce) {

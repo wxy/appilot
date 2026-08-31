@@ -164,6 +164,16 @@ export function registerOpsHandlers(): void {
     return runOpsSyncNow(projectId);
   });
 
+  ipcMain.handle("activity:commits", async (_event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project?.localPath) return {};
+    const { getCommitActivity } = await import("../../engine/git-info");
+    return getCommitActivity(project.localPath);
+  });
+
   ipcMain.handle("asc:sync", async (_event, productId: string) => {
     productId = assertNonEmptyString(productId, "productId");
     return runBuildStatusNow(productId);

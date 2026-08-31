@@ -40,6 +40,29 @@ export async function getRemoteUrl(localPath: string): Promise<string> {
   return git(localPath, ["remote", "get-url", "origin"]).catch(() => "");
 }
 
+/** Per-day commit counts for the last `days` days, keyed by "YYYY-MM-DD". */
+export async function getCommitActivity(
+  localPath: string,
+  days = 120,
+): Promise<Record<string, number>> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const output = await git(localPath, [
+    "log",
+    `--since=${since}`,
+    "--format=%ad",
+    "--date=short",
+  ]).catch(() => "");
+  const activity: Record<string, number> = {};
+  for (const line of output.split("\n")) {
+    const date = line.trim();
+    if (!date) continue;
+    activity[date] = (activity[date] || 0) + 1;
+  }
+  return activity;
+}
+
 /** Convert common GitHub remote forms to a plain https repo URL (null when not GitHub). */
 export function normalizeGitHubUrl(remote: string | null): string | null {
   if (!remote) return null;
