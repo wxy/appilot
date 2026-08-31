@@ -33,3 +33,4 @@ data/
 *.p12
 *.pfx
 .build-cache/
+.npm-cache/
