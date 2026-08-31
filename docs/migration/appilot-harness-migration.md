@@ -355,8 +355,13 @@ v0.4.4 / v0.3.0 等 tag）。
   --profile appilot --port 3099` 启动 Web 表层（HTTP 200）。面向非 Harness 用户
   的分发（CLI/桌面壳）可作为下一步。
 
+**appilot CLI 启动器已落地（2026-08-31）**：`packages/cli`——`appilot` 命令转发
+  `dsh --profile appilot`（PATH 找 dsh，支持 APILOT_DSH/APILOT_PROFILE 环境变量）。
+  已在本机验证转发（--dump-config 输出 appilot 配置树）。桌面壳包装为可选后续。
+
 **待办（后续轮次）**：
-- `appilot` CLI 启动器 / 桌面壳包装（面向非 Harness 用户）
+- 桌面壳包装（Electron/Tauri 包一层 appilot CLI）
+- web profile 部署验证 client bundle；工作台 UI 三阶段
 - web profile 部署验证 client bundle；工作台 UI 三阶段（卡片→节点→命令/设置页）
 - web profile 部署验证 client bundle；工作台 UI 三阶段（卡片→节点→命令/设置页）
 - 其他工具支持按项目名引用（generate/revise/readiness）

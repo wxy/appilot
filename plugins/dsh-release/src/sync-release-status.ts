@@ -1,6 +1,6 @@
 import { resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '@appilot/dsh-common';
+import { jsonify, envCredentialReader, type CredentialReader } from '@appilot/dsh-common';
 import { collectRepoInfo } from '@appilot/core/git-info';
 import { listGitTags } from '@appilot/core/release-watcher';
 import { listGitHubReleases } from '@appilot/core/github-api';
@@ -9,7 +9,10 @@ import { listGitHubReleases } from '@appilot/core/github-api';
  * 刷新并汇总仓库的发布状态：最近 git tag + GitHub release（公开仓库匿名可读，
  * 传 token 可看私有/草稿）。ASC 商店状态需要凭据，Phase 4 接入 ctx.credentials。
  */
-export const syncReleaseStatus = defineTool({
+export function createSyncReleaseStatusTool(
+  reader: CredentialReader = envCredentialReader,
+) {
+  return defineTool({
   name: 'sync_release_status',
   description:
     'Refresh and summarize release status of a repository: latest git tags and, when the remote is GitHub, published/draft releases. ASC store status needs credentials and is not checked yet.',
@@ -22,7 +25,7 @@ export const syncReleaseStatus = defineTool({
     token: {
       type: 'string',
       description:
-        'Optional GitHub token for private repos or draft visibility. Keep it out of the conversation transcript; prefer configuring it as a credential later.',
+        'Optional GitHub token for private repos or draft visibility. Prefer configuring GITHUB_TOKEN via ctx.credentials; avoid passing secrets in the conversation.',
     },
   },
   output: {
@@ -35,7 +38,8 @@ export const syncReleaseStatus = defineTool({
     const path = resolvePath(args.path);
     const repo = await collectRepoInfo(path);
     const tags = await listGitTags(path);
-    const releases = await listGitHubReleases(path, args.token || null);
+    const token = args.token || (await reader('GITHUB_TOKEN')) || null;
+    const releases = await listGitHubReleases(path, token);
     return jsonify({
       path,
       remote: {
@@ -60,3 +64,4 @@ export const syncReleaseStatus = defineTool({
     });
   },
 });
+}

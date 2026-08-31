@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { createGetReleaseDraftTool } from './get-release-draft.js';
 import { checkReleaseReadiness } from './check-release-readiness.js';
-import { syncReleaseStatus } from './sync-release-status.js';
+import { createSyncReleaseStatusTool } from './sync-release-status.js';
 import { createGenerateStoreCopyTool } from './generate-store-copy.js';
 import { createReviseStoreCopyTool } from './revise-store-copy.js';
 import { ctxCredentialReader } from '@appilot/dsh-common';
@@ -19,7 +19,7 @@ export function apply(ctx: Context, config?: { store?: ProjectStore }): void {
   const store = config?.store;
   ctx.tools.register(createGetReleaseDraftTool(store));
   ctx.tools.register(checkReleaseReadiness);
-  ctx.tools.register(syncReleaseStatus);
+  ctx.tools.register(createSyncReleaseStatusTool(reader));
   ctx.tools.register(createGenerateStoreCopyTool(reader));
   ctx.tools.register(createReviseStoreCopyTool(reader));
 }
