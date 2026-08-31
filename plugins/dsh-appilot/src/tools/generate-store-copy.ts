@@ -11,27 +11,13 @@ import {
   detectLocalizedLanguages,
 } from '@appilot/core/app-store-discovery';
 import type { ReleaseInfo } from '@appilot/core/release-watcher';
-
-/**
- * 从环境变量读取 AI 凭据（MVP；Phase 4 迁移到 ctx.credentials）。
- * 刻意不接受参数传入 apiKey——工具参数对模型可见，防止密钥进入会话记录。
- */
-function credentialsFromEnv() {
-  const baseURL =
-    process.env.APILOT_AI_BASE_URL || process.env.OPENAI_BASE_URL || '';
-  const apiKey = process.env.APILOT_AI_API_KEY || process.env.OPENAI_API_KEY || '';
-  const model = process.env.APILOT_AI_MODEL || 'deepseek-chat';
-  if (!baseURL || !apiKey) {
-    throw new Error(
-      '缺少 AI 凭据：请设置 APILOT_AI_BASE_URL 与 APILOT_AI_API_KEY 环境变量（Phase 4 将改用 ctx.credentials）。',
-    );
-  }
-  return { baseURL, apiKey, model };
-}
+import {
+  envCredentialReader,
+  type CredentialReader,
+} from '../credentials.js';
 
 /** 由 git 状态构造最小 ReleaseInfo（MVP：本地 tag 驱动）。 */
-function releaseFromGit(
-  path: string,
+export function releaseFromGit(
   repo: { githubUrl: string | null; headMessage: string | null },
   tags: { name: string; sha: string; date: string }[],
   versionTag?: string,
@@ -52,61 +38,83 @@ function releaseFromGit(
   };
 }
 
-export const generateStoreCopy = defineTool({
-  name: 'generate_store_copy',
-  description:
-    'Generate App Store copy (name/subtitle/description/whatsNew/keywords) for a repository release using the @appilot/core AI pipeline. Credentials come from APILOT_AI_BASE_URL / APILOT_AI_API_KEY env vars. One language per call.',
-  parameters: {
-    path: {
-      type: 'string',
-      required: true,
-      description: 'Absolute path of the project directory.',
+/**
+ * 生成单语言 App Store 文案。凭据经 reader 解析（宿主 ctx.credentials →
+ * 环境变量）；刻意不接收参数传入 apiKey——工具参数对模型可见，防泄漏。
+ */
+export function createGenerateStoreCopyTool(
+  reader: CredentialReader = envCredentialReader,
+) {
+  return defineTool({
+    name: 'generate_store_copy',
+    description:
+      'Generate App Store copy (name/subtitle/description/whatsNew/keywords) for a repository release using the @appilot/core AI pipeline. Credentials come from ctx.credentials / APILOT_AI_* env vars. One language per call.',
+    parameters: {
+      path: {
+        type: 'string',
+        required: true,
+        description: 'Absolute path of the project directory.',
+      },
+      language: {
+        type: 'string',
+        description: 'Store language code (en, zh-Hans, ja, ...); defaults to en.',
+      },
+      versionTag: {
+        type: 'string',
+        description: 'The release tag to draft copy for; defaults to the latest git tag.',
+      },
     },
-    language: {
-      type: 'string',
-      description: 'Store language code (en, zh-Hans, ja, ...); defaults to en.',
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [
+        { type: 'text', text: JSON.stringify(value, null, 2) },
+      ],
     },
-    versionTag: {
-      type: 'string',
-      description: 'The release tag to draft copy for; defaults to the latest git tag.',
+    async execute(args) {
+      const path = resolvePath(args.path);
+      const repo = await collectRepoInfo(path);
+      const tags = await listGitTags(path);
+      const profile = buildProjectProfile({
+        name: basename(path),
+        platform: detectApplePlatform(path),
+        supportedLanguages: detectLocalizedLanguages(path),
+        description: repo.description || '',
+        readme: repo.description || undefined,
+      });
+      const language = args.language || 'en';
+      const baseURL =
+        (await reader('APILOT_AI_BASE_URL')) ||
+        (await reader('OPENAI_BASE_URL')) ||
+        '';
+      const apiKey =
+        (await reader('APILOT_AI_API_KEY')) ||
+        (await reader('OPENAI_API_KEY')) ||
+        '';
+      const model = (await reader('APILOT_AI_MODEL')) || 'deepseek-chat';
+      if (!baseURL || !apiKey) {
+        throw new Error(
+          '缺少 AI 凭据：请在 Harness 设置/环境变量中配置 APILOT_AI_BASE_URL 与 APILOT_AI_API_KEY（或 OPENAI_*）。',
+        );
+      }
+      const provider = new AIProvider({ baseURL, apiKey, model });
+      const result = await generateStoreSubmissionContent(provider, {
+        name: profile.name,
+        description: profile.description,
+        language,
+        trackedKeywords: profile.trackedKeywords ?? [],
+        currentSubmissionKeywords: [],
+        recentRankings: [],
+        release: releaseFromGit(repo, tags, args.versionTag),
+        profile,
+      });
+      return jsonify({
+        path,
+        language,
+        versionTag: args.versionTag || tags[0]?.name || '',
+        summary: result.summary,
+        localizations: result.localizations,
+        submissionKeywords: result.submissionKeywords,
+      });
     },
-  },
-  output: {
-    schema: { type: 'json' },
-    render: (_args, value) => [
-      { type: 'text', text: JSON.stringify(value, null, 2) },
-    ],
-  },
-  async execute(args) {
-    const path = resolvePath(args.path);
-    const repo = await collectRepoInfo(path);
-    const tags = await listGitTags(path);
-    const profile = buildProjectProfile({
-      name: basename(path),
-      platform: detectApplePlatform(path),
-      supportedLanguages: detectLocalizedLanguages(path),
-      description: repo.description || '',
-      readme: repo.description || undefined,
-    });
-    const language = args.language || 'en';
-    const provider = new AIProvider(credentialsFromEnv());
-    const result = await generateStoreSubmissionContent(provider, {
-      name: profile.name,
-      description: profile.description,
-      language,
-      trackedKeywords: profile.trackedKeywords ?? [],
-      currentSubmissionKeywords: [],
-      recentRankings: [],
-      release: releaseFromGit(path, repo, tags, args.versionTag),
-      profile,
-    });
-    return jsonify({
-      path,
-      language,
-      versionTag: args.versionTag || tags[0]?.name || '',
-      summary: result.summary,
-      localizations: result.localizations,
-      submissionKeywords: result.submissionKeywords,
-    });
-  },
-});
+  });
+}
