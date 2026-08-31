@@ -1,0 +1,4 @@
+# @appilot/dsh 开发 patch：把编译后的插件插入 profile（绝对路径，仅供本机验证）。
+- insert:
+    - id: appilot
+      name: '/Users/xingyuwang/develop/appilot/plugins/dsh-appilot/dist/index.js'
