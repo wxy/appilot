@@ -7,6 +7,9 @@ import { resolveCurrentProject } from '../src/tools/resolve-current-project';
 import { getProjectContext } from '../src/tools/get-project-context';
 import { getReleaseDraft } from '../src/tools/get-release-draft';
 import { checkReleaseReadiness } from '../src/tools/check-release-readiness';
+import { syncReleaseStatus } from '../src/tools/sync-release-status';
+import { generateStoreCopy } from '../src/tools/generate-store-copy';
+import { reviseStoreCopy } from '../src/tools/revise-store-copy';
 
 /** 最小的 exec 环境（工具未使用 exec 的额外字段）。 */
 function execFor() {
@@ -82,6 +85,31 @@ async function main() {
     assert.ok(['pass', 'fail', 'warning', 'unknown'].includes(item.status));
   }
   console.log('✅ PASS: check_release_readiness returns checks array');
+
+  // sync_release_status（无 GitHub remote 时只回本地 tag）
+  const status = await callTool(syncReleaseStatus, { path: repo });
+  assert.equal(status.latestTag.name, 'v1.0.0');
+  assert.ok(Array.isArray(status.githubReleases));
+  console.log('✅ PASS: sync_release_status returns latest tag + release list');
+
+  // generate/revise 缺少 AI 凭据时必须报错（不泄漏密钥、不发起请求）
+  await assert.rejects(
+    () => callTool(generateStoreCopy, { path: repo, language: 'en' }),
+    /APILOT_AI_BASE_URL/,
+  );
+  console.log('✅ PASS: generate_store_copy fails cleanly without credentials');
+  await assert.rejects(
+    () =>
+      callTool(reviseStoreCopy, {
+        path: repo,
+        language: 'en',
+        existingName: 'App',
+        existingDescription: 'desc',
+        reviewFeedback: 'keep brand name',
+      }),
+    /APILOT_AI_BASE_URL/,
+  );
+  console.log('✅ PASS: revise_store_copy fails cleanly without credentials');
 
   console.log('\n🎉 All @appilot/dsh tool tests passed!');
 }
