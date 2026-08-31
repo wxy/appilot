@@ -330,8 +330,18 @@ v0.4.4 / v0.3.0 等 tag）。
   每个 profile 可用。工具不接受参数传 key（防泄漏进模型会话记录）。已在本机
   headless 会话验证：插件带 credentials 注入正常加载、工具可用。
 
+**存储已接入（Phase 4，2026-08-31）**：`ProjectStore` 抽象（`src/storage.ts`）——
+  宿主 domain 存储（`ctx.get('storage').domain`，web profile 由 dsh-web-app 提供
+  dsh-storage-domain/json）+ 内存回退（headless / 无存储环境，会话内仍可形成
+  「注册→按名引用」循环）。新工具 `register_project` / `list_projects`；
+  `get_release_draft` 支持按已注册项目名引用。已在本机 headless 会话端到端
+  验证：register → list（1 个项目）→ get_release_draft(by name) → v0.4.4。
+  持久化在 web profile 部署时自动激活（ctx.get 可选读取，无需 inject）。
+
 **待办（后续轮次）**：
-- 存储适配 ctx.storage（项目状态/草稿持久化）
+- 其他工具支持按项目名引用（generate/revise/readiness）
+- GitHub/ASC 凭据同样走 ctx.credentials
+- 更多域插件：keywords / reviews / workbench-ui
 - 更多域插件：keywords / reviews / workbench-ui
 - 插件组拆分为独立 npm 包（按域发布，用户可按需安装）
 - 存储/凭据适配（ctx.storage / ctx.credentials，Phase 4：AI/GitHub/ASC 凭据迁入）

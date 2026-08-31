@@ -1,15 +1,23 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { resolveCurrentProject } from '../tools/resolve-current-project.js';
 import { getProjectContext } from '../tools/get-project-context.js';
+import { createRegisterProjectTool } from '../tools/register-project.js';
+import { createListProjectsTool } from '../tools/list-projects.js';
+import type { ProjectStore } from '../storage.js';
 
 /**
- * @appilot/dsh 域插件：project（项目识别 / 项目上下文）。
- * 独立可安装；由元插件 appilot 组合，用户也可单独安装本域。
+ * @appilot/dsh 域插件：project（项目识别 / 上下文 / 注册表）。
+ * store 由元插件注入（domain 存储或内存回退）。
  */
 export const name = 'appilot-project';
 export const inject = ['tools'];
 
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config?: { store?: ProjectStore }): void {
+  const store = config?.store;
   ctx.tools.register(resolveCurrentProject);
   ctx.tools.register(getProjectContext);
+  if (store) {
+    ctx.tools.register(createRegisterProjectTool(store));
+    ctx.tools.register(createListProjectsTool(store));
+  }
 }
