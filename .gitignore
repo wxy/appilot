@@ -32,3 +32,4 @@ data/
 .secrets/
 *.p12
 *.pfx
+.build-cache/
