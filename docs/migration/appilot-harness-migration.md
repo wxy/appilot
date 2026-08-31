@@ -324,7 +324,14 @@ v0.4.4 / v0.3.0 等 tag）。
   同一会话内 project 域与 release 域的工具都被挂载调用。loader 级 Group +
   profile 声明式条目留待 Phase 6。
 
+**凭据已迁入宿主服务（Phase 4，2026-08-31）**：AI 工具（generate/revise_store_copy）
+  凭据经 `ctx.credentials.resolve(credentialRef(ENV))` 解析（分层：凭据存储 + 环境变量
+  + .env），不再直接读 process.env；`dsh-credentials-local` 已随 dsh-base 提供，
+  每个 profile 可用。工具不接受参数传 key（防泄漏进模型会话记录）。已在本机
+  headless 会话验证：插件带 credentials 注入正常加载、工具可用。
+
 **待办（后续轮次）**：
+- 存储适配 ctx.storage（项目状态/草稿持久化）
 - 更多域插件：keywords / reviews / workbench-ui
 - 插件组拆分为独立 npm 包（按域发布，用户可按需安装）
 - 存储/凭据适配（ctx.storage / ctx.credentials，Phase 4：AI/GitHub/ASC 凭据迁入）

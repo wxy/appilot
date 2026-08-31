@@ -8,8 +8,8 @@ import { getProjectContext } from '../src/tools/get-project-context';
 import { getReleaseDraft } from '../src/tools/get-release-draft';
 import { checkReleaseReadiness } from '../src/tools/check-release-readiness';
 import { syncReleaseStatus } from '../src/tools/sync-release-status';
-import { generateStoreCopy } from '../src/tools/generate-store-copy';
-import { reviseStoreCopy } from '../src/tools/revise-store-copy';
+import { createGenerateStoreCopyTool } from '../src/tools/generate-store-copy';
+import { createReviseStoreCopyTool } from '../src/tools/revise-store-copy';
 
 /** 最小的 exec 环境（工具未使用 exec 的额外字段）。 */
 function execFor() {
@@ -94,13 +94,13 @@ async function main() {
 
   // generate/revise 缺少 AI 凭据时必须报错（不泄漏密钥、不发起请求）
   await assert.rejects(
-    () => callTool(generateStoreCopy, { path: repo, language: 'en' }),
+    () => callTool(createGenerateStoreCopyTool(), { path: repo, language: 'en' }),
     /APILOT_AI_BASE_URL/,
   );
   console.log('✅ PASS: generate_store_copy fails cleanly without credentials');
   await assert.rejects(
     () =>
-      callTool(reviseStoreCopy, {
+      callTool(createReviseStoreCopyTool(), {
         path: repo,
         language: 'en',
         existingName: 'App',
