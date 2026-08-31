@@ -1,7 +1,7 @@
 import { resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '../jsonify.js';
-import { resolveProjectRecord, type ProjectStore } from '../storage.js';
+import { jsonify } from '@appilot/dsh-common';
+import { resolveProjectRecord, type ProjectStore } from '@appilot/dsh-common';
 
 /**
  * 注册/更新一个项目到持久化存储，之后其他工具可按项目名引用（无需每次给路径）。

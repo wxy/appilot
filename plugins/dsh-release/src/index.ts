@@ -1,11 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis';
-import { createGetReleaseDraftTool } from '../tools/get-release-draft.js';
-import { checkReleaseReadiness } from '../tools/check-release-readiness.js';
-import { syncReleaseStatus } from '../tools/sync-release-status.js';
-import { createGenerateStoreCopyTool } from '../tools/generate-store-copy.js';
-import { createReviseStoreCopyTool } from '../tools/revise-store-copy.js';
-import { ctxCredentialReader } from '../credentials.js';
-import type { ProjectStore } from '../storage.js';
+import { createGetReleaseDraftTool } from './get-release-draft.js';
+import { checkReleaseReadiness } from './check-release-readiness.js';
+import { syncReleaseStatus } from './sync-release-status.js';
+import { createGenerateStoreCopyTool } from './generate-store-copy.js';
+import { createReviseStoreCopyTool } from './revise-store-copy.js';
+import { ctxCredentialReader } from '@appilot/dsh-common';
+import type { ProjectStore } from '@appilot/dsh-common';
 
 /**
  * @appilot/dsh 域插件：release（发布草稿 / readiness / 发布状态 / 文案生成与修订）。

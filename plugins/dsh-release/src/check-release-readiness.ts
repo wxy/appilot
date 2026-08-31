@@ -1,6 +1,6 @@
 import { resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '../jsonify.js';
+import { jsonify } from '@appilot/dsh-common';
 import { runReadinessChecks } from '@appilot/core/readiness-check';
 import { listGitTags } from '@appilot/core/release-watcher';
 import { detectLocalizedLanguages } from '@appilot/core/app-store-discovery';

@@ -1,9 +1,9 @@
 import { resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '../jsonify.js';
+import { jsonify } from '@appilot/dsh-common';
 import { collectRepoInfo } from '@appilot/core/git-info';
 import { listGitTags } from '@appilot/core/release-watcher';
-import type { ProjectStore } from '../storage.js';
+import type { ProjectStore } from '@appilot/dsh-common';
 
 /**
  * 查看仓库最近的 git tag 与 HEAD，确定当前进行中/最新的发布草稿版本。

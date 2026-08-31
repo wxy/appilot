@@ -1,16 +1,16 @@
 import type { Context } from '@deepseek-ai/cordis';
-import * as projectDomain from './domain/project.js';
-import * as releaseDomain from './domain/release.js';
-import { createProjectStore } from './storage.js';
+import { createProjectStore } from '@appilot/dsh-common';
+import * as projectDomain from '@appilot/dsh-project';
+import * as releaseDomain from '@appilot/dsh-release';
 
 /**
  * @appilot/dsh — Appilot 的 DeepSeek Harness 元插件（插件组）。
  *
- * 用 ctx.plugin() 组合各域子插件（project / release）；每个子插件可独立
- * 安装（域拆分，见 docs/migration §10）。全部工具走 @appilot/core 同一代码路径。
+ * 组合独立分发的域插件包（@appilot/dsh-project / @appilot/dsh-release）；
+ * 每个域插件可单独安装（用户可按需只装 release 域等）。
+ * 全部工具走 @appilot/core 同一代码路径。
  *
- * 存储：有宿主 domain 存储（web profile）用持久化实现，否则回退内存
- * （headless / 无存储环境，会话内仍可形成"注册→按名引用"循环）。
+ * 存储：有宿主 domain 存储（web profile）用持久化实现，否则回退内存。
  */
 export const name = 'appilot';
 export const inject = ['tools'];
