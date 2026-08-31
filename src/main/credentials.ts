@@ -1,7 +1,7 @@
 import { app, safeStorage } from "electron";
 import fs from "fs";
 import path from "path";
-import { log } from "../engine/logger";
+import { log } from "@appilot/core/logger";
 
 /**
  * Phase 0: encrypt the AI API key at rest using Electron safeStorage
@@ -79,7 +79,7 @@ export function resolveEffectiveCredentials(s: any, projectId: string) {
   };
 }
 
-export { ascJwt, derToRawJwtSignature } from "../engine/asc-api";
+export { ascJwt, derToRawJwtSignature } from "@appilot/core/asc-api";
 
 /** Remove app-managed .p8 files that no credential references. */
 export function garbageCollectKeys(s: any): void {

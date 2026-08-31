@@ -8,8 +8,8 @@
  */
 
 import log from "electron-log";
-import type { Logger } from "@engine/logger";
-import { initLogger } from "@engine/logger";
+import type { Logger } from "@appilot/core/logger";
+import { initLogger } from "@appilot/core/logger";
 import path from "path";
 import fs from "fs";
 import { app } from "electron";
