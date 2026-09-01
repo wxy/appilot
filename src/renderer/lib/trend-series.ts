@@ -1,4 +1,4 @@
-import type { TrafficSnapshot } from "@appilot-labs/core/gh-traffic";
+import type { TrafficSnapshot } from "@appilot-labs/appilot-core/gh-traffic";
 import type { RankSnapshot } from "../stores/project";
 
 export interface TrendPoint {

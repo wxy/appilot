@@ -272,7 +272,7 @@ export function buildStoreRebuildDraft(input: StoreRebuildInput): StoreSubmissio
   }
   const primary = localizations[0] || null;
   return {
-    id: submissionDraftId(input.projectId, input.productId, input.releaseTag),
+    id: submissionDraftId(input.projectId, input.releaseTag),
     projectId: input.projectId,
     productId: input.productId,
     releaseTag: input.releaseTag,
@@ -307,8 +307,13 @@ export function githubStatusForRelease(release: ReleaseInfo): GitHubReleaseStatu
   return release.draft ? "draft" : "published";
 }
 
-export function submissionDraftId(projectId: string, productId: string, releaseTag: string): string {
-  return `${projectId}:${productId}:${releaseTag}`;
+/**
+ * Stable draft id. A store copy belongs to the software (project), not to a
+ * specific platform product: iOS and macOS entries of the same release must
+ * resolve to the same draft, so the id deliberately excludes productId.
+ */
+export function submissionDraftId(projectId: string, releaseTag: string): string {
+  return `${projectId}:${releaseTag}`;
 }
 
 export function inferAppVersion(release: { tag: string; name?: string | null }): string {
@@ -343,7 +348,7 @@ export function createStoreSubmissionDraft(input: {
   const now = new Date().toISOString();
   const existing = input.existing || null;
   return {
-    id: submissionDraftId(input.projectId, input.productId, input.release.tag),
+    id: submissionDraftId(input.projectId, input.release.tag),
     projectId: input.projectId,
     productId: input.productId,
     releaseTag: input.release.tag,

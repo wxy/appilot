@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import type { FeedbackTheme } from "@appilot-labs/core/feedback-inbox";
+import type { FeedbackTheme } from "@appilot-labs/appilot-core/feedback-inbox";
 
 export function FeedbackThemesCard({ project }: { project: any }) {
   const [themes, setThemes] = useState<FeedbackTheme[]>([]);

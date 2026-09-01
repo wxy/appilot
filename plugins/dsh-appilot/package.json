@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Appilot DeepSeek Harness plugin — App 运营 Agent 工具（项目上下文 / 发布草稿 / readiness / 文案）",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,10 +11,10 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@appilot-labs/core": "^0.4.4",
-    "@appilot-labs/dsh-common": "^0.1.0",
-    "@appilot-labs/dsh-project": "^0.1.0",
-    "@appilot-labs/dsh-release": "^0.1.0"
+    "@appilot-labs/appilot-core": "^0.1.0",
+    "@appilot-labs/appilot-common": "^0.1.0",
+    "@appilot-labs/appilot-project": "^0.1.0",
+    "@appilot-labs/appilot-release": "^0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2"

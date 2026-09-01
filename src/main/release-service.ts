@@ -1,9 +1,9 @@
-import { createStoreSubmissionDraft } from "@appilot-labs/core/store-submission";
-import type { StoreSubmissionDraft } from "@appilot-labs/core/store-submission";
+import { createStoreSubmissionDraft } from "@appilot-labs/appilot-core/store-submission";
+import type { StoreSubmissionDraft } from "@appilot-labs/appilot-core/store-submission";
 import { createAiProvider } from "./ai-service";
 import { ensureProjectKeywordPool, getStoreSubmissionDrafts } from "./project-state";
 import type { AppStore } from "./store";
-import type { ReleaseInfo } from "@appilot-labs/core/release-watcher";
+import type { ReleaseInfo } from "@appilot-labs/appilot-core/release-watcher";
 
 export interface ProjectLike {
   id: string;
@@ -31,11 +31,10 @@ export async function buildProjectProfileFor(
   description?: string,
 ) {
   const [{ buildProjectProfile }, { readRepoDescription, readFullReadme }] = await Promise.all([
-    import("@appilot-labs/core/project-profile"),
-    import("@appilot-labs/core/app-store-discovery"),
+    import("@appilot-labs/appilot-core/project-profile"),
+    import("@appilot-labs/appilot-core/app-store-discovery"),
   ]);
   const drafts = getStoreSubmissionDrafts(project)
-    .filter((item: any) => item.productId === product.id)
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const releaseHistory = drafts.map((item: any) => ({
     tag: String(item.releaseTag || ""),
@@ -88,8 +87,8 @@ export async function generateStoreSubmissionDraft(
   signal?: AbortSignal,
   onRetry?: () => void,
 ): Promise<StoreSubmissionDraft> {
-  const { generateStoreSubmissionContent } = await import("@appilot-labs/core/ai/release-reviewer");
-  const { readRepoDescription } = await import("@appilot-labs/core/app-store-discovery");
+  const { generateStoreSubmissionContent } = await import("@appilot-labs/appilot-core/ai/release-reviewer");
+  const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
 
   const provider = await createAiProvider(store);
 
@@ -114,7 +113,7 @@ export async function generateStoreSubmissionDraft(
     checkedAt: snapshot.checkedAt,
   }));
   const previousDrafts = getStoreSubmissionDrafts(project)
-    .filter((item) => item.productId === product.id && item.releaseTag !== release.tag)
+    .filter((item) => item.releaseTag !== release.tag)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const previousDraft = previousDrafts[0] || null;
   const previousLocalization = previousDraft?.localizations?.find(

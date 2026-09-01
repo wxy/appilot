@@ -38,8 +38,8 @@ export function registerFeedbackHandlers(): void {
     if (items.length === 0) return [];
 
     const provider = await createAiProvider(s);
-    const { generateReviewThemes } = await import("@appilot-labs/core/ai/review-insights");
-    const description = (await import("@appilot-labs/core/app-store-discovery")).readRepoDescription(project.localPath);
+    const { generateReviewThemes } = await import("@appilot-labs/appilot-core/ai/review-insights");
+    const description = (await import("@appilot-labs/appilot-core/app-store-discovery")).readRepoDescription(project.localPath);
     const profile = await buildProjectProfileFor(project, product, undefined, description);
     const themes = await generateReviewThemes(provider, profile, items, (received) => {
       if (!_event.sender.isDestroyed()) {

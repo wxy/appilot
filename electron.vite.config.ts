@@ -14,7 +14,8 @@ export default defineConfig({
     resolve: {
       alias: [
         { find: /^@appilot-labs\/core\/(.+)$/, replacement: path.resolve(__dirname, 'packages/core/src') + '/$1' },
-        { find: '@appilot-labs/core', replacement: path.resolve(__dirname, 'packages/core/src/index.ts') },
+        { find: /^@appilot-labs\/appilot-core\/(.+)$/, replacement: path.resolve(__dirname, 'packages/core/src') + '/$1' },
+        { find: /^@appilot-labs\/appilot-core$/, replacement: path.resolve(__dirname, 'packages/core/src/index.ts') },
         { find: '@', replacement: path.resolve(__dirname, 'src/renderer') },
       ],
     },

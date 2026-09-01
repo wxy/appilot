@@ -3,7 +3,7 @@ import { resolveCurrentProject } from './resolve-current-project.js';
 import { getProjectContext } from './get-project-context.js';
 import { createRegisterProjectTool } from './register-project.js';
 import { createListProjectsTool } from './list-projects.js';
-import type { ProjectStore } from '@appilot-labs/dsh-common';
+import type { ProjectStore } from '@appilot-labs/appilot-common';
 
 /**
  * @appilot-labs/dsh 域插件：project（项目识别 / 上下文 / 注册表）。

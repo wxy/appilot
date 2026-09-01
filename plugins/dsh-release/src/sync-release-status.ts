@@ -1,9 +1,9 @@
 import { resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify, envCredentialReader, type CredentialReader } from '@appilot-labs/dsh-common';
-import { collectRepoInfo } from '@appilot-labs/core/git-info';
-import { listGitTags } from '@appilot-labs/core/release-watcher';
-import { listGitHubReleases } from '@appilot-labs/core/github-api';
+import { jsonify, envCredentialReader, type CredentialReader } from '@appilot-labs/appilot-common';
+import { collectRepoInfo } from '@appilot-labs/appilot-core/git-info';
+import { listGitTags } from '@appilot-labs/appilot-core/release-watcher';
+import { listGitHubReleases } from '@appilot-labs/appilot-core/github-api';
 
 /**
  * 刷新并汇总仓库的发布状态：最近 git tag + GitHub release（公开仓库匿名可读，

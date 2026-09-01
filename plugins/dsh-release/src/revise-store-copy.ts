@@ -1,20 +1,20 @@
 import { basename, resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '@appilot-labs/dsh-common';
-import { AIProvider } from '@appilot-labs/core/ai/ai-provider';
-import { generateStoreSubmissionContent } from '@appilot-labs/core/ai/release-reviewer';
-import { collectRepoInfo } from '@appilot-labs/core/git-info';
-import { listGitTags } from '@appilot-labs/core/release-watcher';
-import { buildProjectProfile } from '@appilot-labs/core/project-profile';
+import { jsonify } from '@appilot-labs/appilot-common';
+import { AIProvider } from '@appilot-labs/appilot-core/ai/ai-provider';
+import { generateStoreSubmissionContent } from '@appilot-labs/appilot-core/ai/release-reviewer';
+import { collectRepoInfo } from '@appilot-labs/appilot-core/git-info';
+import { listGitTags } from '@appilot-labs/appilot-core/release-watcher';
+import { buildProjectProfile } from '@appilot-labs/appilot-core/project-profile';
 import {
   detectApplePlatform,
   detectLocalizedLanguages,
-} from '@appilot-labs/core/app-store-discovery';
-import type { StoreSubmissionLocalization } from '@appilot-labs/core/store-submission';
+} from '@appilot-labs/appilot-core/app-store-discovery';
+import type { StoreSubmissionLocalization } from '@appilot-labs/appilot-core/store-submission';
 import {
   envCredentialReader,
   type CredentialReader,
-} from '@appilot-labs/dsh-common';
+} from '@appilot-labs/appilot-common';
 import { releaseFromGit } from './generate-store-copy.js';
 
 /**
@@ -27,7 +27,7 @@ export function createReviseStoreCopyTool(
   return defineTool({
     name: 'revise_store_copy',
     description:
-      'Revise existing App Store copy for a repository release according to reviewer/author feedback, using the same @appilot-labs/core pipeline as the desktop app. Pass the existing copy fields and the feedback; credentials from ctx.credentials / APILOT_AI_* env vars.',
+      'Revise existing App Store copy for a repository release according to reviewer/author feedback, using the same @appilot-labs/appilot-core pipeline as the desktop app. Pass the existing copy fields and the feedback; credentials from ctx.credentials / APILOT_AI_* env vars.',
     parameters: {
       path: {
         type: 'string',

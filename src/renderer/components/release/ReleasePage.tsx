@@ -2,9 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
-import { buildStatusForVersion } from "@appilot-labs/core/build-status";
-import { inferAppVersion } from "@appilot-labs/core/store-submission";
-import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/core/version-status";
+import { buildStatusForVersion } from "@appilot-labs/appilot-core/build-status";
+import { inferAppVersion } from "@appilot-labs/appilot-core/store-submission";
+import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
 import {
   formatHumanTime,
   languageLabel,
@@ -76,6 +76,9 @@ export function ReleasePage() {
   const [sourceLanguage, setSourceLanguage] = useState("");
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [releaseContext, setReleaseContext] = useState<any>(null);
+  // 数据变更后置位：主进程保存/删除/生成文案都会触发 release:context 重取，
+  // 让「文案历史列表」等上下文数据跟上（否则列表要等重新进入页面才刷新）。
+  const [contextRevision, setContextRevision] = useState(0);
   const [contextLoading, setContextLoading] = useState(false);
   const [historyDraft, setHistoryDraft] = useState<any>(null);
   const [translatingLanguages, setTranslatingLanguages] = useState<Set<string>>(new Set());
@@ -171,9 +174,7 @@ export function ReleasePage() {
       // 仅在切项目/平台或首次载入时重置，后台刷新保留当前视图。
       if (resetView) {
         const hasConfirmedFor = (r: any) =>
-          (r?.submissionDrafts || []).some(
-            (d: any) => d?.productId === productId && d?.batchConfirmedAt,
-          );
+          (r?.submissionDrafts || []).some((d: any) => Boolean(d?.batchConfirmedAt));
         // 工作目标 = 前沿发布（列表第一项）。最新发布已定稿且没有更新的
         // 发布时，不存在工作目标；绝不回退到旧的未覆盖发布。
         const workTarget =
@@ -204,9 +205,7 @@ export function ReleasePage() {
       // 当前文案 = 最新一批已确定的文案；没有新工作时默认回到它。
       const confirmed = candidates
         .flatMap((r: any) =>
-          (r.submissionDrafts || []).filter(
-            (d: any) => d?.productId === productId && d?.batchConfirmedAt,
-          ),
+          (r.submissionDrafts || []).filter((d: any) => Boolean(d?.batchConfirmedAt)),
         )
         .sort(
           (a: any, b: any) =>
@@ -286,6 +285,7 @@ export function ReleasePage() {
       const scope = (e as CustomEvent).detail;
       if (scope === "releases") {
         void loadReleasesRef.current(false, false);
+        setContextRevision((revision) => revision + 1);
       } else if (scope === "asc" && productId) {
         (window as any).appilot?.asc?.status(productId)
           .then(setAscInfo)
@@ -354,7 +354,7 @@ export function ReleasePage() {
     return () => {
       cancelled = true;
     };
-  }, [project?.id, productId, selectedTag]);
+  }, [project?.id, productId, selectedTag, contextRevision]);
 
   const draft = active?.draft || null;
   const selectedRelease = releases.find((item) => item.tag === selectedTag) || null;
@@ -441,15 +441,12 @@ export function ReleasePage() {
   // 工作目标 = 前沿发布（列表第一项：草案优先、再按时间）。最新发布已定稿
   // 且没有更新的发布时不存在工作目标，绝不回退到旧的未覆盖发布。
   const hasConfirmedCopyFor = (r: any) =>
-    (r?.submissionDrafts || []).some(
-      (d: any) => d?.productId === productId && d?.batchConfirmedAt,
-    );
+    (r?.submissionDrafts || []).some((d: any) => Boolean(d?.batchConfirmedAt));
   const workTargetRelease =
     releases[0] && !hasConfirmedCopyFor(releases[0]) ? releases[0] : null;
   // 工作目标上的文案草案（未确定）：按最近更新取一份。
   const workingDraft =
     (workTargetRelease?.submissionDrafts || [])
-      .filter((item: any) => item?.productId === productId)
       .sort(
         (a: any, b: any) =>
           new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
@@ -458,7 +455,6 @@ export function ReleasePage() {
   // 被超越的未完成草案：不在工作目标上、且尚未整批确定的残留。
   const supersededUnconfirmedDrafts = (releaseContext?.drafts || []).filter(
     (item: any) =>
-      item?.productId === productId &&
       !item?.batchConfirmedAt &&
       item?.releaseTag !== workTargetRelease?.tag,
   );
@@ -623,11 +619,9 @@ export function ReleasePage() {
       !localizations.some((item: any) => item.language === language),
   ).length;
   const selectedExistingDraft =
-    active?.draft?.productId === productId && active?.draft?.releaseTag === selectedTag
+    active?.draft?.releaseTag === selectedTag
       ? active.draft
-      : selectedRelease?.submissionDrafts?.find(
-          (item: any) => item?.productId === productId,
-        ) || null;
+      : selectedRelease?.submissionDrafts?.[0] || null;
   const isReadOnly =
     versionLocked ||
     batchConfirmed ||
@@ -1095,9 +1089,7 @@ export function ReleasePage() {
     setActiveLanguage("");
     setReleaseContext(null);
     setHistoryDraft(null);
-    const existing = selectedRelease?.submissionDrafts?.find(
-      (item: any) => item?.productId === value,
-    );
+    const existing = selectedRelease?.submissionDrafts?.[0];
     if (!existing || !project || !selectedTag) return;
 
     setLoadingDraft(true);

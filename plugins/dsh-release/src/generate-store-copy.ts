@@ -1,20 +1,20 @@
 import { basename, resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '@appilot-labs/dsh-common';
-import { AIProvider } from '@appilot-labs/core/ai/ai-provider';
-import { generateStoreSubmissionContent } from '@appilot-labs/core/ai/release-reviewer';
-import { collectRepoInfo } from '@appilot-labs/core/git-info';
-import { listGitTags } from '@appilot-labs/core/release-watcher';
-import { buildProjectProfile } from '@appilot-labs/core/project-profile';
+import { jsonify } from '@appilot-labs/appilot-common';
+import { AIProvider } from '@appilot-labs/appilot-core/ai/ai-provider';
+import { generateStoreSubmissionContent } from '@appilot-labs/appilot-core/ai/release-reviewer';
+import { collectRepoInfo } from '@appilot-labs/appilot-core/git-info';
+import { listGitTags } from '@appilot-labs/appilot-core/release-watcher';
+import { buildProjectProfile } from '@appilot-labs/appilot-core/project-profile';
 import {
   detectApplePlatform,
   detectLocalizedLanguages,
-} from '@appilot-labs/core/app-store-discovery';
-import type { ReleaseInfo } from '@appilot-labs/core/release-watcher';
+} from '@appilot-labs/appilot-core/app-store-discovery';
+import type { ReleaseInfo } from '@appilot-labs/appilot-core/release-watcher';
 import {
   envCredentialReader,
   type CredentialReader,
-} from '@appilot-labs/dsh-common';
+} from '@appilot-labs/appilot-common';
 
 /** 由 git 状态构造最小 ReleaseInfo（MVP：本地 tag 驱动）。 */
 export function releaseFromGit(
@@ -48,7 +48,7 @@ export function createGenerateStoreCopyTool(
   return defineTool({
     name: 'generate_store_copy',
     description:
-      'Generate App Store copy (name/subtitle/description/whatsNew/keywords) for a repository release using the @appilot-labs/core AI pipeline. Credentials come from ctx.credentials / APILOT_AI_* env vars. One language per call.',
+      'Generate App Store copy (name/subtitle/description/whatsNew/keywords) for a repository release using the @appilot-labs/appilot-core AI pipeline. Credentials come from ctx.credentials / APILOT_AI_* env vars. One language per call.',
     parameters: {
       path: {
         type: 'string',

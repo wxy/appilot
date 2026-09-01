@@ -15,8 +15,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/renderer/*"],
-      "@appilot-labs/core": ["./packages/core/src/index.ts"],
-      "@appilot-labs/core/*": ["./packages/core/src/*"]
+      "@appilot-labs/appilot-core": ["./packages/core/src/index.ts"],
+      "@appilot-labs/appilot-core/*": ["./packages/core/src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "packages/core/src/**/*.ts", "packages/core/tests/**/*.ts", "vite-env.d.ts"]

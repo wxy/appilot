@@ -36,25 +36,25 @@ jobs:
 
       # 按依赖顺序发布（core → common → project/release → dsh）。
       # 只发布 5 个包；apps/desktop、packages/cli、profiles/ 不发布。
-      - name: Publish @appilot-labs/core
+      - name: Publish @appilot-labs/appilot-core
         working-directory: packages/core
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @appilot-labs/dsh-common
+      - name: Publish @appilot-labs/appilot-common
         working-directory: plugins/dsh-common
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @appilot-labs/dsh-project
+      - name: Publish @appilot-labs/appilot-project
         working-directory: plugins/dsh-project
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @appilot-labs/dsh-release
+      - name: Publish @appilot-labs/appilot-release
         working-directory: plugins/dsh-release
         run: npm publish --access public --provenance
         env:
