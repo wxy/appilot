@@ -52,13 +52,18 @@ export function memoryProjectStore(): ProjectStore {
 }
 
 /**
- * 宿主 domain 存储实现（ctx.storage.domain，web profile 提供）。
+ * 宿主 domain 存储实现（ctx.get('storage').domain，web profile 提供）。
+ * 用 ctx.get() 显式读取——无需 inject（headless 无 storage 时优雅回退内存）。
  * 打开 appilot 域并持有 projects 表；关闭由调用方 effect 负责（index.ts）。
  */
 export function domainProjectStore(ctx: Context): ProjectStore {
+  const hub = () =>
+    ctx.get('storage') as { domain?: { open(spec: unknown): Promise<unknown> } } | undefined;
   const store: ProjectStore = {
     async save(record) {
-      const domain = await ctx.storage?.domain?.open(appilotDomain);
+      const domain = (await hub()?.domain?.open(appilotDomain)) as
+        | { table(name: string): { put(k: string, v: unknown): Promise<void> }; close(): Promise<void> }
+        | undefined;
       if (!domain) throw new Error('存储服务不可用（需要 dsh-storage-domain）。');
       try {
         await domain.table('projects').put(record.name, record);
@@ -67,19 +72,23 @@ export function domainProjectStore(ctx: Context): ProjectStore {
       }
     },
     async list() {
-      const domain = await ctx.storage?.domain?.open(appilotDomain);
+      const domain = (await hub()?.domain?.open(appilotDomain)) as
+        | { table(name: string): { entries(): IterableIterator<[string, unknown]> }; close(): Promise<void> }
+        | undefined;
       if (!domain) return [];
       try {
-        return [...domain.table('projects').entries()].map(([, v]) => v);
+        return [...domain.table('projects').entries()].map(([, v]) => v as ProjectRecord);
       } finally {
         await domain.close();
       }
     },
     async get(name) {
-      const domain = await ctx.storage?.domain?.open(appilotDomain);
+      const domain = (await hub()?.domain?.open(appilotDomain)) as
+        | { table(name: string): { get(k: string): unknown }; close(): Promise<void> }
+        | undefined;
       if (!domain) return undefined;
       try {
-        return domain.table('projects').get(name);
+        return domain.table('projects').get(name) as ProjectRecord | undefined;
       } finally {
         await domain.close();
       }

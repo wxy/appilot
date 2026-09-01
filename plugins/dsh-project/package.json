@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/dsh-project",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Appilot DSH 域插件：project（项目识别 / 上下文 / 注册表）",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,8 +12,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@appilot-labs/core": "0.4.4",
-    "@appilot-labs/dsh-common": "0.1.0"
+    "@appilot-labs/core": "^0.4.4",
+    "@appilot-labs/dsh-common": "^0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
