@@ -10,9 +10,8 @@ bundles = `dsh-base` + `dsh-web-app` + `@appilot-labs/dsh`（元插件，含 pro
 mkdir -p ~/.dsh/profiles/appilot
 cp profiles/appilot/package.json profiles/appilot/cordis.patch.yml ~/.dsh/profiles/appilot/
 
-# 2. 安装插件依赖（file: 指向本仓库；发布后改 registry 版本）
-cd ~/.dsh/profiles/appilot
-npm install --no-audit --no-fund   # 或 dsh plugin --profile appilot add <pkg>
+# 2. 官方模式安装插件（已发布到 npm，pnpm 从 registry 安装）
+dsh plugin --profile appilot add @appilot-labs/dsh
 
 # 3. 验证配置树（不启动服务）
 dsh --profile appilot --dump-config | grep -i appilot

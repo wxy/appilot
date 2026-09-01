@@ -1,0 +1,72 @@
+name: publish
+
+# 发布 @appilot-labs/* 5 个包到 npm（不发布 desktop/CLI/profile 等）。
+# 触发：手动（workflow_dispatch）或推送 v* tag。
+# 认证：npmjs 的 NPM_TOKEN secret（OIDC/Trusted Publishing 升级见文末说明）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: "需要 bump 的包（可选，手动指定）"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # 用于 npm provenance / 未来 OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+
+      # 构建全部（core + plugins），发布内容依赖 dist
+      - run: npm run build
+
+      # 按依赖顺序发布（core → common → project/release → dsh）。
+      # 只发布 5 个包；apps/desktop、packages/cli、profiles/ 不发布。
+      - name: Publish @appilot-labs/core
+        working-directory: packages/core
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @appilot-labs/dsh-common
+        working-directory: plugins/dsh-common
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @appilot-labs/dsh-project
+        working-directory: plugins/dsh-project
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @appilot-labs/dsh-release
+        working-directory: plugins/dsh-release
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @appilot-labs/dsh
+        working-directory: plugins/dsh-appilot
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+# OIDC 升级（Trusted Publishing）：
+# 1) 在 npmjs.com 每个包页面 → Settings → Trusted Publishing，绑定本仓库 + 本 workflow
+# 2) 移除 NPM_TOKEN secret，认证改为 GitHub OIDC 直接换发 npm token
+# 3) workflow 已带 permissions: id-token: write 与 --provenance，就绪
