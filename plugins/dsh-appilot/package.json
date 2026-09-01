@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/dsh",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Appilot DeepSeek Harness plugin — App 运营 Agent 工具（项目上下文 / 发布草稿 / readiness / 文案）",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,6 +25,9 @@
     "typescript": "^5.7.0"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-connection",
@@ -42,7 +45,8 @@
   },
   "files": [
     "dist",
-    "client"
+    "client",
+    "cordis.patch.yml"
   ],
   "publishConfig": {
     "access": "public"

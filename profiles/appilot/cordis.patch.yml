@@ -1,5 +1,2 @@
-# appilot profile 用户层：启用 @appilot-labs/dsh 插件（树外依赖，包安装在 profile node_modules）。
-# 禁用 = 删除本行或改 disabled: true。官方 dsh.profile.bundles 保持不变。
-- insert:
-    - id: appilot
-      name: '@appilot-labs/dsh'
+# appilot profile 用户层（插件作为 bundle 注册，由 dsh plugin add 管理；此处留空）
+[]
