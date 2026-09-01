@@ -1,8 +1,5 @@
-# appilot profile 用户覆盖层。
-# 可选：在此定制 persona / 默认行为。例如把系统提示词改为 Appilot 主场的说明：
-# - id: system-prompt
-#   config:
-#     persona: >-
-#       You are the Appilot app-operations agent running inside a customized
-#       DeepSeek Harness profile. Help with App Store release drafting,
-#       readiness checks, and store copy.
+# appilot profile 用户层：启用 @appilot/dsh 插件（树外依赖，包安装在 profile node_modules）。
+# 禁用 = 删除本行或改 disabled: true。官方 dsh.profile.bundles 保持不变。
+- insert:
+    - id: appilot
+      name: '@appilot/dsh'

@@ -1,7 +1,7 @@
 {
   "name": "appilot-profile",
   "private": true,
-  "description": "Appilot 定制 Harness profile：dsh-base + dsh-web-app + @appilot/dsh，开箱即用的 App 运营 Agent",
+  "description": "Appilot 定制 Harness profile（官方 bundles 不动；@appilot/dsh 走用户层 cordis.patch.yml）",
   "dependencies": {
     "@appilot/dsh": "file:../../plugins/dsh-appilot",
     "@appilot/dsh-common": "file:../../plugins/dsh-common",
@@ -12,8 +12,7 @@
     "profile": {
       "bundles": [
         "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-web-app",
-        "@appilot/dsh"
+        "@deepseek-ai/dsh-web-app"
       ]
     }
   }
