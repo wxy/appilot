@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import type { ReadinessCheckItem, ReadinessStatus } from "@appilot-labs/core/readiness-check";
+import type { ReadinessCheckItem, ReadinessStatus } from "@appilot-labs/appilot-core/readiness-check";
 import { cn } from "../../lib/utils";
 import { formatHumanTime } from "../../lib/format";
 import { AppleIcon, GithubIcon } from "../ui/Icons";

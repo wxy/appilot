@@ -1,13 +1,13 @@
 import { ipcMain } from "electron";
-import { runReadinessChecks, type ReadinessCheckItem } from "@appilot-labs/core/readiness-check";
+import { runReadinessChecks, type ReadinessCheckItem } from "@appilot-labs/appilot-core/readiness-check";
 import { runBuildStatusNow, runOpsSyncNow, runReviewsSyncNow } from "../scheduler";
 import { findStoreSubmissionDraft, upsertStoreSubmissionDraft } from "../project-state";
 import { getStore } from "../store";
 import { assertNonEmptyString } from "../util";
 import { notifyDataChanged } from "../data-sync";
 import { resolveEffectiveCredentials } from "../credentials";
-import { log } from "@appilot-labs/core/logger";
-import { localeMatchesLocale } from "@appilot-labs/core/store-submission";
+import { log } from "@appilot-labs/appilot-core/logger";
+import { localeMatchesLocale } from "@appilot-labs/appilot-core/store-submission";
 
 function readinessInputFrom(draft: any, product: any, asc: any) {
   const localizations = (draft.localizations || []).map((loc: any) => ({
@@ -62,7 +62,7 @@ async function fetchAlignmentStoreCopy(
   if (hasAsc && product.bundleId && targetVersion) {
     try {
       const fs = await import("fs");
-      const { createAscClient } = await import("@appilot-labs/core/asc-api");
+      const { createAscClient } = await import("@appilot-labs/appilot-core/asc-api");
       const client = createAscClient({
         issuerId: creds.ascIssuerId,
         keyId: creds.ascKeyId,
@@ -119,8 +119,8 @@ async function fetchAlignmentStoreCopy(
     }
   }
 
-  const { STOREFRONTS_BY_LANGUAGE } = await import("@appilot-labs/core/storefronts");
-  const { fetchStoreLocalizedCopy } = await import("@appilot-labs/core/app-store-discovery");
+  const { STOREFRONTS_BY_LANGUAGE } = await import("@appilot-labs/appilot-core/storefronts");
+  const { fetchStoreLocalizedCopy } = await import("@appilot-labs/appilot-core/app-store-discovery");
   const storeByLanguage: { language: string; fields: Record<string, string | null> }[] = [];
   let versionMatched = false;
   for (const loc of draft.localizations || []) {
@@ -170,7 +170,7 @@ export function registerOpsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
     if (!project?.localPath) return {};
-    const { getCommitActivity } = await import("@appilot-labs/core/git-info");
+    const { getCommitActivity } = await import("@appilot-labs/appilot-core/git-info");
     return getCommitActivity(project.localPath);
   });
 
@@ -196,7 +196,7 @@ export function registerOpsHandlers(): void {
         (item: any) => item.id === productId,
       );
       if (product?.trackId) {
-        const { fetchStoreCurrentVersion } = await import("@appilot-labs/core/app-store-discovery");
+        const { fetchStoreCurrentVersion } = await import("@appilot-labs/appilot-core/app-store-discovery");
         return fetchStoreCurrentVersion(product.trackId);
       }
     }
@@ -227,9 +227,9 @@ export function registerOpsHandlers(): void {
     // still be aligned after release. Only applies when the storefront's
     // current version matches the draft's target version.
     if (!asc && draft.appVersion && product?.trackId) {
-      const { STOREFRONTS_BY_LANGUAGE } = await import("@appilot-labs/core/storefronts");
-      const { fetchStoreLocalizedCopy } = await import("@appilot-labs/core/app-store-discovery");
-      const { applyStorePublicSnapshotToDraft } = await import("@appilot-labs/core/store-submission");
+      const { STOREFRONTS_BY_LANGUAGE } = await import("@appilot-labs/appilot-core/storefronts");
+      const { fetchStoreLocalizedCopy } = await import("@appilot-labs/appilot-core/app-store-discovery");
+      const { applyStorePublicSnapshotToDraft } = await import("@appilot-labs/appilot-core/store-submission");
       const targetVersion = String(draft.appVersion || "").trim().replace(/^v/i, "");
       const updates: { language: string; description: string; whatsNew: string }[] = [];
       for (const loc of draft.localizations || []) {
@@ -271,7 +271,7 @@ export function registerOpsHandlers(): void {
       const draft = findStoreSubmissionDraft(project, productId, releaseTag);
       if (!draft) throw new Error("Draft not found");
       const copy = await fetchAlignmentStoreCopy(s, project, product, draft);
-      const { diffDraftAgainstStore } = await import("@appilot-labs/core/store-submission");
+      const { diffDraftAgainstStore } = await import("@appilot-labs/appilot-core/store-submission");
       const diffs = diffDraftAgainstStore(draft, copy.storeByLanguage);
       return { mode: copy.mode, versionMatched: copy.versionMatched, diffs };
     },
@@ -300,7 +300,7 @@ export function registerOpsHandlers(): void {
         applyAscSnapshotToDraft,
         applyStorePublicSnapshotToDraft,
         diffDraftAgainstStore,
-      } = await import("@appilot-labs/core/store-submission");
+      } = await import("@appilot-labs/appilot-core/store-submission");
       let changed = false;
       if (copy.mode === "asc" && copy.versionMatched && copy.ascLocalizations) {
         changed =

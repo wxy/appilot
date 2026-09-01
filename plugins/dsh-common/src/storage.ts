@@ -2,11 +2,11 @@ import { z } from 'zod';
 import type { Context } from '@deepseek-ai/cordis';
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain';
 import { basename } from 'node:path';
-import { collectRepoInfo } from '@appilot-labs/core/git-info';
+import { collectRepoInfo } from '@appilot-labs/appilot-core/git-info';
 import {
   detectApplePlatform,
   detectLocalizedLanguages,
-} from '@appilot-labs/core/app-store-discovery';
+} from '@appilot-labs/appilot-core/app-store-discovery';
 
 /** 注册过的项目记录（持久化的最小快照，供按名引用）。 */
 export const projectRecordSchema = z.object({

@@ -1,15 +1,15 @@
 import { basename, resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '@appilot-labs/dsh-common';
-import { collectRepoInfo } from '@appilot-labs/core/git-info';
+import { jsonify } from '@appilot-labs/appilot-common';
+import { collectRepoInfo } from '@appilot-labs/appilot-core/git-info';
 import {
   buildProjectProfile,
   profileToPromptBlock,
-} from '@appilot-labs/core/project-profile';
+} from '@appilot-labs/appilot-core/project-profile';
 import {
   detectApplePlatform,
   detectLocalizedLanguages,
-} from '@appilot-labs/core/app-store-discovery';
+} from '@appilot-labs/appilot-core/app-store-discovery';
 
 /**
  * 构建项目画像（platform / languages / README 摘要 / 商店链接）并输出 prompt 块，

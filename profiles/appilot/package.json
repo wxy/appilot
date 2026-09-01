@@ -4,9 +4,9 @@
   "description": "Appilot 定制 Harness profile（官方 bundles 不动；@appilot-labs/appilot 走用户层 cordis.patch.yml）",
   "dependencies": {
     "@appilot-labs/appilot": "file:../../plugins/dsh-appilot",
-    "@appilot-labs/dsh-common": "file:../../plugins/dsh-common",
-    "@appilot-labs/dsh-project": "file:../../plugins/dsh-project",
-    "@appilot-labs/dsh-release": "file:../../plugins/dsh-release"
+    "@appilot-labs/appilot-common": "file:../../plugins/dsh-common",
+    "@appilot-labs/appilot-project": "file:../../plugins/dsh-project",
+    "@appilot-labs/appilot-release": "file:../../plugins/dsh-release"
   },
   "dsh": {
     "profile": {

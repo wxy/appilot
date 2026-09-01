@@ -1,7 +1,7 @@
 import { ipcMain } from "electron";
 import fs from "fs";
 import path from "path";
-import type { StoreSubmissionDraft } from "@appilot-labs/core/store-submission";
+import type { StoreSubmissionDraft } from "@appilot-labs/appilot-core/store-submission";
 import { createAiProvider } from "../ai-service";
 import { resolveEffectiveCredentials } from "../credentials";
 import {
@@ -12,7 +12,7 @@ import {
   getStoreSubmissionDrafts,
   upsertStoreSubmissionDraft,
 } from "../project-state";
-import { inferAppVersion } from "@appilot-labs/core/store-submission";
+import { inferAppVersion } from "@appilot-labs/appilot-core/store-submission";
 import { githubSyncCacheEntry } from "../scheduler";
 import { getStore } from "../store";
 import {
@@ -21,8 +21,8 @@ import {
 } from "../release-service";
 import { assertNonEmptyString, assertStringArray } from "../util";
 import { notifyDataChanged } from "../data-sync";
-import { log } from "@appilot-labs/core/logger";
-import type { GitHubRepoCapabilities } from "@appilot-labs/core/github-api";
+import { log } from "@appilot-labs/appilot-core/logger";
+import type { GitHubRepoCapabilities } from "@appilot-labs/appilot-core/github-api";
 import { cancelAiRequest, withAiOperation } from "../ai-cancel";
 
 export function registerReleaseHandlers(): void {
@@ -37,7 +37,7 @@ export function registerReleaseHandlers(): void {
     cached?: any,
     force = false,
   ): Promise<any[]> {
-    const { listGitHubReleases } = await import("@appilot-labs/core/github-api");
+    const { listGitHubReleases } = await import("@appilot-labs/appilot-core/github-api");
     // 非强制刷新时优先用小时级同步缓存，避免每次打开工作台都打 GitHub API；
     // 缓存新鲜度（1 小时内 + lastSeenSha 一致）由 githubSyncCacheEntry 保证。
     if (!force && Array.isArray(cached?.releases) && cached.releases.length > 0) {
@@ -55,7 +55,7 @@ export function registerReleaseHandlers(): void {
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
 
-    const { checkForRelease } = await import("@appilot-labs/core/release-watcher");
+    const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
     const token = resolveEffectiveCredentials(s, project.id).githubToken;
     const githubReleases = await githubReleaseCandidates(
       project,
@@ -80,7 +80,7 @@ export function registerReleaseHandlers(): void {
     // invisible instead of silently missing them.
     let githubCapabilities: GitHubRepoCapabilities | null = null;
     if (force) {
-      const { fetchRepoCapabilities } = await import("@appilot-labs/core/github-api");
+      const { fetchRepoCapabilities } = await import("@appilot-labs/appilot-core/github-api");
       githubCapabilities = await fetchRepoCapabilities(project.localPath, token);
     } else {
       githubCapabilities = githubSyncCacheEntry(s, project)?.capabilities ?? null;
@@ -118,8 +118,8 @@ export function registerReleaseHandlers(): void {
       // transient state, not an error worth surfacing in the handler.
       if (!product) return null;
 
-      const { checkForRelease } = await import("@appilot-labs/core/release-watcher");
-      const { readFullReadme, readRepoDescription } = await import("@appilot-labs/core/app-store-discovery");
+      const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
+      const { readFullReadme, readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
       const token = resolveEffectiveCredentials(s, project.id).githubToken;
       const githubReleases = await githubReleaseCandidates(
         project,
@@ -224,7 +224,7 @@ export function registerReleaseHandlers(): void {
     const product = (project.storeProducts || []).find((item: any) => item.id === productId);
     if (!product) throw new Error("Store product not found");
 
-    const { checkForRelease } = await import("@appilot-labs/core/release-watcher");
+    const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
     const token = resolveEffectiveCredentials(s, project.id).githubToken;
     const githubReleases = await githubReleaseCandidates(
       project,
@@ -279,7 +279,7 @@ export function registerReleaseHandlers(): void {
         // commits are fed to the AI as release material.
         let generationRelease = release;
         if (Array.isArray(includeShas) && release.material) {
-          const { filterMaterial, materialToBody } = await import("@appilot-labs/core/release-watcher");
+          const { filterMaterial, materialToBody } = await import("@appilot-labs/appilot-core/release-watcher");
           const filtered = filterMaterial(release.material, includeShas);
           generationRelease = { ...release, material: filtered, body: materialToBody(filtered) };
         }
@@ -362,7 +362,7 @@ export function registerReleaseHandlers(): void {
         throw new Error("该文案已按商店上架状态冻结，不可修改");
       }
 
-      const { translateStoreSubmissionContent } = await import("@appilot-labs/core/ai/release-reviewer");
+      const { translateStoreSubmissionContent } = await import("@appilot-labs/appilot-core/ai/release-reviewer");
 
       const provider = await createAiProvider(s);
       const source = draft.localizations.find((item: any) => item.language === sourceLanguage)
@@ -545,8 +545,8 @@ export function registerReleaseHandlers(): void {
       if (!targetVersion) throw new Error("无法确定目标版本，请先生成文案后再重建");
 
       const fs = await import("fs");
-      const { createAscClient } = await import("@appilot-labs/core/asc-api");
-      const { buildStoreRebuildDraft } = await import("@appilot-labs/core/store-submission");
+      const { createAscClient } = await import("@appilot-labs/appilot-core/asc-api");
+      const { buildStoreRebuildDraft } = await import("@appilot-labs/appilot-core/store-submission");
       const client = createAscClient({
         issuerId: creds.ascIssuerId,
         keyId: creds.ascKeyId,

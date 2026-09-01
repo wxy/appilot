@@ -2,9 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
-import { buildStatusForVersion } from "@appilot-labs/core/build-status";
-import { inferAppVersion } from "@appilot-labs/core/store-submission";
-import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/core/version-status";
+import { buildStatusForVersion } from "@appilot-labs/appilot-core/build-status";
+import { inferAppVersion } from "@appilot-labs/appilot-core/store-submission";
+import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
 import {
   formatHumanTime,
   languageLabel,

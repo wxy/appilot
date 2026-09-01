@@ -4,8 +4,8 @@ import { checkReleaseReadiness } from './check-release-readiness.js';
 import { createSyncReleaseStatusTool } from './sync-release-status.js';
 import { createGenerateStoreCopyTool } from './generate-store-copy.js';
 import { createReviseStoreCopyTool } from './revise-store-copy.js';
-import { ctxCredentialReader } from '@appilot-labs/dsh-common';
-import type { ProjectStore } from '@appilot-labs/dsh-common';
+import { ctxCredentialReader } from '@appilot-labs/appilot-common';
+import type { ProjectStore } from '@appilot-labs/appilot-common';
 
 /**
  * @appilot-labs/dsh 域插件：release（发布草稿 / readiness / 发布状态 / 文案生成与修订）。

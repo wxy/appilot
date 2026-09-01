@@ -9,10 +9,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { BriefSuggestion } from "@appilot-labs/core/ai/overview-brief";
-import { storefrontsForLanguage } from "@appilot-labs/core/storefronts";
-import { storefrontDisplayName } from "@appilot-labs/core/storefronts";
-import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/core/version-status";
+import type { BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
+import { storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
+import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
+import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
 import { briefRuleSignals } from "../../lib/overview-brief";
 import { matrixCellState, STALE_MS } from "../../lib/matrix";
 import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";

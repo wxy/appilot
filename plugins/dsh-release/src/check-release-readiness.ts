@@ -1,9 +1,9 @@
 import { resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '@appilot-labs/dsh-common';
-import { runReadinessChecks } from '@appilot-labs/core/readiness-check';
-import { listGitTags } from '@appilot-labs/core/release-watcher';
-import { detectLocalizedLanguages } from '@appilot-labs/core/app-store-discovery';
+import { jsonify } from '@appilot-labs/appilot-common';
+import { runReadinessChecks } from '@appilot-labs/appilot-core/readiness-check';
+import { listGitTags } from '@appilot-labs/appilot-core/release-watcher';
+import { detectLocalizedLanguages } from '@appilot-labs/appilot-core/app-store-discovery';
 
 /**
  * 对仓库执行 Appilot 发布准备度检查（各语言商店文案与字段上限、版本 tag、

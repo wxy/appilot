@@ -37,7 +37,7 @@ Appilot Core（纯 TS，零宿主依赖）
 
 核心纪律（继承自上次 Codex 会话）：
 
-1. **@appilot-labs/core 永远不绑定任何宿主**（Electron / Harness 都不绑定），可脱离宿主独立测试。
+1. **@appilot-labs/appilot-core 永远不绑定任何宿主**（Electron / Harness 都不绑定），可脱离宿主独立测试。
 2. **不再把核心逻辑写进 Electron 主进程或 renderer**——新采集器、指标、AI prompt、
    release 状态机一律进 core。
 3. **状态单一所有权**：迁移期间明确 Electron 与插件各自的存储 owner，禁止双写同一份数据。
@@ -48,7 +48,7 @@ Appilot Core（纯 TS，零宿主依赖）
 
 | 层 | 位置 | 规模 | 依赖 | 归属 |
 |---|---|---|---|---|
-| 核心 | `src/engine/` + `src/engine/ai/` | 30 个文件 | 仅 `openai`、`@octokit/rest` + node 内置 | → `@appilot-labs/core` |
+| 核心 | `src/engine/` + `src/engine/ai/` | 30 个文件 | 仅 `openai`、`@octokit/rest` + node 内置 | → `@appilot-labs/appilot-core` |
 | 宿主 | `src/main/`（IPC/窗口/调度/存储）、`src/preload/`、`src/renderer/` | 23 个文件引用 engine（108 处 import） | electron、electron-store、react、recharts 等 22 项 | → `apps/desktop` |
 | 测试 | `tests/` | 51 个文件 | tsx + node:assert | 随 core 迁移，desktop 保留宿主相关 |
 
@@ -82,13 +82,13 @@ appilot/
 ├── docs/                         # 保持现状
 ├── packages/
 │   └── core/                     # ← src/engine + src/engine/ai 迁入
-│       ├── package.json          #   name: "@appilot-labs/core", deps: openai, @octokit/rest
+│       ├── package.json          #   name: "@appilot-labs/appilot-core", deps: openai, @octokit/rest
 │       ├── tsconfig.json
 │       ├── src/                  #   engine 全部模块（保留相对结构）
 │       └── tests/                #   engine 相关测试（约 40 个文件）迁入
 ├── apps/
 │   └── desktop/                  # ← 现 Electron 应用整体移入
-│       ├── package.json          #   依赖 @appilot-labs/core (workspace:*)
+│       ├── package.json          #   依赖 @appilot-labs/appilot-core (workspace:*)
 │       ├── electron-builder.yml
 │       ├── electron.vite.config.ts
 │       ├── tailwind.config.ts / postcss.config.cjs
@@ -163,13 +163,13 @@ appilot/
 > `npm run typecheck` + `npm test` 全绿。
 
 - **T1 建 workspaces 骨架**：根 `package.json` 加 `workspaces` 字段；新建
-  `packages/core/package.json`（name `@appilot-labs/core`，version 与主版本一致，deps 仅
+  `packages/core/package.json`（name `@appilot-labs/appilot-core`，version 与主版本一致，deps 仅
   openai + @octokit/rest + 开发用 typescript/tsx）。
 - **T2 迁移 engine**：`git mv src/engine packages/core/src`（含 `ai/` 子目录）。
 - **T3 改写 import**：全仓库 23 个文件、108 处 `../engine` 引用改为
-  `@appilot-labs/core` 包名导入（`git mv` 后由 desktop 引用 `@appilot-labs/core`）。
+  `@appilot-labs/appilot-core` 包名导入（`git mv` 后由 desktop 引用 `@appilot-labs/appilot-core`）。
   需要 engine 补一个完整的 `index.ts` 导出面（当前只有 5 个导出，模块均直接深路径
-  引用——迁移时统一从 `@appilot-labs/core` 入口导出，或先保深路径再收敛）。
+  引用——迁移时统一从 `@appilot-labs/appilot-core` 入口导出，或先保深路径再收敛）。
 - **T4 迁移测试**：`git mv tests/*.test.ts` 中 engine 相关 → `packages/core/tests/`；
   desktop 相关留在 `apps/desktop/tests/`。根 `test` 脚本改为聚合两处。
 - **T5 移动 desktop 配置**：`git mv electron-builder.yml electron.vite.config.ts
@@ -233,7 +233,7 @@ electron-vite 的 root 配置调整；预计可在数轮内完成，无逻辑改
 
 ## 9. 验收标准
 
-1. Phase 1 完成后：`@appilot-labs/core` 无任何 Electron/cordis 依赖；desktop 通过
+1. Phase 1 完成后：`@appilot-labs/appilot-core` 无任何 Electron/cordis 依赖；desktop 通过
    workspace 引用 core；51 个测试全绿；`npm run build` 通过。
 2. Phase 2 完成后：`plugins/dsh-appilot` 可被安装到本机 DSH，`resolve_current_project`
    等 7 个工具可用，且 `generate_store_copy` 与 desktop 走同一 core 代码路径。
@@ -293,7 +293,7 @@ settings/sidebar/jobs/workflow-run/plan/deliverables… 各有浏览器端 `clie
 - T5（desktop 整体迁入 `apps/desktop`）**推迟**到 core 抽取验证通过之后单独执行，
   降低一次性改动风险。
 - core 发布形态：`packages/core` 用 tsc 编译到 `dist/`（declaration 开启），
-  desktop 通过 `dependencies: {"@appilot-labs/core": "workspace:*"}` 引用；
+  desktop 通过 `dependencies: {"@appilot-labs/appilot-core": "workspace:*"}` 引用；
   electron-vite `externalizeDepsPlugin` 外部化后运行时加载编译产物；
   electron-builder 会把 workspace 包打进 asar。
 - 引用改写量实测：`@engine` 别名仅配置层 2 处（可删除）；`src/` 内相对路径
@@ -304,7 +304,7 @@ settings/sidebar/jobs/workflow-run/plan/deliverables… 各有浏览器端 `clie
 
 **已交付并验证**：`plugins/dsh-appilot`（`@appilot-labs/appilot`）首个插件，4 个只读工具
 （resolve_current_project / get_project_context / get_release_draft /
-check_release_readiness），全部走 `@appilot-labs/core` 同一代码路径。
+check_release_readiness），全部走 `@appilot-labs/appilot-core` 同一代码路径。
 
 - 形态：ESM 插件；`@deepseek-ai/cordis` + `dsh-tools` 为 peer 依赖（宿主提供）。
 - 验证：tsc 零错误；单元测试 5 断言；**真实 Harness headless 端到端**——模型调用
@@ -314,7 +314,7 @@ check_release_readiness），全部走 `@appilot-labs/core` 同一代码路径�
 
 **工具已补齐（2026-08-31，插件共 7 个工具）**：新增 `sync_release_status`
 （git tag + GitHub release 状态）、`generate_store_copy` / `revise_store_copy`
-（@appilot-labs/core AI 管线；凭据走 `APILOT_AI_*` 环境变量，不接受参数传 key 防泄漏）。
+（@appilot-labs/appilot-core AI 管线；凭据走 `APILOT_AI_*` 环境变量，不接受参数传 key 防泄漏）。
 `sync_release_status` 已在真实 Harness headless 会话端到端验证（正确返回
 v0.4.4 / v0.3.0 等 tag）。
 
@@ -344,8 +344,8 @@ v0.4.4 / v0.3.0 等 tag）。
   （用户评审判断成立）。骨架已落地 `plugins/dsh-appilot/client/client.js`（含 SVG
   条形图组件 + 3 张工具卡片）；web profile 部署验证列为开放项。
 
-**域插件已拆为独立 npm 包（2026-08-31）**：`@appilot-labs/dsh-common`（凭据/存储/工具）、
-  `@appilot-labs/dsh-project`（项目域）、`@appilot-labs/dsh-release`（发布域）、`@appilot-labs/appilot`（元插件
+**域插件已拆为独立 npm 包（2026-08-31）**：`@appilot-labs/appilot-common`（凭据/存储/工具）、
+  `@appilot-labs/appilot-project`（项目域）、`@appilot-labs/appilot-release`（发布域）、`@appilot-labs/appilot`（元插件
   组合，依赖域包）。用户可按需只装某个域包；已在 headless 会话端到端验证跨域包协作
   （register_project → get_release_draft by name → v0.4.4）。
 
