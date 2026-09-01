@@ -1,7 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis';
-import { createProjectStore } from '@appilot-labs/appilot-common';
+import { createProjectStore, ctxCredentialReader } from '@appilot-labs/appilot-common';
 import * as projectDomain from '@appilot-labs/appilot-project';
 import * as releaseDomain from '@appilot-labs/appilot-release';
+import { createAppilotOverviewTool } from './overview.js';
 
 /**
  * @appilot-labs/dsh — Appilot 的 DeepSeek Harness 元插件（插件组）。
@@ -19,4 +20,6 @@ export function apply(ctx: Context): void {
   const store = createProjectStore(ctx);
   ctx.plugin(projectDomain, { store });
   ctx.plugin(releaseDomain, { store });
+  // 总览聚合工具（跨域，放在元插件）：刷新 Appilot 工作台总览页。
+  ctx.tools.register(createAppilotOverviewTool(ctxCredentialReader(ctx)));
 }

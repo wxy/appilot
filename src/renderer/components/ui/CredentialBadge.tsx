@@ -2,6 +2,15 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { AppleIcon, GithubIcon } from "./Icons";
 
+/** 无 Router 上下文（DSH 客户端）时安全回退：useNavigate 会 throw，捕获后置空。 */
+function useSafeNavigate(): ((to: string) => void) | null {
+  try {
+    return useNavigate();
+  } catch {
+    return null;
+  }
+}
+
 const CREDENTIAL_BADGE_DETAIL: Record<"github" | "asc", string> = {
   github: "私有/草案 release 公告、真实 PR 素材、仓库流量与资产下载量",
   asc: "版本/审核状态回读、审核意见（待实测）、评论洞察、销量/下载分析（待实测）",
@@ -20,7 +29,7 @@ export function CredentialBadge({
   projectId: string;
   source?: "global" | "project" | null;
 }) {
-  const navigate = useNavigate();
+  const navigate = useSafeNavigate();
   const Icon = kind === "github" ? GithubIcon : AppleIcon;
   const label = kind === "github" ? "GitHub" : "App Store";
   const detail = CREDENTIAL_BADGE_DETAIL[kind];
@@ -33,7 +42,7 @@ export function CredentialBadge({
     <button
       type="button"
       onClick={() => {
-        if (!enabled) navigate(`/projects/${projectId}/settings`);
+        if (!enabled && navigate) navigate(`/projects/${projectId}/settings`);
       }}
       title={title}
       className={cn(

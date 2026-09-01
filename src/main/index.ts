@@ -3,6 +3,7 @@ import path from "path";
 import log from "electron-log";
 import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
+import { startRegistrySync } from "./registry-sync";
 import { startTaskScheduler } from "./scheduler";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
 import { setupLogger } from "./logger";
@@ -67,6 +68,8 @@ app.whenReady().then(() => {
   setupLogger();
   registerIpcHandlers();
   startTaskScheduler();
+  // 共享注册表（方案 A）：启动 hydrate + 初始写回 + watch 对侧变更。
+  startRegistrySync(getStore);
   Menu.setApplicationMenu(Menu.buildFromTemplate([]));
   if (process.platform === "darwin" && app.dock) {
     app.dock.setIcon(path.join(__dirname, "../../resources/icon_1024.png"));

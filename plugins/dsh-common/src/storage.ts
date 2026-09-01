@@ -7,6 +7,7 @@ import {
   detectApplePlatform,
   detectLocalizedLanguages,
 } from '@appilot-labs/appilot-core/app-store-discovery';
+import { defaultRegistryPath, fileProjectStore } from './registry-file.js';
 
 /** 注册过的项目记录（持久化的最小快照，供按名引用）。 */
 export const projectRecordSchema = z.object({
@@ -97,9 +98,18 @@ export function domainProjectStore(ctx: Context): ProjectStore {
   return store;
 }
 
-/** 有存储则用 domain 实现，否则回退内存（同一进程内仍可形成循环）。 */
-export function createProjectStore(ctx: Context): ProjectStore {
-  // ctx.get() 显式读取，无需 inject：headless（无 storage 服务）优雅回退内存。
+/** 优先共享注册表文件（方案 A 双向同步）；env APPILOT_REGISTRY_FILE='none' 可禁用回退原逻辑。 */
+export function createProjectStore(
+  ctx: Context,
+  opts?: { registryFile?: string | null },
+): ProjectStore {
+  const override =
+    opts?.registryFile !== undefined ? opts.registryFile : process.env.APPILOT_REGISTRY_FILE;
+  if (override !== 'none' && override !== null) {
+    const filePath = override || defaultRegistryPath();
+    return fileProjectStore(filePath);
+  }
+  // 禁用文件注册表时回退原逻辑（domain → memory）。
   const storage = ctx.get('storage') as { domain?: unknown } | undefined;
   return storage?.domain ? domainProjectStore(ctx) : memoryProjectStore();
 }

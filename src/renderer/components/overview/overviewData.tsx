@@ -127,6 +127,7 @@ export function MetricBlock({
   sub,
   warn,
   highlight,
+  LinkComponent = Link,
 }: {
   to: string;
   label: string;
@@ -134,9 +135,11 @@ export function MetricBlock({
   sub?: string;
   warn?: boolean;
   highlight?: boolean;
+  /** Link 注入：Electron 用 react-router；DSH（无 Router 上下文）传占位实现。 */
+  LinkComponent?: React.ComponentType<{ to: string; className?: string; title?: string; children?: React.ReactNode; [k: string]: any }>;
 }) {
   return (
-    <Link
+    <LinkComponent
       to={to}
       title={`查看${label}`}
       className={cn(
@@ -162,6 +165,6 @@ export function MetricBlock({
         {value}
       </ValueFlash>
       {sub && <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500 truncate">{sub}</p>}
-    </Link>
+    </LinkComponent>
   );
 }

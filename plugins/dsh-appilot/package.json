@@ -6,9 +6,12 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:client",
+    "build:client": "node ./scripts/build-client.mjs",
+    "test:client:smoke": "tsx ./scripts/smoke-test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test:client:contract": "node ./scripts/contract-test.mjs"
   },
   "dependencies": {
     "@appilot-labs/appilot-core": "^0.1.0",
