@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/dsh-release",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Appilot DSH 域插件：release（发布草稿 / readiness / 状态 / 文案生成与修订）",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,8 +12,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@appilot-labs/core": "0.4.4",
-    "@appilot-labs/dsh-common": "0.1.0"
+    "@appilot-labs/core": "^0.4.4",
+    "@appilot-labs/dsh-common": "^0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
