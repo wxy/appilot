@@ -1,7 +1,7 @@
 # Appilot Profile（定制 DeepSeek Harness 发行版）
 
 `dsh --profile appilot` 启动一个以 Appilot 为主场的 Harness：
-bundles = `dsh-base` + `dsh-web-app` + `@appilot/dsh`（元插件，含 project/release 域）。
+bundles = `dsh-base` + `dsh-web-app` + `@appilot-labs/dsh`（元插件，含 project/release 域）。
 
 ## 本机安装（开发验证）
 
@@ -23,7 +23,7 @@ dsh --profile appilot --port 3099 --no-open
 
 ## 说明
 
-- bundles 中的 `@deepseek-ai/*` 从 dsh 安装目录解析；`@appilot/*` 从 profile 的
+- bundles 中的 `@deepseek-ai/*` 从 dsh 安装目录解析；`@appilot-labs/*` 从 profile 的
   node_modules 解析（file: 安装到本机验证，发布后改 npm registry）。
 - profile 的 `cordis.patch.yml` 是用户覆盖层，可定制 persona/默认行为（示例见文件内）。
 - 面向非 Harness 用户的分发：未来用 `appilot` CLI 或桌面壳启动本 profile

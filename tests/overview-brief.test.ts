@@ -8,7 +8,7 @@ import {
   briefSuggestionId,
   buildBriefMessages,
   generateOverviewBrief,
-} from "@appilot/core/ai/overview-brief";
+} from "@appilot-labs/core/ai/overview-brief";
 import { briefRuleSignals } from "../src/renderer/lib/overview-brief";
 
 let errors = 0;

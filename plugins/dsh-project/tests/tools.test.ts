@@ -7,7 +7,7 @@ import { resolveCurrentProject } from '../src/resolve-current-project';
 import { getProjectContext } from '../src/get-project-context';
 import { createRegisterProjectTool } from '../src/register-project';
 import { createListProjectsTool } from '../src/list-projects';
-import { memoryProjectStore } from '@appilot/dsh-common';
+import { memoryProjectStore } from '@appilot-labs/dsh-common';
 
 function execFor() {
   return {
@@ -73,7 +73,7 @@ async function main() {
   assert.equal(listed.projects[0].name, basenameOf(repo));
   console.log('✅ PASS: list_projects returns the registered project');
 
-  console.log('\n🎉 All @appilot/dsh-project tool tests passed!');
+  console.log('\n🎉 All @appilot-labs/dsh-project tool tests passed!');
 }
 
 main().catch((err) => {

@@ -3,10 +3,10 @@ import { resolveCurrentProject } from './resolve-current-project.js';
 import { getProjectContext } from './get-project-context.js';
 import { createRegisterProjectTool } from './register-project.js';
 import { createListProjectsTool } from './list-projects.js';
-import type { ProjectStore } from '@appilot/dsh-common';
+import type { ProjectStore } from '@appilot-labs/dsh-common';
 
 /**
- * @appilot/dsh 域插件：project（项目识别 / 上下文 / 注册表）。
+ * @appilot-labs/dsh 域插件：project（项目识别 / 上下文 / 注册表）。
  * store 由元插件注入（domain 存储或内存回退）。
  */
 export const name = 'appilot-project';

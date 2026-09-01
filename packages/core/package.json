@@ -1,5 +1,5 @@
 {
-  "name": "@appilot/core",
+  "name": "@appilot-labs/core",
   "version": "0.4.4",
   "description": "Appilot core engine — pure TypeScript, zero Electron/React/Cordis dependency",
   "main": "./dist/index.js",

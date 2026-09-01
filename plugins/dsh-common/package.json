@@ -1,5 +1,5 @@
 {
-  "name": "@appilot/dsh-common",
+  "name": "@appilot-labs/dsh-common",
   "version": "0.1.0",
   "description": "Appilot DSH 插件共享基础设施（凭据读取 / 项目存储 / JSON 规范化）",
   "type": "module",
@@ -11,7 +11,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@appilot/core": "0.4.4",
+    "@appilot-labs/core": "0.4.4",
     "zod": "^4.4.3"
   },
   "peerDependencies": {

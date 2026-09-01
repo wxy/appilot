@@ -1,4 +1,4 @@
-# @appilot/dsh 客户端 UI（web）
+# @appilot-labs/dsh 客户端 UI（web）
 
 浏览器端插件：为 Appilot 工具注册自定义 toolview 卡片（含 SVG 图表）。
 
@@ -11,7 +11,7 @@
 
 1. 插件包被宿主 loader 装载（bundle / profile patch）。
 2. `dsh-client-modules` 节点端扫描到 `dsh.client` 声明，编入 `__DSH_BOOT__` 入口图，
-   提供 `/plugins/@appilot/dsh/client.js`。
+   提供 `/plugins/@appilot-labs/dsh/client.js`。
 3. 浏览器端 `__ModuleLoader__` 加载本模块；`apply(ctx)` 经 `ctx.slots.inject`
    注册 `tool.call.toolview` 卡片（键 = 工具名）。
 

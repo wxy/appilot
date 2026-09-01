@@ -1,11 +1,11 @@
 import { basename, resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '@appilot/dsh-common';
-import { collectRepoInfo } from '@appilot/core/git-info';
+import { jsonify } from '@appilot-labs/dsh-common';
+import { collectRepoInfo } from '@appilot-labs/core/git-info';
 import {
   detectApplePlatform,
   detectLocalizedLanguages,
-} from '@appilot/core/app-store-discovery';
+} from '@appilot-labs/core/app-store-discovery';
 
 /**
  * 解析一个本地仓库路径为 Appilot 项目：仓库状态、Apple 平台、商店语言。

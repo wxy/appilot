@@ -8,7 +8,7 @@ import { notifyDataChanged } from "./data-sync";
  * so the UI can show total tokens + cache hits instead of billing amounts.
  */
 export async function createAiProvider(s: AppStore) {
-  const { AIProvider } = await import("@appilot/core/ai/ai-provider");
+  const { AIProvider } = await import("@appilot-labs/core/ai/ai-provider");
   return new AIProvider({
     baseURL: s.get("aiProviderUrl"),
     apiKey: decryptApiKey(s.get("aiApiKey")),

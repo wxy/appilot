@@ -1,9 +1,9 @@
-import { createStoreSubmissionDraft } from "@appilot/core/store-submission";
-import type { StoreSubmissionDraft } from "@appilot/core/store-submission";
+import { createStoreSubmissionDraft } from "@appilot-labs/core/store-submission";
+import type { StoreSubmissionDraft } from "@appilot-labs/core/store-submission";
 import { createAiProvider } from "./ai-service";
 import { ensureProjectKeywordPool, getStoreSubmissionDrafts } from "./project-state";
 import type { AppStore } from "./store";
-import type { ReleaseInfo } from "@appilot/core/release-watcher";
+import type { ReleaseInfo } from "@appilot-labs/core/release-watcher";
 
 export interface ProjectLike {
   id: string;
@@ -31,8 +31,8 @@ export async function buildProjectProfileFor(
   description?: string,
 ) {
   const [{ buildProjectProfile }, { readRepoDescription, readFullReadme }] = await Promise.all([
-    import("@appilot/core/project-profile"),
-    import("@appilot/core/app-store-discovery"),
+    import("@appilot-labs/core/project-profile"),
+    import("@appilot-labs/core/app-store-discovery"),
   ]);
   const drafts = getStoreSubmissionDrafts(project)
     .filter((item: any) => item.productId === product.id)
@@ -88,8 +88,8 @@ export async function generateStoreSubmissionDraft(
   signal?: AbortSignal,
   onRetry?: () => void,
 ): Promise<StoreSubmissionDraft> {
-  const { generateStoreSubmissionContent } = await import("@appilot/core/ai/release-reviewer");
-  const { readRepoDescription } = await import("@appilot/core/app-store-discovery");
+  const { generateStoreSubmissionContent } = await import("@appilot-labs/core/ai/release-reviewer");
+  const { readRepoDescription } = await import("@appilot-labs/core/app-store-discovery");
 
   const provider = await createAiProvider(store);
 
