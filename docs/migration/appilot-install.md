@@ -19,7 +19,11 @@ mkdir -p ~/.dsh/profiles/appilot
 #          name: '@appilot/dsh'
 # 4. 安装依赖
 cd ~/.dsh/profiles/appilot
-npm install --no-audit --no-fund --install-links   # 或 dsh plugin --profile appilot add <pkg>
+# ⚠️ 必须 --omit=peer：npm 默认自动装 peer，会把整套 @deepseek-ai 运行时复制进
+# profile node_modules（双份 cordis），导致 preset 挂载失败、模型列表载不出来。
+# profile 的 pnpm-workspace.yaml 已设 autoInstallPeers:false，npm 不遵守，必须手动省略。
+npm install --no-audit --no-fund --install-links --omit=peer
+# 或（推荐）用官方 pnpm 方式：dsh plugin --profile appilot add <pkg>
 # 5. 启动
 dsh --profile appilot --port 3099
 ```
@@ -38,7 +42,7 @@ scripts/dsh-profile-backup.sh web
 # 2. 安装插件包到 profile node_modules（官方命令，转发 pnpm）
 dsh plugin --profile web add @appilot/dsh          # 发布后：npm registry 包名
 #    本地开发（未发布）：
-cd ~/.dsh/profiles/web && npm install --no-audit --no-fund --install-links
+cd ~/.dsh/profiles/web && npm install --no-audit --no-fund --install-links --omit=peer
 
 # 3. 在用户层启用（web profile 自己的 cordis.patch.yml，追加）：
 #    - insert:
