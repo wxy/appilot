@@ -1,5 +1,5 @@
 import { reviewStats } from "../src/renderer/lib/review-stats";
-import type { Review } from "@appilot/core/review-collector";
+import type { Review } from "@appilot-labs/core/review-collector";
 
 let errors = 0;
 function check(ok: boolean, msg: string) {

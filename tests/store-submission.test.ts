@@ -4,7 +4,7 @@ import {
   buildStoreRebuildDraft,
   diffDraftAgainstStore,
   inferAppVersion,
-} from "@appilot/core/store-submission";
+} from "@appilot-labs/core/store-submission";
 import {
   findDraftByVersion,
   normalizeDraftIdentity,

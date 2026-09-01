@@ -8,7 +8,7 @@ import { checkReleaseReadiness } from '../src/check-release-readiness';
 import { createSyncReleaseStatusTool } from '../src/sync-release-status';
 import { createGenerateStoreCopyTool } from '../src/generate-store-copy';
 import { createReviseStoreCopyTool } from '../src/revise-store-copy';
-import { memoryProjectStore } from '@appilot/dsh-common';
+import { memoryProjectStore } from '@appilot-labs/dsh-common';
 
 function execFor() {
   return {
@@ -104,7 +104,7 @@ async function main() {
   );
   console.log('✅ PASS: revise_store_copy fails cleanly without credentials');
 
-  console.log('\n🎉 All @appilot/dsh-release tool tests passed!');
+  console.log('\n🎉 All @appilot-labs/dsh-release tool tests passed!');
 }
 
 main().catch((err) => {

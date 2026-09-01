@@ -1,20 +1,20 @@
 {
-  "name": "@appilot/dsh",
+  "name": "@appilot-labs/dsh",
   "version": "0.1.0",
-  "private": true,
   "description": "Appilot DeepSeek Harness plugin — App 运营 Agent 工具（项目上下文 / 发布草稿 / readiness / 文案）",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@appilot/core": "0.4.4",
-    "@appilot/dsh-common": "0.1.0",
-    "@appilot/dsh-project": "0.1.0",
-    "@appilot/dsh-release": "0.1.0"
+    "@appilot-labs/core": "0.4.4",
+    "@appilot-labs/dsh-common": "0.1.0",
+    "@appilot-labs/dsh-project": "0.1.0",
+    "@appilot-labs/dsh-release": "0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2"
@@ -42,5 +42,13 @@
     ".": "./dist/index.js",
     "./client": "./client/client.js",
     "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "client",
+    "cordis.patch.yml"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

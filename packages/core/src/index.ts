@@ -1,4 +1,4 @@
-// @appilot/engine — Core engine logic (pure TypeScript, zero Electron/React dependency)
+// @appilot-labs/engine — Core engine logic (pure TypeScript, zero Electron/React dependency)
 
 // Error handling (Task 0.3)
 export {

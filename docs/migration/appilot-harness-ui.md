@@ -67,7 +67,7 @@ ctx.slots.inject('tool.call.toolview', function* () {
 ## 4. 待办/开放项（后续 UI 阶段）
 
 1. **第三方 client bundle 构建路径**：web profile 需要该包的已构建 client 导出；
-   `@appilot/dsh` 的 `client/client.js` 是手写 __ModuleLoader__ 格式，需确认 profile
+   `@appilot-labs/dsh` 的 `client/client.js` 是手写 __ModuleLoader__ 格式，需确认 profile
    打包/重启流程能收录（在 dev:web 环境验证 HMR 链路）。
 2. **部署验证**：把插件装进 web profile（`dsh plugin --profile web add …`）+ 重启后，
    在真实 Web UI 里看自定义卡片与图表（当前 headless 无 web 表层）。

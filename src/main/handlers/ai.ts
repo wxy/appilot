@@ -37,7 +37,7 @@ export function registerAiHandlers(): void {
   });
 
   ipcMain.handle("ai:testConnection", async (_event, config: { providerUrl: string; apiKey: string; model: string }) => {
-    const { AIProvider } = await import("@appilot/core/ai/ai-provider");
+    const { AIProvider } = await import("@appilot-labs/core/ai/ai-provider");
     const provider = new AIProvider({
       baseURL: config.providerUrl,
       apiKey: config.apiKey,

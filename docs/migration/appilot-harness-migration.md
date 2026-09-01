@@ -37,7 +37,7 @@ Appilot Core（纯 TS，零宿主依赖）
 
 核心纪律（继承自上次 Codex 会话）：
 
-1. **@appilot/core 永远不绑定任何宿主**（Electron / Harness 都不绑定），可脱离宿主独立测试。
+1. **@appilot-labs/core 永远不绑定任何宿主**（Electron / Harness 都不绑定），可脱离宿主独立测试。
 2. **不再把核心逻辑写进 Electron 主进程或 renderer**——新采集器、指标、AI prompt、
    release 状态机一律进 core。
 3. **状态单一所有权**：迁移期间明确 Electron 与插件各自的存储 owner，禁止双写同一份数据。
@@ -48,7 +48,7 @@ Appilot Core（纯 TS，零宿主依赖）
 
 | 层 | 位置 | 规模 | 依赖 | 归属 |
 |---|---|---|---|---|
-| 核心 | `src/engine/` + `src/engine/ai/` | 30 个文件 | 仅 `openai`、`@octokit/rest` + node 内置 | → `@appilot/core` |
+| 核心 | `src/engine/` + `src/engine/ai/` | 30 个文件 | 仅 `openai`、`@octokit/rest` + node 内置 | → `@appilot-labs/core` |
 | 宿主 | `src/main/`（IPC/窗口/调度/存储）、`src/preload/`、`src/renderer/` | 23 个文件引用 engine（108 处 import） | electron、electron-store、react、recharts 等 22 项 | → `apps/desktop` |
 | 测试 | `tests/` | 51 个文件 | tsx + node:assert | 随 core 迁移，desktop 保留宿主相关 |
 
@@ -59,7 +59,7 @@ Appilot Core（纯 TS，零宿主依赖）
 - engine 模块为**注入式纯函数/异步函数**：如 `runReadinessChecks(input)`、
   `buildProjectProfile(input)`、`deriveVersionStatus(input)`——数据由宿主提供，
   engine 不直接访问存储。这是 Phase 1 几乎零重构的直接依据。
-- `src/engine/index.ts` 文件头已自声明 `// @appilot/engine — Core engine logic
+- `src/engine/index.ts` 文件头已自声明 `// @appilot-labs/engine — Core engine logic
   (pure TypeScript, zero Electron/React dependency)`，迁移意图已埋好。
 
 ### 2.3 依赖归属（package.json 全量核实）
@@ -82,13 +82,13 @@ appilot/
 ├── docs/                         # 保持现状
 ├── packages/
 │   └── core/                     # ← src/engine + src/engine/ai 迁入
-│       ├── package.json          #   name: "@appilot/core", deps: openai, @octokit/rest
+│       ├── package.json          #   name: "@appilot-labs/core", deps: openai, @octokit/rest
 │       ├── tsconfig.json
 │       ├── src/                  #   engine 全部模块（保留相对结构）
 │       └── tests/                #   engine 相关测试（约 40 个文件）迁入
 ├── apps/
 │   └── desktop/                  # ← 现 Electron 应用整体移入
-│       ├── package.json          #   依赖 @appilot/core (workspace:*)
+│       ├── package.json          #   依赖 @appilot-labs/core (workspace:*)
 │       ├── electron-builder.yml
 │       ├── electron.vite.config.ts
 │       ├── tailwind.config.ts / postcss.config.cjs
@@ -97,7 +97,7 @@ appilot/
 │       └── tests/                #   desktop 宿主相关测试（如有）
 └── plugins/
     └── dsh-appilot/              # ← 新建（Phase 2）
-        ├── package.json          #   name: "@appilot/dsh", dsh.bundle 字段
+        ├── package.json          #   name: "@appilot-labs/dsh", dsh.bundle 字段
         ├── cordis.patch.yml
         ├── src/
         │   ├── index.ts          #   apply(ctx)：注册 tools/jobs/storage
@@ -163,13 +163,13 @@ appilot/
 > `npm run typecheck` + `npm test` 全绿。
 
 - **T1 建 workspaces 骨架**：根 `package.json` 加 `workspaces` 字段；新建
-  `packages/core/package.json`（name `@appilot/core`，version 与主版本一致，deps 仅
+  `packages/core/package.json`（name `@appilot-labs/core`，version 与主版本一致，deps 仅
   openai + @octokit/rest + 开发用 typescript/tsx）。
 - **T2 迁移 engine**：`git mv src/engine packages/core/src`（含 `ai/` 子目录）。
 - **T3 改写 import**：全仓库 23 个文件、108 处 `../engine` 引用改为
-  `@appilot/core` 包名导入（`git mv` 后由 desktop 引用 `@appilot/core`）。
+  `@appilot-labs/core` 包名导入（`git mv` 后由 desktop 引用 `@appilot-labs/core`）。
   需要 engine 补一个完整的 `index.ts` 导出面（当前只有 5 个导出，模块均直接深路径
-  引用——迁移时统一从 `@appilot/core` 入口导出，或先保深路径再收敛）。
+  引用——迁移时统一从 `@appilot-labs/core` 入口导出，或先保深路径再收敛）。
 - **T4 迁移测试**：`git mv tests/*.test.ts` 中 engine 相关 → `packages/core/tests/`；
   desktop 相关留在 `apps/desktop/tests/`。根 `test` 脚本改为聚合两处。
 - **T5 移动 desktop 配置**：`git mv electron-builder.yml electron.vite.config.ts
@@ -226,14 +226,14 @@ electron-vite 的 root 配置调整；预计可在数轮内完成，无逻辑改
 
 - **desktop**：继续 `npm run dist:mac` → DMG（v0.4.4 流程已跑通，含 DMG 手动公证+贴票）。
 - **插件**：`plugins/dsh-appilot` 独立发布 npm（Phase 5）；用户通过
-  `dsh plugin --profile appilot add @appilot/dsh` 安装。
+  `dsh plugin --profile appilot add @appilot-labs/dsh` 安装。
 - **profile**（Phase 6）：`profiles/appilot` 打包定制 Harness 发行版，面向非 Harness
   用户；未来可选桌面壳。
 - **版本同步**：monorepo 单次提交原子更新 core/desktop/plugin，避免三份版本漂移。
 
 ## 9. 验收标准
 
-1. Phase 1 完成后：`@appilot/core` 无任何 Electron/cordis 依赖；desktop 通过
+1. Phase 1 完成后：`@appilot-labs/core` 无任何 Electron/cordis 依赖；desktop 通过
    workspace 引用 core；51 个测试全绿；`npm run build` 通过。
 2. Phase 2 完成后：`plugins/dsh-appilot` 可被安装到本机 DSH，`resolve_current_project`
    等 7 个工具可用，且 `generate_store_copy` 与 desktop 走同一 core 代码路径。
@@ -245,16 +245,16 @@ Harness 原生支持插件组（`cordis-plugin-group` / `Group`，Cordis loader 
 DSH 自身即由数十个小插件组合而成）。Appilot 按功能域拆分，用户可整装或按需安装：
 
 ```text
-@appilot/project      项目识别/上下文（resolve_current_project、get_project_context）
-@appilot/release      发布草稿/文案生成与修订/readiness（get_release_draft、
+@appilot-labs/project      项目识别/上下文（resolve_current_project、get_project_context）
+@appilot-labs/release      发布草稿/文案生成与修订/readiness（get_release_draft、
                       check_release_readiness、generate_store_copy、revise_store_copy）
-@appilot/keywords     关键词/排名/竞品（关键词工具集、竞品查询）
-@appilot/reviews      评论洞察/反馈收件箱（主题聚类、反馈查询）
-@appilot/workbench-ui 界面插件（后置，注册 conversation 节点/命令/设置页）
+@appilot-labs/keywords     关键词/排名/竞品（关键词工具集、竞品查询）
+@appilot-labs/reviews      评论洞察/反馈收件箱（主题聚类、反馈查询）
+@appilot-labs/workbench-ui 界面插件（后置，注册 conversation 节点/命令/设置页）
 
 组合层：
-@appilot/appilot      Group 元插件：组合上面全部（装一个=全功能）
-profiles/appilot      定制 profile：bundles=[dsh-base, dsh-web-app, @appilot/*]
+@appilot-labs/appilot      Group 元插件：组合上面全部（装一个=全功能）
+profiles/appilot      定制 profile：bundles=[dsh-base, dsh-web-app, @appilot-labs/*]
                       + 默认 patch，`dsh --profile appilot` 启动即工作台
 ```
 
@@ -293,7 +293,7 @@ settings/sidebar/jobs/workflow-run/plan/deliverables… 各有浏览器端 `clie
 - T5（desktop 整体迁入 `apps/desktop`）**推迟**到 core 抽取验证通过之后单独执行，
   降低一次性改动风险。
 - core 发布形态：`packages/core` 用 tsc 编译到 `dist/`（declaration 开启），
-  desktop 通过 `dependencies: {"@appilot/core": "workspace:*"}` 引用；
+  desktop 通过 `dependencies: {"@appilot-labs/core": "workspace:*"}` 引用；
   electron-vite `externalizeDepsPlugin` 外部化后运行时加载编译产物；
   electron-builder 会把 workspace 包打进 asar。
 - 引用改写量实测：`@engine` 别名仅配置层 2 处（可删除）；`src/` 内相对路径
@@ -302,19 +302,19 @@ settings/sidebar/jobs/workflow-run/plan/deliverables… 各有浏览器端 `clie
 
 ## 14. Phase 2 进度（2026-08-31）
 
-**已交付并验证**：`plugins/dsh-appilot`（`@appilot/dsh`）首个插件，4 个只读工具
+**已交付并验证**：`plugins/dsh-appilot`（`@appilot-labs/dsh`）首个插件，4 个只读工具
 （resolve_current_project / get_project_context / get_release_draft /
-check_release_readiness），全部走 `@appilot/core` 同一代码路径。
+check_release_readiness），全部走 `@appilot-labs/core` 同一代码路径。
 
 - 形态：ESM 插件；`@deepseek-ai/cordis` + `dsh-tools` 为 peer 依赖（宿主提供）。
 - 验证：tsc 零错误；单元测试 5 断言；**真实 Harness headless 端到端**——模型调用
   `resolve_current_project` 返回正确项目信息（会话日志含工具调用记录）。
 - 本机验证方式：`dsh --profile headless --patch plugins/dsh-appilot/dev.cordis.yml "…"`
-  （需先 `npm run build -w @appilot/dsh` 生成 dist）。
+  （需先 `npm run build -w @appilot-labs/dsh` 生成 dist）。
 
 **工具已补齐（2026-08-31，插件共 7 个工具）**：新增 `sync_release_status`
 （git tag + GitHub release 状态）、`generate_store_copy` / `revise_store_copy`
-（@appilot/core AI 管线；凭据走 `APILOT_AI_*` 环境变量，不接受参数传 key 防泄漏）。
+（@appilot-labs/core AI 管线；凭据走 `APILOT_AI_*` 环境变量，不接受参数传 key 防泄漏）。
 `sync_release_status` 已在真实 Harness headless 会话端到端验证（正确返回
 v0.4.4 / v0.3.0 等 tag）。
 
@@ -344,13 +344,13 @@ v0.4.4 / v0.3.0 等 tag）。
   （用户评审判断成立）。骨架已落地 `plugins/dsh-appilot/client/client.js`（含 SVG
   条形图组件 + 3 张工具卡片）；web profile 部署验证列为开放项。
 
-**域插件已拆为独立 npm 包（2026-08-31）**：`@appilot/dsh-common`（凭据/存储/工具）、
-  `@appilot/dsh-project`（项目域）、`@appilot/dsh-release`（发布域）、`@appilot/dsh`（元插件
+**域插件已拆为独立 npm 包（2026-08-31）**：`@appilot-labs/dsh-common`（凭据/存储/工具）、
+  `@appilot-labs/dsh-project`（项目域）、`@appilot-labs/dsh-release`（发布域）、`@appilot-labs/dsh`（元插件
   组合，依赖域包）。用户可按需只装某个域包；已在 headless 会话端到端验证跨域包协作
   （register_project → get_release_draft by name → v0.4.4）。
 
 **Phase 6 profile 已落地（2026-08-31）**：`profiles/appilot`（bundles = dsh-base +
-  dsh-web-app + @appilot/dsh），`@appilot/dsh` 补充 `dsh.bundle`（patch 声明）与
+  dsh-web-app + @appilot-labs/dsh），`@appilot-labs/dsh` 补充 `dsh.bundle`（patch 声明）与
   `./client` 导出。已在本机验证：`--dump-config` 组合出 appilot 条目；`dsh
   --profile appilot --port 3099` 启动 Web 表层（HTTP 200）。面向非 Harness 用户
   的分发（CLI/桌面壳）可作为下一步。

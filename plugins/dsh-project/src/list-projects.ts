@@ -1,6 +1,6 @@
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify } from '@appilot/dsh-common';
-import type { ProjectStore } from '@appilot/dsh-common';
+import { jsonify } from '@appilot-labs/dsh-common';
+import type { ProjectStore } from '@appilot-labs/dsh-common';
 
 /**
  * 列出已注册的项目（注册表内容）。

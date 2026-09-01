@@ -1,12 +1,12 @@
 {
   "name": "appilot-profile",
   "private": true,
-  "description": "Appilot 定制 Harness profile（官方 bundles 不动；@appilot/dsh 走用户层 cordis.patch.yml）",
+  "description": "Appilot 定制 Harness profile（官方 bundles 不动；@appilot-labs/dsh 走用户层 cordis.patch.yml）",
   "dependencies": {
-    "@appilot/dsh": "file:../../plugins/dsh-appilot",
-    "@appilot/dsh-common": "file:../../plugins/dsh-common",
-    "@appilot/dsh-project": "file:../../plugins/dsh-project",
-    "@appilot/dsh-release": "file:../../plugins/dsh-release"
+    "@appilot-labs/dsh": "file:../../plugins/dsh-appilot",
+    "@appilot-labs/dsh-common": "file:../../plugins/dsh-common",
+    "@appilot-labs/dsh-project": "file:../../plugins/dsh-project",
+    "@appilot-labs/dsh-release": "file:../../plugins/dsh-release"
   },
   "dsh": {
     "profile": {

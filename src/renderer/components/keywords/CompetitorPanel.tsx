@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { storefrontDisplayName, storefrontsForLanguage } from "@appilot/core/storefronts";
+import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/core/storefronts";
 import { formatHumanTime, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";

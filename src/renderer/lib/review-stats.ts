@@ -1,4 +1,4 @@
-import type { Review } from "@appilot/core/review-collector";
+import type { Review } from "@appilot-labs/core/review-collector";
 
 export interface ReviewStats {
   total: number;

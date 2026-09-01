@@ -1,10 +1,10 @@
 import { app, dialog, ipcMain } from "electron";
 import fs from "fs";
 import path from "path";
-import { log } from "@appilot/core/logger";
-import { appendRankSnapshots } from "@appilot/core/rank-snapshots";
-import { evaluatePause, normalizeTrackedKeyword } from "@appilot/core/rank-keywords";
-import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "@appilot/core/storefronts";
+import { log } from "@appilot-labs/core/logger";
+import { appendRankSnapshots } from "@appilot-labs/core/rank-snapshots";
+import { evaluatePause, normalizeTrackedKeyword } from "@appilot-labs/core/rank-keywords";
+import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "@appilot-labs/core/storefronts";
 import { createAiProvider } from "../ai-service";
 import { importAscKeyFileTo } from "../asc-key-file";
 import { notifyDataChanged } from "../data-sync";
@@ -43,7 +43,7 @@ import {
   COMMON_PERMISSION_KEYS,
   capabilityLabel,
   versionConsistencyCheck,
-} from "@appilot/core/pre-release";
+} from "@appilot-labs/core/pre-release";
 import {
   assertNonEmptyString,
   dedupeProjects,
@@ -121,7 +121,7 @@ export function registerProjectsHandlers(): void {
         Date.now() - new Date(repo.capturedAt).getTime() > repoStaleMs;
       if (!stale) continue;
       try {
-        const { collectRepoInfo } = await import("@appilot/core/git-info");
+        const { collectRepoInfo } = await import("@appilot-labs/core/git-info");
         project.repo = await collectRepoInfo(project.localPath || "");
         repoChanged = true;
       } catch (err: any) {
@@ -184,7 +184,7 @@ export function registerProjectsHandlers(): void {
         }
         project.localPath = candidate;
         try {
-          const { collectRepoInfo } = await import("@appilot/core/git-info");
+          const { collectRepoInfo } = await import("@appilot-labs/core/git-info");
           project.repo = await collectRepoInfo(candidate);
         } catch (err: any) {
           log.warn(`Repo info refresh failed after path change: ${err.message}`);
@@ -194,7 +194,7 @@ export function registerProjectsHandlers(): void {
         project.repo = { ...(project.repo || {}), githubUrl: settings.githubUrl.trim() };
       } else if (settings.githubUrl === null || settings.githubUrl === "") {
         try {
-          const { collectRepoInfo } = await import("@appilot/core/git-info");
+          const { collectRepoInfo } = await import("@appilot-labs/core/git-info");
           project.repo = await collectRepoInfo(project.localPath || "");
         } catch (err: any) {
           log.warn(`Repo info refresh failed while clearing github url: ${err.message}`);
@@ -481,7 +481,7 @@ export function registerProjectsHandlers(): void {
         languageDisplayName,
         lookupApp,
         localizedStoreLinks,
-      } = await import("@appilot/core/app-store-discovery");
+      } = await import("@appilot-labs/core/app-store-discovery");
       const languages = detectLocalizedLanguages(localPath);
       project.supportedLanguages = languages.map((code) => ({ code, name: languageDisplayName(code) }));
       const discovery = discoverAppStoreLinks(localPath);
@@ -560,7 +560,7 @@ export function registerProjectsHandlers(): void {
     }
 
     try {
-      const { collectRepoInfo } = await import("@appilot/core/git-info");
+      const { collectRepoInfo } = await import("@appilot-labs/core/git-info");
       (project as any).repo = await collectRepoInfo(localPath);
     } catch (err: any) {
       log.warn(`Repo info collection failed for ${localPath}: ${err.message}`);
@@ -629,8 +629,8 @@ export function registerProjectsHandlers(): void {
     if (!language) throw new Error("Missing language");
 
     const provider = await createAiProvider(s);
-    const { generateKeywords } = await import("@appilot/core/ai/keyword-suggester");
-    const { readRepoDescription } = await import("@appilot/core/app-store-discovery");
+    const { generateKeywords } = await import("@appilot-labs/core/ai/keyword-suggester");
+    const { readRepoDescription } = await import("@appilot-labs/core/app-store-discovery");
 
     const description = readRepoDescription(context.project.localPath);
     const profile = await buildProjectProfileFor(context.project, context.product);
@@ -663,8 +663,8 @@ export function registerProjectsHandlers(): void {
     const { project, product } = context;
 
     const provider = await createAiProvider(s);
-    const { curateKeywords } = await import("@appilot/core/ai/keyword-suggester");
-    const { readRepoDescription } = await import("@appilot/core/app-store-discovery");
+    const { curateKeywords } = await import("@appilot-labs/core/ai/keyword-suggester");
+    const { readRepoDescription } = await import("@appilot-labs/core/app-store-discovery");
 
     const drafts = getStoreSubmissionDrafts(project)
       .filter((draft) => draft.productId === productId)
@@ -731,7 +731,7 @@ export function registerProjectsHandlers(): void {
     const { project, product } = context;
     const profile = await buildProjectProfileFor(project, product);
     const provider = await createAiProvider(s);
-    const { extractSubmissionCandidates } = await import("@appilot/core/ai/keyword-suggester");
+    const { extractSubmissionCandidates } = await import("@appilot-labs/core/ai/keyword-suggester");
 
     const ref = submissionReferenceFor(product, project, language);
     const submissionTerms = (ref.submissionKeywords || "")
@@ -856,7 +856,7 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) return [];
-    const { readFullReadme } = await import("@appilot/core/app-store-discovery");
+    const { readFullReadme } = await import("@appilot-labs/core/app-store-discovery");
     let readme = "";
     try {
       readme = project.localPath ? readFullReadme(project.localPath) : "";
@@ -1093,7 +1093,7 @@ export function registerProjectsHandlers(): void {
       if (inputs.length === 0) return [];
 
       const { createAiProvider } = await import("../ai-service");
-      const { parseJsonObject } = await import("@appilot/core/ai/ai-request");
+      const { parseJsonObject } = await import("@appilot-labs/core/ai/ai-request");
       const provider = await createAiProvider(s);
       const prompt = [
         "你是 App Store 的 ASO 顾问。根据每个语言当前的名称/副标题与文案缺口关键词，给出发布前应采用的名称/副标题修改建议。",
@@ -1416,7 +1416,7 @@ export function registerProjectsHandlers(): void {
       let languageDisplayNameFn: (code: string) => string = (code) => code;
       try {
         const { detectLocalizedLanguages, languageDisplayName } = await import(
-          "@appilot/core/app-store-discovery"
+          "@appilot-labs/core/app-store-discovery"
         );
         detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
         languageDisplayNameFn = languageDisplayName;
@@ -1647,11 +1647,11 @@ export function registerProjectsHandlers(): void {
     const { project, product } = context;
 
     const provider = await createAiProvider(s);
-    const { generateOverviewBrief } = await import("@appilot/core/ai/overview-brief");
-    const { buildBriefInput } = await import("@appilot/core/overview-summary");
-    const { readRepoDescription } = await import("@appilot/core/app-store-discovery");
-    const { checkForRelease } = await import("@appilot/core/release-watcher");
-    const { competitorDeltaSummary } = await import("@appilot/core/competitor-radar");
+    const { generateOverviewBrief } = await import("@appilot-labs/core/ai/overview-brief");
+    const { buildBriefInput } = await import("@appilot-labs/core/overview-summary");
+    const { readRepoDescription } = await import("@appilot-labs/core/app-store-discovery");
+    const { checkForRelease } = await import("@appilot-labs/core/release-watcher");
+    const { competitorDeltaSummary } = await import("@appilot-labs/core/competitor-radar");
 
     const releaseResult = await checkForRelease(
       project.localPath,
@@ -1764,7 +1764,7 @@ export function registerProjectsHandlers(): void {
       : (allowedStorefronts.length > 0 ? allowedStorefronts : ["us"]);
     if (storefronts.length === 0) storefronts.push("us");
 
-    const { lookupApp } = await import("@appilot/core/app-store-discovery");
+    const { lookupApp } = await import("@appilot-labs/core/app-store-discovery");
     const metadata = await lookupApp(product.trackId);
     const entity: "software" | "macSoftware" = metadata?.kind === "mac-software" ? "macSoftware" : "software";
     if (metadata?.kind) {
@@ -1779,7 +1779,7 @@ export function registerProjectsHandlers(): void {
       })),
     );
 
-    const { collectKeywordRankings } = await import("@appilot/core/rank-collector");
+    const { collectKeywordRankings } = await import("@appilot-labs/core/rank-collector");
     const result = await collectKeywordRankings({
       targets,
       trackId: product.trackId,
