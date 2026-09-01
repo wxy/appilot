@@ -1,5 +1,0 @@
-# @appilot-labs/dsh bundle patch：声明 Appilot 元插件条目。
-# 当 profile 的 dsh.profile.bundles 包含 @appilot-labs/dsh 时，本 patch 自动插入该条目。
-- insert:
-    - id: appilot
-      name: '@appilot-labs/dsh'
