@@ -21,9 +21,13 @@ mkdir -p ~/.dsh/profiles/appilot
 cd ~/.dsh/profiles/appilot
 # ⚠️ 必须 --omit=peer：npm 默认自动装 peer，会把整套 @deepseek-ai 运行时复制进
 # profile node_modules（双份 cordis），导致 preset 挂载失败、模型列表载不出来。
-# profile 的 pnpm-workspace.yaml 已设 autoInstallPeers:false，npm 不遵守，必须手动省略。
 npm install --no-audit --no-fund --install-links --omit=peer
-# 或（推荐）用官方 pnpm 方式：dsh plugin --profile appilot add <pkg>
+
+# ⚠️ 本地未发布阶段：官方 `dsh plugin --profile appilot add <pkg>`（pnpm）不可用——
+# 私有 @appilot/* 包 pnpm 无法从 registry/workspace 解析（pnpm workspace 不支持
+# 根外路径，file: 传递依赖仍走 registry）。npm 因 file: 宽松链接私有依赖才可用。
+# 发布到 npm 后（解锁官方模式）：
+#   dsh plugin --profile appilot add @appilot/dsh
 # 5. 启动
 dsh --profile appilot --port 3099
 ```

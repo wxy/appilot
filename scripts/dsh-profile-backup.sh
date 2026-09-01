@@ -20,7 +20,9 @@ mkdir -p "$HOME/.dsh/appilot-backups"
 TS="$(date +%Y%m%d-%H%M%S)"
 DEST="$HOME/.dsh/appilot-backups/$TS-$PROFILE.tar.gz"
 
-tar -C "$HOME/.dsh/profiles" -czf "$DEST" "$PROFILE"
+# node_modules 可再生成（package.json 记录依赖），排除避免符号链接在 tar 恢复后失效
+tar -C "$HOME/.dsh/profiles" --exclude="$PROFILE/node_modules" -czf "$DEST" "$PROFILE"
+echo "  (node_modules 已排除——恢复后需按 package.json 重新安装)" 
 HASH="$(shasum -a 256 "$DEST" | awk '{print $1}')"
 echo "$HASH" > "$DEST.sha256"
 
