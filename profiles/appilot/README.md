@@ -1,7 +1,7 @@
 # Appilot Profile（定制 DeepSeek Harness 发行版）
 
 `dsh --profile appilot` 启动一个以 Appilot 为主场的 Harness：
-bundles = `dsh-base` + `dsh-web-app` + `@appilot-labs/dsh`（元插件，含 project/release 域）。
+bundles = `dsh-base` + `dsh-web-app` + `@appilot-labs/appilot`（元插件，含 project/release 域）。
 
 ## 本机安装（开发验证）
 
@@ -11,7 +11,7 @@ mkdir -p ~/.dsh/profiles/appilot
 cp profiles/appilot/package.json profiles/appilot/cordis.patch.yml ~/.dsh/profiles/appilot/
 
 # 2. 官方模式安装插件（已发布到 npm，pnpm 从 registry 安装）
-dsh plugin --profile appilot add @appilot-labs/dsh
+dsh plugin --profile appilot add @appilot-labs/appilot
 
 # 3. 验证配置树（不启动服务）
 dsh --profile appilot --dump-config | grep -i appilot

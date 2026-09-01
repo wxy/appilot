@@ -2,4 +2,4 @@
 # 由 dsh plugin --profile <name> add @appilot-labs/dsh 注册为 profile bundle。
 - insert:
     - id: appilot
-      name: '@appilot-labs/dsh'
+      name: '@appilot-labs/appilot'

@@ -97,7 +97,7 @@ appilot/
 │       └── tests/                #   desktop 宿主相关测试（如有）
 └── plugins/
     └── dsh-appilot/              # ← 新建（Phase 2）
-        ├── package.json          #   name: "@appilot-labs/dsh", dsh.bundle 字段
+        ├── package.json          #   name: "@appilot-labs/appilot", dsh.bundle 字段
         ├── cordis.patch.yml
         ├── src/
         │   ├── index.ts          #   apply(ctx)：注册 tools/jobs/storage
@@ -226,7 +226,7 @@ electron-vite 的 root 配置调整；预计可在数轮内完成，无逻辑改
 
 - **desktop**：继续 `npm run dist:mac` → DMG（v0.4.4 流程已跑通，含 DMG 手动公证+贴票）。
 - **插件**：`plugins/dsh-appilot` 独立发布 npm（Phase 5）；用户通过
-  `dsh plugin --profile appilot add @appilot-labs/dsh` 安装。
+  `dsh plugin --profile appilot add @appilot-labs/appilot` 安装。
 - **profile**（Phase 6）：`profiles/appilot` 打包定制 Harness 发行版，面向非 Harness
   用户；未来可选桌面壳。
 - **版本同步**：monorepo 单次提交原子更新 core/desktop/plugin，避免三份版本漂移。
@@ -302,7 +302,7 @@ settings/sidebar/jobs/workflow-run/plan/deliverables… 各有浏览器端 `clie
 
 ## 14. Phase 2 进度（2026-08-31）
 
-**已交付并验证**：`plugins/dsh-appilot`（`@appilot-labs/dsh`）首个插件，4 个只读工具
+**已交付并验证**：`plugins/dsh-appilot`（`@appilot-labs/appilot`）首个插件，4 个只读工具
 （resolve_current_project / get_project_context / get_release_draft /
 check_release_readiness），全部走 `@appilot-labs/core` 同一代码路径。
 
@@ -310,7 +310,7 @@ check_release_readiness），全部走 `@appilot-labs/core` 同一代码路径�
 - 验证：tsc 零错误；单元测试 5 断言；**真实 Harness headless 端到端**——模型调用
   `resolve_current_project` 返回正确项目信息（会话日志含工具调用记录）。
 - 本机验证方式：`dsh --profile headless --patch plugins/dsh-appilot/dev.cordis.yml "…"`
-  （需先 `npm run build -w @appilot-labs/dsh` 生成 dist）。
+  （需先 `npm run build -w @appilot-labs/appilot` 生成 dist）。
 
 **工具已补齐（2026-08-31，插件共 7 个工具）**：新增 `sync_release_status`
 （git tag + GitHub release 状态）、`generate_store_copy` / `revise_store_copy`
@@ -345,12 +345,12 @@ v0.4.4 / v0.3.0 等 tag）。
   条形图组件 + 3 张工具卡片）；web profile 部署验证列为开放项。
 
 **域插件已拆为独立 npm 包（2026-08-31）**：`@appilot-labs/dsh-common`（凭据/存储/工具）、
-  `@appilot-labs/dsh-project`（项目域）、`@appilot-labs/dsh-release`（发布域）、`@appilot-labs/dsh`（元插件
+  `@appilot-labs/dsh-project`（项目域）、`@appilot-labs/dsh-release`（发布域）、`@appilot-labs/appilot`（元插件
   组合，依赖域包）。用户可按需只装某个域包；已在 headless 会话端到端验证跨域包协作
   （register_project → get_release_draft by name → v0.4.4）。
 
 **Phase 6 profile 已落地（2026-08-31）**：`profiles/appilot`（bundles = dsh-base +
-  dsh-web-app + @appilot-labs/dsh），`@appilot-labs/dsh` 补充 `dsh.bundle`（patch 声明）与
+  dsh-web-app + @appilot-labs/appilot），`@appilot-labs/appilot` 补充 `dsh.bundle`（patch 声明）与
   `./client` 导出。已在本机验证：`--dump-config` 组合出 appilot 条目；`dsh
   --profile appilot --port 3099` 启动 Web 表层（HTTP 200）。面向非 Harness 用户
   的分发（CLI/桌面壳）可作为下一步。

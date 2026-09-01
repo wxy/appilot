@@ -9,7 +9,7 @@
  * 之后添加入口只需编辑本文件并重启 profile。
  */
 window.__ModuleLoader__.load({
-  id: '@appilot-labs/dsh',
+  id: '@appilot-labs/appilot',
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
