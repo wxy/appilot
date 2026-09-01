@@ -35,7 +35,6 @@ export async function buildProjectProfileFor(
     import("@appilot-labs/appilot-core/app-store-discovery"),
   ]);
   const drafts = getStoreSubmissionDrafts(project)
-    .filter((item: any) => item.productId === product.id)
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const releaseHistory = drafts.map((item: any) => ({
     tag: String(item.releaseTag || ""),
@@ -114,7 +113,7 @@ export async function generateStoreSubmissionDraft(
     checkedAt: snapshot.checkedAt,
   }));
   const previousDrafts = getStoreSubmissionDrafts(project)
-    .filter((item) => item.productId === product.id && item.releaseTag !== release.tag)
+    .filter((item) => item.releaseTag !== release.tag)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const previousDraft = previousDrafts[0] || null;
   const previousLocalization = previousDraft?.localizations?.find(

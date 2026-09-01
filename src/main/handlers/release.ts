@@ -93,10 +93,14 @@ export function registerReleaseHandlers(): void {
     return {
       releases: result.releases.map((release) => ({
         ...release,
-        submissionDrafts: (project.storeProducts || []).map((product: any) =>
-          findStoreSubmissionDraft(project, product.id, release.tag) ||
-          findDraftByVersion(project, product.id, inferAppVersion(release)),
-        ),
+        // Copy is bound to the software, not to (software, platform): one
+        // submission draft per release/version across all store products.
+        submissionDrafts: (() => {
+          const draft =
+            findStoreSubmissionDraft(project, release.tag) ||
+            findDraftByVersion(project, inferAppVersion(release));
+          return draft ? [draft] : [];
+        })(),
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,
       githubCapabilities,
@@ -139,13 +143,12 @@ export function registerReleaseHandlers(): void {
       );
       let release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) {
-        const saved = findStoreSubmissionDraft(project, productId, releaseTag);
+        const saved = findStoreSubmissionDraft(project, releaseTag);
         if (saved) release = synthesizeReleaseFromDraft(saved);
       }
       if (!release) return null;
 
       const draftSummaries = getStoreSubmissionDrafts(project)
-        .filter((item) => item.productId === productId)
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .map((draft) => ({
           id: draft.id,
@@ -249,7 +252,7 @@ export function registerReleaseHandlers(): void {
     );
     let release = result.releases.find((item) => item.tag === releaseTag) || null;
     if (!release) {
-      const saved = findStoreSubmissionDraft(project, productId, releaseTag);
+      const saved = findStoreSubmissionDraft(project, releaseTag);
       if (saved) release = synthesizeReleaseFromDraft(saved);
     }
     _event.sender.send("release:generateProgress", {
@@ -260,14 +263,14 @@ export function registerReleaseHandlers(): void {
     });
     if (!release) return { release: null, draft: null, actionable: false };
 
-    let existing = findStoreSubmissionDraft(project, productId, releaseTag);
+    let existing = findStoreSubmissionDraft(project, releaseTag);
     if (!existing) {
       // Identity by appVersion: a copy prepared under an older release for the
       // same target version belongs to this release's workbench too.
       const targetVersion = String(
         appVersion || inferAppVersion(release) || "",
       ).trim();
-      existing = findDraftByVersion(project, productId, targetVersion);
+      existing = findDraftByVersion(project, targetVersion);
     }
     if (release.draft) {
       if (force) {
@@ -355,7 +358,7 @@ export function registerReleaseHandlers(): void {
       if (!project) throw new Error("Project not found");
       const product = (project.storeProducts || []).find((item: any) => item.id === productId);
       if (!product) throw new Error("Store product not found");
-      const draft = findStoreSubmissionDraft(project, productId, releaseTag);
+      const draft = findStoreSubmissionDraft(project, releaseTag);
       if (!draft) throw new Error("Submission draft not found");
       // 已按商店上架冻结的文案完全只读：翻译也不允许（UI 已禁用，这里兜底）。
       if (draft.ascSyncedAt) {
@@ -419,7 +422,7 @@ export function registerReleaseHandlers(): void {
       const latestProjects: any[] = s.get("projects") || [];
       const latestProject = latestProjects.find((item: any) => item.id === projectId);
       const latestDraft = latestProject
-        ? findStoreSubmissionDraft(latestProject, productId, releaseTag)
+        ? findStoreSubmissionDraft(latestProject, releaseTag)
         : null;
       if (!latestDraft) throw new Error("Submission draft not found");
 
@@ -537,8 +540,8 @@ export function registerReleaseHandlers(): void {
         throw new Error("需要 App Store Connect 凭证才能重建文案");
       }
       const existing =
-        findStoreSubmissionDraft(project, productId, releaseTag) ||
-        findDraftByVersion(project, productId, inferAppVersion({ tag: releaseTag, name: null })) ||
+        findStoreSubmissionDraft(project, releaseTag) ||
+        findDraftByVersion(project, inferAppVersion({ tag: releaseTag, name: null })) ||
         null;
       const targetVersion = existing?.appVersion ||
         inferAppVersion({ tag: releaseTag, name: null });

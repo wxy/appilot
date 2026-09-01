@@ -58,8 +58,8 @@ function updateProjectInProjects(projects: any[], projectId: string, updater: (p
 
 function submissionReferenceFor(product: any, project: any, language: string) {
   ensureProjectKeywordPool(project);
+  // The copy is bound to the software: take the latest draft in the project.
   const drafts = getStoreSubmissionDrafts(project)
-    .filter((draft) => draft.productId === product.id)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const latest = drafts[0];
   const loc = latest?.localizations?.find((item: any) => item.language === language)
@@ -667,7 +667,6 @@ export function registerProjectsHandlers(): void {
     const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
 
     const drafts = getStoreSubmissionDrafts(project)
-      .filter((draft) => draft.productId === productId)
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     const latest = drafts[0];
     const loc = latest?.localizations?.find((item: any) => item.language === language)
@@ -880,7 +879,6 @@ export function registerProjectsHandlers(): void {
       for (const product of project.storeProducts || []) {
         copyTexts.push(String(product.trackName || ""));
         for (const draft of project.storeSubmissionDrafts || []) {
-          if (draft.productId !== product.id) continue;
           for (const loc of draft.localizations || []) {
             for (const field of [
               "name",
@@ -1052,7 +1050,6 @@ export function registerProjectsHandlers(): void {
       if (!context) throw new Error("Store product not found");
       const { project, product } = context;
       const drafts = (project.storeSubmissionDrafts || [])
-        .filter((draft: any) => draft.productId === productId)
         .sort(
           (a: any, b: any) =>
             new Date(b.updatedAt || 0).getTime() -
@@ -1240,7 +1237,6 @@ export function registerProjectsHandlers(): void {
         }
       }
       const drafts = (project.storeSubmissionDrafts || [])
-        .filter((draft: any) => draft.productId === productId)
         .sort(
           (a: any, b: any) =>
             new Date(b.updatedAt || 0).getTime() -
@@ -1660,7 +1656,6 @@ export function registerProjectsHandlers(): void {
       { githubCache: githubSyncCacheEntry(s, project) ?? undefined },
     );
     const drafts = getStoreSubmissionDrafts(project)
-      .filter((item: any) => item.productId === productId)
       .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     const submissionDraft = drafts[0] || null;
     const description = readRepoDescription(project.localPath);

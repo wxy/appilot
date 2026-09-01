@@ -441,14 +441,12 @@ async function reconcileOpsTasks(store: AppStore): Promise<void> {
         }),
       );
       // Version status is derived from ASC data, so poll it whenever the
-      // product has a copy draft — but only with complete ASC credentials.
+      // project has a copy draft — but only with complete ASC credentials.
       const creds = resolveEffectiveCredentials(store, project.id);
       const hasAscCredential = Boolean(
         creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath,
       );
-      const hasDraft = getStoreSubmissionDrafts(project).some(
-        (draft: any) => draft.productId === product.id,
-      );
+      const hasDraft = getStoreSubmissionDrafts(project).length > 0;
       if (hasAscCredential && hasDraft) {
         desired.set(
           buildStatusTaskId(product.id),

@@ -4,6 +4,7 @@ import {
   buildStoreRebuildDraft,
   diffDraftAgainstStore,
   inferAppVersion,
+  submissionDraftId,
 } from "@appilot-labs/appilot-core/store-submission";
 import {
   findDraftByVersion,
@@ -36,13 +37,13 @@ check(
   "草案 name 无版本 → 空（用户手动填写）",
 );
 
-// --- Task 4: appVersion identity ---
+// --- appVersion identity, bound to the software (project), not (software, platform) ---
 
-function draft(releaseTag: string, appVersion: string, updatedAt: string) {
+function draft(releaseTag: string, appVersion: string, updatedAt: string, productId = "prod") {
   return {
-    id: `p:prod:${releaseTag}`,
+    id: `p:${productId}:${releaseTag}`,
     projectId: "p",
-    productId: "prod",
+    productId,
     releaseTag,
     appVersion,
     updatedAt,
@@ -55,12 +56,26 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
 
 {
   const project: any = { id: "p", storeSubmissionDrafts: [older, newer, other] };
-  const found = findDraftByVersion(project, "prod", "1.1.1");
+  const found = findDraftByVersion(project, "1.1.1");
   check(found?.releaseTag === "v1.1.1", "按 appVersion 找到最新同版本文案");
-  check(findDraftByVersion(project, "prod", "v1.1.1")?.releaseTag === "v1.1.1", "v 前缀归一化匹配");
-  check(findDraftByVersion(project, "prod", "9.9.9") === null, "无匹配 → null");
-  check(findDraftByVersion(project, "prod", "") === null, "空版本 → null");
-  check(findDraftByVersion(project, "other", "1.1.1") === null, "其他 product 不串扰");
+  check(findDraftByVersion(project, "v1.1.1")?.releaseTag === "v1.1.1", "v 前缀归一化匹配");
+  check(findDraftByVersion(project, "9.9.9") === null, "无匹配 → null");
+  check(findDraftByVersion(project, "") === null, "空版本 → null");
+}
+
+{
+  // 同一软件的多平台（iOS/macOS）共享一份文案：同一版本不同 productId 也命中。
+  const ios = draft("v1.1.1", "1.1.1", "2026-08-21T10:00:00Z", "ios");
+  const macos = draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z", "macos");
+  const project: any = { id: "p", storeSubmissionDrafts: [ios, macos] };
+  check(
+    findDraftByVersion(project, "1.1.1")?.productId === "macos",
+    "跨平台命中同一版本文案（取最新更新）",
+  );
+  check(
+    submissionDraftId("p", "v1.1.1") === submissionDraftId("p", "v1.1.1"),
+    "draft id 只含软件维度（projectId + releaseTag）",
+  );
 }
 
 {
@@ -77,12 +92,34 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
 }
 
 {
+  // 多平台重复文案（iOS + macOS 同版本）upsert 时合并为一份。
+  const ios = draft("v1.1.1", "1.1.1", "2026-08-21T10:00:00Z", "ios");
+  const macos = draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z", "macos");
+  const project: any = { id: "p", storeSubmissionDrafts: [ios] };
+  upsertStoreSubmissionDraft(project, macos);
+  check(project.storeSubmissionDrafts.length === 1, "跨平台同版本 upsert 合并为一份");
+}
+
+{
   // normalizeDraftIdentity merges legacy duplicates, keeps newest, returns changed.
   const project: any = { id: "p", storeSubmissionDrafts: [older, newer, other] };
   check(normalizeDraftIdentity(project) === true, "归一化检测到重复");
   const tags = project.storeSubmissionDrafts.map((d: any) => d.releaseTag);
   check(tags.length === 2 && tags.includes("v1.1.1") && tags.includes("v1.2.0"), "归并后每个版本一份");
   check(normalizeDraftIdentity(project) === false, "无重复时不再变更");
+}
+
+{
+  // normalizeDraftIdentity 也把历史遗留的跨平台重复合并（保留最新更新）。
+  const ios = draft("v1.1.1", "1.1.1", "2026-08-21T10:00:00Z", "ios");
+  const macos = draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z", "macos");
+  const project: any = { id: "p", storeSubmissionDrafts: [ios, macos] };
+  check(normalizeDraftIdentity(project) === true, "跨平台重复被归一化检测");
+  check(
+    project.storeSubmissionDrafts.length === 1 &&
+      project.storeSubmissionDrafts[0].productId === "macos",
+    "跨平台重复归并保留最新更新的一份",
+  );
 }
 
 {

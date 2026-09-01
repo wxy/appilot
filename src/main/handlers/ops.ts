@@ -218,7 +218,7 @@ export function registerOpsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
-    const draft = findStoreSubmissionDraft(project, productId, releaseTag);
+    const draft = findStoreSubmissionDraft(project, releaseTag);
     if (!draft) throw new Error("Draft not found");
     const product = (project.storeProducts || []).find((item: any) => item.id === productId);
     const asc = (s.get("ascCache") || {})[productId] || null;
@@ -268,7 +268,7 @@ export function registerOpsHandlers(): void {
         (item: any) => item.id === productId,
       );
       if (!product) throw new Error("Store product not found");
-      const draft = findStoreSubmissionDraft(project, productId, releaseTag);
+      const draft = findStoreSubmissionDraft(project, releaseTag);
       if (!draft) throw new Error("Draft not found");
       const copy = await fetchAlignmentStoreCopy(s, project, product, draft);
       const { diffDraftAgainstStore } = await import("@appilot-labs/appilot-core/store-submission");
@@ -293,7 +293,7 @@ export function registerOpsHandlers(): void {
         (item: any) => item.id === productId,
       );
       if (!product) throw new Error("Store product not found");
-      const draft = findStoreSubmissionDraft(project, productId, releaseTag);
+      const draft = findStoreSubmissionDraft(project, releaseTag);
       if (!draft) throw new Error("Draft not found");
       const copy = await fetchAlignmentStoreCopy(s, project, product, draft);
       const {
