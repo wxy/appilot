@@ -4,6 +4,7 @@ import * as projectDomain from '@appilot-labs/appilot-project';
 import * as releaseDomain from '@appilot-labs/appilot-release';
 import { createAppilotOverviewTool } from './overview.js';
 import { startAppilotTasks, createTasksStatusTool } from './tasks.js';
+import { createSnapshotsQueryTool } from './snapshots.js';
 
 /**
  * @appilot-labs/dsh — Appilot 的 DeepSeek Harness 元插件（插件组）。
@@ -26,5 +27,7 @@ export function apply(ctx: Context): void {
   ctx.tools.register(createAppilotOverviewTool(reader));
   // 任务中心：headless 租约选主调度（仅主壳执行任务）+ 状态工具。
   ctx.tools.register(createTasksStatusTool());
+  // 排名快照只读查询（共享 DB：DSH 采集 + Electron 双写都能读）。
+  ctx.tools.register(createSnapshotsQueryTool());
   startAppilotTasks(reader);
 }

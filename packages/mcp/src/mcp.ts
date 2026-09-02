@@ -137,6 +137,29 @@ async function serve(): Promise<void> {
       }),
     },
     {
+      name: 'snapshots_history',
+      description: '某项目最近排名快照时间序列（checkedAt 降序）；可按 productId / keyword 过滤。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string' },
+          productId: { type: ['string', 'null'], description: '可选：产品维度（Electron 侧）' },
+          keyword: { type: 'string', description: '可选：只看某关键词' },
+          limit: { type: 'number', description: '最大点数（默认 200，最大 2000）' },
+        },
+        required: ['project'],
+        additionalProperties: false,
+      },
+      execute: (a) => {
+        const rows = svc.snapshots.recent(String(a.project), {
+          productId: (a.productId as string | null) ?? null,
+          keyword: (a.keyword as string | undefined) ?? undefined,
+          limit: typeof a.limit === 'number' ? a.limit : undefined,
+        });
+        return { project: a.project, productId: a.productId ?? null, count: rows.length, snapshots: rows };
+      },
+    },
+    {
       name: 'tasks_list',
       description: '列出共享定时任务定义与运行状态（interval / last run / next run / status）。',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },

@@ -93,7 +93,13 @@ async function main(): Promise<void> {
   assert.ok(runText.includes('mcp-test-proj'), `run 结果应含项目名: ${runText}`);
   console.log('✓ task_run (readiness)');
 
-  // 6. 错误路径：未知工具
+  // 6. tools/call snapshots_history（readiness 双写？不——需先 seed 快照；验证工具存在与空结果）
+  const hist = await s.send({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'snapshots_history', arguments: { project: 'mcp-test-proj' } } });
+  const histText = hist.result?.content?.[0]?.text ?? '';
+  assert.ok(histText.includes('"count": 0'), `空历史应 count=0: ${histText.slice(0, 120)}`);
+  console.log('✓ snapshots_history（空库）');
+
+  // 7. 错误路径：未知工具
   const bad = await s.send({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'nope', arguments: {} } });
   assert.equal(bad.error?.code, -32601, '未知工具应报 -32601');
   console.log('✓ 未知工具错误');

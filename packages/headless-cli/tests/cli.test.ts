@@ -85,6 +85,24 @@ async function main(): Promise<void> {
   assert.ok(typeof leaseJson.ageMs === 'number');
   console.log(`✓ lease status（主=test-leader, ageMs=${leaseJson.ageMs}）`);
 
+  // snapshots history：seed 两条 → history 返回降序点；productId 过滤
+  const store = openStore(dbPath);
+  store.snapshots.add([
+    { projectName: 'cli-test-proj', productId: null, keyword: 'app', language: 'en', storefront: 'us', rank: 3, totalResults: 100, checkedAt: '2026-08-01T00:00:00Z' },
+    { projectName: 'cli-test-proj', productId: null, keyword: 'app', language: 'en', storefront: 'us', rank: 2, totalResults: 100, checkedAt: '2026-08-02T00:00:00Z' },
+    { projectName: 'cli-test-proj', productId: 'cli-test-proj:macos', keyword: 'app', language: 'en', storefront: 'us', rank: 1, totalResults: 100, checkedAt: '2026-08-02T00:00:00Z' },
+  ]);
+  store.close();
+  const hist = await run(['snapshots', 'history', 'cli-test-proj'], dbPath);
+  const histJson = JSON.parse(hist.stdout);
+  assert.equal(histJson.count, 2, '缺省只返回 DSH 维度（productId null）');
+  assert.equal(histJson.snapshots[0].rank, 2, '降序最新在前');
+  const histProd = await run(['snapshots', 'history', 'cli-test-proj', '--product', 'cli-test-proj:macos'], dbPath);
+  assert.equal(JSON.parse(histProd.stdout).count, 1);
+  const histKw = await run(['snapshots', 'history', 'cli-test-proj', '--limit', '1'], dbPath);
+  assert.equal(JSON.parse(histKw.stdout).count, 1);
+  console.log('✓ snapshots history（降序/productId/limit）');
+
   console.log('CLI 端到端测试全部通过 ✓');
 }
 

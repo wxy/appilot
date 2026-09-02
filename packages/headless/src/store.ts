@@ -27,6 +27,14 @@ export interface AppilotStore {
     add(rows: RankSnapshotRow[]): void;
     /** 每个 (project[, productId], keyword, language, storefront) 的最新一条。 */
     latestByKey(projectName: string, productId?: string | null): RankSnapshotRow[];
+    /**
+     * 最近的时间序列点（checkedAt 降序，最新在前），可按 productId/keyword 过滤。
+     * productId 缺省 = 只看该项目的 DSH 维度（productId NULL）；显式传值看对应产品。
+     */
+    recent(
+      projectName: string,
+      opts?: { productId?: string | null; keyword?: string; limit?: number },
+    ): RankSnapshotRow[];
     /** 清理某项目早于 checkedAt 的旧快照（保留最近 N 天）。 */
     pruneOlderThan(projectName: string, beforeIso: string): number;
   };
@@ -181,6 +189,26 @@ export function openStore(dbPath: string): AppilotStore {
           .prepare('DELETE FROM rank_snapshots WHERE projectName = ? AND checkedAt < ?')
           .run(projectName, beforeIso);
         return Number(res.changes);
+      },
+      recent(projectName, opts = {}) {
+        const limit = Math.min(Math.max(opts.limit ?? 200, 1), 2000);
+        const productId = opts.productId ?? null;
+        const rows = opts.keyword
+          ? (db
+              .prepare(
+                `SELECT * FROM rank_snapshots
+                 WHERE projectName = ? AND productId IS ? AND keyword = ?
+                 ORDER BY checkedAt DESC, id DESC LIMIT ?`,
+              )
+              .all(projectName, productId, opts.keyword, limit) as any[])
+          : (db
+              .prepare(
+                `SELECT * FROM rank_snapshots
+                 WHERE projectName = ? AND productId IS ?
+                 ORDER BY checkedAt DESC, id DESC LIMIT ?`,
+              )
+              .all(projectName, productId, limit) as any[]);
+        return rows.map(stripId);
       },
     },
 

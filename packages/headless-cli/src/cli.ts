@@ -59,6 +59,7 @@ function usage(): never {
       '  appilot-headless projects register <path> [--name <name>]',
       '  appilot-headless projects remove <name>',
       '  appilot-headless snapshots latest <project> [--product <id>]',
+      '  appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]',
       '  appilot-headless tasks list',
       '  appilot-headless lease status        # 当前租约主（多壳调度验证）',
       '  appilot-headless run <taskId>   # release-sync | readiness',
@@ -141,6 +142,22 @@ export async function main(argv: string[]): Promise<void> {
           const product = flags.has('product') && flags.get('product') !== '' ? flags.get('product') : undefined;
           const rows = svc.snapshots.latest(project, product ?? null);
           process.stdout.write(JSON.stringify({ project, productId: product ?? null, snapshots: rows }, null, 2) + '\n');
+          return;
+        }
+        if (sub === 'history') {
+          const project = pos[0];
+          if (!project) return usage();
+          const product = flags.has('product') && flags.get('product') !== '' ? flags.get('product') : undefined;
+          const keyword = flags.has('keyword') && flags.get('keyword') !== '' ? flags.get('keyword') : undefined;
+          const limit = flags.has('limit') && flags.get('limit') !== '' ? Number(flags.get('limit')) : undefined;
+          const rows = svc.snapshots.recent(project, {
+            productId: product ?? null,
+            keyword,
+            limit: Number.isFinite(limit as number) ? (limit as number) : undefined,
+          });
+          process.stdout.write(
+            JSON.stringify({ project, productId: product ?? null, keyword: keyword ?? null, count: rows.length, snapshots: rows }, null, 2) + '\n',
+          );
           return;
         }
         return usage();
