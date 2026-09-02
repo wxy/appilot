@@ -3,7 +3,7 @@ import { createProjectStore, ctxCredentialReader } from '@appilot-labs/appilot-c
 import * as projectDomain from '@appilot-labs/appilot-project';
 import * as releaseDomain from '@appilot-labs/appilot-release';
 import { createAppilotOverviewTool } from './overview.js';
-import { startAppilotTasks, createTasksStatusTool } from './tasks.js';
+import { startAppilotTasks, createTasksStatusTool, createTaskRunTool } from './tasks.js';
 import { createSnapshotsQueryTool } from './snapshots.js';
 
 /**
@@ -29,5 +29,7 @@ export function apply(ctx: Context): void {
   ctx.tools.register(createTasksStatusTool());
   // 排名快照只读查询（共享 DB：DSH 采集 + Electron 双写都能读）。
   ctx.tools.register(createSnapshotsQueryTool());
+  // 任务显式触发（runNow：release-sync / readiness）。
+  ctx.tools.register(createTaskRunTool());
   startAppilotTasks(reader);
 }

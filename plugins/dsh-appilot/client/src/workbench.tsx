@@ -26,6 +26,10 @@ export const REFRESH_PROMPT =
 /** 「任务中心」提示词：让 agent 运行 appilot_tasks 读取定时任务状态。 */
 export const TASKS_PROMPT = '请运行 appilot_tasks，查看 Appilot 定时任务状态，并简要汇报。';
 
+/** 「立即运行任务」提示词：让 agent 运行 appilot_task_run 显式触发单个任务。 */
+export const taskRunPrompt = (taskId: string) =>
+  `请运行 appilot_task_run，taskId=${taskId}，立即执行该定时任务并汇报结果；若返回未知任务请如实说明。`;
+
 /** 「生成简报」提示词：让 agent 运行 appilot_overview 并生成 AI 简报。 */
 export const BRIEF_PROMPT =
   '请运行 appilot_overview（路径使用当前工作目录，includeBrief=true），' +
@@ -46,6 +50,8 @@ export interface WorkbenchProps {
   refresh?: () => Promise<unknown>;
   refreshBrief?: () => Promise<unknown>;
   refreshTasks?: () => Promise<unknown>;
+  /** 立即运行某个共享任务（发提示词让 agent 执行 appilot_task_run）。 */
+  runTask?: (taskId: string) => Promise<unknown>;
   /** 在当前会话运行（注册等操作）。 */
   runCurrent?: (prompt: string) => Promise<unknown>;
   /** 专属会话的 binding.session 可观察对象（subscribe/getSnapshot）。 */
@@ -224,9 +230,10 @@ export function AppilotWorkbench(props: WorkbenchProps) {
           activeTab,
           project.cwd,
           dedicatedNodes,
-          { busy, error, onRefresh },
+          {busy, error, onRefresh },
           props.refreshBrief,
           props.refreshTasks,
+          props.runTask,
         )}
       </div>
     </div>
@@ -240,6 +247,7 @@ function renderWbPanel(
   actions: { busy: boolean; error: string | null; onRefresh: () => void },
   refreshBrief?: () => Promise<unknown>,
   refreshTasks?: () => Promise<unknown>,
+  runTask?: (taskId: string) => Promise<unknown>,
 ) {
   const results = collectToolResults(nodes);
   const overviewNode = results['appilot_overview'];
@@ -254,6 +262,15 @@ function renderWbPanel(
       <TaskTab
         node={results['appilot_tasks']}
         busy={actions.busy}
+        onRunTask={
+          runTask
+            ? (taskId) => {
+                if (actions.busy) return;
+                actions.onRefresh();
+                Promise.resolve(runTask(taskId)).catch(() => {});
+              }
+            : undefined
+        }
         onRefresh={() => {
           if (actions.busy || !refreshTasks) return;
           actions.onRefresh();
