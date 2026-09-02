@@ -1,15 +1,20 @@
 /**
- * Headless 共享定时任务（Phase 5）：所有壳（DSH / CLI / MCP / Electron）运行的
- * 任务定义唯一来源。
+ * Headless 共享定时任务（Phase 5 + 任务统一）：所有壳（DSH / CLI / MCP）运行的
+ * 任务定义；项目级执行逻辑收敛在 core（project-sync / readiness 纯函数）。
  *
  * 任务只调用 core 的确定性函数（不经过模型、不花 token），状态持久化在共享 DB
  * 的 tasks 表；由壳各自 createLeaseScheduler 挂载（仅租约主执行）。
  *
+ * 说明（与 Electron 任务的关系）：Electron 侧 github-sync 为「实例级」任务
+ * （每项目一实例、含 fetchRepoCapabilities/checkForRelease 检测链并写
+ * githubSyncCache 供发布页 UI）；本模块 release-sync 是「汇总级」模板，与
+ * Electron 共用同一 core 执行器 syncProjectReleaseState 的项目状态提取——
+ * 实例粒度统一与 Electron 侧切换 core 执行器列入 4c（见 docs/headless-architecture.md）。
+ *
  * readToken：从壳的凭据源读取 token（DSH 传 ctx 凭据读取器；CLI/MCP 传 env 读取）。
  */
 import type { ScheduledJob } from './scheduler.js';
-import { listGitTags } from '@appilot-labs/appilot-core/release-watcher';
-import { listGitHubReleases } from '@appilot-labs/appilot-core/github-api';
+import { syncProjectReleaseState } from '@appilot-labs/appilot-core/project-sync';
 import { detectLocalizedLanguages } from '@appilot-labs/appilot-core/app-store-discovery';
 import { runReadinessChecks } from '@appilot-labs/appilot-core/readiness-check';
 
@@ -18,7 +23,7 @@ export interface HeadlessJobsOptions {
   readToken(name: string): Promise<string | null> | string | null;
 }
 
-/** 构建共享任务集：发布同步（release-sync）+ 发布准备度（readiness）。 */
+/** 构建共享任务集：项目级发布同步（release-sync）+ 发布准备度（readiness）。 */
 export function buildHeadlessJobs(opts: HeadlessJobsOptions): ScheduledJob[] {
   const { readToken } = opts;
   return [
@@ -26,19 +31,16 @@ export function buildHeadlessJobs(opts: HeadlessJobsOptions): ScheduledJob[] {
       id: 'release-sync',
       title: '发布同步（git tags + GitHub releases）',
       intervalMinutes: 60,
-      async run({ store: s, log }) {
+      async run({ store: s }) {
         const token = (await readToken('GITHUB_TOKEN')) || null;
         const projects = s.projects.list();
         if (projects.length === 0) return '无已注册项目';
         const parts: string[] = [];
         for (const p of projects) {
           try {
-            const tags = await listGitTags(p.path);
-            const releases = await listGitHubReleases(p.path, token);
-            const drafts = releases.filter((r) => r.draft).length;
-            parts.push(
-              `${p.name}: tag=${tags[0]?.name ?? '无'} · GitHub 发布 ${releases.length}（草稿 ${drafts}）`,
-            );
+            // 核心执行器（core/project-sync）：与 Electron github-sync 共用同一实现
+            const state = await syncProjectReleaseState(p.path, { token });
+            parts.push(`${p.name}: ${state.summary}`);
           } catch (err: any) {
             parts.push(`${p.name}: 失败 ${err.message}`);
           }

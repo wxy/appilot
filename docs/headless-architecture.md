@@ -68,19 +68,29 @@ CI 门控：Type Check + Unit Tests（root 构建链含 headless，node 22）全
 
 1. **Phase 4c**：Electron IPC 瘦身 —— 数据域读取改走 headless service API，
    UI 从 DB 读 rank（移除 electron-store 富数据依赖，需真机验证大改）。
-2. **Electron 任务系统**：旧动态任务（rank/github-sync 按产品拆分）若要与
-   DSH 静态任务共用同一调度器，需先解决任务定义形态差异（当前已做状态镜像，
-   执行仍由 Electron 自己调度；headless dueJobs 不会误触发镜像行）。
-3. **DSH/Electron 双写去重**：两壳 rank 采集按 productId 维度隔离
+2. **任务执行统一（核心收敛）**：原则 = 任务类型/执行实现由核心 NPM 包统一，
+   **不存在壳特有任务**；壳只装载 + 展示 + 触发。
+   - 已做：项目级发布同步纯执行器收敛到 core（`project-sync.ts`），DSH/Electron
+     共用同一实现（headless release-sync 已切 core 执行器；Electron github-sync
+     检测链切 core 执行器列入下步，需真机复核）。
+   - 待决策（粒度）：Electron 任务为**实例级**（每项目/每产品×关键词一实例、
+     独立排程/失败重试），headless scheduler 目前是**汇总级**（一 job 遍历项目）。
+     统一需二选一：headless scheduler 支持实例调度（TaskRow 加参数字段，schema v4），
+     或 Electron 项目级任务改为汇总粒度。富数据任务（rank/ops/reviews）依赖
+     electron-store 富数据，随 4c 一并迁。
+3. **任务中心定位**：主面板（全局入口）与工作区 tab 并存、共享同一数据源
+   （DB tasks）与同一操作（appilot_task_run）；主面板任务通道待 4c 一起设计。
+4. **DSH/Electron 双写去重**：两壳 rank 采集按 productId 维度隔离
    （DSH productId=null，Electron 带 productId），同词不重复入 latest 视图。
 
 ## 关键包速览
 
 - `packages/headless`：openStore（DDL v3：projects/rank_snapshots/tasks[source]/lease + meta，
   v1→v3 幂等迁移）、createHeadlessService（projects/snapshots[recent/prune]/tasks 门面）、
-  createLeaseScheduler、buildHeadlessJobs（release-sync / readiness 共享定义）、
+  createLeaseScheduler、buildHeadlessJobs（release-sync / readiness 汇总模板）、
   defaultDbPath/importLegacyRegistry。
-- `packages/core`：纯业务函数（rank-collector / release-watcher / github-api / readiness-check…）。
+- `packages/core`：纯业务函数（rank-collector / release-watcher / github-api /
+  readiness-check / **project-sync（项目级发布同步统一执行器）**…）。
 - `plugins/dsh-common`：openSharedHeadlessStore（单例）+ sqliteProjectStore + 凭据读取。
 - `plugins/dsh-appilot`：工具注册（注册/上下文/发布/趋势/任务/overview）+ 客户端 UI + 调度。
 - `src/main`（Electron）：registry-sync（双向同步 + 租约门 + rank 导入）、rank-db-sync、scheduler。
