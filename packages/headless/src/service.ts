@@ -5,7 +5,7 @@
  * 调度器（租约选主）与 store 分开持有：壳各自 createLeaseScheduler 嵌入。
  */
 import type { AppilotStore } from './store.js';
-import type { ProjectRow, RankSnapshotRow, TaskRow } from './schema.js';
+import type { ProjectRow, RankSnapshotRow, TaskRow, ProjectMetaRow, ProductRecordRow } from './schema.js';
 
 export interface HeadlessService {
   projects: {
@@ -33,6 +33,14 @@ export interface HeadlessService {
     /** 按 source 过滤任务行（'dsh' | 'electron' | 'cli'）。 */
     listBySource(source: string): TaskRow[];
   };
+  /** v5 富数据：产品注册查询（rank 实例化 / UI / agent 只读）。 */
+  products: {
+    listByProject(projectName: string): ProductRecordRow[];
+  };
+  /** v5 富数据：repo 状态查询。 */
+  meta: {
+    get(projectName: string): ProjectMetaRow | undefined;
+  };
   /** 底层 store（调度器/租约等高级能力）。 */
   readonly store: AppilotStore;
 }
@@ -57,6 +65,12 @@ export function createHeadlessService(store: AppilotStore): HeadlessService {
     tasks: {
       list: () => store.tasks.all(),
       listBySource: (source) => store.tasks.all().filter((t) => t.source === source),
+    },
+    products: {
+      listByProject: (projectName) => store.products.listByProject(projectName),
+    },
+    meta: {
+      get: (projectName) => store.meta.get(projectName),
     },
     store,
   };
