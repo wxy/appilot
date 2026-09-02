@@ -49,7 +49,26 @@ export function createTasksStatusTool() {
       ],
     },
     async execute() {
-      return jsonify({ tasks: openSharedHeadlessStore().tasks.all() });
+      const store = openSharedHeadlessStore();
+      const all = store.tasks.all();
+      // DSH 可运行任务的静态定义（release-sync / readiness）——即使尚未以主身份
+      // 跑过（无状态行）也应呈现为可「立即运行」的候选。
+      const definitions = buildHeadlessJobs({ readToken: () => null }).map((j) => ({
+        id: j.id,
+        title: j.title,
+        intervalMinutes: j.intervalMinutes,
+      }));
+      const bySource = (src: string) => all.filter((t) => t.source === src);
+      return jsonify({
+        tasks: all,
+        definitions,
+        summary: {
+          dsh: bySource('dsh').length,
+          electron: bySource('electron').length,
+          cli: bySource('cli').length,
+          error: all.filter((t) => t.lastStatus === 'error').length,
+        },
+      });
     },
   });
 }
