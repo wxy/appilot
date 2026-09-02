@@ -55,7 +55,7 @@ export function createTasksStatusTool() {
 }
 
 /** appilot_task_run 工具：显式立即运行一个共享任务（同步等待结果）。 */
-export function createTaskRunTool() {
+export function createTaskRunTool(scheduler?: LeaseScheduler | null) {
   return defineTool({
     name: 'appilot_task_run',
     description:
@@ -76,10 +76,10 @@ export function createTaskRunTool() {
       ],
     },
     async execute(args: any) {
-      const scheduler = activeScheduler;
+      const sched = scheduler ?? activeScheduler;
       const id = String(args?.taskId ?? '');
-      if (!scheduler) return jsonify({ error: '调度器未运行（dsh 服务未启动）' });
-      const result = await scheduler.runNow(id);
+      if (!sched) return jsonify({ error: '调度器未运行（dsh 服务未启动）' });
+      const result = await sched.runNow(id);
       if (!result) return jsonify({ error: `未知任务: ${id}（可用: release-sync / readiness）` });
       return jsonify({ task: result });
     },

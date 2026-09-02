@@ -63,6 +63,25 @@ async function main() {
     throw new Error(`run 未启动应报错: ${JSON.stringify(runErr).slice(0, 200)}`);
   }
   console.log('✓ appilot_task_run（调度器未启动 → 明确错误）');
+
+  // appilot_task_run 成功路径（注入 fake scheduler）+ 未知任务
+  const fakeScheduler = {
+    runNow: async (id) =>
+      id === 'release-sync'
+        ? { id, title: '发布同步', intervalMinutes: 60, lastRunAt: new Date().toISOString(), nextRunAt: null, lastStatus: 'ok', lastSummary: 'app: tag=v1 · 发布 1', runCount: 1, source: 'dsh' }
+        : undefined,
+  };
+  const runOkTool = createTaskRunTool(fakeScheduler);
+  const okVal = await runOkTool.execute({ taskId: 'release-sync' });
+  if (!okVal.task || okVal.task.id !== 'release-sync' || okVal.task.lastStatus !== 'ok') {
+    throw new Error(`run 成功路径应返回 task: ${JSON.stringify(okVal).slice(0, 200)}`);
+  }
+  console.log('✓ appilot_task_run（成功路径 → 返回 task 新状态）');
+  const unknownVal = await runOkTool.execute({ taskId: 'nope' });
+  if (!unknownVal.error || !unknownVal.error.includes('未知任务')) {
+    throw new Error(`run 未知任务应报错: ${JSON.stringify(unknownVal).slice(0, 200)}`);
+  }
+  console.log('✓ appilot_task_run（未知任务 → 明确错误）');
   console.log('工具冒烟通过 ✓');
 }
 
