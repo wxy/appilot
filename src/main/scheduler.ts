@@ -34,7 +34,8 @@ import {
   type SchedulerRoundState,
 } from "./schedule";
 import { getStore } from "./store";
-import { scheduleGate } from "./registry-sync";
+import { scheduleGate, sharedStore } from "./registry-sync";
+import { recordRankSnapshotToDb } from "./rank-db-sync";
 import type { AppStore } from "./store";
 
 interface ScheduledTaskBase {
@@ -662,6 +663,16 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     latestProduct.rankSnapshots = appendRankSnapshots(previous, [snapshot]);
     store.set("projects", latestProjects);
     notifyDataChanged("rank");
+    // Phase 4b：同一采集结果双写一份到共享 DB（electron-store 仍是 UI 富数据
+    // 源；DB 副本供 DSH / CLI / MCP 读取同一 rank 历史）。失败只告警不阻断。
+    const holderProject = latestProjects.find(
+      (p: any) =>
+        Array.isArray(p?.storeProducts) &&
+        p.storeProducts.some((sp: any) => sp?.id === task.productId),
+    );
+    if (holderProject?.name && !recordRankSnapshotToDb(sharedStore(), holderProject.name, task.productId, snapshot)) {
+      log.warn(`rank snapshot write to shared db failed for product ${task.productId}`);
+    }
   }
 }
 
