@@ -39,7 +39,12 @@ export interface AppilotStore {
     pruneOlderThan(projectName: string, beforeIso: string): number;
   };
   tasks: {
-    upsert(row: TaskRow): void;
+    /**
+     * upsert 任务行。默认（无 opts）UPDATE 分支不覆盖 kind/instance/source
+     * （调度状态写回不应改身份）；opts.setIdentity=true 时同时更新身份字段
+     * （reconcile 参数/身份刷新用，例如把镜像先建的 kind=null 行升级为实例行）。
+     */
+    upsert(row: TaskRow, opts?: { setIdentity?: boolean }): void;
     all(): TaskRow[];
     get(id: string): TaskRow | undefined;
     /** 删除任务行（镜像清理：源里已不存在的 Electron 任务）。 */
@@ -230,8 +235,9 @@ export function openStore(dbPath: string): AppilotStore {
     },
 
     tasks: {
-      upsert(row) {
+      upsert(row, opts = {}) {
         tx(() => {
+          const setIdentity = opts.setIdentity === true;
           db.prepare(
             `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount, source, kind, instance)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -242,7 +248,8 @@ export function openStore(dbPath: string): AppilotStore {
                nextRunAt = excluded.nextRunAt,
                lastStatus = excluded.lastStatus,
                lastSummary = excluded.lastSummary,
-               runCount = excluded.runCount`,
+               runCount = excluded.runCount
+               ${setIdentity ? ", source = excluded.source, kind = excluded.kind, instance = excluded.instance" : ""}`,
           ).run(
             row.id,
             row.title,

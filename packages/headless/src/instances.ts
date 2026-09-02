@@ -65,21 +65,25 @@ export function reconcileTaskInstances(
   for (const spec of expected) {
     const existing = store.tasks.get(spec.id);
     if (existing) {
-      // 存在则按需刷新参数/标题（不改 nextRunAt/状态）
+      // 存在则按需刷新参数/标题/身份（不改 nextRunAt/状态）。用 setIdentity
+      // 覆盖已存在行的 kind/instance——镜像先建的行（kind=null）需升级为实例行。
       if (
         existing.kind !== spec.kind ||
         existing.title !== spec.title ||
         existing.intervalMinutes !== spec.intervalMinutes ||
         JSON.stringify(existing.instance ?? null) !== JSON.stringify(spec.instance)
       ) {
-        store.tasks.upsert({
-          ...existing,
-          title: spec.title,
-          intervalMinutes: spec.intervalMinutes,
-          kind: spec.kind,
-          instance: spec.instance,
-          source: existing.source ?? source,
-        });
+        store.tasks.upsert(
+          {
+            ...existing,
+            title: spec.title,
+            intervalMinutes: spec.intervalMinutes,
+            kind: spec.kind,
+            instance: spec.instance,
+            source: existing.source ?? source,
+          },
+          { setIdentity: true },
+        );
       }
       continue;
     }

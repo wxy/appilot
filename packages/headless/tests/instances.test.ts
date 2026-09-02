@@ -81,6 +81,20 @@ async function main(): Promise<void> {
     const r4 = reconcileTaskInstances(store, githubSyncInstancesFor([projA]), 'dsh');
     assert.equal(r4.pruned, 0, '不应清 electron 来源行');
     assert.equal(store.tasks.get('github-sync:proj-b')?.source, 'electron');
+
+    // 镜像先建的行（kind=null 无 instance）→ reconcile 刷新应升级身份（setIdentity）
+    const ghost = makeGitRepo('ghost-proj', 'v1.1.0');
+    store.tasks.upsert({ id: 'github-sync:ghost-proj', title: '排名采集镜像', intervalMinutes: 55, lastRunAt: '2026-09-01T00:00:00Z', nextRunAt: null, lastStatus: 'ok', lastSummary: '旧', runCount: 3, source: 'electron' });
+    const pre = store.tasks.get('github-sync:ghost-proj');
+    assert.equal(pre?.kind, null, '镜像先行 kind=null（INSERT 新行）');
+    reconcileTaskInstances(store, githubSyncInstancesFor([{ name: 'ghost-proj', path: ghost }]), 'dsh');
+    const upgraded = store.tasks.get('github-sync:ghost-proj');
+    assert.equal(upgraded?.kind, 'github-sync', '镜像 null 行应被升级 kind');
+    assert.deepEqual(upgraded?.instance, { projectName: 'ghost-proj', path: ghost }, 'instance 应被写入');
+    // 状态与排程保留（refresh 不改状态）；来源保留原值（不夺 source）
+    assert.equal(upgraded?.lastStatus, 'ok');
+    assert.equal(upgraded?.runCount, 3);
+    assert.equal(upgraded?.source, 'electron', '刷新不应夺走原来源');
     store.close();
   });
 
