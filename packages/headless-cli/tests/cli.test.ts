@@ -70,6 +70,21 @@ async function main(): Promise<void> {
   assert.ok(!JSON.parse(lst2.stdout).projects.some((p: any) => p.name === 'cli-test-proj'));
   console.log('✓ projects remove');
 
+  // lease status：无主 → null；模拟有主 → 显示 leader + 心跳年龄
+  const leaseEmpty = await run(['lease', 'status'], dbPath);
+  assert.equal(JSON.parse(leaseEmpty.stdout).leader, null, '新 DB 应无租约主');
+  console.log('✓ lease status（无主）');
+
+  const { openStore } = require('@appilot-labs/appilot-headless');
+  const holder = openStore(dbPath);
+  assert.equal(holder.lease.acquire('test-leader', 60_000), true);
+  holder.close();
+  const leaseTaken = await run(['lease', 'status'], dbPath);
+  const leaseJson = JSON.parse(leaseTaken.stdout);
+  assert.equal(leaseJson.leader, 'test-leader');
+  assert.ok(typeof leaseJson.ageMs === 'number');
+  console.log(`✓ lease status（主=test-leader, ageMs=${leaseJson.ageMs}）`);
+
   console.log('CLI 端到端测试全部通过 ✓');
 }
 

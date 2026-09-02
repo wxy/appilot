@@ -60,6 +60,7 @@ function usage(): never {
       '  appilot-headless projects remove <name>',
       '  appilot-headless snapshots latest <project> [--product <id>]',
       '  appilot-headless tasks list',
+      '  appilot-headless lease status        # 当前租约主（多壳调度验证）',
       '  appilot-headless run <taskId>   # release-sync | readiness',
       '',
       '环境变量 APPILOT_DB_FILE 覆盖数据库路径。输出 JSON。',
@@ -150,6 +151,29 @@ export async function main(argv: string[]): Promise<void> {
           const jobs = buildHeadlessJobs({ readToken: envToken });
           const definitions = jobs.map((j) => ({ id: j.id, title: j.title, intervalMinutes: j.intervalMinutes }));
           process.stdout.write(JSON.stringify({ tasks: svc.tasks.list(), definitions }, null, 2) + '\n');
+          return;
+        }
+        return usage();
+      }
+      case 'lease': {
+        const sub = argv[1];
+        if (sub === 'status' || sub === undefined) {
+          const info = store.lease.info();
+          if (!info) {
+            process.stdout.write(JSON.stringify({ leader: null, heartbeatAt: null, ageMs: null }, null, 2) + '\n');
+            return;
+          }
+          process.stdout.write(
+            JSON.stringify(
+              {
+                leader: info.leaderId,
+                heartbeatAt: info.heartbeatAt,
+                ageMs: Date.now() - new Date(info.heartbeatAt).getTime(),
+              },
+              null,
+              2,
+            ) + '\n',
+          );
           return;
         }
         return usage();
