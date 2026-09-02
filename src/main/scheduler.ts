@@ -371,10 +371,14 @@ function syncRankInstancesToDb(tasks: ScheduledTask[]): void {
           groupKey: t.groupKey,
         },
       }));
-    if (specs.length === 0) return;
-    reconcileTaskInstances(sharedStore(), specs, "electron");
+    if (specs.length === 0) {
+      log.info("appilot: rank instances sync skipped (no rank tasks in scheduledTasks)");
+      return;
+    }
+    const res = reconcileTaskInstances(sharedStore(), specs, "electron");
+    log.info(`appilot: synced rank instances to shared db (seeded ${res.seeded}, pruned ${res.pruned}, of ${specs.length})`);
   } catch (err: any) {
-    log.warn(`rank instances sync to shared db failed: ${err.message}`);
+    log.warn(`rank instances sync to shared db failed: ${err?.message || String(err)}`);
   }
 }
 
@@ -1250,6 +1254,17 @@ async function scatterOverdueTasks(store: AppStore): Promise<void> {
 }
 
 async function schedulerLoopOnce(): Promise<void> {
+  try {
+    await schedulerLoopOnceInner();
+  } catch (err: any) {
+    // 调度循环崩溃点显形：任何一轮失败都记录并继续下一轮，避免静默停摆。
+    log.error(`scheduler loop failed: ${err?.stack || err?.message || String(err)}`);
+    if (schedulerPaused) return;
+    schedulerTimer = setTimeout(() => void schedulerLoopOnce(), TICK_INTERVAL_MS);
+  }
+}
+
+async function schedulerLoopOnceInner(): Promise<void> {
   const store = await getStore();
   const accel = store.get("schedulerAccel") === true;
   // 加速模式跳过积压分散：让任务按序立即处理，而不是散到未来 120 分钟。
