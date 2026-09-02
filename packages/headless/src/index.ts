@@ -10,4 +10,6 @@ export { openStore } from './store.js';
 export type { AppilotStore } from './store.js';
 export { defaultDbPath, defaultLegacyRegistryPath, importLegacyRegistry } from './paths.js';
 export { createLeaseScheduler } from './scheduler.js';
+export { createHeadlessService } from './service.js';
+export type { HeadlessService } from './service.js';
 export type { ScheduledJob, ScheduledJobContext, LeaseScheduler, LeaseSchedulerOptions } from './scheduler.js';
