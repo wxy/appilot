@@ -6,6 +6,9 @@
  * - DSH 侧注册的新项目 → hydrateFromDb（启动 + 每 10s 轮询，补进 electron-store
  *   的富数据副本——electron-store 仍持有富数据，DB 是注册表单一事实源）；
  * - 首次打开时把旧版 registry.json 一次性导入（headless.importLegacyRegistry）。
+ *
+ * 双向同步的纯逻辑（映射/比较/合并）在 registry-sync-core.ts（无 electron，
+ * node 单测覆盖）；本文件只做 electron 绑定（userData 路径、租约门、轮询）。
  */
 import { app } from 'electron';
 import { join } from 'node:path';
@@ -13,11 +16,12 @@ import {
   openStore,
   importLegacyRegistry,
   type AppilotStore,
-  type ProjectRow,
 } from '@appilot-labs/appilot-headless';
 import { log } from '@appilot-labs/appilot-core/logger';
 import { importRankHistoryToDb } from './rank-db-sync';
 import { mirrorTasksToDb } from './task-db-sync';
+import { hydrateFromDbCore, syncRegistryCore } from './registry-sync-core';
+export { registryRecordOf } from './registry-sync-core';
 
 let store: AppilotStore | null = null;
 
@@ -80,122 +84,25 @@ function startLeaderHeartbeat(): void {
   }, 10_000);
 }
 
-/** 本侧项目 → DB 注册表行（identity 子集）。 */
-export function registryRecordOf(project: any): ProjectRow {
-  const resolved = project?.repo?.capturedAt ?? project?.createdAt ?? new Date().toISOString();
-  return {
-    name: project.name,
-    path: project.localPath,
-    githubUrl: project?.repo?.githubUrl ?? null,
-    platform: project?.productType ?? null,
-    languages: (project?.supportedLanguages || [])
-      .map((l: any) => (typeof l === 'string' ? l : l?.code))
-      .filter(Boolean),
-    lastResolvedAt: resolved,
-    artworkUrl: project?.artworkUrl ?? null,
-    updatedAt: resolved,
-  };
-}
-
 /** 本侧项目变更 → 写共享 DB（identity upsert）。 */
 export async function syncRegistryToDb(projects: any[]): Promise<void> {
   try {
-    const s = sharedStore();
-    for (const p of projects || []) {
-      if (p && p.name && p.localPath) s.projects.save(registryRecordOf(p));
-    }
+    syncRegistryCore(sharedStore(), projects);
   } catch (err: any) {
     log.warn(`registry sync to db failed: ${err.message}`);
   }
 }
 
-/** 共享 DB 里本侧缺失的项目补进 electron-store（最小 Project）；返回变更后的列表与是否有变化。 */
+/** 共享 DB 里本侧缺失/更新的项目 → 补进 electron-store 富数据副本。 */
 export async function hydrateFromDb(
   projects: any[],
 ): Promise<{ projects: any[]; changed: boolean }> {
   try {
-    const records = sharedStore().projects.list();
-    const byPath = new Map(
-      (projects || []).map((p: any) => [normalizePath(p.localPath), p]),
-    );
-    let changed = false;
-    const next = [...(projects || [])];
-    for (const rec of records) {
-      const existing = byPath.get(normalizePath(rec.path));
-      if (!existing) {
-        next.push(minimalProjectFromRecord(rec));
-        byPath.set(normalizePath(rec.path), rec.path);
-        changed = true;
-      } else if (rec.updatedAt && isNewer(rec.updatedAt, existing)) {
-        const before = JSON.stringify(existing);
-        if (rec.name) existing.name = rec.name;
-        if (rec.platform === 'ios' || rec.platform === 'macos') existing.productType = rec.platform;
-        if (Array.isArray(rec.languages) && rec.languages.length) {
-          existing.supportedLanguages = rec.languages.map((code) => ({ code, name: code }));
-        }
-        if (rec.githubUrl) {
-          existing.repo = existing.repo || {};
-          existing.repo.githubUrl = rec.githubUrl;
-          existing.repo.remoteUrl = rec.githubUrl;
-        }
-        if (rec.artworkUrl && !existing.artworkUrl) existing.artworkUrl = rec.artworkUrl;
-        if (JSON.stringify(existing) !== before) changed = true;
-      }
-    }
-    return { projects: next, changed };
+    return hydrateFromDbCore(sharedStore(), projects);
   } catch (err: any) {
     log.warn(`registry hydrate failed: ${err.message}`);
     return { projects: projects || [], changed: false };
   }
-}
-
-function normalizePath(p: string): string {
-  return (p || '').replace(/[/\\]+$/, '');
-}
-
-function isNewer(updatedAt: string, project: any): boolean {
-  const recTime = new Date(updatedAt).getTime();
-  const projTime = new Date(
-    project?.repo?.capturedAt ?? project?.createdAt ?? 0,
-  ).getTime();
-  return recTime > projTime;
-}
-
-/** 由 DB 记录构造最小 Project（storeProducts 等留空，待用户在应用中完善）。 */
-function minimalProjectFromRecord(rec: ProjectRow): any {
-  const resolved = rec.lastResolvedAt ?? rec.updatedAt ?? new Date().toISOString();
-  return {
-    id: `shared-${Buffer.from(rec.path).toString('base64url').slice(0, 16)}`,
-    name: rec.name,
-    localPath: rec.path,
-    productType: rec.platform === 'ios' || rec.platform === 'macos' ? rec.platform : null,
-    bundleId: null,
-    trackId: null,
-    trackName: null,
-    artworkUrl: rec.artworkUrl ?? null,
-    supportedLanguages: (rec.languages || []).map((code) => ({ code, name: code })),
-    storeLinks: [],
-    trackedKeywords: [],
-    submissionKeywords: [],
-    removedKeywords: [],
-    rankSnapshots: [],
-    storeProducts: [],
-    createdAt: resolved,
-    repo: rec.githubUrl
-      ? {
-          remoteUrl: rec.githubUrl,
-          githubUrl: rec.githubUrl,
-          branch: null,
-          headSha: null,
-          headMessage: null,
-          headDate: null,
-          dirty: false,
-          description: null,
-          capturedAt: resolved,
-        }
-      : null,
-    registryShared: true,
-  };
 }
 
 /**
