@@ -5,7 +5,7 @@
  * - 首次打开时把旧版 registry.json 一次性导入（幂等）；
  * - 实现 ProjectStore 契约（save/list/get），供 dsh-project 工具使用。
  */
-import { openStore, importLegacyRegistry, defaultLegacyRegistryPath } from '@appilot-labs/appilot-headless';
+import { openStore, importLegacyRegistry, defaultDbPath, defaultLegacyRegistryPath } from '@appilot-labs/appilot-headless';
 import type { ProjectRecord, ProjectStore } from './storage.js';
 
 export interface SqliteStoreOptions {
@@ -16,8 +16,7 @@ export interface SqliteStoreOptions {
 }
 
 export function sqliteProjectStore(opts: SqliteStoreOptions = {}): ProjectStore {
-  const dbPath = opts.dbPath ?? process.env.APPILOT_DB_FILE ?? undefined;
-  if (!dbPath) throw new Error('sqliteProjectStore: 需要 dbPath 或 APPILOT_DB_FILE');
+  const dbPath = opts.dbPath ?? process.env.APPILOT_DB_FILE ?? defaultDbPath();
   const store = openStore(dbPath);
   const legacy =
     opts.legacyJsonPath === null ? null : (opts.legacyJsonPath ?? defaultLegacyRegistryPath());

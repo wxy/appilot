@@ -109,18 +109,15 @@ export function createProjectStore(
 ): ProjectStore {
   const override = opts?.dbFile !== undefined ? opts.dbFile : process.env.APPILOT_DB_FILE;
   if (override !== 'none' && override !== null) {
-    const dbPath = override || undefined;
-    if (dbPath) {
-      try {
-        return sqliteProjectStore({
-          dbPath,
-          legacyJsonPath:
-            opts?.legacyJsonPath === undefined ? defaultRegistryPath() : opts?.legacyJsonPath,
-        });
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`[appilot-common] SQLite store unavailable, falling back: ${String(err)}`);
-      }
+    try {
+      return sqliteProjectStore({
+        dbPath: override || undefined,
+        legacyJsonPath:
+          opts?.legacyJsonPath === undefined ? defaultRegistryPath() : opts?.legacyJsonPath,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[appilot-common] SQLite store unavailable, falling back: ${String(err)}`);
     }
   }
   // 禁用/不可用时回退原逻辑（domain → memory）。
