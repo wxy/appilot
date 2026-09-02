@@ -42,6 +42,8 @@ export interface AppilotStore {
     upsert(row: TaskRow): void;
     all(): TaskRow[];
     get(id: string): TaskRow | undefined;
+    /** 删除任务行（镜像清理：源里已不存在的 Electron 任务）。 */
+    remove(id: string): boolean;
   };
   lease: {
     /**
@@ -221,8 +223,8 @@ export function openStore(dbPath: string): AppilotStore {
       upsert(row) {
         tx(() => {
           db.prepare(
-            `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount, source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                title = excluded.title,
                intervalMinutes = excluded.intervalMinutes,
@@ -240,6 +242,7 @@ export function openStore(dbPath: string): AppilotStore {
             row.lastStatus,
             row.lastSummary,
             row.runCount,
+            row.source ?? 'dsh',
           );
         });
       },
@@ -254,6 +257,7 @@ export function openStore(dbPath: string): AppilotStore {
           lastStatus: r.lastStatus,
           lastSummary: r.lastSummary,
           runCount: r.runCount,
+          source: r.source ?? 'dsh',
         }));
       },
       get(id) {
@@ -268,7 +272,12 @@ export function openStore(dbPath: string): AppilotStore {
           lastStatus: r.lastStatus,
           lastSummary: r.lastSummary,
           runCount: r.runCount,
+          source: r.source ?? 'dsh',
         };
+      },
+      remove(id) {
+        const res = db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+        return Number(res.changes) > 0;
       },
     },
 

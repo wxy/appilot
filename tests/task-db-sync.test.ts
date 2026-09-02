@@ -62,21 +62,26 @@ async function main(): Promise<void> {
   assert.equal(toTaskRow(null as any), null);
   console.log('✓ 非法行跳过');
 
-  // 5. 镜像 + 幂等（同 id upsert 不重复行）
-  const n = mirrorTasksToDb(store, [rankTask, failed, neverRun, disabled, { id: 'x' }] as any);
-  assert.equal(n, 4, `应镜像 4 行（1 非法跳过），实际 ${n}`);
-  const all = store.tasks.all();
+  // 5. 镜像 + 幂等（同 id upsert 不重复行）+ source 标记
+  const first = mirrorTasksToDb(store, [rankTask, failed, neverRun, disabled, { id: 'x' }] as any);
+  assert.deepEqual(first, { mirrored: 4, pruned: 0 }, `应镜像 4 行（1 非法跳过），实际 ${JSON.stringify(first)}`);
+  let all = store.tasks.all();
   assert.equal(all.length, 4, `tasks 表应 4 行，实际 ${all.length}`);
-  mirrorTasksToDb(store, [rankTask] as any);
-  assert.equal(store.tasks.all().length, 4, '重复镜像不应新增行');
+  assert.ok(all.every((t) => t.source === 'electron'), '镜像行应标 source=electron');
+  const again = mirrorTasksToDb(store, [rankTask] as any);
+  assert.deepEqual(again, { mirrored: 1, pruned: 3 }, '重复镜像不新增行；源中缺失的 3 行被清理');
+  all = store.tasks.all();
+  assert.equal(all.length, 1, `清理后应只剩 rankTask 1 行，实际 ${all.length}`);
   const mirroredRank = store.tasks.get('prod-x:macos:app:en:us');
   assert.equal(mirroredRank?.runCount, 5);
-  console.log('✓ 镜像幂等 upsert');
+  console.log('✓ 镜像幂等 upsert + source 标记 + 幽灵行清理');
 
-  // 6. DSH 静态任务不被污染：release-sync/readiness 之外没有新「定义」
-  const ids = store.tasks.all().map((t) => t.id);
-  assert.ok(ids.every((id) => !id.startsWith('release') || id === 'release-sync'));
-  console.log('✓ 共享 tasks 镜像不与 headless 任务冲突');
+  // 6. DSH 静态任务不被污染/不被误清
+  store.tasks.upsert({ id: 'release-sync', title: '发布同步', intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'dsh' });
+  const withDsh = mirrorTasksToDb(store, [rankTask] as any);
+  assert.equal(withDsh.pruned, 0, 'DSH 行不应被清理');
+  assert.equal(store.tasks.all().length, 2, 'DSH 行应保留');
+  console.log('✓ DSH 静态任务行不受镜像清理影响');
 
   store.close();
   console.log('task-db-sync 单测全部通过 ✓');

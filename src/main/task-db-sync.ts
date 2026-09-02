@@ -73,20 +73,42 @@ export function toTaskRow(t: ElectronTaskLike): TaskRow | null {
     lastStatus,
     lastSummary: null,
     runCount: typeof t.executionCount === 'number' ? t.executionCount : 0,
+    source: 'electron',
   };
 }
 
+export interface MirrorResult {
+  mirrored: number;
+  /** 清理掉的幽灵行（源里已不存在的 Electron 镜像行）。 */
+  pruned: number;
+}
+
 /**
- * 把 electron-store 的调度任务镜像进共享 DB tasks 表（upsert）。
- * 返回镜像的任务数。失败按调用方处理（此函数不做 try/catch）。
+ * 把 electron-store 的调度任务镜像进共享 DB tasks 表（upsert），并清理
+ * 源里已不存在的 Electron 镜像行（任务被移除/产品下架等，避免幽灵行）。
+ *
+ * ⚠️ 只清理 source='electron' 的行——DSH 静态任务行（source='dsh'）与 CLI
+ * 触发行不受影响。Electron 启动早期 scheduledTasks 为空会触发一次全清，
+ * 随后 reconcile 重建并重新镜像，最终一致。
+ * 返回 { mirrored, pruned }。失败由调用方处理（此函数不做 try/catch）。
  */
-export function mirrorTasksToDb(store: AppilotStore, tasks: ElectronTaskLike[]): number {
+export function mirrorTasksToDb(store: AppilotStore, tasks: ElectronTaskLike[]): MirrorResult {
+  const sourceIds = new Set<string>();
   let mirrored = 0;
   for (const t of tasks ?? []) {
+    if (!t || typeof t.id !== 'string' || !t.id) continue;
+    sourceIds.add(t.id);
     const row = toTaskRow(t);
     if (!row) continue;
     store.tasks.upsert(row);
     mirrored += 1;
   }
-  return mirrored;
+  // 清理：DB 中 source='electron' 但已不在当前源的任务行
+  let pruned = 0;
+  for (const row of store.tasks.all()) {
+    if (row.source === 'electron' && !sourceIds.has(row.id)) {
+      if (store.tasks.remove(row.id)) pruned += 1;
+    }
+  }
+  return { mirrored, pruned };
 }
