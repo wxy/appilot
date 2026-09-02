@@ -58,6 +58,17 @@ async function main(): Promise<void> {
   assert.ok(runJson.runCount >= 1);
   console.log(`✓ run readiness (status=${runJson.lastStatus})`);
 
+  // run 实例任务：github-sync:<project>（现场 seed + 核心执行器跑真实仓库）
+  const inst = await run(['run', 'github-sync:cli-test-proj'], dbPath);
+  assert.equal(inst.code, 0, `run github-sync 实例应成功: ${inst.stderr}`);
+  const instJson = JSON.parse(inst.stdout);
+  assert.equal(instJson.kind, 'github-sync', '实例应带 kind');
+  assert.equal(instJson.source, 'cli');
+  assert.ok(instJson.lastStatus === 'ok' || instJson.lastStatus === 'error', '实例落库状态');
+  assert.ok((instJson.lastSummary ?? '').length > 0, '实例应有摘要');
+  assert.ok(instJson.runCount >= 1);
+  console.log(`✓ run github-sync:cli-test-proj 实例 (status=${instJson.lastStatus})`);
+
   // run 未知任务 → 非零退出 + stderr
   const bad = await run(['run', 'nope'], dbPath);
   assert.notEqual(bad.code, 0);
