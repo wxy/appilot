@@ -171,7 +171,12 @@ export function TrendTab(props: { node: any }) {
 }
 
 /** 任务中心 tab：从 appilot_tasks 节点渲染定时任务状态。 */
-export function TaskTab(props: { node: any; onRefresh?: () => void; busy?: boolean }) {
+export function TaskTab(props: {
+  node: any;
+  onRefresh?: () => void;
+  onRunTask?: (taskId: string) => void;
+  busy?: boolean;
+}) {
   const v = overviewValue(props.node);
   if (!v) {
     return (
@@ -217,27 +222,48 @@ export function TaskTab(props: { node: any; onRefresh?: () => void; busy?: boole
           <div className="ap-empty-hint">服务端未注册任何定时任务。</div>
         </div>
       ) : (
-        tasks.map((t: any) => (
-          <div className="ap-ov-card" key={t.id}>
-            <div className="ap-ov-card-title">{t.title}</div>
-            <div className="ap-ov-row">
-              {chip('每 ' + t.intervalMinutes + ' 分钟', '')}
-              {t.lastStatus === 'ok'
-                ? chip('上次成功', 'pass')
-                : t.lastStatus === 'error'
-                  ? chip('上次失败', 'fail')
-                  : chip('未运行', '')}
-              {chip('已运行 ' + (t.runCount ?? 0) + ' 次', '')}
+        tasks.map((t: any) => {
+          // 仅 dsh 侧可运行的任务显示「立即运行」（Electron 动态任务由其自身调度）。
+          const runnable = !t.source || t.source === 'dsh';
+          return (
+            <div className="ap-ov-card" key={t.id}>
+              <div className="ap-ov-row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="ap-ov-card-title">{t.title}</div>
+                {runnable ? (
+                  <button
+                    type="button"
+                    className="ap-btn"
+                    disabled={props.busy || undefined}
+                    title="立即运行（appilot_task_run）"
+                    onClick={() => {
+                      if (props.busy) return;
+                      props.onRunTask?.(t.id);
+                    }}
+                  >
+                    {props.busy ? '运行中…' : '立即运行'}
+                  </button>
+                ) : null}
+              </div>
+              <div className="ap-ov-row">
+                {chip('每 ' + t.intervalMinutes + ' 分钟', '')}
+                {t.lastStatus === 'ok'
+                  ? chip('上次成功', 'pass')
+                  : t.lastStatus === 'error'
+                    ? chip('上次失败', 'fail')
+                    : chip('未运行', '')}
+                {chip('已运行 ' + (t.runCount ?? 0) + ' 次', '')}
+                {t.source && t.source !== 'dsh' ? chip('来源: ' + t.source, '') : null}
+              </div>
+              {t.lastRunAt ? (
+                <div className="ap-wb-sub">上次运行：{new Date(t.lastRunAt).toLocaleString()}</div>
+              ) : null}
+              {t.nextRunAt ? (
+                <div className="ap-wb-sub">下次运行：{new Date(t.nextRunAt).toLocaleString()}</div>
+              ) : null}
+              {t.lastSummary ? <div className="ap-wb-sub">{t.lastSummary}</div> : null}
             </div>
-            {t.lastRunAt ? (
-              <div className="ap-wb-sub">上次运行：{new Date(t.lastRunAt).toLocaleString()}</div>
-            ) : null}
-            {t.nextRunAt ? (
-              <div className="ap-wb-sub">下次运行：{new Date(t.nextRunAt).toLocaleString()}</div>
-            ) : null}
-            {t.lastSummary ? <div className="ap-wb-sub">{t.lastSummary}</div> : null}
-          </div>
-        ))
+          );
+        })
       )}
     </div>
   );

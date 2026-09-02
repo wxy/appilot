@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openSharedHeadlessStore } from '@appilot-labs/appilot-common';
 import { createSnapshotsQueryTool } from '../src/snapshots.js';
+import { createTaskRunTool, createTasksStatusTool } from '../src/tasks.js';
 
 const tmp = mkdtempSync(join(tmpdir(), 'tool-smoke-'));
 process.env.APPILOT_DB_FILE = join(tmp, 'appilot.db');
@@ -50,7 +51,19 @@ async function main() {
 
   const miss = await tool.execute({ projectName: 'nope' });
   console.log('✓ 未知项目（空结果不抛）:', JSON.stringify(miss).slice(0, 80));
-  console.log('appilot_snapshots 工具冒烟通过 ✓');
+
+  // appilot_tasks 装配 + appilot_task_run（调度器未启动 → 明确 error）
+  const statusTool = createTasksStatusTool();
+  const runTool = createTaskRunTool();
+  const statusVal = await statusTool.execute({});
+  if (!Array.isArray(statusVal.tasks)) throw new Error('appilot_tasks 应返回 tasks 数组');
+  console.log(`✓ appilot_tasks（tasks=${statusVal.tasks.length}）`);
+  const runErr = await runTool.execute({ taskId: 'release-sync' });
+  if (!runErr.error || !runErr.error.includes('调度器未运行')) {
+    throw new Error(`run 未启动应报错: ${JSON.stringify(runErr).slice(0, 200)}`);
+  }
+  console.log('✓ appilot_task_run（调度器未启动 → 明确错误）');
+  console.log('工具冒烟通过 ✓');
 }
 
 main().catch((err) => {

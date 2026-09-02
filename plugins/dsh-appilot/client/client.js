@@ -31004,23 +31004,43 @@ function TaskTab(props) {
     tasks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-empty", children: [
       /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-title", children: "\u6682\u65E0\u4EFB\u52A1" }),
       /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-hint", children: "\u670D\u52A1\u7AEF\u672A\u6CE8\u518C\u4EFB\u4F55\u5B9A\u65F6\u4EFB\u52A1\u3002" })
-    ] }) : tasks.map((t) => /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-card", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-ov-card-title", children: t.title }),
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", children: [
-        chip("\u6BCF " + t.intervalMinutes + " \u5206\u949F", ""),
-        t.lastStatus === "ok" ? chip("\u4E0A\u6B21\u6210\u529F", "pass") : t.lastStatus === "error" ? chip("\u4E0A\u6B21\u5931\u8D25", "fail") : chip("\u672A\u8FD0\u884C", ""),
-        chip("\u5DF2\u8FD0\u884C " + (t.runCount ?? 0) + " \u6B21", "")
-      ] }),
-      t.lastRunAt ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-wb-sub", children: [
-        "\u4E0A\u6B21\u8FD0\u884C\uFF1A",
-        new Date(t.lastRunAt).toLocaleString()
-      ] }) : null,
-      t.nextRunAt ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-wb-sub", children: [
-        "\u4E0B\u6B21\u8FD0\u884C\uFF1A",
-        new Date(t.nextRunAt).toLocaleString()
-      ] }) : null,
-      t.lastSummary ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.lastSummary }) : null
-    ] }, t.id))
+    ] }) : tasks.map((t) => {
+      const runnable = !t.source || t.source === "dsh";
+      return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-card", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", style: { justifyContent: "space-between", alignItems: "center" }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-ov-card-title", children: t.title }),
+          runnable ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "ap-btn",
+              disabled: props.busy || void 0,
+              title: "\u7ACB\u5373\u8FD0\u884C\uFF08appilot_task_run\uFF09",
+              onClick: () => {
+                if (props.busy) return;
+                props.onRunTask?.(t.id);
+              },
+              children: props.busy ? "\u8FD0\u884C\u4E2D\u2026" : "\u7ACB\u5373\u8FD0\u884C"
+            }
+          ) : null
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", children: [
+          chip("\u6BCF " + t.intervalMinutes + " \u5206\u949F", ""),
+          t.lastStatus === "ok" ? chip("\u4E0A\u6B21\u6210\u529F", "pass") : t.lastStatus === "error" ? chip("\u4E0A\u6B21\u5931\u8D25", "fail") : chip("\u672A\u8FD0\u884C", ""),
+          chip("\u5DF2\u8FD0\u884C " + (t.runCount ?? 0) + " \u6B21", ""),
+          t.source && t.source !== "dsh" ? chip("\u6765\u6E90: " + t.source, "") : null
+        ] }),
+        t.lastRunAt ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-wb-sub", children: [
+          "\u4E0A\u6B21\u8FD0\u884C\uFF1A",
+          new Date(t.lastRunAt).toLocaleString()
+        ] }) : null,
+        t.nextRunAt ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-wb-sub", children: [
+          "\u4E0B\u6B21\u8FD0\u884C\uFF1A",
+          new Date(t.nextRunAt).toLocaleString()
+        ] }) : null,
+        t.lastSummary ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.lastSummary }) : null
+      ] }, t.id);
+    })
   ] });
 }
 
@@ -31103,6 +31123,7 @@ function maybeRefreshRegistry(run) {
 var import_jsx_runtime15 = require("react/jsx-runtime");
 var REFRESH_PROMPT = "\u8BF7\u8FD0\u884C appilot_overview\uFF08\u8DEF\u5F84\u4F7F\u7528\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\uFF09\u5237\u65B0 Appilot \u603B\u89C8\u6570\u636E\uFF1B\u5982\u679C\u5DF2\u77E5\u8BE5\u4EA7\u54C1\u7684\u8DDF\u8E2A\u5173\u952E\u8BCD\uFF0C\u8BF7\u4E00\u5E76\u4F20\u5165 keywords \u53C2\u6570\uFF08\u53EF\u91C7\u96C6\u5B9E\u65F6\u6392\u540D\uFF09\u3002\u7136\u540E\u7B80\u8981\u6C47\u62A5\u7ED3\u679C\u3002";
 var TASKS_PROMPT = "\u8BF7\u8FD0\u884C appilot_tasks\uFF0C\u67E5\u770B Appilot \u5B9A\u65F6\u4EFB\u52A1\u72B6\u6001\uFF0C\u5E76\u7B80\u8981\u6C47\u62A5\u3002";
+var taskRunPrompt = (taskId) => `\u8BF7\u8FD0\u884C appilot_task_run\uFF0CtaskId=${taskId}\uFF0C\u7ACB\u5373\u6267\u884C\u8BE5\u5B9A\u65F6\u4EFB\u52A1\u5E76\u6C47\u62A5\u7ED3\u679C\uFF1B\u82E5\u8FD4\u56DE\u672A\u77E5\u4EFB\u52A1\u8BF7\u5982\u5B9E\u8BF4\u660E\u3002`;
 var BRIEF_PROMPT = "\u8BF7\u8FD0\u884C appilot_overview\uFF08\u8DEF\u5F84\u4F7F\u7528\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\uFF0CincludeBrief=true\uFF09\uFF0C\u751F\u6210 Appilot AI \u7B80\u62A5\uFF08\u526F\u9A7E\u9A76\u7B80\u62A5\uFF09\uFF0C\u7136\u540E\u7B80\u8981\u6C47\u62A5\u5EFA\u8BAE\u4E8B\u9879\u3002";
 var WB_TABS = [
   { id: "overview", label: "\u603B\u89C8" },
@@ -31250,11 +31271,12 @@ function AppilotWorkbench(props) {
       dedicatedNodes,
       { busy, error, onRefresh },
       props.refreshBrief,
-      props.refreshTasks
+      props.refreshTasks,
+      props.runTask
     ) })
   ] });
 }
-function renderWbPanel(tab, cwd, nodes, actions, refreshBrief, refreshTasks) {
+function renderWbPanel(tab, cwd, nodes, actions, refreshBrief, refreshTasks, runTask2) {
   const results = collectToolResults(nodes);
   const overviewNode = results["appilot_overview"];
   if (tab === "release") {
@@ -31269,6 +31291,12 @@ function renderWbPanel(tab, cwd, nodes, actions, refreshBrief, refreshTasks) {
       {
         node: results["appilot_tasks"],
         busy: actions.busy,
+        onRunTask: runTask2 ? (taskId) => {
+          if (actions.busy) return;
+          actions.onRefresh();
+          Promise.resolve(runTask2(taskId)).catch(() => {
+          });
+        } : void 0,
         onRefresh: () => {
           if (actions.busy || !refreshTasks) return;
           actions.onRefresh();
@@ -32095,6 +32123,7 @@ function apply(ctx) {
             refresh: () => sendToDedicated(ctx, cwdOf(), REFRESH_PROMPT),
             refreshBrief: () => sendToDedicated(ctx, cwdOf(), BRIEF_PROMPT),
             refreshTasks: () => sendToDedicated(ctx, cwdOf(), TASKS_PROMPT),
+            runTask: (taskId) => sendToDedicated(ctx, cwdOf(), taskRunPrompt(taskId)),
             /** 在当前会话运行（注册等操作——注册表是共享 store，结果落当前会话便于本面板读取）。 */
             runCurrent: (prompt) => sendIn(sessionId, prompt),
             dedicatedSession: (id) => dedicatedSessionObservable(ctx, id)
