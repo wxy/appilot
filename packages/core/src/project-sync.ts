@@ -10,8 +10,14 @@
  *
  * 本模块只调用 core 纯函数（node:git / GitHub REST），可在 node 单测。
  */
-import { listGitTags, fetchRemoteTags, type GitTagInfo } from './release-watcher';
-import { listGitHubReleases, type GitHubReleaseItem } from './github-api';
+import { listGitTags, fetchRemoteTags, checkForRelease, type GitTagInfo } from './release-watcher';
+import {
+  listGitHubReleases,
+  fetchRepoCapabilities,
+  type GitHubReleaseItem,
+  type GitHubRepoCapabilities,
+} from './github-api';
+import type { ReleaseCheckResult, ReleaseMaterial, ReleaseInfo } from './release-watcher';
 
 export interface ProjectReleaseState {
   /** 本地最新 tag（tags[0]）。 */
@@ -39,6 +45,8 @@ export interface SyncProjectReleasesOptions {
    * Electron github-sync 行为；DSH release-sync 未 fetch（只读本地 tag）。
    */
   fetchRemote?: boolean;
+  /** API 流量统计（requestBytes/responseBytes 累计），透传给 GitHub 调用。 */
+  onApiStats?(requestBytes: number, responseBytes: number): void;
 }
 
 /**
@@ -52,7 +60,7 @@ export async function syncProjectReleaseState(
   const token = opts.token ?? null;
   const fetched = opts.fetchRemote === true ? await fetchRemoteTags(localPath) : false;
   const tags = await listGitTags(localPath);
-  const releases = await listGitHubReleases(localPath, token);
+  const releases = await listGitHubReleases(localPath, token, opts.onApiStats);
   const drafts = releases.filter((r) => r.draft).length;
   const summary = [
     `tag=${tags[0]?.name ?? '无'}`,
@@ -68,4 +76,75 @@ export async function syncProjectReleaseState(
     fetched,
     syncedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * 深度发布检测（Electron github-sync 的完整计算链）：
+ * fetch remote + GitHub releases + repo capabilities + checkForRelease
+ * （发布素材 material / PR / 最新发布边界）。Electron 壳只负责把产物写进
+ * githubSyncCache 供发布页 UI——计算实现唯一来源是这里。
+ */
+export interface ProjectReleaseInspection extends ProjectReleaseState {
+  /** checkForRelease 的最新候选发布。 */
+  release: ReleaseInfo | null;
+  /** checkForRelease 全部候选。 */
+  releasesAll: ReleaseInfo[];
+  lastSeenTag: string | null;
+  /** release 的发布素材（commits/PR/diffStat/githubRelease）。 */
+  material: ReleaseMaterial | null;
+  /** repo 能力探测（token 决定 drafts 可否发布）。 */
+  repoCapabilities: GitHubRepoCapabilities;
+  /** 上次已见 sha（输入透传，供壳记录）。 */
+  lastSeenSha: string | null;
+}
+
+export interface InspectProjectReleaseOptions extends SyncProjectReleasesOptions {
+  /** 上次已见 sha（checkForRelease 的 lastSeenSha 边界）。 */
+  lastSeenSha?: string | null;
+}
+
+/** Electron github-sync 深度计算链的 core 单一实现。 */
+export async function inspectProjectRelease(
+  localPath: string,
+  opts: InspectProjectReleaseOptions = {},
+): Promise<ProjectReleaseInspection> {
+  const token = opts.token ?? null;
+  const base = await syncProjectReleaseState(localPath, {
+    token,
+    fetchRemote: opts.fetchRemote,
+    onApiStats: opts.onApiStats,
+  });
+  const repoCapabilities = await fetchRepoCapabilities(localPath, token);
+  const check: ReleaseCheckResult = await checkForRelease(localPath, opts.lastSeenSha ?? null, token, {
+    sync: false,
+    githubReleases: base.releases,
+    onApiStats: opts.onApiStats,
+  });
+  return {
+    ...base,
+    release: check.latest,
+    releasesAll: check.releases,
+    lastSeenTag: check.lastSeenTag,
+    material: check.latest?.material ?? null,
+    repoCapabilities,
+    lastSeenSha: opts.lastSeenSha ?? null,
+  };
+}
+
+export interface ProjectReleaseState {
+  /** 本地最新 tag（tags[0]）。 */
+  latestTag: GitTagInfo | null;
+  /** 全部本地 tag（按时间倒序）。 */
+  tags: GitTagInfo[];
+  /** GitHub releases（含草稿可见性取决于 token）。 */
+  releases: GitHubReleaseItem[];
+  /** 非草稿发布数。 */
+  publishedCount: number;
+  /** 草稿数。 */
+  draftCount: number;
+  /** 汇总摘要（任务 summary 用，与既有 DSH release-sync 文案一致）。 */
+  summary: string;
+  /** fetch 是否执行过（仅当 opts.fetchRemote=true）。 */
+  fetched: boolean;
+  syncedAt: string;
 }
