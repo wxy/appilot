@@ -20,6 +20,11 @@ export interface HeadlessService {
     record(rows: RankSnapshotRow[]): void;
     /** 每个 (keyword, language, storefront) 的最新一条；可按 productId 过滤。 */
     latest(projectName: string, productId?: string | null): RankSnapshotRow[];
+    /** 最近时间序列点（降序），可按 productId/keyword 过滤。 */
+    recent(
+      projectName: string,
+      opts?: { productId?: string | null; keyword?: string; limit?: number },
+    ): RankSnapshotRow[];
   };
   tasks: {
     list(): TaskRow[];
@@ -42,6 +47,7 @@ export function createHeadlessService(store: AppilotStore): HeadlessService {
       record: (rows) => store.snapshots.add(rows),
       latest: (projectName, productId) =>
         store.snapshots.latestByKey(projectName, productId ?? undefined),
+      recent: (projectName, opts) => store.snapshots.recent(projectName, opts),
     },
     tasks: { list: () => store.tasks.all() },
     store,
