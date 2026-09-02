@@ -42,6 +42,8 @@ export interface AppilotStore {
     heartbeat(leaderId: string): boolean;
     /** 当前主是谁（无主返回 null）。 */
     leader(): string | null;
+    /** 租约详情（leader + 最近心跳时间）；无主返回 null。 */
+    info(): { leaderId: string; heartbeatAt: string } | null;
   };
   close(): void;
 }
@@ -273,6 +275,10 @@ export function openStore(dbPath: string): AppilotStore {
       leader() {
         const r = db.prepare('SELECT leaderId FROM lease WHERE id = 1').get() as any;
         return r ? r.leaderId : null;
+      },
+      info() {
+        const r = db.prepare('SELECT leaderId, heartbeatAt FROM lease WHERE id = 1').get() as any;
+        return r ? { leaderId: r.leaderId, heartbeatAt: r.heartbeatAt } : null;
       },
     },
 

@@ -42,8 +42,8 @@
 | 壳 | 项目 | 快照 | 任务 | 租约 | 说明 |
 | --- | --- | --- | --- | --- | --- |
 | **DSH**（dsh-appilot 插件） | ✅ 共享 DB 读写 | ✅ 采集写 DB（productId=null） | ✅ 共享定义 buildHeadlessJobs + lease scheduler | ✅ 主 | agent 工具 + 客户端 UI |
-| **Electron** | ✅ DB 双向同步（hydrate 10s） | 🟡 双写 DB（UI 仍读 electron-store） | 🟡 旧动态任务系统 + scheduleGate 租约门 | ✅ | 富数据过渡态 |
-| **CLI**（headless-cli） | ✅ list/get/register/remove | ✅ latest 查询 | ✅ tasks list / run | —（显式触发） | JSON 输出 |
+| **Electron** | ✅ DB 双向同步（hydrate 10s） | 🟡 双写 DB（UI 仍读 electron-store） | 🟡 旧动态任务系统 + scheduleGate 租约门 + 状态镜像 DB | ✅ | 富数据过渡态 |
+| **CLI**（headless-cli） | ✅ list/get/register/remove | ✅ latest 查询 | ✅ tasks list / run + lease status | —（显式触发） | JSON 输出 |
 | **MCP**（appilot-mcp） | ✅ 4 工具 | ✅ latest | ✅ tasks list / task_run | —（显式触发） | stdio JSON-RPC |
 
 ## 真机验证清单（本仓库无法跑 Electron / 3099 服务端）
@@ -51,8 +51,11 @@
 - [ ] Electron 启动：日志出现 `imported N rank snapshots to shared db`（存量迁移幂等）
 - [ ] Electron 跑一轮 rank 任务后，`rank_snapshots` 增长（可用 CLI 查）：
       `appilot-headless snapshots latest <project> --product <productId>`
+- [ ] Electron 运行中：`appilot-headless tasks list` 能看到其动态任务状态镜像
+      （rank/github-sync 等，title 形如 `排名采集: <keyword> @ <storefront> (en)`）
 - [ ] DSH 侧（3099 重启后）：appilot 工具任务正常（共享任务定义生效）
-- [ ] Electron 与 DSH 同时打开：任务只被租约主执行；关掉主后 ≤60s 从者接管
+- [ ] Electron 与 DSH 同时打开：`appilot-headless lease status` 显示唯一主
+      （`electron` 或 `dsh`）；关掉主后 ≤60s 从者接管（lease status 的 leader 切换）
 - [ ] CLI：`appilot-headless tasks list` 看到 DSH/Electron 写入的任务状态
 
 ## 剩余路线
@@ -60,9 +63,10 @@
 1. **Phase 4c**：Electron IPC 瘦身 —— 数据域读取改走 headless service API，
    UI 从 DB 读 rank（移除 electron-store 富数据依赖，需真机验证大改）。
 2. **Electron 任务系统**：旧动态任务（rank/github-sync 按产品拆分）若要与
-   DSH 静态任务共用同一调度器，需先解决任务定义形态差异。
-3. **DSH/Electron 双写去重**：若两壳都跑同一 rank 关键词，考虑按 productId 区分
-   采集归属，避免同一词被双写两次（当前 DSH productId=null 与 Electron 维度隔离）。
+   DSH 静态任务共用同一调度器，需先解决任务定义形态差异（当前已做状态镜像，
+   执行仍由 Electron 自己调度；headless dueJobs 不会误触发镜像行）。
+3. **DSH/Electron 双写去重**：两壳 rank 采集按 productId 维度隔离
+   （DSH productId=null，Electron 带 productId），同词不重复入 latest 视图。
 
 ## 关键包速览
 
