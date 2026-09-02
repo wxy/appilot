@@ -60,7 +60,8 @@ function usage(): never {
       '  appilot-headless projects remove <name>',
       '  appilot-headless snapshots latest <project> [--product <id>]',
       '  appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]',
-      '  appilot-headless tasks list',
+      '  appilot-headless snapshots prune <project> [--before <iso>]   # 默认清 90 天前',
+      '  appilot-headless tasks list [--source dsh|electron|cli]',
       '  appilot-headless lease status        # 当前租约主（多壳调度验证）',
       '  appilot-headless run <taskId>   # release-sync | readiness',
       '',
@@ -160,14 +161,26 @@ export async function main(argv: string[]): Promise<void> {
           );
           return;
         }
+        if (sub === 'prune') {
+          const project = pos[0];
+          if (!project) return usage();
+          // 默认清理 90 天前的快照（与 core RANK_SNAPSHOT_WINDOW_MS 一致）
+          const before = flags.get('before') || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+          const removed = svc.snapshots.prune(project, before);
+          process.stdout.write(JSON.stringify({ project, beforeIso: before, removed }, null, 2) + '\n');
+          return;
+        }
         return usage();
       }
       case 'tasks': {
         const sub = argv[1];
+        const { flags } = parseArgs(argv.slice(2));
         if (sub === 'list' || sub === undefined) {
           const jobs = buildHeadlessJobs({ readToken: envToken });
           const definitions = jobs.map((j) => ({ id: j.id, title: j.title, intervalMinutes: j.intervalMinutes }));
-          process.stdout.write(JSON.stringify({ tasks: svc.tasks.list(), definitions }, null, 2) + '\n');
+          const source = flags.has('source') && flags.get('source') !== '' ? flags.get('source') : undefined;
+          const tasks = source ? svc.tasks.listBySource(source as string) : svc.tasks.list();
+          process.stdout.write(JSON.stringify({ tasks, definitions, source: source ?? null }, null, 2) + '\n');
           return;
         }
         return usage();

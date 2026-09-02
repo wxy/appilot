@@ -103,6 +103,33 @@ async function main(): Promise<void> {
   assert.equal(JSON.parse(histKw.stdout).count, 1);
   console.log('✓ snapshots history（降序/productId/limit）');
 
+  // snapshots prune：清 90 天前（seed 里 2026-08 距今不足 90 天 → 保留？用显式 before 清全部）
+  const seedStore = openStore(dbPath);
+  seedStore.snapshots.add([
+    { projectName: 'old-proj', productId: null, keyword: 'k', language: 'en', storefront: 'us', rank: 9, totalResults: 10, checkedAt: '2020-01-01T00:00:00Z' },
+    { projectName: 'old-proj', productId: null, keyword: 'k', language: 'en', storefront: 'us', rank: 8, totalResults: 10, checkedAt: '2026-08-15T00:00:00Z' },
+  ]);
+  seedStore.close();
+  const prune = await run(['snapshots', 'prune', 'old-proj', '--before', '2025-01-01T00:00:00Z'], dbPath);
+  const pruneJson = JSON.parse(prune.stdout);
+  assert.equal(pruneJson.removed, 1, '只清早于 before 的行');
+  assert.equal(pruneJson.beforeIso, '2025-01-01T00:00:00Z');
+  console.log('✓ snapshots prune（--before 窗口）');
+
+  // tasks list --source：seed 不同来源行 → 过滤正确
+  const tStore = openStore(dbPath);
+  tStore.tasks.upsert({ id: 'release-sync', title: '发布同步', intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'dsh' });
+  tStore.tasks.upsert({ id: 'prod:macos:kw', title: '排名采集', intervalMinutes: 720, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron' });
+  tStore.close();
+  const tAll = JSON.parse((await run(['tasks', 'list'], dbPath)).stdout);
+  assert.ok(tAll.tasks.some((t: any) => t.source === 'electron'), 'tasks list 应含 source 字段');
+  const tElectron = JSON.parse((await run(['tasks', 'list', '--source', 'electron'], dbPath)).stdout);
+  assert.equal(tElectron.tasks.length, 1);
+  assert.equal(tElectron.tasks[0].id, 'prod:macos:kw');
+  const tDsh = JSON.parse((await run(['tasks', 'list', '--source', 'dsh'], dbPath)).stdout);
+  assert.ok(tDsh.tasks.every((t: any) => t.source === 'dsh'));
+  console.log('✓ tasks list --source 过滤');
+
   console.log('CLI 端到端测试全部通过 ✓');
 }
 

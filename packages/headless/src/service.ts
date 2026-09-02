@@ -25,9 +25,13 @@ export interface HeadlessService {
       projectName: string,
       opts?: { productId?: string | null; keyword?: string; limit?: number },
     ): RankSnapshotRow[];
+    /** 清理某项目早于 beforeIso 的旧快照；返回删除行数。 */
+    prune(projectName: string, beforeIso: string): number;
   };
   tasks: {
     list(): TaskRow[];
+    /** 按 source 过滤任务行（'dsh' | 'electron' | 'cli'）。 */
+    listBySource(source: string): TaskRow[];
   };
   /** 底层 store（调度器/租约等高级能力）。 */
   readonly store: AppilotStore;
@@ -48,8 +52,12 @@ export function createHeadlessService(store: AppilotStore): HeadlessService {
       latest: (projectName, productId) =>
         store.snapshots.latestByKey(projectName, productId ?? undefined),
       recent: (projectName, opts) => store.snapshots.recent(projectName, opts),
+      prune: (projectName, beforeIso) => store.snapshots.pruneOlderThan(projectName, beforeIso),
     },
-    tasks: { list: () => store.tasks.all() },
+    tasks: {
+      list: () => store.tasks.all(),
+      listBySource: (source) => store.tasks.all().filter((t) => t.source === source),
+    },
     store,
   };
 }
