@@ -7,6 +7,8 @@ import {
   detectApplePlatform,
   detectLocalizedLanguages,
 } from '@appilot-labs/appilot-core/app-store-discovery';
+import { defaultRegistryPath } from './registry-file.js';
+import { sqliteProjectStore } from './sqlite-store.js';
 
 /** 注册过的项目记录（持久化的最小快照，供按名引用）。 */
 export const projectRecordSchema = z.object({
@@ -16,6 +18,8 @@ export const projectRecordSchema = z.object({
   platform: z.string().nullable(),
   languages: z.array(z.string()),
   lastResolvedAt: z.string(),
+  /** 商店图标（iTunes 公开 API 解析；无则 null，前端显示占位）。 */
+  artworkUrl: z.string().nullable().optional(),
 });
 export type ProjectRecord = z.infer<typeof projectRecordSchema>;
 
@@ -97,9 +101,26 @@ export function domainProjectStore(ctx: Context): ProjectStore {
   return store;
 }
 
-/** 有存储则用 domain 实现，否则回退内存（同一进程内仍可形成循环）。 */
-export function createProjectStore(ctx: Context): ProjectStore {
-  // ctx.get() 显式读取，无需 inject：headless（无 storage 服务）优雅回退内存。
+/** 优先共享 SQLite 注册表（Phase 2：单一 DB 取代 registry.json，自动迁移旧 JSON）；
+ *  env APPILOT_DB_FILE='none' 可禁用回退原逻辑。 */
+export function createProjectStore(
+  ctx: Context,
+  opts?: { dbFile?: string | null; legacyJsonPath?: string | null },
+): ProjectStore {
+  const override = opts?.dbFile !== undefined ? opts.dbFile : process.env.APPILOT_DB_FILE;
+  if (override !== 'none' && override !== null) {
+    try {
+      return sqliteProjectStore({
+        dbPath: override || undefined,
+        legacyJsonPath:
+          opts?.legacyJsonPath === undefined ? defaultRegistryPath() : opts?.legacyJsonPath,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[appilot-common] SQLite store unavailable, falling back: ${String(err)}`);
+    }
+  }
+  // 禁用/不可用时回退原逻辑（domain → memory）。
   const storage = ctx.get('storage') as { domain?: unknown } | undefined;
   return storage?.domain ? domainProjectStore(ctx) : memoryProjectStore();
 }
@@ -107,6 +128,20 @@ export function createProjectStore(ctx: Context): ProjectStore {
 /** 解析仓库 → ProjectRecord（与 resolve_current_project 共享的纯逻辑）。 */
 export async function resolveProjectRecord(path: string): Promise<ProjectRecord> {
   const repo = await collectRepoInfo(path);
+  // 商店图标（best-effort：README 商店链接 → iTunes Lookup；失败为 null）。
+  let artworkUrl: string | null = null;
+  try {
+    const { discoverAppStoreLinks, lookupApp } = await import(
+      '@appilot-labs/appilot-core/app-store-discovery'
+    );
+    const trackId = discoverAppStoreLinks(path)?.trackId ?? null;
+    if (trackId) {
+      const meta = await lookupApp(trackId);
+      artworkUrl = meta?.artworkUrl ?? null;
+    }
+  } catch {
+    artworkUrl = null;
+  }
   return {
     name: basename(path),
     path,
@@ -114,5 +149,6 @@ export async function resolveProjectRecord(path: string): Promise<ProjectRecord>
     platform: detectApplePlatform(path),
     languages: detectLocalizedLanguages(path),
     lastResolvedAt: new Date().toISOString(),
+    artworkUrl,
   };
 }

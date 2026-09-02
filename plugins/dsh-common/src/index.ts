@@ -13,4 +13,14 @@ export {
   createProjectStore,
   resolveProjectRecord,
 } from './storage.js';
+export {
+  type RegistryRecord,
+  REGISTRY_VERSION,
+  defaultRegistryPath,
+  readRegistry,
+  writeRegistry,
+  mergeRegistry,
+  fileProjectStore,
+} from './registry-file.js';
+export { sqliteProjectStore, openSharedHeadlessStore, type SqliteStoreOptions } from './sqlite-store.js';
 export { jsonify } from './jsonify.js';

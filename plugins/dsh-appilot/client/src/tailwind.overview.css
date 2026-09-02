@@ -1,0 +1,74 @@
+/* scoped tailwind 输入（preflight 关闭，仅工具类；darkMode: class）。 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── scoped 基础（preflight 关闭后的补偿，仅作用于 .ap-ov 子树，不污染宿主）── */
+
+/* 盒模型 + 边框归零（对齐 preflight）：没有 preflight 时元素默认 content-box，
+   且 button/input 等保留 UA 默认边框与背景。 */
+.ap-ov,
+.ap-ov *,
+.ap-ov *::before,
+.ap-ov *::after {
+  box-sizing: border-box;
+  border: 0 solid;
+}
+
+.ap-ov {
+  /* Electron 渲染层的 --radius 变量（tailwind config 的 rounded-lg 等引用它）。 */
+  --radius: 0.625rem;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 排版重置（对齐 preflight）：标题/段落/列表/代码块默认边距归零，列表无 UA 缩进与圆点。 */
+.ap-ov h1, .ap-ov h2, .ap-ov h3, .ap-ov h4, .ap-ov h5, .ap-ov h6,
+.ap-ov p, .ap-ov ul, .ap-ov ol, .ap-ov figure, .ap-ov blockquote,
+.ap-ov dl, .ap-ov dd, .ap-ov pre {
+  margin: 0;
+}
+.ap-ov ul, .ap-ov ol {
+  list-style: none;
+  padding: 0;
+}
+
+/* 表单元素：对齐 preflight（透明背景/无边框/零内边距/继承字体），
+   样式完全由 tailwind 工具类决定（与 Electron 一致）。 */
+.ap-ov button, .ap-ov input, .ap-ov select, .ap-ov textarea {
+  font-family: inherit;
+  font-size: 100%;
+  line-height: inherit;
+  color: inherit;
+  margin: 0;
+  padding: 0;
+  background-color: transparent;
+  background-image: none;
+}
+.ap-ov button {
+  text-transform: none;
+  -webkit-appearance: button;
+}
+.ap-ov a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+/* 图片/图标基线对齐（对齐 preflight）。 */
+.ap-ov img,
+.ap-ov svg {
+  display: block;
+  vertical-align: middle;
+}
+
+/* 工具栏（刷新/简报）与 OverviewContent 的 max-w-6xl 内容列对齐。 */
+.ap-ov-toolbar {
+  max-width: 72rem; /* tailwind max-w-6xl */
+  margin-left: auto;
+  margin-right: auto;
+  padding: 16px 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

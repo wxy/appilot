@@ -34,3 +34,7 @@ data/
 *.pfx
 .build-cache/
 .npm-cache/
+
+# Appilot DSH client build artifacts
+plugins/dsh-appilot/client/.build/
+plugins/dsh-appilot/client/src/generated/

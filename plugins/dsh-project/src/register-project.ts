@@ -28,7 +28,17 @@ export function createRegisterProjectTool(store: ProjectStore) {
       const path = resolvePath(args.path);
       const record = await resolveProjectRecord(path);
       await store.save(record);
-      return jsonify({ registered: true, record });
+      // App Store 适配性识别：未检测到 Apple 平台（iOS/macOS）时给出警告——
+      // 这类项目不适合 App Store 运营（本阶段暂不支持其运营功能）。
+      const warning =
+        !record.platform
+          ? '未检测到 Apple 平台（iOS/macOS）——该项目可能不适合 App Store 运营，本阶段暂不支持其运营功能。'
+          : undefined;
+      return jsonify({
+        registered: true,
+        record,
+        ...(warning ? { warning } : {}),
+      });
     },
   });
 }

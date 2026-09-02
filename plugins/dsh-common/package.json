@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@appilot-labs/appilot-core": "^0.1.0",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@appilot-labs/appilot-headless": "^0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2",

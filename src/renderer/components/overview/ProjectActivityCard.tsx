@@ -43,32 +43,65 @@ function formatLastCommit(date: string): string {
   return `${months} 个月前`;
 }
 
-export function ProjectActivityCard({ project }: { project: any }) {
+export function ProjectActivityCard({
+  project,
+  activity: activityProp,
+  releases: releasesProp,
+  loaded: loadedProp,
+}: {
+  project: any;
+  /** 可选注入：每日提交数（DSH 客户端等无 window.appilot 的宿主传入）。缺省时内部经 IPC 取数。 */
+  activity?: Record<string, number>;
+  /** 可选注入：发布列表（tag + publishedAt，用于热力图标注）。 */
+  releases?: { tag: string; publishedAt: string | null }[];
+  /** 可选注入：数据是否已就绪（缺省跟随内部取数状态）。 */
+  loaded?: boolean;
+}) {
   const [activity, setActivity] = useState<Record<string, number>>({});
   const [releases, setReleases] = useState<{ tag: string; publishedAt: string | null }[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    // 外部已注入数据（DSH 等）：任一注入即采用（缺项补空），不再内部取数。
+    if (activityProp !== undefined || releasesProp !== undefined) {
+      setActivity(activityProp ?? {});
+      setReleases(releasesProp ?? []);
+      setLoaded(loadedProp ?? true);
+      return;
+    }
     let cancelled = false;
-    (window as any).appilot?.activity?.commits(project.id)
-      .then((data: Record<string, number>) => {
-        if (cancelled) return;
-        setActivity(data || {});
-        setLoaded(true);
-      })
-      .catch(() => { if (!cancelled) setLoaded(true); });
-    (window as any).appilot?.release?.list(project.id)
-      .then((result: any) => {
-        if (cancelled) return;
-        setReleases(
-          (result?.releases || [])
-            .map((r: any) => ({ tag: r.tag || "", publishedAt: r.publishedAt || null }))
-            .filter((r: any) => r.tag && r.publishedAt),
-        );
-      })
-      .catch(() => {});
+    // 无 window.appilot 的宿主（DSH）：整条链为 undefined，安全跳过。
+    const commitsP: any = (window as any).appilot?.activity?.commits(project.id);
+    if (commitsP && typeof commitsP.then === "function") {
+      commitsP
+        .then((data: Record<string, number>) => {
+          if (cancelled) return;
+          setActivity(data || {});
+          setLoaded(true);
+        })
+        .catch(() => { if (!cancelled) setLoaded(true); });
+    } else {
+      setLoaded(true);
+    }
+    const releasesP: any = (window as any).appilot?.release?.list(project.id);
+    if (releasesP && typeof releasesP.then === "function") {
+      releasesP
+        .then((result: any) => {
+          if (cancelled) return;
+          setReleases(
+            (result?.releases || [])
+              .map((r: any) => ({ tag: r.tag || "", publishedAt: r.publishedAt || null }))
+              .filter((r: any) => r.tag && r.publishedAt),
+          );
+        })
+        .catch(() => {});
+    }
     return () => { cancelled = true; };
-  }, [project.id]);
+  }, [project.id, activityProp, releasesProp, loadedProp]);
+
+  const effectiveActivity = activityProp !== undefined ? activityProp : activity;
+  const effectiveReleases = releasesProp !== undefined ? releasesProp : releases;
+  const effectiveLoaded = loadedProp !== undefined ? loadedProp : loaded;
 
   const cells: DayCell[] = useMemo(() => {
     const now = new Date();
@@ -80,7 +113,7 @@ export function ProjectActivityCard({ project }: { project: any }) {
     const totalDays = Math.ceil((now.getTime() - gridStart.getTime()) / DAY_MS) + 1;
 
     const releaseByDay = new Map<string, string>();
-    for (const r of releases) {
+    for (const r of effectiveReleases) {
       if (!r.publishedAt) continue;
       releaseByDay.set(r.publishedAt.slice(0, 10), r.tag);
     }
@@ -91,12 +124,12 @@ export function ProjectActivityCard({ project }: { project: any }) {
       const date = localDateKey(d);
       return {
         date,
-        commits: activity[date] || 0,
+        commits: effectiveActivity[date] || 0,
         releaseTag: releaseByDay.get(date) || null,
         preRange: date < rangeStartKey,
       };
     });
-  }, [activity, releases]);
+  }, [effectiveActivity, effectiveReleases]);
 
   const monthLabels = useMemo(() => {
     const labels: { left: number; text: string }[] = [];
@@ -128,7 +161,7 @@ export function ProjectActivityCard({ project }: { project: any }) {
           </span>
         )}
       </div>
-      {!loaded ? (
+      {!effectiveLoaded ? (
         <div className="px-4 py-6 text-center text-xs text-zinc-400 dark:text-zinc-500">加载中…</div>
       ) : !project.localPath ? (
         <div className="px-4 py-6 text-center text-xs text-zinc-400 dark:text-zinc-500">
