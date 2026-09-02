@@ -201,12 +201,16 @@ export function TaskTab(props: {
     );
   }
   const tasks = v.tasks || [];
-  const definitions: any[] = v.definitions || [];
   const electronTasks = tasks.filter((t: any) => t.source === 'electron');
-  const stateById = new Map(tasks.map((t: any) => [t.id, t]));
-  // DSH 可运行任务：以 definitions 为准（静态定义始终可运行——即使尚未以主身份跑过）；
-  // 状态行有则合并显示，无则视为「未运行」。
-  const runnableDefs = definitions.length > 0 ? definitions : tasks.filter((t: any) => !t.source || t.source === 'dsh');
+  // DSH 可运行任务：v4 实例视图（每项目 github-sync 实例行）；旧节点无
+  // dshInstances 时回退到静态定义/本来源行（兼容缓存旧结果）。
+  const dshInstances: any[] = v.dshInstances || [];
+  const runnableDefs: any[] =
+    dshInstances.length > 0
+      ? dshInstances
+      : (v.definitions && v.definitions.length > 0)
+        ? v.definitions
+        : tasks.filter((t: any) => !t.source || t.source === 'dsh');
   return (
     <div className="ap-ov">
       <div className="ap-ov-row">
@@ -219,22 +223,20 @@ export function TaskTab(props: {
           {props.busy ? '刷新中…' : '刷新任务状态'}
         </button>
         <span className="ap-wb-sub">
-          DSH 任务由 dsh 服务端调度（runNow 可强制运行）；Electron 动态任务由其自身调度
-          （共享只读）。此列表来自 appilot_tasks。
+          本侧任务由 dsh 服务端调度（核心执行器，runNow 可强制运行）；Electron 任务
+          由其自身调度（共享只读）。列表来自 appilot_tasks。
         </span>
       </div>
       <div className="ap-wb-sub" style={{ margin: '4px 0 8px' }}>
-        可运行任务（本侧）
+        本侧任务实例（可运行）
       </div>
       {runnableDefs.length === 0 ? (
         <div className="ap-empty">
           <div className="ap-empty-title">暂无任务</div>
-          <div className="ap-empty-hint">服务端未定义任何定时任务。</div>
+          <div className="ap-empty-hint">尚未注册项目——注册后自动生成每项目任务实例。</div>
         </div>
       ) : (
-        runnableDefs.map((def: any) => {
-          const st = stateById.get(def.id) || null;
-          const t = st || def;
+        runnableDefs.map((t: any) => {
           return (
             <div className="ap-ov-card" key={t.id}>
               <div className="ap-ov-row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
@@ -268,11 +270,6 @@ export function TaskTab(props: {
                 <div className="ap-wb-sub">下次运行：{new Date(t.nextRunAt).toLocaleString()}</div>
               ) : null}
               {t.lastSummary ? <div className="ap-wb-sub">{t.lastSummary}</div> : null}
-              {!st ? (
-                <div className="ap-wb-sub">
-                  尚未运行（dsh 服务为从属角色时由租约主执行；可点「立即运行」强制触发）
-                </div>
-              ) : null}
             </div>
           );
         })

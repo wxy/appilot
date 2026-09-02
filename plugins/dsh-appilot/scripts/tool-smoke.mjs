@@ -57,7 +57,8 @@ async function main() {
   const runTool = createTaskRunTool();
   const statusVal = await statusTool.execute({});
   if (!Array.isArray(statusVal.tasks)) throw new Error('appilot_tasks 应返回 tasks 数组');
-  console.log(`✓ appilot_tasks（tasks=${statusVal.tasks.length}）`);
+  if (!Array.isArray(statusVal.dshInstances)) throw new Error('appilot_tasks 应返回 dshInstances 数组');
+  console.log(`✓ appilot_tasks（tasks=${statusVal.tasks.length}, dshInstances=${statusVal.dshInstances.length}）`);
   const runErr = await runTool.execute({ taskId: 'release-sync' });
   if (!runErr.error || !runErr.error.includes('调度器未运行')) {
     throw new Error(`run 未启动应报错: ${JSON.stringify(runErr).slice(0, 200)}`);
