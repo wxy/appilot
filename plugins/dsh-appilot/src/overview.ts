@@ -1,6 +1,6 @@
 import { basename, resolve as resolvePath } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify, type CredentialReader } from '@appilot-labs/appilot-common';
+import { jsonify, openSharedHeadlessStore, type CredentialReader } from '@appilot-labs/appilot-common';
 import { collectRepoInfo, getCommitActivity } from '@appilot-labs/appilot-core/git-info';
 import {
   detectApplePlatform,
@@ -198,6 +198,17 @@ export function createAppilotOverviewTool(
           snapshots: result.snapshots,
           failed: result.failed,
         };
+        // Phase 4a：采集结果写入共享 SQLite（rank_snapshots 历史）——供任务中心/
+        // 未来 Electron 复用同一份排名历史。DB 不可用时不影响本工具返回。
+        if (result.snapshots.length > 0) {
+          try {
+            openSharedHeadlessStore().snapshots.add(
+              result.snapshots.map((sn) => ({ projectName: basename(path), ...sn })),
+            );
+          } catch {
+            /* 忽略：采集结果照常返回 */
+          }
+        }
       }
 
       // ASC 商店状态（App Store Connect 凭据门控；无凭据则为 null）。

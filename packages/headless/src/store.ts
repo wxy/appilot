@@ -25,8 +25,8 @@ export interface AppilotStore {
   snapshots: {
     /** 批量追加快照（保留历史）。 */
     add(rows: RankSnapshotRow[]): void;
-    /** 每个 (project, keyword, language, storefront) 的最新一条。 */
-    latestByKey(projectName: string): RankSnapshotRow[];
+    /** 每个 (project[, productId], keyword, language, storefront) 的最新一条。 */
+    latestByKey(projectName: string, productId?: string | null): RankSnapshotRow[];
     /** 清理某项目早于 checkedAt 的旧快照（保留最近 N 天）。 */
     pruneOlderThan(projectName: string, beforeIso: string): number;
   };
@@ -147,28 +147,31 @@ export function openStore(dbPath: string): AppilotStore {
         if (rows.length === 0) return;
         tx(() => {
           const stmt = db.prepare(
-            `INSERT INTO rank_snapshots (projectName, keyword, language, storefront, rank, totalResults, checkedAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO rank_snapshots (projectName, productId, keyword, language, storefront, rank, totalResults, checkedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           );
-          for (const s of rows) {
-            stmt.run(s.projectName, s.keyword, s.language, s.storefront, s.rank, s.totalResults, s.checkedAt);
+          for (const row of rows) {
+            stmt.run(row.projectName, row.productId ?? null, row.keyword, row.language, row.storefront, row.rank, row.totalResults, row.checkedAt);
           }
         });
       },
-      latestByKey(projectName) {
+      latestByKey(projectName: string, productId?: string | null) {
+        // 每组 (keyword, language, storefront) 取最新（checkedAt 降序，同刻按 id 兜底）
         const rows = db
           .prepare(
             `SELECT s.* FROM rank_snapshots s
-             JOIN (
-               SELECT keyword, language, storefront, MAX(checkedAt) AS latest
-               FROM rank_snapshots WHERE projectName = ?
-               GROUP BY keyword, language, storefront
-             ) m
-             ON s.projectName = ? AND s.keyword = m.keyword AND s.language = m.language
-                AND s.storefront = m.storefront AND s.checkedAt = m.latest
+             WHERE s.projectName = ? AND s.productId IS ?
+               AND s.id = (
+                 SELECT s2.id FROM rank_snapshots s2
+                 WHERE s2.projectName = s.projectName
+                   AND s2.productId IS s.productId
+                   AND s2.keyword = s.keyword
+                   AND s2.language = s.language
+                   AND s2.storefront = s.storefront
+                 ORDER BY s2.checkedAt DESC, s2.id DESC LIMIT 1)
              ORDER BY s.keyword, s.language, s.storefront`,
           )
-          .all(projectName, projectName) as any[];
+          .all(projectName, productId ?? null) as any[];
         return rows.map(stripId);
       },
       pruneOlderThan(projectName, beforeIso) {
@@ -282,6 +285,7 @@ export function openStore(dbPath: string): AppilotStore {
 function stripId(r: any): RankSnapshotRow {
   return {
     projectName: r.projectName,
+    productId: r.productId ?? null,
     keyword: r.keyword,
     language: r.language,
     storefront: r.storefront,

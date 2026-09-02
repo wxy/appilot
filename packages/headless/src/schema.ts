@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -22,9 +22,11 @@ export interface ProjectRow {
   updatedAt: string;
 }
 
-/** 排名快照行（keyword×language×storefront 历史点）。 */
+/** 排名快照行（keyword×language×storefront 历史点）。productId 供多产品（Electron）区分。 */
 export interface RankSnapshotRow {
   projectName: string;
+  /** 产品维度（Electron 的 product.id）；DSH 侧为 null。 */
+  productId?: string | null;
   keyword: string;
   language: string;
   storefront: string;
@@ -71,6 +73,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS rank_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   projectName TEXT NOT NULL,
+  productId TEXT,
   keyword TEXT NOT NULL,
   language TEXT NOT NULL,
   storefront TEXT NOT NULL,
@@ -99,16 +102,25 @@ CREATE TABLE IF NOT EXISTS lease (
 );
 `;
 
-/** 逐版本迁移（当前版本内已是最新 schema，仅做版本号记录）。 */
+/** 逐版本迁移：v1→v2 为 rank_snapshots 增加 productId 列。 */
 export function migrate(db: {
   exec(sql: string): void;
-  prepare(sql: string): { get(...p: unknown[]): { value?: unknown } | undefined; run(...p: unknown[]): unknown };
+  prepare(sql: string): { get(...p: unknown[]): { value?: unknown } | undefined; run(...p: unknown[]): unknown; all(...p: unknown[]): unknown[] };
 }): void {
   db.exec(DDL);
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get('schemaVersion') as
     | { value?: unknown }
     | undefined;
-  if (!row || row.value === undefined) {
-    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schemaVersion', String(SCHEMA_VERSION));
+  const ver = row && row.value !== undefined ? Number(row.value) : 0;
+  if (ver < 1) {
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schemaVersion', '1');
+  }
+  if (ver < 2) {
+    // v1→v2：rank_snapshots 加 productId（幂等：列已存在则跳过）
+    const cols = (db.prepare('PRAGMA table_info(rank_snapshots)').all() as Array<{ name: string }>) || [];
+    if (!cols.some((c) => c.name === 'productId')) {
+      db.exec('ALTER TABLE rank_snapshots ADD COLUMN productId TEXT');
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '2') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }
