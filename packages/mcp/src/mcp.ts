@@ -160,16 +160,41 @@ async function serve(): Promise<void> {
       },
     },
     {
+      name: 'snapshots_prune',
+      description: '清理某项目早于指定时间（ISO）的排名快照；返回删除行数（数据生命周期维护，默认窗口 90 天由调用方给出 before）。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string' },
+          before: { type: 'string', description: 'ISO 时间：只删除 checkedAt 早于它的行' },
+        },
+        required: ['project', 'before'],
+        additionalProperties: false,
+      },
+      execute: (a) => ({
+        project: a.project,
+        beforeIso: a.before,
+        removed: svc.snapshots.prune(String(a.project), String(a.before)),
+      }),
+    },
+    {
       name: 'tasks_list',
-      description: '列出共享定时任务定义与运行状态（interval / last run / next run / status）。',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      execute: () => {
+      description: '列出共享定时任务定义与运行状态（interval / last run / next run / status）。可按 source 过滤（dsh / electron / cli）。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          source: { type: 'string', enum: ['dsh', 'electron', 'cli'] as const, description: '可选：只看某来源任务' },
+        },
+        additionalProperties: false,
+      },
+      execute: (a) => {
         const definitions = buildHeadlessJobs({ readToken: () => null }).map((j) => ({
           id: j.id,
           title: j.title,
           intervalMinutes: j.intervalMinutes,
         }));
-        return { tasks: svc.tasks.list(), definitions };
+        const tasks = a.source ? svc.tasks.listBySource(String(a.source)) : svc.tasks.list();
+        return { tasks, definitions, source: a.source ?? null };
       },
     },
     {
