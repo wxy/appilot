@@ -53,6 +53,32 @@ try {
   fail("schema v1→v2 migration adds productId", e);
 }
 
+/* v2→v3 迁移：手工建 v2 库（tasks 无 source），重开应加列、默认 'dsh' 并升级版本 */
+try {
+  const dbPath = join(dir, "migrate-v3.db");
+  const v2 = new DatabaseSync(dbPath);
+  v2.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, intervalMinutes INTEGER NOT NULL,
+      lastRunAt TEXT, nextRunAt TEXT, lastStatus TEXT NOT NULL DEFAULT 'never',
+      lastSummary TEXT, runCount INTEGER NOT NULL DEFAULT 0);
+    INSERT INTO meta (key, value) VALUES ('schemaVersion', '2');`);
+  v2.close();
+  const store = openStore(dbPath);
+  // 既有行默认 source='dsh'
+  store.tasks.upsert({ id: "release-sync", title: "发布同步", intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: "never", lastSummary: null, runCount: 0 });
+  assert.equal(store.tasks.get("release-sync")?.source, "dsh", "既有行默认 source=dsh");
+  // 新行可写 electron 来源 + remove
+  store.tasks.upsert({ id: "e:1", title: "排名采集", intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: "never", lastSummary: null, runCount: 0, source: "electron" });
+  assert.equal(store.tasks.get("e:1")?.source, "electron");
+  assert.equal(store.tasks.remove("e:1"), true);
+  assert.equal(store.tasks.get("e:1"), undefined);
+  store.close();
+  pass("schema v2→v3 migration adds tasks.source");
+} catch (e) {
+  fail("schema v2→v3 migration adds tasks.source", e);
+}
+
 /* productId 过滤：同项目不同产品互不串 */
 try {
   const store = openStore(join(dir, "prod.db"));

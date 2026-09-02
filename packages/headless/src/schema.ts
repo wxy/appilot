@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -35,7 +35,11 @@ export interface RankSnapshotRow {
   checkedAt: string;
 }
 
-/** 定时任务状态行（Phase 3 调度器使用）。 */
+/**
+ * 定时任务状态行（Phase 3 调度器使用）。
+ * source：任务来源——'dsh'（共享静态任务 buildHeadlessJobs）/ 'electron'（Electron
+ * 动态任务镜像）/ 'cli'（显式触发）；用于镜像清理与展示过滤。
+ */
 export interface TaskRow {
   id: string;
   title: string;
@@ -45,6 +49,7 @@ export interface TaskRow {
   lastStatus: 'never' | 'ok' | 'error';
   lastSummary: string | null;
   runCount: number;
+  source?: 'dsh' | 'electron' | 'cli' | string;
 }
 
 /** 调度租约行（Phase 3：多壳同时打开时仅主进程调度）。 */
@@ -92,7 +97,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   nextRunAt TEXT,
   lastStatus TEXT NOT NULL DEFAULT 'never',
   lastSummary TEXT,
-  runCount INTEGER NOT NULL DEFAULT 0
+  runCount INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'dsh'
 );
 
 CREATE TABLE IF NOT EXISTS lease (
@@ -122,5 +128,13 @@ export function migrate(db: {
       db.exec('ALTER TABLE rank_snapshots ADD COLUMN productId TEXT');
     }
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '2') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 3) {
+    // v2→v3：tasks 加 source（任务来源：dsh/electron/cli；镜像清理与展示过滤用）
+    const cols = (db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>) || [];
+    if (!cols.some((c) => c.name === 'source')) {
+      db.exec("ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'dsh'");
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }
