@@ -114,6 +114,8 @@ export function startRegistrySync(
   getStore: () => Promise<{ get<T = any>(k: string): T; set(k: string, v: unknown): void }>,
 ): () => void {
   let timer: ReturnType<typeof setInterval> | null = null;
+  // 富数据规模签名（meta/products 计数）——仅变化时打日志去噪。
+  let lastRichSig: string | null = null;
 
   const hydrateOnce = async () => {
     try {
@@ -138,9 +140,12 @@ export function startRegistrySync(
       }
       // Phase M3：Electron 富数据（storeProducts / repo 状态）双写共享 DB——
       // product_records / project_meta（rank 等富数据任务实例化与跨壳读的前提）。
+      // 仅在规模有变化时记录（避免每 10s 全量 upsert 的同步噪音）。
       try {
         const { meta, products } = syncRichDataToDb(sharedStore(), projects as any[]);
-        if (meta > 0 || products > 0) {
+        const sig = `${meta}/${products}`;
+        if (sig !== lastRichSig) {
+          lastRichSig = sig;
           log.info(`appilot: synced rich data to shared db (${meta} meta, ${products} products)`);
         }
       } catch (err: any) {
