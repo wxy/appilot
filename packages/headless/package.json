@@ -1,0 +1,27 @@
+{
+  "name": "@appilot-labs/appilot-headless",
+  "version": "0.1.0",
+  "description": "Appilot headless core — SQLite store + scheduler lease, transport-agnostic. Embedded by Electron / DSH / CLI / MCP shells.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./*": "./dist/*.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx tests/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1",
+    "typescript": "^5.7.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
