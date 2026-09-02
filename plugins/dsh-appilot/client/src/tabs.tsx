@@ -201,6 +201,12 @@ export function TaskTab(props: {
     );
   }
   const tasks = v.tasks || [];
+  const definitions: any[] = v.definitions || [];
+  const electronTasks = tasks.filter((t: any) => t.source === 'electron');
+  const stateById = new Map(tasks.map((t: any) => [t.id, t]));
+  // DSH 可运行任务：以 definitions 为准（静态定义始终可运行——即使尚未以主身份跑过）；
+  // 状态行有则合并显示，无则视为「未运行」。
+  const runnableDefs = definitions.length > 0 ? definitions : tasks.filter((t: any) => !t.source || t.source === 'dsh');
   return (
     <div className="ap-ov">
       <div className="ap-ov-row">
@@ -213,36 +219,38 @@ export function TaskTab(props: {
           {props.busy ? '刷新中…' : '刷新任务状态'}
         </button>
         <span className="ap-wb-sub">
-          定时任务由 dsh 服务端调度（服务运行期间生效）；此列表来自 appilot_tasks
+          DSH 任务由 dsh 服务端调度（runNow 可强制运行）；Electron 动态任务由其自身调度
+          （共享只读）。此列表来自 appilot_tasks。
         </span>
       </div>
-      {tasks.length === 0 ? (
+      <div className="ap-wb-sub" style={{ margin: '4px 0 8px' }}>
+        可运行任务（本侧）
+      </div>
+      {runnableDefs.length === 0 ? (
         <div className="ap-empty">
           <div className="ap-empty-title">暂无任务</div>
-          <div className="ap-empty-hint">服务端未注册任何定时任务。</div>
+          <div className="ap-empty-hint">服务端未定义任何定时任务。</div>
         </div>
       ) : (
-        tasks.map((t: any) => {
-          // 仅 dsh 侧可运行的任务显示「立即运行」（Electron 动态任务由其自身调度）。
-          const runnable = !t.source || t.source === 'dsh';
+        runnableDefs.map((def: any) => {
+          const st = stateById.get(def.id) || null;
+          const t = st || def;
           return (
             <div className="ap-ov-card" key={t.id}>
               <div className="ap-ov-row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="ap-ov-card-title">{t.title}</div>
-                {runnable ? (
-                  <button
-                    type="button"
-                    className="ap-btn"
-                    disabled={props.busy || undefined}
-                    title="立即运行（appilot_task_run）"
-                    onClick={() => {
-                      if (props.busy) return;
-                      props.onRunTask?.(t.id);
-                    }}
-                  >
-                    {props.busy ? '运行中…' : '立即运行'}
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  className="ap-btn"
+                  disabled={props.busy || undefined}
+                  title="立即运行（appilot_task_run）"
+                  onClick={() => {
+                    if (props.busy) return;
+                    props.onRunTask?.(t.id);
+                  }}
+                >
+                  {props.busy ? '运行中…' : '立即运行'}
+                </button>
               </div>
               <div className="ap-ov-row">
                 {chip('每 ' + t.intervalMinutes + ' 分钟', '')}
@@ -252,7 +260,6 @@ export function TaskTab(props: {
                     ? chip('上次失败', 'fail')
                     : chip('未运行', '')}
                 {chip('已运行 ' + (t.runCount ?? 0) + ' 次', '')}
-                {t.source && t.source !== 'dsh' ? chip('来源: ' + t.source, '') : null}
               </div>
               {t.lastRunAt ? (
                 <div className="ap-wb-sub">上次运行：{new Date(t.lastRunAt).toLocaleString()}</div>
@@ -261,10 +268,40 @@ export function TaskTab(props: {
                 <div className="ap-wb-sub">下次运行：{new Date(t.nextRunAt).toLocaleString()}</div>
               ) : null}
               {t.lastSummary ? <div className="ap-wb-sub">{t.lastSummary}</div> : null}
+              {!st ? (
+                <div className="ap-wb-sub">
+                  尚未运行（dsh 服务为从属角色时由租约主执行；可点「立即运行」强制触发）
+                </div>
+              ) : null}
             </div>
           );
         })
       )}
+      {electronTasks.length > 0 ? (
+        <details style={{ marginTop: 10 }}>
+          <summary className="ap-wb-sub" style={{ cursor: 'pointer' }}>
+            Electron 共享任务（{electronTasks.length} 个，镜像只读）——展开查看
+          </summary>
+          <div style={{ marginTop: 6 }}>
+            {electronTasks.slice(0, 50).map((t: any) => (
+              <div className="ap-ov-card" key={t.id} style={{ padding: '6px 10px' }}>
+                <div className="ap-ov-row">
+                  <div className="ap-wb-sub">{t.title}</div>
+                  {t.lastStatus === 'ok'
+                    ? chip('ok', 'pass')
+                    : t.lastStatus === 'error'
+                      ? chip('失败', 'fail')
+                      : chip('未运行', '')}
+                </div>
+                {t.lastSummary ? <div className="ap-wb-sub">{t.lastSummary}</div> : null}
+              </div>
+            ))}
+            {electronTasks.length > 50 ? (
+              <div className="ap-wb-sub">…仅显示前 50 个（共 {electronTasks.length} 个）</div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }

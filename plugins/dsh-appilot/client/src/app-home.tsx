@@ -22,6 +22,8 @@ interface AppHomeProps {
   sessionObservable?: (id: string | null) => any;
   /** 注册的项目若尚无工作区，则新建工作区（返回 workspaceId）。 */
   createWorkspace?: (path: string) => Promise<string | null>;
+  /** 打开项目到 Appilot：确保专属会话存在并发一次注册刷新（添加后默认可见面板）。 */
+  openProject?: (path: string) => Promise<string | null>;
 }
 
 /** 独立应用样式的 App 图标（有 artworkUrl 用图，否则琥珀占位 ⌖）。 */
@@ -133,6 +135,8 @@ export function AppHome(props: AppHomeProps) {
     setError(null);
     try {
       await props.createWorkspace(path);
+      // 补专属会话：新建 workspace 默认无会话，Appilot 面板无处可见。
+      await props.openProject?.(path);
     } catch (err: any) {
       setError(err && err.message ? err.message : String(err));
     } finally {
@@ -160,6 +164,8 @@ export function AppHome(props: AppHomeProps) {
         `请运行 register_project（路径为 ${JSON.stringify(path)}）注册该项目，` +
           '然后运行 list_projects 刷新列表。',
       );
+      // 补专属会话：注册后让该项目有一个可见的 Appilot 面板（专属会话承载）。
+      await props.openProject?.(path);
     } catch (err: any) {
       setError(err && err.message ? err.message : String(err));
     } finally {

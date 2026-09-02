@@ -19,6 +19,7 @@ import { ProjectHome } from './project-home';
 import { AppHome } from './app-home';
 import { AiUsage } from './ai-usage';
 import { sendToDedicated, ensureDedicatedSession, dedicatedSessionObservable } from './dedicated-session';
+import { REGISTRY_LIST_PROMPT } from './registry-cache';
 
 /* ── 主题样式注入（模块物化时执行；node 侧无 document 时跳过）── */
 if (
@@ -82,6 +83,17 @@ export function apply(ctx: any) {
           /** 注册的项目若尚无工作区，则新建工作区。 */
           createWorkspace: (path: string) =>
             ctx.workspaces.create({ path }).then((w: any) => w?.workspaceId ?? null),
+          /**
+           * 打开项目到 Appilot：确保其专属会话存在（无则创建 [Appilot] <名> 会话），
+           * 并发一次注册列表刷新——「添加到工作区/添加新项目」后默认就有可看的
+           * Appilot 面板，而不是只有空 workspace 没有任何会话。
+           */
+          openProject: async (path: string) => {
+            const id = await ensureDedicatedSession(ctx, path);
+            if (!id) return null;
+            await sendToDedicated(ctx, path, REGISTRY_LIST_PROMPT).catch(() => {});
+            return id;
+          },
         }),
       },
       AppHome,

@@ -30987,6 +30987,10 @@ function TaskTab(props) {
     ] }) });
   }
   const tasks = v.tasks || [];
+  const definitions = v.definitions || [];
+  const electronTasks = tasks.filter((t) => t.source === "electron");
+  const stateById = new Map(tasks.map((t) => [t.id, t]));
+  const runnableDefs = definitions.length > 0 ? definitions : tasks.filter((t) => !t.source || t.source === "dsh");
   return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov", children: [
     /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", children: [
       /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
@@ -30999,17 +31003,19 @@ function TaskTab(props) {
           children: props.busy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1\u72B6\u6001"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ap-wb-sub", children: "\u5B9A\u65F6\u4EFB\u52A1\u7531 dsh \u670D\u52A1\u7AEF\u8C03\u5EA6\uFF08\u670D\u52A1\u8FD0\u884C\u671F\u95F4\u751F\u6548\uFF09\uFF1B\u6B64\u5217\u8868\u6765\u81EA appilot_tasks" })
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ap-wb-sub", children: "DSH \u4EFB\u52A1\u7531 dsh \u670D\u52A1\u7AEF\u8C03\u5EA6\uFF08runNow \u53EF\u5F3A\u5236\u8FD0\u884C\uFF09\uFF1BElectron \u52A8\u6001\u4EFB\u52A1\u7531\u5176\u81EA\u8EAB\u8C03\u5EA6 \uFF08\u5171\u4EAB\u53EA\u8BFB\uFF09\u3002\u6B64\u5217\u8868\u6765\u81EA appilot_tasks\u3002" })
     ] }),
-    tasks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-empty", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", style: { margin: "4px 0 8px" }, children: "\u53EF\u8FD0\u884C\u4EFB\u52A1\uFF08\u672C\u4FA7\uFF09" }),
+    runnableDefs.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-empty", children: [
       /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-title", children: "\u6682\u65E0\u4EFB\u52A1" }),
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-hint", children: "\u670D\u52A1\u7AEF\u672A\u6CE8\u518C\u4EFB\u4F55\u5B9A\u65F6\u4EFB\u52A1\u3002" })
-    ] }) : tasks.map((t) => {
-      const runnable = !t.source || t.source === "dsh";
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-hint", children: "\u670D\u52A1\u7AEF\u672A\u5B9A\u4E49\u4EFB\u4F55\u5B9A\u65F6\u4EFB\u52A1\u3002" })
+    ] }) : runnableDefs.map((def) => {
+      const st = stateById.get(def.id) || null;
+      const t = st || def;
       return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-card", children: [
         /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", style: { justifyContent: "space-between", alignItems: "center" }, children: [
           /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-ov-card-title", children: t.title }),
-          runnable ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
             "button",
             {
               type: "button",
@@ -31022,13 +31028,12 @@ function TaskTab(props) {
               },
               children: props.busy ? "\u8FD0\u884C\u4E2D\u2026" : "\u7ACB\u5373\u8FD0\u884C"
             }
-          ) : null
+          )
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", children: [
           chip("\u6BCF " + t.intervalMinutes + " \u5206\u949F", ""),
           t.lastStatus === "ok" ? chip("\u4E0A\u6B21\u6210\u529F", "pass") : t.lastStatus === "error" ? chip("\u4E0A\u6B21\u5931\u8D25", "fail") : chip("\u672A\u8FD0\u884C", ""),
-          chip("\u5DF2\u8FD0\u884C " + (t.runCount ?? 0) + " \u6B21", ""),
-          t.source && t.source !== "dsh" ? chip("\u6765\u6E90: " + t.source, "") : null
+          chip("\u5DF2\u8FD0\u884C " + (t.runCount ?? 0) + " \u6B21", "")
         ] }),
         t.lastRunAt ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-wb-sub", children: [
           "\u4E0A\u6B21\u8FD0\u884C\uFF1A",
@@ -31038,9 +31043,31 @@ function TaskTab(props) {
           "\u4E0B\u6B21\u8FD0\u884C\uFF1A",
           new Date(t.nextRunAt).toLocaleString()
         ] }) : null,
-        t.lastSummary ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.lastSummary }) : null
+        t.lastSummary ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.lastSummary }) : null,
+        !st ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: "\u5C1A\u672A\u8FD0\u884C\uFF08dsh \u670D\u52A1\u4E3A\u4ECE\u5C5E\u89D2\u8272\u65F6\u7531\u79DF\u7EA6\u4E3B\u6267\u884C\uFF1B\u53EF\u70B9\u300C\u7ACB\u5373\u8FD0\u884C\u300D\u5F3A\u5236\u89E6\u53D1\uFF09" }) : null
       ] }, t.id);
-    })
+    }),
+    electronTasks.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("details", { style: { marginTop: 10 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("summary", { className: "ap-wb-sub", style: { cursor: "pointer" }, children: [
+        "Electron \u5171\u4EAB\u4EFB\u52A1\uFF08",
+        electronTasks.length,
+        " \u4E2A\uFF0C\u955C\u50CF\u53EA\u8BFB\uFF09\u2014\u2014\u5C55\u5F00\u67E5\u770B"
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: { marginTop: 6 }, children: [
+        electronTasks.slice(0, 50).map((t) => /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-card", style: { padding: "6px 10px" }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.title }),
+            t.lastStatus === "ok" ? chip("ok", "pass") : t.lastStatus === "error" ? chip("\u5931\u8D25", "fail") : chip("\u672A\u8FD0\u884C", "")
+          ] }),
+          t.lastSummary ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.lastSummary }) : null
+        ] }, t.id)),
+        electronTasks.length > 50 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-wb-sub", children: [
+          "\u2026\u4EC5\u663E\u793A\u524D 50 \u4E2A\uFF08\u5171 ",
+          electronTasks.length,
+          " \u4E2A\uFF09"
+        ] }) : null
+      ] })
+    ] }) : null
   ] });
 }
 
@@ -31695,6 +31722,7 @@ function AppHome(props) {
     setError(null);
     try {
       await props.createWorkspace(path2);
+      await props.openProject?.(path2);
     } catch (err) {
       setError(err && err.message ? err.message : String(err));
     } finally {
@@ -31719,6 +31747,7 @@ function AppHome(props) {
       await props.run(
         `\u8BF7\u8FD0\u884C register_project\uFF08\u8DEF\u5F84\u4E3A ${JSON.stringify(path2)}\uFF09\u6CE8\u518C\u8BE5\u9879\u76EE\uFF0C\u7136\u540E\u8FD0\u884C list_projects \u5237\u65B0\u5217\u8868\u3002`
       );
+      await props.openProject?.(path2);
     } catch (err) {
       setError(err && err.message ? err.message : String(err));
     } finally {
@@ -32082,7 +32111,19 @@ function apply(ctx) {
           },
           sessionObservable: (id) => ctx.sessions.binding(id)?.session ?? null,
           /** 注册的项目若尚无工作区，则新建工作区。 */
-          createWorkspace: (path2) => ctx.workspaces.create({ path: path2 }).then((w) => w?.workspaceId ?? null)
+          createWorkspace: (path2) => ctx.workspaces.create({ path: path2 }).then((w) => w?.workspaceId ?? null),
+          /**
+           * 打开项目到 Appilot：确保其专属会话存在（无则创建 [Appilot] <名> 会话），
+           * 并发一次注册列表刷新——「添加到工作区/添加新项目」后默认就有可看的
+           * Appilot 面板，而不是只有空 workspace 没有任何会话。
+           */
+          openProject: async (path2) => {
+            const id = await ensureDedicatedSession(ctx, path2);
+            if (!id) return null;
+            await sendToDedicated(ctx, path2, REGISTRY_LIST_PROMPT).catch(() => {
+            });
+            return id;
+          }
         })
       },
       AppHome
