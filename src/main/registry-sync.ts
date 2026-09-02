@@ -16,10 +16,11 @@ import {
   type ProjectRow,
 } from '@appilot-labs/appilot-headless';
 import { log } from '@appilot-labs/appilot-core/logger';
+import { importRankHistoryToDb } from './rank-db-sync';
 
 let store: AppilotStore | null = null;
 
-function db(): AppilotStore {
+export function sharedStore(): AppilotStore {
   if (!store) {
     const path = join(app.getPath('userData'), 'appilot.db');
     store = openStore(path);
@@ -46,7 +47,7 @@ let gateTimer: ReturnType<typeof setInterval> | null = null;
  */
 export function scheduleGate(): boolean {
   try {
-    const s = db();
+    const s = sharedStore();
     if (electronLeader) {
       if (!s.lease.heartbeat("electron")) {
         electronLeader = false;
@@ -70,7 +71,7 @@ function startLeaderHeartbeat(): void {
   gateTimer = setInterval(() => {
     if (electronLeader) {
       try {
-        if (!db().lease.heartbeat("electron")) electronLeader = false;
+        if (!sharedStore().lease.heartbeat("electron")) electronLeader = false;
       } catch {
         /* 下轮再试 */
       }
@@ -98,7 +99,7 @@ export function registryRecordOf(project: any): ProjectRow {
 /** 本侧项目变更 → 写共享 DB（identity upsert）。 */
 export async function syncRegistryToDb(projects: any[]): Promise<void> {
   try {
-    const s = db();
+    const s = sharedStore();
     for (const p of projects || []) {
       if (p && p.name && p.localPath) s.projects.save(registryRecordOf(p));
     }
@@ -112,7 +113,7 @@ export async function hydrateFromDb(
   projects: any[],
 ): Promise<{ projects: any[]; changed: boolean }> {
   try {
-    const records = db().projects.list();
+    const records = sharedStore().projects.list();
     const byPath = new Map(
       (projects || []).map((p: any) => [normalizePath(p.localPath), p]),
     );
@@ -211,6 +212,14 @@ export function startRegistrySync(
       const { projects, changed } = await hydrateFromDb((s.get('projects') || []) as any[]);
       if (changed) s.set('projects', projects);
       await syncRegistryToDb(projects as any[]);
+      // Phase 4b：electron-store 存量 rank 历史一次性幂等导入共享 DB（此后由
+      // scheduler 双写增量）。失败不影响注册表同步。
+      try {
+        const n = importRankHistoryToDb(sharedStore(), projects as any[]);
+        if (n > 0) log.info(`appilot: imported ${n} rank snapshots to shared db`);
+      } catch (err: any) {
+        log.warn(`rank history import failed: ${err.message}`);
+      }
     } catch (err: any) {
       log.warn(`registry sync failed: ${err.message}`);
     }
