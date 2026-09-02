@@ -20,10 +20,12 @@ appilot-headless projects remove <name>
 
 # 排名快照
 appilot-headless snapshots latest <project> [--product <id>]
+appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]
 
-# 定时任务
+# 定时任务与调度观测
 appilot-headless tasks list
-appilot-headless run <taskId>      # release-sync | readiness
+appilot-headless lease status          # 当前租约主（多壳调度：DSH=主 或 electron=主）
+appilot-headless run <taskId>          # release-sync | readiness
 ```
 
 输出一律 JSON（stdout）；错误写 stderr 并以非零码退出，适合脚本 / AI agent 消费。
