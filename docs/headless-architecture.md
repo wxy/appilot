@@ -39,23 +39,27 @@
     `scheduleGate()`，DSH 通过 headless `createLeaseScheduler` 内建租约。
 - 多进程同时打开同一 DB：WAL 多读一写 + busy_timeout 等待写锁；headless 层事务包裹写。
 
-## 壳状态一览（2026-09，master @ headless-phase4b）
+## 壳状态一览（2026-09，master @ 任务中心闭环 + CI 门控）
 
 | 壳 | 项目 | 快照 | 任务 | 租约 | 说明 |
 | --- | --- | --- | --- | --- | --- |
-| **DSH**（dsh-appilot 插件） | ✅ 共享 DB 读写 | ✅ 采集写 DB（productId=null） | ✅ 共享定义 buildHeadlessJobs + lease scheduler | ✅ 主 | agent 工具 + 客户端 UI |
-| **Electron** | ✅ DB 双向同步（hydrate 10s） | 🟡 双写 DB（UI 仍读 electron-store） | 🟡 旧动态任务系统 + scheduleGate 租约门 + 状态镜像 DB | ✅ | 富数据过渡态 |
-| **CLI**（headless-cli） | ✅ list/get/register/remove | ✅ latest/history 查询 | ✅ tasks list / run + lease status | —（显式触发） | JSON 输出 |
-| **MCP**（appilot-mcp） | ✅ 4 工具 | ✅ latest | ✅ tasks list / task_run | —（显式触发） | stdio JSON-RPC |
+| **DSH**（dsh-appilot 插件） | ✅ 共享 DB 读写 | ✅ 采集写 DB（productId=null）+ 只读查询工具 | ✅ 共享定义 buildHeadlessJobs + lease scheduler + appilot_task_run 显式触发（任务中心「立即运行」） | ✅ 主 | agent 工具 + 客户端 UI |
+| **Electron** | ✅ DB 双向同步（hydrate 10s） | 🟡 双写 DB + 存量幂等导入（UI 仍读 electron-store） | 🟡 旧动态任务系统 + scheduleGate 租约门 + 状态镜像 DB（source=electron，幽灵行清理） | ✅ | 富数据过渡态 |
+| **CLI**（headless-cli） | ✅ list/get/register/remove | ✅ latest / history / prune | ✅ tasks list（--source）/ run + lease status | —（显式触发） | JSON 输出 |
+| **MCP**（appilot-mcp） | ✅ 4 工具 | ✅ latest / history / prune | ✅ tasks list（source）/ task_run（9 工具） | —（显式触发） | stdio JSON-RPC |
+
+CI 门控：Type Check + Unit Tests（root 构建链含 headless，node 22）全绿才合并 PR。
 
 ## 真机验证清单（本仓库无法跑 Electron / 3099 服务端）
 
 - [ ] Electron 启动：日志出现 `imported N rank snapshots to shared db`（存量迁移幂等）
 - [ ] Electron 跑一轮 rank 任务后，`rank_snapshots` 增长（可用 CLI 查）：
       `appilot-headless snapshots latest <project> --product <productId>`
-- [ ] Electron 运行中：`appilot-headless tasks list` 能看到其动态任务状态镜像
-      （rank/github-sync 等，title 形如 `排名采集: <keyword> @ <storefront> (en)`）
-- [ ] DSH 侧（3099 重启后）：appilot 工具任务正常（共享任务定义生效）
+- [ ] Electron 运行中：`appilot-headless tasks list --source electron` 能看到其动态
+      任务镜像（title 形如 `排名采集: <keyword> @ <storefront> (en)`）；从 Electron
+      移除任务后镜像行被清理（幽灵行不残留）
+- [ ] DSH 侧（3099 重启后）：任务中心卡片有「立即运行」按钮（release-sync /
+      readiness，agent 走 appilot_task_run）；Electron 镜像任务不显示按钮
 - [ ] Electron 与 DSH 同时打开：`appilot-headless lease status` 显示唯一主
       （`electron` 或 `dsh`）；关掉主后 ≤60s 从者接管（lease status 的 leader 切换）
 - [ ] CLI：`appilot-headless tasks list` 看到 DSH/Electron 写入的任务状态
@@ -72,9 +76,10 @@
 
 ## 关键包速览
 
-- `packages/headless`：openStore（DDL v2：projects/rank_snapshots/tasks/lease + meta）、
-  createHeadlessService（projects/snapshots/tasks 门面）、createLeaseScheduler、
-  buildHeadlessJobs（release-sync / readiness 共享定义）、defaultDbPath/importLegacyRegistry。
+- `packages/headless`：openStore（DDL v3：projects/rank_snapshots/tasks[source]/lease + meta，
+  v1→v3 幂等迁移）、createHeadlessService（projects/snapshots[recent/prune]/tasks 门面）、
+  createLeaseScheduler、buildHeadlessJobs（release-sync / readiness 共享定义）、
+  defaultDbPath/importLegacyRegistry。
 - `packages/core`：纯业务函数（rank-collector / release-watcher / github-api / readiness-check…）。
 - `plugins/dsh-common`：openSharedHeadlessStore（单例）+ sqliteProjectStore + 凭据读取。
 - `plugins/dsh-appilot`：工具注册（注册/上下文/发布/趋势/任务/overview）+ 客户端 UI + 调度。
