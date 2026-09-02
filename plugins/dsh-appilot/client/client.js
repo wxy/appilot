@@ -30987,10 +30987,9 @@ function TaskTab(props) {
     ] }) });
   }
   const tasks = v.tasks || [];
-  const definitions = v.definitions || [];
   const electronTasks = tasks.filter((t) => t.source === "electron");
-  const stateById = new Map(tasks.map((t) => [t.id, t]));
-  const runnableDefs = definitions.length > 0 ? definitions : tasks.filter((t) => !t.source || t.source === "dsh");
+  const dshInstances = v.dshInstances || [];
+  const runnableDefs = dshInstances.length > 0 ? dshInstances : v.definitions && v.definitions.length > 0 ? v.definitions : tasks.filter((t) => !t.source || t.source === "dsh");
   return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov", children: [
     /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", children: [
       /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
@@ -31003,15 +31002,13 @@ function TaskTab(props) {
           children: props.busy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1\u72B6\u6001"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ap-wb-sub", children: "DSH \u4EFB\u52A1\u7531 dsh \u670D\u52A1\u7AEF\u8C03\u5EA6\uFF08runNow \u53EF\u5F3A\u5236\u8FD0\u884C\uFF09\uFF1BElectron \u52A8\u6001\u4EFB\u52A1\u7531\u5176\u81EA\u8EAB\u8C03\u5EA6 \uFF08\u5171\u4EAB\u53EA\u8BFB\uFF09\u3002\u6B64\u5217\u8868\u6765\u81EA appilot_tasks\u3002" })
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ap-wb-sub", children: "\u672C\u4FA7\u4EFB\u52A1\u7531 dsh \u670D\u52A1\u7AEF\u8C03\u5EA6\uFF08\u6838\u5FC3\u6267\u884C\u5668\uFF0CrunNow \u53EF\u5F3A\u5236\u8FD0\u884C\uFF09\uFF1BElectron \u4EFB\u52A1 \u7531\u5176\u81EA\u8EAB\u8C03\u5EA6\uFF08\u5171\u4EAB\u53EA\u8BFB\uFF09\u3002\u5217\u8868\u6765\u81EA appilot_tasks\u3002" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", style: { margin: "4px 0 8px" }, children: "\u53EF\u8FD0\u884C\u4EFB\u52A1\uFF08\u672C\u4FA7\uFF09" }),
+    /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", style: { margin: "4px 0 8px" }, children: "\u672C\u4FA7\u4EFB\u52A1\u5B9E\u4F8B\uFF08\u53EF\u8FD0\u884C\uFF09" }),
     runnableDefs.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-empty", children: [
       /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-title", children: "\u6682\u65E0\u4EFB\u52A1" }),
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-hint", children: "\u670D\u52A1\u7AEF\u672A\u5B9A\u4E49\u4EFB\u4F55\u5B9A\u65F6\u4EFB\u52A1\u3002" })
-    ] }) : runnableDefs.map((def) => {
-      const st = stateById.get(def.id) || null;
-      const t = st || def;
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-hint", children: "\u5C1A\u672A\u6CE8\u518C\u9879\u76EE\u2014\u2014\u6CE8\u518C\u540E\u81EA\u52A8\u751F\u6210\u6BCF\u9879\u76EE\u4EFB\u52A1\u5B9E\u4F8B\u3002" })
+    ] }) : runnableDefs.map((t) => {
       return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-card", children: [
         /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", style: { justifyContent: "space-between", alignItems: "center" }, children: [
           /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-ov-card-title", children: t.title }),
@@ -31043,8 +31040,7 @@ function TaskTab(props) {
           "\u4E0B\u6B21\u8FD0\u884C\uFF1A",
           new Date(t.nextRunAt).toLocaleString()
         ] }) : null,
-        t.lastSummary ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.lastSummary }) : null,
-        !st ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: "\u5C1A\u672A\u8FD0\u884C\uFF08dsh \u670D\u52A1\u4E3A\u4ECE\u5C5E\u89D2\u8272\u65F6\u7531\u79DF\u7EA6\u4E3B\u6267\u884C\uFF1B\u53EF\u70B9\u300C\u7ACB\u5373\u8FD0\u884C\u300D\u5F3A\u5236\u89E6\u53D1\uFF09" }) : null
+        t.lastSummary ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.lastSummary }) : null
       ] }, t.id);
     }),
     electronTasks.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("details", { style: { marginTop: 10 }, children: [
