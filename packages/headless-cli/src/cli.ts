@@ -61,6 +61,8 @@ function usage(): never {
       '  appilot-headless projects get <name>',
       '  appilot-headless projects register <path> [--name <name>]',
       '  appilot-headless projects remove <name>',
+      '  appilot-headless projects products <name>   # 产品注册（富数据，M3）',
+      '  appilot-headless projects meta <name>       # repo 状态（富数据，M3）',
       '  appilot-headless snapshots latest <project> [--product <id>]',
       '  appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]',
       '  appilot-headless snapshots prune <project> [--before <iso>]   # 默认清 90 天前',
@@ -131,6 +133,39 @@ export async function main(argv: string[]): Promise<void> {
             const removed = svc.projects.remove(name);
             process.stdout.write(JSON.stringify({ removed, name }, null, 2) + '\n');
             if (!removed) process.exitCode = 1;
+            return;
+          }
+          case 'products': {
+            const name = pos[0];
+            if (!name) return usage();
+            const products = svc.products.listByProject(name);
+            process.stdout.write(
+              JSON.stringify(
+                {
+                  project: name,
+                  count: products.length,
+                  products: products.map((pr) => ({
+                    productId: pr.productId,
+                    platform: pr.platform,
+                    trackId: pr.trackId,
+                    bundleId: pr.bundleId,
+                    trackName: pr.trackName,
+                    artworkUrl: pr.artworkUrl,
+                    supportedLanguages: pr.supportedLanguages,
+                    trackedKeywords: pr.trackedKeywords,
+                  })),
+                },
+                null,
+                2,
+              ) + '\n',
+            );
+            return;
+          }
+          case 'meta': {
+            const name = pos[0];
+            if (!name) return usage();
+            const meta = svc.meta.get(name);
+            process.stdout.write(JSON.stringify({ project: name, meta: meta ?? null }, null, 2) + '\n');
             return;
           }
           default:

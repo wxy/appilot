@@ -141,6 +141,24 @@ async function main(): Promise<void> {
   assert.ok(tDsh.tasks.every((t: any) => t.source === 'dsh'));
   console.log('✓ tasks list --source 过滤');
 
+  // products / meta（M3 富数据查询）
+  const rStore = openStore(dbPath);
+  rStore.products.upsert({
+    projectName: 'cli-test-proj', productId: 'proj-x:macos', platform: 'macos',
+    trackId: 123456, bundleId: 'com.x', trackName: 'X App', artworkUrl: null,
+    supportedLanguages: ['en'], trackedKeywords: [{ keyword: 'app', language: 'en', status: 'active' }], storeLinks: [],
+    updatedAt: new Date().toISOString(),
+  });
+  rStore.meta.save({ projectName: 'cli-test-proj', githubUrl: 'https://github.com/wxy/x', headSha: 'abc', headDate: null, lastReleaseSha: 'def', updatedAt: new Date().toISOString() });
+  rStore.close();
+  const prods = JSON.parse((await run(['projects', 'products', 'cli-test-proj'], dbPath)).stdout);
+  assert.equal(prods.count, 1);
+  assert.equal(prods.products[0].trackId, 123456);
+  assert.deepEqual(prods.products[0].trackedKeywords, [{ keyword: 'app', language: 'en', status: 'active' }]);
+  const meta = JSON.parse((await run(['projects', 'meta', 'cli-test-proj'], dbPath)).stdout);
+  assert.equal(meta.meta.lastReleaseSha, 'def');
+  console.log('✓ projects products / meta（富数据查询）');
+
   console.log('CLI 端到端测试全部通过 ✓');
 }
 
