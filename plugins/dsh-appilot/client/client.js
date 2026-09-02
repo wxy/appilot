@@ -31505,7 +31505,37 @@ function ProjectHome(props) {
 // client/src/app-home.tsx
 var import_react60 = require("react");
 var import_jsx_runtime19 = require("react/jsx-runtime");
-var LIST_PROMPT = REGISTRY_LIST_PROMPT;
+function AppIcon({ url, size = 40 }) {
+  const base = {
+    width: size,
+    height: size,
+    borderRadius: Math.round(size * 0.3),
+    border: "1px solid var(--dsw-alias-border-l2)",
+    flex: "none",
+    overflow: "hidden"
+  };
+  if (url) {
+    return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("img", { src: url, alt: "", style: { ...base, objectFit: "cover" } });
+  }
+  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+    "div",
+    {
+      style: {
+        ...base,
+        background: "#fef5e7",
+        color: "#f59e0b",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: Math.round(size * 0.62)
+      },
+      children: "\u2316"
+    }
+  );
+}
+function normPath(p) {
+  return (p || "").replace(/[/\\]+$/, "");
+}
 function AppHome(props) {
   const [visible, setVisible] = (0, import_react60.useState)(isHomeOpen());
   const sessions = props.useSessions((s) => s);
@@ -31536,7 +31566,7 @@ function AppHome(props) {
   const results = collectToolResults(nodes);
   const listNode = results["list_projects"];
   const listValue = listNode ? resultOf(listNode.content).value : null;
-  const projects = listValue && listValue.projects || [];
+  const records = listValue && listValue.projects || [];
   (0, import_react60.useEffect)(() => {
     if (listValue) setRegistryCache(listValue);
   }, [listValue]);
@@ -31552,6 +31582,24 @@ function AppHome(props) {
     setError(null);
     Promise.resolve(props.run(prompt)).catch((err) => setError(err && err.message ? err.message : String(err))).then(() => setBusy(null));
   }
+  function registerPath(path2) {
+    runAction(
+      "reg:" + normPath(path2),
+      `\u8BF7\u8FD0\u884C register_project\uFF08\u8DEF\u5F84\u4E3A ${JSON.stringify(path2)}\uFF09\u6CE8\u518C\u6B64\u9879\u76EE\uFF0C\u7136\u540E\u8FD0\u884C list_projects \u5237\u65B0\u6CE8\u518C\u5217\u8868\u3002`
+    );
+  }
+  async function addToWorkspace(path2) {
+    if (!props.createWorkspace || busy) return;
+    setBusy("ws:" + normPath(path2));
+    setError(null);
+    try {
+      await props.createWorkspace(path2);
+    } catch (err) {
+      setError(err && err.message ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
   async function onAddProject() {
     const path2 = (addPath || "").trim();
     if (!path2) {
@@ -31562,7 +31610,7 @@ function AppHome(props) {
     setBusy("add");
     setError(null);
     try {
-      const existing = (workspaces?.items || []).some((w) => w.path === path2);
+      const existing = (workspaces?.items || []).some((w) => normPath(w.path) === normPath(path2));
       if (!existing) {
         if (!props.createWorkspace) throw new Error("\u65E0\u6CD5\u65B0\u5EFA\u5DE5\u4F5C\u533A\uFF08workspaces \u670D\u52A1\u4E0D\u53EF\u7528\uFF09");
         await props.createWorkspace(path2);
@@ -31576,6 +31624,12 @@ function AppHome(props) {
       setBusy(null);
     }
   }
+  const wsItems = workspaces?.items || [];
+  const regPaths = new Set(records.map((r2) => normPath(r2.path)));
+  const wsByPath = new Map(wsItems.map((w) => [normPath(w.path), w]));
+  const registeredNoWs = records.filter((r2) => !wsByPath.has(normPath(r2.path)));
+  const unregisteredWs = wsItems.filter((w) => !regPaths.has(normPath(w.path)));
+  const wsName = (w) => w.title || normPath(w.path).split(/[/\\]/).pop() || w.path;
   return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
       "div",
@@ -31654,98 +31708,78 @@ function AppHome(props) {
           ] }) : null,
           /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { fontWeight: 600, fontSize: 14, marginBottom: 8 }, children: [
             "\u5DF2\u6DFB\u52A0\u9879\u76EE",
-            listValue && typeof listValue.count === "number" ? `\uFF08${listValue.count}\uFF09` : ""
+            records.length > 0 ? `\uFF08${records.length}\uFF09` : ""
           ] }),
-          !listNode ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-            "div",
-            {
-              style: {
-                padding: 16,
-                borderRadius: 12,
-                border: "1px dashed var(--dsw-alias-border-l2)",
-                color: "var(--dsw-alias-label-tertiary)",
-                fontSize: 13
-              },
-              children: "\u6B63\u5728\u83B7\u53D6\u9879\u76EE\u5217\u8868\uFF08agent \u8FD0\u884C list_projects\uFF09\u2026"
-            }
-          ) : projects.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-            "div",
-            {
-              style: {
-                padding: 16,
-                borderRadius: 12,
-                border: "1px dashed var(--dsw-alias-border-l2)",
-                color: "var(--dsw-alias-label-tertiary)",
-                fontSize: 13
-              },
-              children: "\u6682\u65E0\u6CE8\u518C\u9879\u76EE\u3002\u70B9\u300C\u6DFB\u52A0\u9879\u76EE\u300D\u6CE8\u518C\u5F53\u524D\u5DE5\u4F5C\u533A\u3002"
-            }
-          ) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("ul", { style: { margin: 0, padding: 0, listStyle: "none" }, children: projects.map((p) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
-            "li",
-            {
-              style: {
-                padding: "10px 12px",
-                marginBottom: 8,
-                borderRadius: 12,
-                border: "1px solid var(--dsw-alias-border-l1)",
-                background: "var(--dsw-alias-bg-layer-1)"
-              },
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 8, fontWeight: 500 }, children: [
-                  p.name,
-                  p.platform ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          !listNode ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: emptyBox, children: "\u6B63\u5728\u83B7\u53D6\u9879\u76EE\u5217\u8868\uFF08agent \u8FD0\u884C list_projects\uFF09\u2026" }) : records.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: emptyBox, children: "\u6682\u65E0\u6CE8\u518C\u9879\u76EE\u2014\u2014\u4ECE\u4E0B\u65B9\u5DE5\u4F5C\u533A\u6CE8\u518C\uFF0C\u6216\u8F93\u5165\u8DEF\u5F84\u6DFB\u52A0\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("ul", { style: { margin: 0, padding: 0, listStyle: "none" }, children: records.map((p) => {
+            const noWs = !wsByPath.has(normPath(p.path));
+            const warnPlatform = !p.platform;
+            return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("li", { style: projectRow, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(AppIcon, { url: p.artworkUrl }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { minWidth: 0, flex: 1 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: { fontWeight: 500 }, children: p.name }),
+                  p.platform ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: platformBadge, children: p.platform }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                     "span",
                     {
                       style: {
-                        padding: "1px 8px",
-                        borderRadius: 999,
-                        fontSize: 11,
-                        background: "var(--dsw-alias-interactive-bg-hover)",
-                        color: "var(--dsw-alias-label-secondary)"
+                        ...platformBadge,
+                        background: "var(--dsw-alias-state-warn-tertiary)",
+                        color: "var(--dsw-alias-state-warn-primary)"
                       },
-                      children: p.platform
+                      title: "\u672A\u68C0\u6D4B\u5230 Apple \u5E73\u53F0\uFF08iOS/macOS\uFF09\u2014\u2014\u53EF\u80FD\u4E0D\u9002\u5408 App Store \u8FD0\u8425",
+                      children: "\u672A\u8BC6\u522B Apple \u5E73\u53F0"
                     }
-                  ) : null
+                  ),
+                  warnPlatform ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: { fontSize: 11, color: "var(--dsw-alias-state-warn-primary)" }, children: "\u6682\u4E0D\u652F\u6301\u5176\u8FD0\u8425\u529F\u80FD" }) : null
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
-                  "div",
-                  {
-                    style: {
-                      color: "var(--dsw-alias-label-tertiary)",
-                      fontSize: 12,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      marginTop: 2
-                    },
-                    children: [
-                      p.path,
-                      p.githubUrl ? " \xB7 " + p.githubUrl : "",
-                      p.languages && p.languages.length ? " \xB7 " + p.languages.length + " \u8BED\u8A00" : ""
-                    ]
-                  }
-                )
-              ]
-            },
-            p.name
-          )) }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-              "button",
-              {
-                type: "button",
-                disabled: !!busy,
-                onClick: () => runAction("refresh", LIST_PROMPT),
-                style: actionBtn,
-                children: busy === "refresh" ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u5217\u8868"
-              }
-            ),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: pathLine, children: [
+                  p.path,
+                  noWs ? " \xB7 \u672A\u5173\u8054\u5DE5\u4F5C\u533A" : " \xB7 \u5DF2\u5173\u8054\u5DE5\u4F5C\u533A"
+                ] })
+              ] }),
+              noWs ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                "button",
+                {
+                  type: "button",
+                  disabled: !!busy,
+                  onClick: () => addToWorkspace(p.path),
+                  style: smallBtn,
+                  children: busy === "ws:" + normPath(p.path) ? "\u521B\u5EFA\u4E2D\u2026" : "\u6DFB\u52A0\u5230\u5DE5\u4F5C\u533A"
+                }
+              ) : null
+            ] }, p.name);
+          }) }),
+          unregisteredWs.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: [
+              "\u672A\u6CE8\u518C\u7684\u5DE5\u4F5C\u533A",
+              `\uFF08${unregisteredWs.length}\uFF09`
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("ul", { style: { margin: 0, padding: 0, listStyle: "none" }, children: unregisteredWs.map((w) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("li", { style: projectRow, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(AppIcon, { url: null }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { minWidth: 0, flex: 1 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: wsName(w) }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: pathLine, children: w.path })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                "button",
+                {
+                  type: "button",
+                  disabled: !!busy,
+                  onClick: () => registerPath(w.path),
+                  style: smallBtn,
+                  children: busy === "reg:" + normPath(w.path) ? "\u6CE8\u518C\u4E2D\u2026" : "\u6CE8\u518C"
+                }
+              )
+            ] }, w.workspaceId)) })
+          ] }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: "\u6DFB\u52A0\u65B0\u9879\u76EE" }),
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               "input",
               {
                 value: addPath,
                 onChange: (e) => setAddPath(e.target.value),
-                placeholder: "\u9879\u76EE\u8DEF\u5F84\uFF08\u7F3A\u5DE5\u4F5C\u533A\u65F6\u81EA\u52A8\u65B0\u5EFA\uFF09",
+                placeholder: "\u9879\u76EE\u8DEF\u5F84\uFF08\u7F3A\u5DE5\u4F5C\u533A\u65F6\u81EA\u52A8\u65B0\u5EFA\uFF1B\u5C06\u8BC6\u522B\u662F\u5426\u9002\u5408 App Store\uFF09",
                 style: {
                   flex: 1,
                   minWidth: 220,
@@ -31766,10 +31800,11 @@ function AppHome(props) {
                 disabled: !!busy,
                 onClick: onAddProject,
                 style: { ...actionBtn, background: "var(--dsw-alias-button-info-fill)", color: "#fff" },
-                children: busy === "add" ? "\u6CE8\u518C\u4E2D\u2026" : "\u6DFB\u52A0\u9879\u76EE"
+                children: busy === "add" ? "\u6DFB\u52A0\u4E2D\u2026" : "\u6DFB\u52A0\u9879\u76EE"
               }
             )
           ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginTop: 6 }, children: "\u672A\u68C0\u6D4B\u5230 Apple \u5E73\u53F0\uFF08iOS/macOS\uFF09\u7684\u9879\u76EE\u6682\u4E0D\u652F\u6301\u8FD0\u8425\u529F\u80FD\uFF08\u6DFB\u52A0\u540E\u4ECD\u4F1A\u4FDD\u7559\u5728\u5217\u8868\u4E2D\u5E76\u6807\u6CE8\uFF09\u3002" }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: "\u5168\u5C40" }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: entryCard, children: [
@@ -31781,7 +31816,7 @@ function AppHome(props) {
               /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: entryDesc, children: "Appilot \u914D\u7F6E\uFF08\u51ED\u636E / \u9879\u76EE\u6CE8\u518C\u8868\uFF09\u2014\u2014\u89C4\u5212\u4E2D" })
             ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { color: "var(--dsw-alias-label-tertiary)", fontSize: 11, marginTop: 12 }, children: "\u9879\u76EE\u6570\u636E\u6765\u81EA list_projects \u5DE5\u5177\u8FD0\u884C\u7ED3\u679C\uFF08\u5F53\u524D\u4F1A\u8BDD\uFF0C\u53EF\u5BA1\u8BA1\uFF09\u3002" })
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { color: "var(--dsw-alias-label-tertiary)", fontSize: 11, marginTop: 12 }, children: "\u9879\u76EE\u6570\u636E\u6765\u81EA list_projects \u5DE5\u5177\u8FD0\u884C\u7ED3\u679C\uFF08\u5F53\u524D\u4F1A\u8BDD\uFF0C\u53EF\u5BA1\u8BA1\uFF09\uFF1B\u5DE5\u4F5C\u533A\u6570\u636E\u6765\u81EA\u5BBF\u4E3B\u3002" })
         ]
       }
     )
@@ -31796,6 +31831,49 @@ var actionBtn = {
   fontSize: 13,
   lineHeight: "20px",
   cursor: "pointer"
+};
+var smallBtn = {
+  flex: "none",
+  padding: "4px 10px",
+  borderRadius: 8,
+  border: "1px solid var(--dsw-alias-border-l2)",
+  background: "var(--dsw-alias-interactive-bg-hover)",
+  color: "var(--dsw-alias-label-primary)",
+  fontSize: 12,
+  lineHeight: "18px",
+  cursor: "pointer"
+};
+var projectRow = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  padding: "8px 10px",
+  marginBottom: 8,
+  borderRadius: 12,
+  border: "1px solid var(--dsw-alias-border-l1)",
+  background: "var(--dsw-alias-bg-layer-1)"
+};
+var platformBadge = {
+  padding: "1px 8px",
+  borderRadius: 999,
+  fontSize: 11,
+  background: "var(--dsw-alias-interactive-bg-hover)",
+  color: "var(--dsw-alias-label-secondary)"
+};
+var pathLine = {
+  color: "var(--dsw-alias-label-tertiary)",
+  fontSize: 12,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  marginTop: 2
+};
+var emptyBox = {
+  padding: 16,
+  borderRadius: 12,
+  border: "1px dashed var(--dsw-alias-border-l2)",
+  color: "var(--dsw-alias-label-tertiary)",
+  fontSize: 13
 };
 var entryCard = {
   padding: "12px 14px",

@@ -17,6 +17,8 @@ export const projectRecordSchema = z.object({
   platform: z.string().nullable(),
   languages: z.array(z.string()),
   lastResolvedAt: z.string(),
+  /** 商店图标（iTunes 公开 API 解析；无则 null，前端显示占位）。 */
+  artworkUrl: z.string().nullable().optional(),
 });
 export type ProjectRecord = z.infer<typeof projectRecordSchema>;
 
@@ -117,6 +119,20 @@ export function createProjectStore(
 /** 解析仓库 → ProjectRecord（与 resolve_current_project 共享的纯逻辑）。 */
 export async function resolveProjectRecord(path: string): Promise<ProjectRecord> {
   const repo = await collectRepoInfo(path);
+  // 商店图标（best-effort：README 商店链接 → iTunes Lookup；失败为 null）。
+  let artworkUrl: string | null = null;
+  try {
+    const { discoverAppStoreLinks, lookupApp } = await import(
+      '@appilot-labs/appilot-core/app-store-discovery'
+    );
+    const trackId = discoverAppStoreLinks(path)?.trackId ?? null;
+    if (trackId) {
+      const meta = await lookupApp(trackId);
+      artworkUrl = meta?.artworkUrl ?? null;
+    }
+  } catch {
+    artworkUrl = null;
+  }
   return {
     name: basename(path),
     path,
@@ -124,5 +140,6 @@ export async function resolveProjectRecord(path: string): Promise<ProjectRecord>
     platform: detectApplePlatform(path),
     languages: detectLocalizedLanguages(path),
     lastResolvedAt: new Date().toISOString(),
+    artworkUrl,
   };
 }

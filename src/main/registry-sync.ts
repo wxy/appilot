@@ -21,6 +21,8 @@ export interface RegistryRecord {
   languages: string[];
   lastResolvedAt: string | null;
   updatedAt: string;
+  /** 商店图标（无则 null，前端显示占位）。 */
+  artworkUrl?: string | null;
 }
 
 const REGISTRY_VERSION = 1;
@@ -103,6 +105,7 @@ export function registryRecordOf(project: any): RegistryRecord {
       .filter(Boolean),
     lastResolvedAt: resolved,
     updatedAt: resolved,
+    artworkUrl: project?.artworkUrl ?? null,
   };
 }
 
@@ -185,7 +188,6 @@ function minimalProjectFromRecord(rec: RegistryRecord): any {
     bundleId: null,
     trackId: null,
     trackName: null,
-    artworkUrl: null,
     supportedLanguages: (rec.languages || []).map((code) => ({ code, name: code })),
     storeLinks: [],
     trackedKeywords: [],
@@ -194,6 +196,7 @@ function minimalProjectFromRecord(rec: RegistryRecord): any {
     rankSnapshots: [],
     storeProducts: [],
     createdAt: resolved,
+    artworkUrl: rec.artworkUrl ?? null,
     repo: rec.githubUrl
       ? {
           remoteUrl: rec.githubUrl,

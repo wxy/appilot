@@ -1,7 +1,11 @@
 /**
  * Appilot 应用首页（shell.overlay 居中浮层，跨工作区全局）。
- * 内容：已注册项目列表 + 添加项目入口 + 全局入口（设置 / 任务中心）。
- * 项目数据经 agent 运行 list_projects 落在当前会话，浮层订阅会话节点自动更新。
+ *
+ * 三方状态统一管理（数据源：注册表 list_projects × 宿主工作区列表）：
+ * - 已添加项目（注册表）——按独立应用样式显示图标；未关联工作区的可「添加到工作区」；
+ * - 未注册工作区——已存在的工作区尚未注册，可一键「注册」；
+ * - 添加新项目——全新路径：自动补建工作区 + 注册 + App Store 适配性识别
+ *   （platform 为 null 提示不适合 App Store 运营，本阶段暂不支持）。
  */
 import { useEffect, useState } from 'react';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -18,6 +22,40 @@ interface AppHomeProps {
   sessionObservable?: (id: string | null) => any;
   /** 注册的项目若尚无工作区，则新建工作区（返回 workspaceId）。 */
   createWorkspace?: (path: string) => Promise<string | null>;
+}
+
+/** 独立应用样式的 App 图标（有 artworkUrl 用图，否则琥珀占位 ⌖）。 */
+function AppIcon({ url, size = 40 }: { url?: string | null; size?: number }) {
+  const base: React.CSSProperties = {
+    width: size,
+    height: size,
+    borderRadius: Math.round(size * 0.3),
+    border: '1px solid var(--dsw-alias-border-l2)',
+    flex: 'none',
+    overflow: 'hidden',
+  };
+  if (url) {
+    return <img src={url} alt="" style={{ ...base, objectFit: 'cover' }} />;
+  }
+  return (
+    <div
+      style={{
+        ...base,
+        background: '#fef5e7',
+        color: '#f59e0b',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: Math.round(size * 0.62),
+      }}
+    >
+      ⌖
+    </div>
+  );
+}
+
+function normPath(p: string): string {
+  return (p || '').replace(/[/\\]+$/, '');
 }
 
 export function AppHome(props: AppHomeProps) {
@@ -38,7 +76,7 @@ export function AppHome(props: AppHomeProps) {
 
   useEffect(() => subscribeHome(setVisible), []);
 
-  // 订阅当前会话节点（list_projects 结果）。
+  // 订阅当前会话节点（list_projects / register_project 结果）。
   useEffect(() => {
     const session = props.sessionObservable ? props.sessionObservable(currentId) : null;
     if (!session) {
@@ -56,7 +94,7 @@ export function AppHome(props: AppHomeProps) {
   const results = collectToolResults(nodes);
   const listNode = results['list_projects'];
   const listValue = listNode ? resultOf(listNode.content).value : null;
-  const projects = (listValue && listValue.projects) || [];
+  const records = (listValue && listValue.projects) || [];
 
   // 观察到新的 list_projects 节点 → 更新共享缓存。
   useEffect(() => {
@@ -81,7 +119,28 @@ export function AppHome(props: AppHomeProps) {
       .then(() => setBusy(null));
   }
 
-  /** 添加项目：路径缺工作区则自动新建工作区，然后注册 + 刷新。 */
+  function registerPath(path: string) {
+    runAction(
+      'reg:' + normPath(path),
+      `请运行 register_project（路径为 ${JSON.stringify(path)}）注册此项目，` +
+        '然后运行 list_projects 刷新注册列表。',
+    );
+  }
+
+  async function addToWorkspace(path: string) {
+    if (!props.createWorkspace || busy) return;
+    setBusy('ws:' + normPath(path));
+    setError(null);
+    try {
+      await props.createWorkspace(path);
+    } catch (err: any) {
+      setError(err && err.message ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** 添加新项目（情况 C）：路径缺工作区则自动新建工作区，然后注册 + 刷新。 */
   async function onAddProject() {
     const path = (addPath || '').trim();
     if (!path) {
@@ -92,13 +151,11 @@ export function AppHome(props: AppHomeProps) {
     setBusy('add');
     setError(null);
     try {
-      // 1) 该路径是否已有工作区？没有则新建。
-      const existing = (workspaces?.items || []).some((w: any) => w.path === path);
+      const existing = (workspaces?.items || []).some((w: any) => normPath(w.path) === normPath(path));
       if (!existing) {
         if (!props.createWorkspace) throw new Error('无法新建工作区（workspaces 服务不可用）');
         await props.createWorkspace(path);
       }
-      // 2) 注册项目（agent 运行 register_project）。
       await props.run(
         `请运行 register_project（路径为 ${JSON.stringify(path)}）注册该项目，` +
           '然后运行 list_projects 刷新列表。',
@@ -109,6 +166,14 @@ export function AppHome(props: AppHomeProps) {
       setBusy(null);
     }
   }
+
+  // 三方匹配：注册表 × 工作区。
+  const wsItems = (workspaces?.items || []) as any[];
+  const regPaths = new Set(records.map((r: any) => normPath(r.path)));
+  const wsByPath = new Map(wsItems.map((w: any) => [normPath(w.path), w]));
+  const registeredNoWs = records.filter((r: any) => !wsByPath.has(normPath(r.path)));
+  const unregisteredWs = wsItems.filter((w: any) => !regPaths.has(normPath(w.path)));
+  const wsName = (w: any) => w.title || normPath(w.path).split(/[/\\]/).pop() || w.path;
 
   return (
     <>
@@ -184,96 +249,101 @@ export function AppHome(props: AppHomeProps) {
           </div>
         ) : null}
 
-        {/* 项目列表 */}
+        {/* 已添加项目（注册表） */}
         <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
-          已添加项目{listValue && typeof listValue.count === 'number' ? `（${listValue.count}）` : ''}
+          已添加项目{records.length > 0 ? `（${records.length}）` : ''}
         </div>
         {!listNode ? (
-          <div
-            style={{
-              padding: 16,
-              borderRadius: 12,
-              border: '1px dashed var(--dsw-alias-border-l2)',
-              color: 'var(--dsw-alias-label-tertiary)',
-              fontSize: 13,
-            }}
-          >
-            正在获取项目列表（agent 运行 list_projects）…
-          </div>
-        ) : projects.length === 0 ? (
-          <div
-            style={{
-              padding: 16,
-              borderRadius: 12,
-              border: '1px dashed var(--dsw-alias-border-l2)',
-              color: 'var(--dsw-alias-label-tertiary)',
-              fontSize: 13,
-            }}
-          >
-            暂无注册项目。点「添加项目」注册当前工作区。
-          </div>
+          <div style={emptyBox}>正在获取项目列表（agent 运行 list_projects）…</div>
+        ) : records.length === 0 ? (
+          <div style={emptyBox}>暂无注册项目——从下方工作区注册，或输入路径添加。</div>
         ) : (
           <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-            {projects.map((p: any) => (
-              <li
-                key={p.name}
-                style={{
-                  padding: '10px 12px',
-                  marginBottom: 8,
-                  borderRadius: 12,
-                  border: '1px solid var(--dsw-alias-border-l1)',
-                  background: 'var(--dsw-alias-bg-layer-1)',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500 }}>
-                  {p.name}
-                  {p.platform ? (
-                    <span
-                      style={{
-                        padding: '1px 8px',
-                        borderRadius: 999,
-                        fontSize: 11,
-                        background: 'var(--dsw-alias-interactive-bg-hover)',
-                        color: 'var(--dsw-alias-label-secondary)',
-                      }}
+            {records.map((p: any) => {
+              const noWs = !wsByPath.has(normPath(p.path));
+              const warnPlatform = !p.platform;
+              return (
+                <li key={p.name} style={projectRow}>
+                  <AppIcon url={p.artworkUrl} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 500 }}>{p.name}</span>
+                      {p.platform ? (
+                        <span style={platformBadge}>{p.platform}</span>
+                      ) : (
+                        <span
+                          style={{
+                            ...platformBadge,
+                            background: 'var(--dsw-alias-state-warn-tertiary)',
+                            color: 'var(--dsw-alias-state-warn-primary)',
+                          }}
+                          title="未检测到 Apple 平台（iOS/macOS）——可能不适合 App Store 运营"
+                        >
+                          未识别 Apple 平台
+                        </span>
+                      )}
+                      {warnPlatform ? (
+                        <span style={{ fontSize: 11, color: 'var(--dsw-alias-state-warn-primary)' }}>
+                          暂不支持其运营功能
+                        </span>
+                      ) : null}
+                    </div>
+                    <div style={pathLine}>
+                      {p.path}
+                      {noWs ? ' · 未关联工作区' : ' · 已关联工作区'}
+                    </div>
+                  </div>
+                  {noWs ? (
+                    <button
+                      type="button"
+                      disabled={!!busy}
+                      onClick={() => addToWorkspace(p.path)}
+                      style={smallBtn}
                     >
-                      {p.platform}
-                    </span>
+                      {busy === 'ws:' + normPath(p.path) ? '创建中…' : '添加到工作区'}
+                    </button>
                   ) : null}
-                </div>
-                <div
-                  style={{
-                    color: 'var(--dsw-alias-label-tertiary)',
-                    fontSize: 12,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    marginTop: 2,
-                  }}
-                >
-                  {p.path}
-                  {p.githubUrl ? ' · ' + p.githubUrl : ''}
-                  {p.languages && p.languages.length ? ' · ' + p.languages.length + ' 语言' : ''}
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
 
-        {/* 操作行 */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button
-            type="button"
-            disabled={!!busy}
-            onClick={() => runAction('refresh', LIST_PROMPT)}
-            style={actionBtn}
-          >
-            {busy === 'refresh' ? '刷新中…' : '刷新列表'}
-          </button>
+        {/* 未注册工作区（情况 A） */}
+        {unregisteredWs.length > 0 ? (
+          <>
+            <div style={{ fontWeight: 600, fontSize: 14, margin: '18px 0 8px' }}>
+              未注册的工作区{`（${unregisteredWs.length}）`}
+            </div>
+            <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+              {unregisteredWs.map((w: any) => (
+                <li key={w.workspaceId} style={projectRow}>
+                  <AppIcon url={null} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontWeight: 500 }}>{wsName(w)}</div>
+                    <div style={pathLine}>{w.path}</div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!!busy}
+                    onClick={() => registerPath(w.path)}
+                    style={smallBtn}
+                  >
+                    {busy === 'reg:' + normPath(w.path) ? '注册中…' : '注册'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+
+        {/* 添加新项目（情况 C） */}
+        <div style={{ fontWeight: 600, fontSize: 14, margin: '18px 0 8px' }}>添加新项目</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <input
             value={addPath}
             onChange={(e) => setAddPath(e.target.value)}
-            placeholder="项目路径（缺工作区时自动新建）"
+            placeholder="项目路径（缺工作区时自动新建；将识别是否适合 App Store）"
             style={{
               flex: 1,
               minWidth: 220,
@@ -292,8 +362,11 @@ export function AppHome(props: AppHomeProps) {
             onClick={onAddProject}
             style={{ ...actionBtn, background: 'var(--dsw-alias-button-info-fill)', color: '#fff' }}
           >
-            {busy === 'add' ? '注册中…' : '添加项目'}
+            {busy === 'add' ? '添加中…' : '添加项目'}
           </button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', marginTop: 6 }}>
+          未检测到 Apple 平台（iOS/macOS）的项目暂不支持运营功能（添加后仍会保留在列表中并标注）。
         </div>
 
         {/* 全局入口 */}
@@ -301,9 +374,7 @@ export function AppHome(props: AppHomeProps) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div style={entryCard}>
             <div style={{ fontWeight: 500 }}>任务中心</div>
-            <div style={entryDesc}>
-              定时任务（排名采集 / 发布同步）的状态与调度——规划中
-            </div>
+            <div style={entryDesc}>定时任务（排名采集 / 发布同步）的状态与调度——规划中</div>
           </div>
           <div style={entryCard}>
             <div style={{ fontWeight: 500 }}>设置</div>
@@ -312,7 +383,7 @@ export function AppHome(props: AppHomeProps) {
         </div>
 
         <div style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, marginTop: 12 }}>
-          项目数据来自 list_projects 工具运行结果（当前会话，可审计）。
+          项目数据来自 list_projects 工具运行结果（当前会话，可审计）；工作区数据来自宿主。
         </div>
       </div>
     </>
@@ -328,6 +399,54 @@ const actionBtn: React.CSSProperties = {
   fontSize: 13,
   lineHeight: '20px',
   cursor: 'pointer',
+};
+
+const smallBtn: React.CSSProperties = {
+  flex: 'none',
+  padding: '4px 10px',
+  borderRadius: 8,
+  border: '1px solid var(--dsw-alias-border-l2)',
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 12,
+  lineHeight: '18px',
+  cursor: 'pointer',
+};
+
+const projectRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  padding: '8px 10px',
+  marginBottom: 8,
+  borderRadius: 12,
+  border: '1px solid var(--dsw-alias-border-l1)',
+  background: 'var(--dsw-alias-bg-layer-1)',
+};
+
+const platformBadge: React.CSSProperties = {
+  padding: '1px 8px',
+  borderRadius: 999,
+  fontSize: 11,
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+  color: 'var(--dsw-alias-label-secondary)',
+};
+
+const pathLine: React.CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  marginTop: 2,
+};
+
+const emptyBox: React.CSSProperties = {
+  padding: 16,
+  borderRadius: 12,
+  border: '1px dashed var(--dsw-alias-border-l2)',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 13,
 };
 
 const entryCard: React.CSSProperties = {
