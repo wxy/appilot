@@ -36,6 +36,7 @@ import {
 import { getStore } from "./store";
 import { scheduleGate, sharedStore } from "./registry-sync";
 import { recordRankSnapshotToDb } from "./rank-db-sync";
+import { reconcileTaskInstances, type TaskInstanceSpec } from "@appilot-labs/appilot-headless";
 import type { AppStore } from "./store";
 
 interface ScheduledTaskBase {
@@ -343,6 +344,38 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
   store.set("scheduledTasks", next);
   store.set("projects", projects);
   reconcileSchedulerRounds(store, next);
+  // M3.2：rank 任务实例（kind/参数）同步进共享 DB——Electron 调度语义不变
+  // （reconcile 继续写 electron-store），DB 行由 reconcile 管理参数、
+  // registry-sync 的 10s 镜像同步状态；DSH/CLI 可见 rank 实例与状态。
+  syncRankInstancesToDb(next);
+}
+
+/**
+ * 把 electron-store 的 rank 调度任务 reconcile 成共享 DB 实例行
+ * （source=electron, kind=rank, instance 带 productId/keyword/语言/storefront）。
+ */
+function syncRankInstancesToDb(tasks: ScheduledTask[]): void {
+  try {
+    const specs: TaskInstanceSpec[] = tasks
+      .filter((t): t is RankScheduledTask => t.kind === "rank")
+      .map((t) => ({
+        id: t.id,
+        kind: "rank",
+        title: `排名采集: ${t.keyword} @ ${t.storefront} (${t.queryLanguage})`,
+        intervalMinutes: t.intervalMinutes,
+        instance: {
+          productId: t.productId,
+          keyword: t.keyword,
+          queryLanguage: t.queryLanguage,
+          storefront: t.storefront,
+          groupKey: t.groupKey,
+        },
+      }));
+    if (specs.length === 0) return;
+    reconcileTaskInstances(sharedStore(), specs, "electron");
+  } catch (err: any) {
+    log.warn(`rank instances sync to shared db failed: ${err.message}`);
+  }
 }
 
 /**
