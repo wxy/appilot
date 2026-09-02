@@ -21,14 +21,17 @@ appilot-headless projects remove <name>
 # 排名快照
 appilot-headless snapshots latest <project> [--product <id>]
 appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]
+appilot-headless snapshots prune <project> [--before <iso>]   # 默认清 90 天前旧点
 
 # 定时任务与调度观测
-appilot-headless tasks list
+appilot-headless tasks list [--source dsh|electron|cli]   # 默认全部来源
 appilot-headless lease status          # 当前租约主（多壳调度：DSH=主 或 electron=主）
 appilot-headless run <taskId>          # release-sync | readiness
 ```
 
 输出一律 JSON（stdout）；错误写 stderr 并以非零码退出，适合脚本 / AI agent 消费。
+`tasks list` 行自带 `source`（dsh = 共享静态任务 / electron = Electron 动态任务镜像 /
+cli = 显式触发），`snapshots prune` 与 core 的 90 天窗口常量对齐（生命周期维护）。
 
 ## 环境变量
 

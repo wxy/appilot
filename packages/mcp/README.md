@@ -15,7 +15,9 @@ Appilot MCP server（stdio）—— 把 headless 服务 API（项目 / 排名快
 | `projects_register` | 登记项目（path 必填，name 缺省取 basename） |
 | `projects_remove` | 移除项目 |
 | `snapshots_latest` | 每 (keyword, language, storefront) 最新排名快照，可按 productId 过滤 |
-| `tasks_list` | 共享任务定义 + 运行状态 |
+| `snapshots_history` | 最近时间序列点（降序），可按 productId / keyword / limit 过滤 |
+| `snapshots_prune` | 清理某项目早于指定 ISO 时间的旧快照（返回删除行数） |
+| `tasks_list` | 共享任务定义 + 运行状态；可按 source（dsh/electron/cli）过滤 |
 | `task_run` | 立即运行共享任务（release-sync / readiness） |
 
 ## 客户端接入示例
