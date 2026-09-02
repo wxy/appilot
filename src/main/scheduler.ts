@@ -34,6 +34,7 @@ import {
   type SchedulerRoundState,
 } from "./schedule";
 import { getStore } from "./store";
+import { scheduleGate } from "./registry-sync";
 import type { AppStore } from "./store";
 
 interface ScheduledTaskBase {
@@ -1059,6 +1060,11 @@ export async function schedulerTick(): Promise<void> {
   if (schedulerRunning) return;
   schedulerRunning = true;
   try {
+    // Phase 3：租约门——非调度主（如 DSH 在跑）时本轮跳过定时派发；
+    // 显式 IPC 触发（runTaskNow 等）不受影响，仍可手动执行。
+    if (!scheduleGate()) {
+      return; // schedulerLoopOnce 会继续安排下一轮；非主轮不做派发
+    }
     const store = await getStore();
     await reconcileRankTasks(store);
     await reconcileGithubSyncTasks(store);

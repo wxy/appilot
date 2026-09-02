@@ -3,7 +3,7 @@ import { createProjectStore, ctxCredentialReader } from '@appilot-labs/appilot-c
 import * as projectDomain from '@appilot-labs/appilot-project';
 import * as releaseDomain from '@appilot-labs/appilot-release';
 import { createAppilotOverviewTool } from './overview.js';
-import { createTaskScheduler, createTasksStatusTool } from './tasks.js';
+import { startAppilotTasks, createTasksStatusTool } from './tasks.js';
 
 /**
  * @appilot-labs/dsh — Appilot 的 DeepSeek Harness 元插件（插件组）。
@@ -24,7 +24,7 @@ export function apply(ctx: Context): void {
   ctx.plugin(releaseDomain, { store });
   // 总览聚合工具（跨域，放在元插件）：刷新 Appilot 工作台总览页。
   ctx.tools.register(createAppilotOverviewTool(reader));
-  // 任务中心：宿主 timer 定时任务 + 状态工具。
-  const scheduler = createTaskScheduler(ctx, store, reader);
-  ctx.tools.register(createTasksStatusTool(scheduler));
+  // 任务中心：headless 租约选主调度（仅主壳执行任务）+ 状态工具。
+  ctx.tools.register(createTasksStatusTool());
+  startAppilotTasks(reader);
 }

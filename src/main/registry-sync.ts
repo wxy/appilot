@@ -35,6 +35,49 @@ function db(): AppilotStore {
   return store;
 }
 
+let electronLeader = false;
+let gateTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * 调度租约门（Phase 3）：Electron 与 DSH 共享 lease 表，仅租约主执行定时任务。
+ * - 已是主 → 续租并返回 true；
+ * - 非主 → 尝试抢占（主心跳过期后接管）→ 抢到返回 true，否则返回 false（本 tick 跳过调度）。
+ * 另起 10s 心跳保持主的租约（即使 schedulerTick 间隔较长也不掉租）。
+ */
+export function scheduleGate(): boolean {
+  try {
+    const s = db();
+    if (electronLeader) {
+      if (!s.lease.heartbeat("electron")) {
+        electronLeader = false;
+        return false;
+      }
+      return true;
+    }
+    if (s.lease.acquire("electron", 60_000)) {
+      electronLeader = true;
+      return true;
+    }
+    return false;
+  } catch (err: any) {
+    log.warn(`schedule gate failed: ${err.message}`);
+    return false;
+  }
+}
+
+function startLeaderHeartbeat(): void {
+  if (gateTimer) return;
+  gateTimer = setInterval(() => {
+    if (electronLeader) {
+      try {
+        if (!db().lease.heartbeat("electron")) electronLeader = false;
+      } catch {
+        /* 下轮再试 */
+      }
+    }
+  }, 10_000);
+}
+
 /** 本侧项目 → DB 注册表行（identity 子集）。 */
 export function registryRecordOf(project: any): ProjectRow {
   const resolved = project?.repo?.capturedAt ?? project?.createdAt ?? new Date().toISOString();
@@ -175,8 +218,11 @@ export function startRegistrySync(
 
   void hydrateOnce();
   timer = setInterval(hydrateOnce, 10_000);
+  startLeaderHeartbeat();
 
   return () => {
     if (timer) clearInterval(timer);
+    if (gateTimer) clearInterval(gateTimer);
+    gateTimer = null;
   };
 }
