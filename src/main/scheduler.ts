@@ -693,50 +693,32 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   let status: "success" | "failed" = "success";
   try {
     if (!project?.localPath) throw new Error("Project not found");
-    const { fetchRemoteTags, checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
-    const { listGitHubReleases } = await import("@appilot-labs/appilot-core/github-api");
-    const { fetchRepoCapabilities } = await import("@appilot-labs/appilot-core/github-api");
+    // M2：github-sync 计算链收敛到 core 单一实现（inspectProjectRelease：
+    // fetchRemoteTags + listGitHubReleases + fetchRepoCapabilities +
+    // checkForRelease）。壳只保留 githubSyncCache 副作用与任务簿记。
+    const { inspectProjectRelease } = await import("@appilot-labs/appilot-core/project-sync");
     // Background sync must never touch the worktree or local branches: fetch
-    // only updates remote-tracking refs and tags.
-    await fetchRemoteTags(project.localPath);
+    // only updates remote-tracking refs and tags (inspect fetchRemote: true).
     const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
-    // Best-effort GitHub releases listing (drafts included with token). Empty
-    // on private repos without a token / offline — checkForRelease degrades to
-    // local git tags.
-    const githubReleases = await listGitHubReleases(
-      project.localPath,
+    const inspection = await inspectProjectRelease(project.localPath, {
       token,
-      (rb, pb) => {
+      fetchRemote: true,
+      lastSeenSha: project.lastReleaseSha || null,
+      onApiStats: (rb, pb) => {
         requestBytes += rb;
         responseBytes += pb;
       },
-    );
-    const repoCapabilities = await fetchRepoCapabilities(project.localPath, token);
-    const result = await checkForRelease(
-      project.localPath,
-      project.lastReleaseSha || null,
-      token,
-      {
-        sync: false,
-        githubReleases,
-        onApiStats: (rb, pb) => {
-          requestBytes += rb;
-          responseBytes += pb;
-        },
-      },
-    );
-    const release = result.latest || null;
-    const material = release?.material || null;
+    });
     const all: Record<string, any> = store.get("githubSyncCache") || {};
     all[task.projectId] = {
-      tag: release?.tag || null,
-      release: material?.githubRelease ?? null,
-      pullRequests: material?.pullRequests || [],
+      tag: inspection.release?.tag ?? null,
+      release: inspection.material?.githubRelease ?? null,
+      pullRequests: inspection.material?.pullRequests || [],
       prSchemaVersion: GITHUB_SYNC_CACHE_PR_SCHEMA,
-      releases: githubReleases,
-      repoCapabilities,
-      lastSeenSha: project.lastReleaseSha || null,
-      syncedAt: new Date().toISOString(),
+      releases: inspection.releases,
+      repoCapabilities: inspection.repoCapabilities,
+      lastSeenSha: inspection.lastSeenSha ?? project.lastReleaseSha ?? null,
+      syncedAt: inspection.syncedAt,
     };
     store.set("githubSyncCache", all);
     notifyDataChanged("releases");
