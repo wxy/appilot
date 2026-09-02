@@ -22,4 +22,5 @@ export {
   mergeRegistry,
   fileProjectStore,
 } from './registry-file.js';
+export { sqliteProjectStore, type SqliteStoreOptions } from './sqlite-store.js';
 export { jsonify } from './jsonify.js';

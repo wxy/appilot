@@ -1,99 +1,42 @@
 /**
- * 共享项目注册表同步（方案 A）：Electron 与 DSH 插件共用 `registry.json`
- * （userData 下），原子写 + updatedAt 合并（后写者赢）+ 文件变更 watch。
+ * 共享注册表（Phase 2：单一 SQLite DB，取代 registry.json 双向同步）。
  *
- * - 本侧项目变更 → syncRegistryToFile（合并写回共享文件）；
- * - 对侧（DSH）新增 → hydrateFromFile（启动 + watch 时补进本侧 store）。
- * 强一致不可达（无锁双写）；本实现保证不损坏 + 最终收敛（秒级）。
+ * Electron 与 DSH 打开**同一个 appilot.db**（headless 的 openStore，WAL/事务）。
+ * - 本侧项目变更 → syncRegistryToDb（identity upsert 进 DB）；
+ * - DSH 侧注册的新项目 → hydrateFromDb（启动 + 每 10s 轮询，补进 electron-store
+ *   的富数据副本——electron-store 仍持有富数据，DB 是注册表单一事实源）；
+ * - 首次打开时把旧版 registry.json 一次性导入（headless.importLegacyRegistry）。
  */
 import { app } from 'electron';
-import { basename, dirname, join } from 'node:path';
-import { watch, type FSWatcher } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import {
+  openStore,
+  importLegacyRegistry,
+  type AppilotStore,
+  type ProjectRow,
+} from '@appilot-labs/appilot-headless';
 import { log } from '@appilot-labs/appilot-core/logger';
 
-export interface RegistryRecord {
-  name: string;
-  path: string;
-  githubUrl: string | null;
-  platform: string | null;
-  languages: string[];
-  lastResolvedAt: string | null;
-  updatedAt: string;
-  /** 商店图标（无则 null，前端显示占位）。 */
-  artworkUrl?: string | null;
-}
+let store: AppilotStore | null = null;
 
-const REGISTRY_VERSION = 1;
-
-export function registryFilePath(): string {
-  return join(app.getPath('userData'), 'registry.json');
-}
-
-async function readRegistry(
-  filePath: string,
-): Promise<Record<string, RegistryRecord>> {
-  try {
-    const raw = await readFile(filePath, 'utf8');
-    const data = JSON.parse(raw);
-    if (!data || typeof data !== 'object' || !Array.isArray(data.projects)) return {};
-    const out: Record<string, RegistryRecord> = {};
-    for (const p of data.projects) {
-      if (p && typeof p.name === 'string' && typeof p.path === 'string') {
-        out[p.name] = p as RegistryRecord;
-      }
+function db(): AppilotStore {
+  if (!store) {
+    const path = join(app.getPath('userData'), 'appilot.db');
+    store = openStore(path);
+    // 旧版 registry.json 一次性迁移（幂等）。
+    const legacy = join(app.getPath('userData'), 'registry.json');
+    try {
+      const n = importLegacyRegistry(store, legacy);
+      if (n > 0) log.info(`appilot: migrated ${n} legacy registry records to SQLite`);
+    } catch (err: any) {
+      log.warn(`appilot: legacy registry migration failed: ${err.message}`);
     }
-    return out;
-  } catch {
-    return {};
   }
+  return store;
 }
 
-/** 原子写注册表（进程内串行化，避免 read-merge-write 竞态丢记录）。 */
-let writeChain: Promise<unknown> = Promise.resolve();
-
-async function doWrite(
-  filePath: string,
-  records: Record<string, RegistryRecord>,
-): Promise<void> {
-  const payload = JSON.stringify(
-    { version: REGISTRY_VERSION, projects: Object.values(records) },
-    null,
-    2,
-  );
-  await mkdir(dirname(filePath), { recursive: true });
-  // tmp 名用 uuid 保证唯一：跨进程同毫秒并发写也不会互相覆盖导致 rename ENOENT。
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-  await writeFile(tmp, payload, 'utf8');
-  await rename(tmp, filePath);
-}
-
-function writeRegistry(
-  filePath: string,
-  records: Record<string, RegistryRecord>,
-): Promise<void> {
-  const run = writeChain.then(() => doWrite(filePath, records));
-  writeChain = run.catch(() => {});
-  return run;
-}
-
-function mergeRecords(
-  current: Record<string, RegistryRecord>,
-  incoming: Record<string, RegistryRecord>,
-): Record<string, RegistryRecord> {
-  const out = { ...current };
-  for (const [key, rec] of Object.entries(incoming)) {
-    const existing = out[key];
-    const recTime = new Date(rec.updatedAt || 0).getTime();
-    const curTime = existing ? new Date(existing.updatedAt || 0).getTime() : 0;
-    if (!existing || recTime >= curTime) out[key] = rec;
-  }
-  return out;
-}
-
-/** 本侧项目 → 注册表记录（identity 子集）。 */
-export function registryRecordOf(project: any): RegistryRecord {
+/** 本侧项目 → DB 注册表行（identity 子集）。 */
+export function registryRecordOf(project: any): ProjectRow {
   const resolved = project?.repo?.capturedAt ?? project?.createdAt ?? new Date().toISOString();
   return {
     name: project.name,
@@ -104,45 +47,41 @@ export function registryRecordOf(project: any): RegistryRecord {
       .map((l: any) => (typeof l === 'string' ? l : l?.code))
       .filter(Boolean),
     lastResolvedAt: resolved,
-    updatedAt: resolved,
     artworkUrl: project?.artworkUrl ?? null,
+    updatedAt: resolved,
   };
 }
 
-/** 把本侧项目的注册记录合并写回共享文件（后写者赢）。 */
-export async function syncRegistryToFile(projects: any[]): Promise<void> {
+/** 本侧项目变更 → 写共享 DB（identity upsert）。 */
+export async function syncRegistryToDb(projects: any[]): Promise<void> {
   try {
-    const filePath = registryFilePath();
-    const current = await readRegistry(filePath);
-    const incoming: Record<string, RegistryRecord> = {};
+    const s = db();
     for (const p of projects || []) {
-      if (p && p.name && p.localPath) incoming[p.name] = registryRecordOf(p);
+      if (p && p.name && p.localPath) s.projects.save(registryRecordOf(p));
     }
-    await writeRegistry(filePath, mergeRecords(current, incoming));
   } catch (err: any) {
-    log.warn(`registry sync failed: ${err.message}`);
+    log.warn(`registry sync to db failed: ${err.message}`);
   }
 }
 
-/** 把共享文件里本侧缺失的项目补进来（DSH 侧注册的）；返回变更后的列表与是否有变化。 */
-export async function hydrateFromFile(
+/** 共享 DB 里本侧缺失的项目补进 electron-store（最小 Project）；返回变更后的列表与是否有变化。 */
+export async function hydrateFromDb(
   projects: any[],
 ): Promise<{ projects: any[]; changed: boolean }> {
   try {
-    const records = await readRegistry(registryFilePath());
+    const records = db().projects.list();
     const byPath = new Map(
       (projects || []).map((p: any) => [normalizePath(p.localPath), p]),
     );
     let changed = false;
     const next = [...(projects || [])];
-    for (const rec of Object.values(records)) {
+    for (const rec of records) {
       const existing = byPath.get(normalizePath(rec.path));
       if (!existing) {
         next.push(minimalProjectFromRecord(rec));
         byPath.set(normalizePath(rec.path), rec.path);
         changed = true;
       } else if (rec.updatedAt && isNewer(rec.updatedAt, existing)) {
-        // 对侧更新了 identity（name/platform/languages/githubUrl）→ 保守回填。
         const before = JSON.stringify(existing);
         if (rec.name) existing.name = rec.name;
         if (rec.platform === 'ios' || rec.platform === 'macos') existing.productType = rec.platform;
@@ -154,6 +93,7 @@ export async function hydrateFromFile(
           existing.repo.githubUrl = rec.githubUrl;
           existing.repo.remoteUrl = rec.githubUrl;
         }
+        if (rec.artworkUrl && !existing.artworkUrl) existing.artworkUrl = rec.artworkUrl;
         if (JSON.stringify(existing) !== before) changed = true;
       }
     }
@@ -176,10 +116,9 @@ function isNewer(updatedAt: string, project: any): boolean {
   return recTime > projTime;
 }
 
-/** 由注册表记录构造最小 Project（storeProducts 等留空，待用户在应用中完善）。 */
-function minimalProjectFromRecord(rec: RegistryRecord): any {
-  const now = new Date().toISOString();
-  const resolved = rec.lastResolvedAt ?? rec.updatedAt ?? now;
+/** 由 DB 记录构造最小 Project（storeProducts 等留空，待用户在应用中完善）。 */
+function minimalProjectFromRecord(rec: ProjectRow): any {
+  const resolved = rec.lastResolvedAt ?? rec.updatedAt ?? new Date().toISOString();
   return {
     id: `shared-${Buffer.from(rec.path).toString('base64url').slice(0, 16)}`,
     name: rec.name,
@@ -188,6 +127,7 @@ function minimalProjectFromRecord(rec: RegistryRecord): any {
     bundleId: null,
     trackId: null,
     trackName: null,
+    artworkUrl: rec.artworkUrl ?? null,
     supportedLanguages: (rec.languages || []).map((code) => ({ code, name: code })),
     storeLinks: [],
     trackedKeywords: [],
@@ -196,7 +136,6 @@ function minimalProjectFromRecord(rec: RegistryRecord): any {
     rankSnapshots: [],
     storeProducts: [],
     createdAt: resolved,
-    artworkUrl: rec.artworkUrl ?? null,
     repo: rec.githubUrl
       ? {
           remoteUrl: rec.githubUrl,
@@ -214,37 +153,30 @@ function minimalProjectFromRecord(rec: RegistryRecord): any {
   };
 }
 
-/** 启动：hydrate + 初始写回 + watch 对侧变更（防抖 300ms）。 */
-export function startRegistrySync(getStore: () => Promise<{ get<T = any>(k: string): T; set(k: string, v: unknown): void }>): () => void {
-  let watcher: FSWatcher | null = null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * 启动：立即 hydrate 一次 + 初始写回 + 每 10 秒轮询 DB（对侧 DSH 注册/变更）。
+ * 返回清理函数。
+ */
+export function startRegistrySync(
+  getStore: () => Promise<{ get<T = any>(k: string): T; set(k: string, v: unknown): void }>,
+): () => void {
+  let timer: ReturnType<typeof setInterval> | null = null;
 
   const hydrateOnce = async () => {
     try {
       const s = await getStore();
-      const { projects, changed } = await hydrateFromFile((s.get('projects') || []) as any[]);
+      const { projects, changed } = await hydrateFromDb((s.get('projects') || []) as any[]);
       if (changed) s.set('projects', projects);
-      await syncRegistryToFile(projects as any[]);
+      await syncRegistryToDb(projects as any[]);
     } catch (err: any) {
-      log.warn(`registry start sync failed: ${err.message}`);
+      log.warn(`registry sync failed: ${err.message}`);
     }
   };
 
   void hydrateOnce();
-
-  try {
-    const dir = dirname(registryFilePath());
-    watcher = watch(dir, (_event, filename) => {
-      if (filename !== basename(registryFilePath())) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(hydrateOnce, 300);
-    });
-  } catch (err: any) {
-    log.warn(`registry watch unavailable: ${err.message}`);
-  }
+  timer = setInterval(hydrateOnce, 10_000);
 
   return () => {
-    if (timer) clearTimeout(timer);
-    watcher?.close();
+    if (timer) clearInterval(timer);
   };
 }

@@ -7,7 +7,8 @@ import {
   detectApplePlatform,
   detectLocalizedLanguages,
 } from '@appilot-labs/appilot-core/app-store-discovery';
-import { defaultRegistryPath, fileProjectStore } from './registry-file.js';
+import { defaultRegistryPath } from './registry-file.js';
+import { sqliteProjectStore } from './sqlite-store.js';
 
 /** 注册过的项目记录（持久化的最小快照，供按名引用）。 */
 export const projectRecordSchema = z.object({
@@ -100,18 +101,29 @@ export function domainProjectStore(ctx: Context): ProjectStore {
   return store;
 }
 
-/** 优先共享注册表文件（方案 A 双向同步）；env APPILOT_REGISTRY_FILE='none' 可禁用回退原逻辑。 */
+/** 优先共享 SQLite 注册表（Phase 2：单一 DB 取代 registry.json，自动迁移旧 JSON）；
+ *  env APPILOT_DB_FILE='none' 可禁用回退原逻辑。 */
 export function createProjectStore(
   ctx: Context,
-  opts?: { registryFile?: string | null },
+  opts?: { dbFile?: string | null; legacyJsonPath?: string | null },
 ): ProjectStore {
-  const override =
-    opts?.registryFile !== undefined ? opts.registryFile : process.env.APPILOT_REGISTRY_FILE;
+  const override = opts?.dbFile !== undefined ? opts.dbFile : process.env.APPILOT_DB_FILE;
   if (override !== 'none' && override !== null) {
-    const filePath = override || defaultRegistryPath();
-    return fileProjectStore(filePath);
+    const dbPath = override || undefined;
+    if (dbPath) {
+      try {
+        return sqliteProjectStore({
+          dbPath,
+          legacyJsonPath:
+            opts?.legacyJsonPath === undefined ? defaultRegistryPath() : opts?.legacyJsonPath,
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(`[appilot-common] SQLite store unavailable, falling back: ${String(err)}`);
+      }
+    }
   }
-  // 禁用文件注册表时回退原逻辑（domain → memory）。
+  // 禁用/不可用时回退原逻辑（domain → memory）。
   const storage = ctx.get('storage') as { domain?: unknown } | undefined;
   return storage?.domain ? domainProjectStore(ctx) : memoryProjectStore();
 }

@@ -1,5 +1,5 @@
 import { log } from "@appilot-labs/appilot-core/logger";
-import { syncRegistryToFile } from "./registry-sync";
+import { syncRegistryToDb } from "./registry-sync";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
 export interface AppStore {
@@ -14,7 +14,7 @@ let syncTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleRegistrySync(projects: unknown): void {
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
-    void syncRegistryToFile((projects as any[]) || []);
+    void syncRegistryToDb((projects as any[]) || []);
   }, 300);
 }
 
