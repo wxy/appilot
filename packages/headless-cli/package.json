@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx tests/*.test.ts"
+    "test": "tsx tests/*.test.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@appilot-labs/appilot-headless": "^0.1.0"
@@ -21,5 +22,8 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }
