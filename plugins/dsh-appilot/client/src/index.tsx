@@ -12,7 +12,7 @@
  * 依赖（宿主提供，构建时 external）：react / react/jsx-runtime / @deepseek-ai/*。
  */
 import { CSS, CSS_ID } from './styles';
-import { AppilotWorkbench, REFRESH_PROMPT, BRIEF_PROMPT } from './workbench';
+import { AppilotWorkbench, REFRESH_PROMPT, BRIEF_PROMPT, TASKS_PROMPT } from './workbench';
 import { ProjectCard, ReadinessCard, ReleaseStatusCard, OverviewCard } from './toolcards';
 import { QuickActions } from './quick-actions';
 import { ProjectHome } from './project-home';
@@ -123,6 +123,7 @@ export function apply(ctx: any) {
             ensureDedicated: () => ensureDedicatedSession(ctx, cwdOf()),
             refresh: () => sendToDedicated(ctx, cwdOf(), REFRESH_PROMPT),
             refreshBrief: () => sendToDedicated(ctx, cwdOf(), BRIEF_PROMPT),
+            refreshTasks: () => sendToDedicated(ctx, cwdOf(), TASKS_PROMPT),
             /** 在当前会话运行（注册等操作——注册表是共享 store，结果落当前会话便于本面板读取）。 */
             runCurrent: (prompt: string) => sendIn(sessionId, prompt),
             dedicatedSession: (id: string | null) => dedicatedSessionObservable(ctx, id),

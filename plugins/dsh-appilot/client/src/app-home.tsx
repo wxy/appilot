@@ -374,7 +374,7 @@ export function AppHome(props: AppHomeProps) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div style={entryCard}>
             <div style={{ fontWeight: 500 }}>任务中心</div>
-            <div style={entryDesc}>定时任务（排名采集 / 发布同步）的状态与调度——规划中</div>
+            <div style={entryDesc}>定时任务（发布同步 / readiness）的状态——见工作台「任务」标签页</div>
           </div>
           <div style={entryCard}>
             <div style={{ fontWeight: 500 }}>设置</div>

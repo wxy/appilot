@@ -30968,6 +30968,61 @@ function TrendTab(props) {
     ] }) : null
   ] });
 }
+function TaskTab(props) {
+  const v = overviewValue(props.node);
+  if (!v) {
+    return /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-ov", children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-empty", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-title", children: "\u4EFB\u52A1\u4E2D\u5FC3" }),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-hint", children: "\u70B9\u51FB\u300C\u5237\u65B0\u4EFB\u52A1\u72B6\u6001\u300D\uFF0Cagent \u4F1A\u8FD0\u884C appilot_tasks \u8BFB\u53D6\u5B9A\u65F6\u4EFB\u52A1\uFF08\u53D1\u5E03\u540C\u6B65 / readiness \u68C0\u67E5\uFF09\u7684\u72B6\u6001\u3002" }),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { marginTop: 8 }, children: /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+        "button",
+        {
+          type: "button",
+          className: "ap-btn",
+          disabled: props.busy || void 0,
+          onClick: props.onRefresh,
+          children: props.busy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1\u72B6\u6001"
+        }
+      ) })
+    ] }) });
+  }
+  const tasks = v.tasks || [];
+  return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+        "button",
+        {
+          type: "button",
+          className: "ap-btn",
+          disabled: props.busy || void 0,
+          onClick: props.onRefresh,
+          children: props.busy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1\u72B6\u6001"
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ap-wb-sub", children: "\u5B9A\u65F6\u4EFB\u52A1\u7531 dsh \u670D\u52A1\u7AEF\u8C03\u5EA6\uFF08\u670D\u52A1\u8FD0\u884C\u671F\u95F4\u751F\u6548\uFF09\uFF1B\u6B64\u5217\u8868\u6765\u81EA appilot_tasks" })
+    ] }),
+    tasks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-empty", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-title", children: "\u6682\u65E0\u4EFB\u52A1" }),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-hint", children: "\u670D\u52A1\u7AEF\u672A\u6CE8\u518C\u4EFB\u4F55\u5B9A\u65F6\u4EFB\u52A1\u3002" })
+    ] }) : tasks.map((t) => /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-card", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-ov-card-title", children: t.title }),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-ov-row", children: [
+        chip("\u6BCF " + t.intervalMinutes + " \u5206\u949F", ""),
+        t.lastStatus === "ok" ? chip("\u4E0A\u6B21\u6210\u529F", "pass") : t.lastStatus === "error" ? chip("\u4E0A\u6B21\u5931\u8D25", "fail") : chip("\u672A\u8FD0\u884C", ""),
+        chip("\u5DF2\u8FD0\u884C " + (t.runCount ?? 0) + " \u6B21", "")
+      ] }),
+      t.lastRunAt ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-wb-sub", children: [
+        "\u4E0A\u6B21\u8FD0\u884C\uFF1A",
+        new Date(t.lastRunAt).toLocaleString()
+      ] }) : null,
+      t.nextRunAt ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-wb-sub", children: [
+        "\u4E0B\u6B21\u8FD0\u884C\uFF1A",
+        new Date(t.nextRunAt).toLocaleString()
+      ] }) : null,
+      t.lastSummary ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-wb-sub", children: t.lastSummary }) : null
+    ] }, t.id))
+  ] });
+}
 
 // client/src/dedicated-session.ts
 var TITLE_PREFIX = "[Appilot] ";
@@ -31047,11 +31102,13 @@ function maybeRefreshRegistry(run) {
 // client/src/workbench.tsx
 var import_jsx_runtime15 = require("react/jsx-runtime");
 var REFRESH_PROMPT = "\u8BF7\u8FD0\u884C appilot_overview\uFF08\u8DEF\u5F84\u4F7F\u7528\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\uFF09\u5237\u65B0 Appilot \u603B\u89C8\u6570\u636E\uFF1B\u5982\u679C\u5DF2\u77E5\u8BE5\u4EA7\u54C1\u7684\u8DDF\u8E2A\u5173\u952E\u8BCD\uFF0C\u8BF7\u4E00\u5E76\u4F20\u5165 keywords \u53C2\u6570\uFF08\u53EF\u91C7\u96C6\u5B9E\u65F6\u6392\u540D\uFF09\u3002\u7136\u540E\u7B80\u8981\u6C47\u62A5\u7ED3\u679C\u3002";
+var TASKS_PROMPT = "\u8BF7\u8FD0\u884C appilot_tasks\uFF0C\u67E5\u770B Appilot \u5B9A\u65F6\u4EFB\u52A1\u72B6\u6001\uFF0C\u5E76\u7B80\u8981\u6C47\u62A5\u3002";
 var BRIEF_PROMPT = "\u8BF7\u8FD0\u884C appilot_overview\uFF08\u8DEF\u5F84\u4F7F\u7528\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\uFF0CincludeBrief=true\uFF09\uFF0C\u751F\u6210 Appilot AI \u7B80\u62A5\uFF08\u526F\u9A7E\u9A76\u7B80\u62A5\uFF09\uFF0C\u7136\u540E\u7B80\u8981\u6C47\u62A5\u5EFA\u8BAE\u4E8B\u9879\u3002";
 var WB_TABS = [
   { id: "overview", label: "\u603B\u89C8" },
   { id: "release", label: "\u53D1\u5E03" },
-  { id: "trend", label: "\u8D8B\u52BF" }
+  { id: "trend", label: "\u8D8B\u52BF" },
+  { id: "tasks", label: "\u4EFB\u52A1" }
 ];
 function AppilotWorkbench(props) {
   const project = useProjectName(props.useSessions, props.useWorkspaces);
@@ -31192,11 +31249,12 @@ function AppilotWorkbench(props) {
       project.cwd,
       dedicatedNodes,
       { busy, error, onRefresh },
-      props.refreshBrief
+      props.refreshBrief,
+      props.refreshTasks
     ) })
   ] });
 }
-function renderWbPanel(tab, cwd, nodes, actions, refreshBrief) {
+function renderWbPanel(tab, cwd, nodes, actions, refreshBrief, refreshTasks) {
   const results = collectToolResults(nodes);
   const overviewNode = results["appilot_overview"];
   if (tab === "release") {
@@ -31204,6 +31262,21 @@ function renderWbPanel(tab, cwd, nodes, actions, refreshBrief) {
   }
   if (tab === "trend") {
     return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(TrendTab, { node: overviewNode });
+  }
+  if (tab === "tasks") {
+    return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+      TaskTab,
+      {
+        node: results["appilot_tasks"],
+        busy: actions.busy,
+        onRefresh: () => {
+          if (actions.busy || !refreshTasks) return;
+          actions.onRefresh();
+          Promise.resolve(refreshTasks()).catch(() => {
+          });
+        }
+      }
+    );
   }
   return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
     OverviewDsh,
@@ -31809,7 +31882,7 @@ function AppHome(props) {
           /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: entryCard, children: [
               /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: "\u4EFB\u52A1\u4E2D\u5FC3" }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: entryDesc, children: "\u5B9A\u65F6\u4EFB\u52A1\uFF08\u6392\u540D\u91C7\u96C6 / \u53D1\u5E03\u540C\u6B65\uFF09\u7684\u72B6\u6001\u4E0E\u8C03\u5EA6\u2014\u2014\u89C4\u5212\u4E2D" })
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: entryDesc, children: "\u5B9A\u65F6\u4EFB\u52A1\uFF08\u53D1\u5E03\u540C\u6B65 / readiness\uFF09\u7684\u72B6\u6001\u2014\u2014\u89C1\u5DE5\u4F5C\u53F0\u300C\u4EFB\u52A1\u300D\u6807\u7B7E\u9875" })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: entryCard, children: [
               /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: "\u8BBE\u7F6E" }),
@@ -32021,6 +32094,7 @@ function apply(ctx) {
             ensureDedicated: () => ensureDedicatedSession(ctx, cwdOf()),
             refresh: () => sendToDedicated(ctx, cwdOf(), REFRESH_PROMPT),
             refreshBrief: () => sendToDedicated(ctx, cwdOf(), BRIEF_PROMPT),
+            refreshTasks: () => sendToDedicated(ctx, cwdOf(), TASKS_PROMPT),
             /** 在当前会话运行（注册等操作——注册表是共享 store，结果落当前会话便于本面板读取）。 */
             runCurrent: (prompt) => sendIn(sessionId, prompt),
             dedicatedSession: (id) => dedicatedSessionObservable(ctx, id)

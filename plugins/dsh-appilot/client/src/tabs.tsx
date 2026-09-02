@@ -169,3 +169,76 @@ export function TrendTab(props: { node: any }) {
     </div>
   );
 }
+
+/** 任务中心 tab：从 appilot_tasks 节点渲染定时任务状态。 */
+export function TaskTab(props: { node: any; onRefresh?: () => void; busy?: boolean }) {
+  const v = overviewValue(props.node);
+  if (!v) {
+    return (
+      <div className="ap-ov">
+        <div className="ap-empty">
+          <div className="ap-empty-title">任务中心</div>
+          <div className="ap-empty-hint">
+            点击「刷新任务状态」，agent 会运行 appilot_tasks 读取定时任务（发布同步 / readiness 检查）的状态。
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="ap-btn"
+              disabled={props.busy || undefined}
+              onClick={props.onRefresh}
+            >
+              {props.busy ? '刷新中…' : '刷新任务状态'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const tasks = v.tasks || [];
+  return (
+    <div className="ap-ov">
+      <div className="ap-ov-row">
+        <button
+          type="button"
+          className="ap-btn"
+          disabled={props.busy || undefined}
+          onClick={props.onRefresh}
+        >
+          {props.busy ? '刷新中…' : '刷新任务状态'}
+        </button>
+        <span className="ap-wb-sub">
+          定时任务由 dsh 服务端调度（服务运行期间生效）；此列表来自 appilot_tasks
+        </span>
+      </div>
+      {tasks.length === 0 ? (
+        <div className="ap-empty">
+          <div className="ap-empty-title">暂无任务</div>
+          <div className="ap-empty-hint">服务端未注册任何定时任务。</div>
+        </div>
+      ) : (
+        tasks.map((t: any) => (
+          <div className="ap-ov-card" key={t.id}>
+            <div className="ap-ov-card-title">{t.title}</div>
+            <div className="ap-ov-row">
+              {chip('每 ' + t.intervalMinutes + ' 分钟', '')}
+              {t.lastStatus === 'ok'
+                ? chip('上次成功', 'pass')
+                : t.lastStatus === 'error'
+                  ? chip('上次失败', 'fail')
+                  : chip('未运行', '')}
+              {chip('已运行 ' + (t.runCount ?? 0) + ' 次', '')}
+            </div>
+            {t.lastRunAt ? (
+              <div className="ap-wb-sub">上次运行：{new Date(t.lastRunAt).toLocaleString()}</div>
+            ) : null}
+            {t.nextRunAt ? (
+              <div className="ap-wb-sub">下次运行：{new Date(t.nextRunAt).toLocaleString()}</div>
+            ) : null}
+            {t.lastSummary ? <div className="ap-wb-sub">{t.lastSummary}</div> : null}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}

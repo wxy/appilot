@@ -12,7 +12,7 @@ import {
   type SnapshotSelectorHook,
 } from './helpers';
 import { OverviewDsh } from './overview-dsh';
-import { ReleaseTab, TrendTab } from './tabs';
+import { ReleaseTab, TrendTab, TaskTab } from './tabs';
 import { findDedicatedId } from './dedicated-session';
 import { openHome } from './home-store';
 import { setRegistryCache, maybeRefreshRegistry, REGISTRY_LIST_PROMPT } from './registry-cache';
@@ -23,6 +23,9 @@ export const REFRESH_PROMPT =
   '如果已知该产品的跟踪关键词，请一并传入 keywords 参数（可采集实时排名）。' +
   '然后简要汇报结果。';
 
+/** 「任务中心」提示词：让 agent 运行 appilot_tasks 读取定时任务状态。 */
+export const TASKS_PROMPT = '请运行 appilot_tasks，查看 Appilot 定时任务状态，并简要汇报。';
+
 /** 「生成简报」提示词：让 agent 运行 appilot_overview 并生成 AI 简报。 */
 export const BRIEF_PROMPT =
   '请运行 appilot_overview（路径使用当前工作目录，includeBrief=true），' +
@@ -32,6 +35,7 @@ const WB_TABS = [
   { id: 'overview', label: '总览' },
   { id: 'release', label: '发布' },
   { id: 'trend', label: '趋势' },
+  { id: 'tasks', label: '任务' },
 ];
 
 export interface WorkbenchProps {
@@ -41,6 +45,7 @@ export interface WorkbenchProps {
   useProjection?: (key: string) => any;
   refresh?: () => Promise<unknown>;
   refreshBrief?: () => Promise<unknown>;
+  refreshTasks?: () => Promise<unknown>;
   /** 在当前会话运行（注册等操作）。 */
   runCurrent?: (prompt: string) => Promise<unknown>;
   /** 专属会话的 binding.session 可观察对象（subscribe/getSnapshot）。 */
@@ -221,6 +226,7 @@ export function AppilotWorkbench(props: WorkbenchProps) {
           dedicatedNodes,
           { busy, error, onRefresh },
           props.refreshBrief,
+          props.refreshTasks,
         )}
       </div>
     </div>
@@ -233,6 +239,7 @@ function renderWbPanel(
   nodes: readonly any[] | undefined,
   actions: { busy: boolean; error: string | null; onRefresh: () => void },
   refreshBrief?: () => Promise<unknown>,
+  refreshTasks?: () => Promise<unknown>,
 ) {
   const results = collectToolResults(nodes);
   const overviewNode = results['appilot_overview'];
@@ -241,6 +248,19 @@ function renderWbPanel(
   }
   if (tab === 'trend') {
     return <TrendTab node={overviewNode} />;
+  }
+  if (tab === 'tasks') {
+    return (
+      <TaskTab
+        node={results['appilot_tasks']}
+        busy={actions.busy}
+        onRefresh={() => {
+          if (actions.busy || !refreshTasks) return;
+          actions.onRefresh();
+          Promise.resolve(refreshTasks()).catch(() => {});
+        }}
+      />
+    );
   }
   return (
     <OverviewDsh
