@@ -29,6 +29,8 @@
 ## 数据一致性模型
 
 - **单一事实源 = SQLite**（注册表 / 快照 / 任务状态 / 租约都在 DB）。
+- **任务行有来源**（schema v3：tasks.source）：'dsh'（共享静态任务 buildHeadlessJobs）、
+  'electron'（Electron 动态任务镜像，镜像时清理源中已消失的幽灵行）、'cli'（显式触发）。
 - **electron-store 过渡态**：Electron UI 仍读 electron-store 富数据（project 内嵌
   rankSnapshots / storeProducts / repo 等）。迁移分阶段，避免一次性大爆炸：
   - 注册表：双向同步（DB ←→ electron-store，10s 轮询 hydrate）；
