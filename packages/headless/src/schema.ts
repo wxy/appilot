@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -36,9 +36,12 @@ export interface RankSnapshotRow {
 }
 
 /**
- * 定时任务状态行（Phase 3 调度器使用）。
- * source：任务来源——'dsh'（共享静态任务 buildHeadlessJobs）/ 'electron'（Electron
- * 动态任务镜像）/ 'cli'（显式触发）；用于镜像清理与展示过滤。
+ * 定时任务状态行（Phase 3 调度器使用；v4 起支持实例任务）。
+ * source：任务来源——'dsh' / 'electron' / 'cli'；用于镜像清理与展示过滤。
+ * kind + instance：v4 实例任务——kind 是核心任务类型（如 'github-sync'），
+ * instance 是该实例的参数（JSON，如 { projectName, path }）。静态任务（job
+ * 数组驱动）无 kind；实例任务由 executors（按 kind 分发的核心执行器）执行，
+ * 使 Electron / DSH 的任务收敛为同一 DB 实例 + 同一核心执行器。
  */
 export interface TaskRow {
   id: string;
@@ -50,6 +53,10 @@ export interface TaskRow {
   lastSummary: string | null;
   runCount: number;
   source?: 'dsh' | 'electron' | 'cli' | string;
+  /** v4：核心任务类型（实例任务用；静态任务无）。 */
+  kind?: string | null;
+  /** v4：实例参数（JSON 列；静态任务无）。 */
+  instance?: Record<string, unknown> | null;
 }
 
 /** 调度租约行（Phase 3：多壳同时打开时仅主进程调度）。 */
@@ -98,7 +105,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   lastStatus TEXT NOT NULL DEFAULT 'never',
   lastSummary TEXT,
   runCount INTEGER NOT NULL DEFAULT 0,
-  source TEXT NOT NULL DEFAULT 'dsh'
+  source TEXT NOT NULL DEFAULT 'dsh',
+  kind TEXT,
+  instance TEXT
 );
 
 CREATE TABLE IF NOT EXISTS lease (
@@ -136,5 +145,16 @@ export function migrate(db: {
       db.exec("ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'dsh'");
     }
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 4) {
+    // v3→v4：tasks 加 kind/instance（实例任务：类型 + 参数 JSON；两壳任务统一）
+    const cols = (db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>) || [];
+    if (!cols.some((c) => c.name === 'kind')) {
+      db.exec('ALTER TABLE tasks ADD COLUMN kind TEXT');
+    }
+    if (!cols.some((c) => c.name === 'instance')) {
+      db.exec('ALTER TABLE tasks ADD COLUMN instance TEXT');
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }

@@ -223,8 +223,8 @@ export function openStore(dbPath: string): AppilotStore {
       upsert(row) {
         tx(() => {
           db.prepare(
-            `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount, source, kind, instance)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                title = excluded.title,
                intervalMinutes = excluded.intervalMinutes,
@@ -243,37 +243,18 @@ export function openStore(dbPath: string): AppilotStore {
             row.lastSummary,
             row.runCount,
             row.source ?? 'dsh',
+            row.kind ?? null,
+            row.instance ? JSON.stringify(row.instance) : null,
           );
         });
       },
       all() {
         const rows = db.prepare('SELECT * FROM tasks ORDER BY id').all() as any[];
-        return rows.map((r) => ({
-          id: r.id,
-          title: r.title,
-          intervalMinutes: r.intervalMinutes,
-          lastRunAt: r.lastRunAt,
-          nextRunAt: r.nextRunAt,
-          lastStatus: r.lastStatus,
-          lastSummary: r.lastSummary,
-          runCount: r.runCount,
-          source: r.source ?? 'dsh',
-        }));
+        return rows.map(parseTaskRow);
       },
       get(id) {
         const r = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as any;
-        if (!r) return undefined;
-        return {
-          id: r.id,
-          title: r.title,
-          intervalMinutes: r.intervalMinutes,
-          lastRunAt: r.lastRunAt,
-          nextRunAt: r.nextRunAt,
-          lastStatus: r.lastStatus,
-          lastSummary: r.lastSummary,
-          runCount: r.runCount,
-          source: r.source ?? 'dsh',
-        };
+        return r ? parseTaskRow(r) : undefined;
       },
       remove(id) {
         const res = db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
@@ -340,5 +321,30 @@ function stripId(r: any): RankSnapshotRow {
     rank: r.rank,
     totalResults: r.totalResults,
     checkedAt: r.checkedAt,
+  };
+}
+
+/** 任务行解析：instance JSON 列 → 对象；kind 空串 → null。 */
+function parseTaskRow(r: any): TaskRow {
+  let instance: Record<string, unknown> | null = null;
+  if (typeof r.instance === 'string' && r.instance) {
+    try {
+      instance = JSON.parse(r.instance);
+    } catch {
+      instance = null;
+    }
+  }
+  return {
+    id: r.id,
+    title: r.title,
+    intervalMinutes: r.intervalMinutes,
+    lastRunAt: r.lastRunAt,
+    nextRunAt: r.nextRunAt,
+    lastStatus: r.lastStatus,
+    lastSummary: r.lastSummary,
+    runCount: r.runCount,
+    source: r.source ?? 'dsh',
+    kind: r.kind || null,
+    instance,
   };
 }

@@ -18,11 +18,14 @@
  */
 import { basename, resolve } from 'node:path';
 import {
+  buildHeadlessExecutors,
   buildHeadlessJobs,
   createHeadlessService,
   createLeaseScheduler,
   defaultDbPath,
+  githubSyncInstancesFor,
   openStore,
+  reconcileTaskInstances,
   type ProjectRow,
 } from '@appilot-labs/appilot-headless';
 
@@ -215,12 +218,22 @@ export async function main(argv: string[]): Promise<void> {
           store,
           leaderId: `cli-${process.pid}`,
           jobs: buildHeadlessJobs({ readToken: envToken }),
+          executors: buildHeadlessExecutors({ readToken: envToken }),
           heartbeatMs: 60_000,
         });
         try {
+          // 实例任务（github-sync:<project>）：DB 无该行时按注册项目现场 seed（source=cli）
+          if (!store.tasks.get(id) && id.startsWith('github-sync:')) {
+            const name = id.slice('github-sync:'.length);
+            const projects = store.projects
+              .list()
+              .filter((p) => p.name === name)
+              .map((p) => ({ name: p.name, path: p.path }));
+            reconcileTaskInstances(store, githubSyncInstancesFor(projects), 'cli');
+          }
           const result = await scheduler.runNow(id);
           if (!result) {
-            process.stderr.write(`未知任务: ${id}（可用: release-sync / readiness）\n`);
+            process.stderr.write(`未知任务: ${id}（可用: release-sync / readiness / github-sync:<项目名>）\n`);
             process.exitCode = 1;
             return;
           }
