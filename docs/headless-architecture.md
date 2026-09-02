@@ -43,7 +43,7 @@
 | --- | --- | --- | --- | --- | --- |
 | **DSH**（dsh-appilot 插件） | ✅ 共享 DB 读写 | ✅ 采集写 DB（productId=null） | ✅ 共享定义 buildHeadlessJobs + lease scheduler | ✅ 主 | agent 工具 + 客户端 UI |
 | **Electron** | ✅ DB 双向同步（hydrate 10s） | 🟡 双写 DB（UI 仍读 electron-store） | 🟡 旧动态任务系统 + scheduleGate 租约门 + 状态镜像 DB | ✅ | 富数据过渡态 |
-| **CLI**（headless-cli） | ✅ list/get/register/remove | ✅ latest 查询 | ✅ tasks list / run + lease status | —（显式触发） | JSON 输出 |
+| **CLI**（headless-cli） | ✅ list/get/register/remove | ✅ latest/history 查询 | ✅ tasks list / run + lease status | —（显式触发） | JSON 输出 |
 | **MCP**（appilot-mcp） | ✅ 4 工具 | ✅ latest | ✅ tasks list / task_run | —（显式触发） | stdio JSON-RPC |
 
 ## 真机验证清单（本仓库无法跑 Electron / 3099 服务端）

@@ -44,7 +44,12 @@ export interface AppilotStore {
     get(id: string): TaskRow | undefined;
   };
   lease: {
-    /** 尝试获取租约：当前无主或主心跳过期则成为主。返回是否成功。 */
+    /**
+     * 尝试获取租约：当前无主或主心跳过期则成为主。返回是否成功。
+     * ⚠️ TTL 语义：过期判定用**调用方传入的 ttlMs** 作窗口（心跳距今 > ttlMs
+     * 视为主已崩溃）。所有壳必须使用一致的 TTL（如 60s），否则窗口不一致会
+     * 导致接管判断失真（详见 tests/multiprocess.test.ts 第 4 步）。
+     */
     acquire(leaderId: string, ttlMs: number): boolean;
     /** 续租：仅当前主可续；主已换人则失败。 */
     heartbeat(leaderId: string): boolean;
