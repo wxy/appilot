@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -65,6 +65,42 @@ export interface LeaseRow {
   heartbeatAt: string;
 }
 
+/**
+ * 项目富数据行（v5）：repo 状态（供 github-sync 边界、UI 状态展示）。
+ * Electron hydrate 双写；DSH 注册时仅写基本字段。
+ */
+export interface ProjectMetaRow {
+  projectName: string;
+  githubUrl: string | null;
+  /** 当前 HEAD sha（Electron repo 状态；DSH 可能为 null）。 */
+  headSha: string | null;
+  headDate: string | null;
+  /** github-sync 的 lastSeenSha 边界（checkForRelease 用）。 */
+  lastReleaseSha: string | null;
+  updatedAt: string;
+}
+
+/**
+ * 产品注册行（v5）：Electron 富数据的产品维度（platform/trackId/关键词池等），
+ * rank 等富数据任务实例化与 UI 读取的前提。productId 与 rank_snapshots 对齐。
+ */
+export interface ProductRecordRow {
+  projectName: string;
+  /** Electron product.id（如 'projId:macos'）；DSH 侧无产品时可为项目名。 */
+  productId: string;
+  platform: string | null;
+  trackId: number | null;
+  bundleId: string | null;
+  trackName: string | null;
+  artworkUrl: string | null;
+  supportedLanguages: string[];
+  /** Electron trackedKeywords 池（对象数组 JSON 保留）。 */
+  trackedKeywords: unknown[];
+  /** Electron storeLinks（平台链接 JSON 保留）。 */
+  storeLinks: unknown[];
+  updatedAt: string;
+}
+
 export const DDL = `
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
@@ -81,6 +117,32 @@ CREATE TABLE IF NOT EXISTS projects (
   artworkUrl TEXT,
   updatedAt TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS project_meta (
+  projectName TEXT PRIMARY KEY,
+  githubUrl TEXT,
+  headSha TEXT,
+  headDate TEXT,
+  lastReleaseSha TEXT,
+  updatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS product_records (
+  projectName TEXT NOT NULL,
+  productId TEXT NOT NULL,
+  platform TEXT,
+  trackId INTEGER,
+  bundleId TEXT,
+  trackName TEXT,
+  artworkUrl TEXT,
+  supportedLanguages TEXT NOT NULL DEFAULT '[]',
+  trackedKeywords TEXT NOT NULL DEFAULT '[]',
+  storeLinks TEXT NOT NULL DEFAULT '[]',
+  updatedAt TEXT NOT NULL,
+  PRIMARY KEY (projectName, productId)
+);
+CREATE INDEX IF NOT EXISTS idx_product_records_project
+  ON product_records(projectName);
 
 CREATE TABLE IF NOT EXISTS rank_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,5 +218,30 @@ export function migrate(db: {
       db.exec('ALTER TABLE tasks ADD COLUMN instance TEXT');
     }
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 5) {
+    // v4→v5：新增 project_meta / product_records（富数据：repo 状态 + 产品注册）
+    db.exec(`CREATE TABLE IF NOT EXISTS project_meta (
+      projectName TEXT PRIMARY KEY,
+      githubUrl TEXT,
+      headSha TEXT,
+      headDate TEXT,
+      lastReleaseSha TEXT,
+      updatedAt TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS product_records (
+      projectName TEXT NOT NULL,
+      productId TEXT NOT NULL,
+      platform TEXT,
+      trackId INTEGER,
+      bundleId TEXT,
+      trackName TEXT,
+      artworkUrl TEXT,
+      supportedLanguages TEXT NOT NULL DEFAULT '[]',
+      trackedKeywords TEXT NOT NULL DEFAULT '[]',
+      storeLinks TEXT NOT NULL DEFAULT '[]',
+      updatedAt TEXT NOT NULL,
+      PRIMARY KEY (projectName, productId));
+    CREATE INDEX IF NOT EXISTS idx_product_records_project ON product_records(projectName);`);
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }

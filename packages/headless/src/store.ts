@@ -9,7 +9,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { migrate, type ProjectRow, type RankSnapshotRow, type TaskRow } from './schema.js';
+import { migrate, type ProjectRow, type RankSnapshotRow, type TaskRow, type ProjectMetaRow, type ProductRecordRow } from './schema.js';
 
 /** 等待写锁的毫秒数（并发进程写竞争时避免立刻报 busy）。 */
 const BUSY_TIMEOUT_MS = 5000;
@@ -44,6 +44,16 @@ export interface AppilotStore {
     get(id: string): TaskRow | undefined;
     /** 删除任务行（镜像清理：源里已不存在的 Electron 任务）。 */
     remove(id: string): boolean;
+  };
+  /** v5 富数据：repo 状态（github-sync 边界 / UI 展示）。 */
+  meta: {
+    save(row: ProjectMetaRow): void;
+    get(projectName: string): ProjectMetaRow | undefined;
+  };
+  /** v5 富数据：产品注册（rank 等富数据任务实例化 / UI 读取）。 */
+  products: {
+    upsert(row: ProductRecordRow): void;
+    listByProject(projectName: string): ProductRecordRow[];
   };
   lease: {
     /**
@@ -305,6 +315,93 @@ export function openStore(dbPath: string): AppilotStore {
       },
     },
 
+    meta: {
+      save(row) {
+        tx(() => {
+          db.prepare(
+            `INSERT INTO project_meta (projectName, githubUrl, headSha, headDate, lastReleaseSha, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(projectName) DO UPDATE SET
+               githubUrl = excluded.githubUrl,
+               headSha = excluded.headSha,
+               headDate = excluded.headDate,
+               lastReleaseSha = excluded.lastReleaseSha,
+               updatedAt = excluded.updatedAt`,
+          ).run(
+            row.projectName,
+            row.githubUrl,
+            row.headSha,
+            row.headDate,
+            row.lastReleaseSha,
+            row.updatedAt,
+          );
+        });
+      },
+      get(projectName) {
+        const r = db.prepare('SELECT * FROM project_meta WHERE projectName = ?').get(projectName) as any;
+        if (!r) return undefined;
+        return {
+          projectName: r.projectName,
+          githubUrl: r.githubUrl,
+          headSha: r.headSha,
+          headDate: r.headDate,
+          lastReleaseSha: r.lastReleaseSha,
+          updatedAt: r.updatedAt,
+        };
+      },
+    },
+
+    products: {
+      upsert(row) {
+        tx(() => {
+          db.prepare(
+            `INSERT INTO product_records (projectName, productId, platform, trackId, bundleId, trackName, artworkUrl, supportedLanguages, trackedKeywords, storeLinks, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(projectName, productId) DO UPDATE SET
+               platform = excluded.platform,
+               trackId = excluded.trackId,
+               bundleId = excluded.bundleId,
+               trackName = excluded.trackName,
+               artworkUrl = excluded.artworkUrl,
+               supportedLanguages = excluded.supportedLanguages,
+               trackedKeywords = excluded.trackedKeywords,
+               storeLinks = excluded.storeLinks,
+               updatedAt = excluded.updatedAt`,
+          ).run(
+            row.projectName,
+            row.productId,
+            row.platform,
+            row.trackId,
+            row.bundleId,
+            row.trackName,
+            row.artworkUrl,
+            JSON.stringify(row.supportedLanguages),
+            JSON.stringify(row.trackedKeywords),
+            JSON.stringify(row.storeLinks),
+            row.updatedAt,
+          );
+        });
+      },
+      listByProject(projectName) {
+        const rows = db
+          .prepare('SELECT * FROM product_records WHERE projectName = ? ORDER BY productId')
+          .all(projectName) as any[];
+        return rows.map((r) => ({
+          projectName: r.projectName,
+          productId: r.productId,
+          platform: r.platform,
+          trackId: r.trackId,
+          bundleId: r.bundleId,
+          trackName: r.trackName,
+          artworkUrl: r.artworkUrl,
+          supportedLanguages: parseJsonArray(r.supportedLanguages),
+          trackedKeywords: parseJsonArray(r.trackedKeywords),
+          storeLinks: parseJsonArray(r.storeLinks),
+          updatedAt: r.updatedAt,
+        }));
+      },
+    },
+
     close() {
       db.close();
     },
@@ -325,6 +422,15 @@ function stripId(r: any): RankSnapshotRow {
 }
 
 /** 任务行解析：instance JSON 列 → 对象；kind 空串 → null。 */
+function parseJsonArray(raw: unknown): any[] {
+  try {
+    const v = JSON.parse(String(raw ?? '[]'));
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
 function parseTaskRow(r: any): TaskRow {
   let instance: Record<string, unknown> | null = null;
   if (typeof r.instance === 'string' && r.instance) {

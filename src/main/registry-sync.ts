@@ -20,6 +20,7 @@ import {
 import { log } from '@appilot-labs/appilot-core/logger';
 import { importRankHistoryToDb } from './rank-db-sync';
 import { mirrorTasksToDb } from './task-db-sync';
+import { syncRichDataToDb } from './rich-data-sync';
 import { hydrateFromDbCore, syncRegistryCore } from './registry-sync-core';
 export { registryRecordOf } from './registry-sync-core';
 
@@ -134,6 +135,16 @@ export function startRegistrySync(
         mirrorTasksToDb(sharedStore(), (s.get('scheduledTasks') || []) as any[]);
       } catch (err: any) {
         log.warn(`task mirror to shared db failed: ${err.message}`);
+      }
+      // Phase M3：Electron 富数据（storeProducts / repo 状态）双写共享 DB——
+      // product_records / project_meta（rank 等富数据任务实例化与跨壳读的前提）。
+      try {
+        const { meta, products } = syncRichDataToDb(sharedStore(), projects as any[]);
+        if (meta > 0 || products > 0) {
+          log.info(`appilot: synced rich data to shared db (${meta} meta, ${products} products)`);
+        }
+      } catch (err: any) {
+        log.warn(`rich data sync failed: ${err.message}`);
       }
     } catch (err: any) {
       log.warn(`registry sync failed: ${err.message}`);
