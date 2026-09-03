@@ -74,6 +74,7 @@ export function AppHome(props: AppHomeProps) {
   const [addPath, setAddPath] = useState<string>('');
   const [taskBusy, setTaskBusy] = useState(false);
   const [taskFetched, setTaskFetched] = useState(false);
+  const [homeTab, setHomeTab] = useState<'projects' | 'tasks' | 'settings'>('projects');
 
   // 默认填入当前工作区路径。
   useEffect(() => {
@@ -271,12 +272,35 @@ export function AppHome(props: AppHomeProps) {
           </button>
         </div>
 
+        {/* 主面板分区 */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 12, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 10 }}>
+          {(['projects', 'tasks', 'settings'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setHomeTab(t)}
+              style={{
+                padding: '5px 14px',
+                borderRadius: 999,
+                border: '1px solid var(--dsw-alias-border-l2)',
+                background: homeTab === t ? 'var(--dsw-alias-button-info-fill)' : 'transparent',
+                color: homeTab === t ? '#fff' : 'var(--dsw-alias-label-secondary)',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              {t === 'projects' ? '项目' : t === 'tasks' ? '任务' : '设置'}
+            </button>
+          ))}
+        </div>
         {error ? (
           <div style={{ color: 'var(--dsw-alias-state-error-primary)', fontSize: 12, marginBottom: 10 }}>
             失败：{error}
           </div>
         ) : null}
 
+        {homeTab === 'projects' ? (
+          <div>
         {/* 已添加项目（注册表） */}
         <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
           已添加项目{records.length > 0 ? `（${records.length}）` : ''}
@@ -396,36 +420,32 @@ export function AppHome(props: AppHomeProps) {
         <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', marginTop: 6 }}>
           未检测到 Apple 平台（iOS/macOS）的项目暂不支持运营功能（添加后仍会保留在列表中并标注）。
         </div>
-
-        {/* 全局入口 */}
-        <div style={{ fontWeight: 600, fontSize: 14, margin: '18px 0 8px' }}>全局</div>
-        {/* 任务中心：全局活动任务（共享 DB，agent 经 appilot_tasks 读取；可立即运行） */}
-        <div style={{ marginTop: 18 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>任务中心</div>
-            <button
-              type="button"
-              style={smallBtn}
-              disabled={taskBusy || undefined}
-              onClick={() => runTaskAction(TASKS_PROMPT)}
-            >
-              {taskBusy ? '刷新中…' : '刷新任务'}
-            </button>
           </div>
-          <TaskTab
-            node={results['appilot_tasks']}
-            busy={taskBusy}
-            onRefresh={() => runTaskAction(TASKS_PROMPT)}
-            onRunTask={(taskId) => runTaskAction(taskRunPrompt(taskId))}
-          />
-        </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
-          <div style={entryCard}>
-            <div style={{ fontWeight: 500 }}>设置</div>
-            <div style={entryDesc}>Appilot 配置（凭据 / 项目注册表）——规划中</div>
+        ) : homeTab === 'tasks' ? (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>任务中心</div>
+              <button type="button" style={smallBtn} disabled={taskBusy || undefined} onClick={() => runTaskAction(TASKS_PROMPT)}>
+                {taskBusy ? '刷新中…' : '刷新任务'}
+              </button>
+            </div>
+            <TaskTab
+              node={results['appilot_tasks']}
+              busy={taskBusy}
+              onRefresh={() => runTaskAction(TASKS_PROMPT)}
+              onRunTask={(taskId) => runTaskAction(taskRunPrompt(taskId))}
+            />
           </div>
-        </div>
+        ) : (
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>设置</div>
+            <div style={entryCard}>
+              <div style={{ fontWeight: 500 }}>凭据与注册表</div>
+              <div style={entryDesc}>Appilot 配置（GitHub / App Store Connect 凭据、项目注册表）——由各工作区设置页管理。</div>
+            </div>
+          </div>
+        )}
 
         <div style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, marginTop: 12 }}>
           项目数据来自 list_projects 工具运行结果（当前会话，可审计）；工作区数据来自宿主。
