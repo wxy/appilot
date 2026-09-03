@@ -14,6 +14,12 @@ import {
 export interface HeadlessExecutorsOptions {
   /** 凭据读取器：壳注入（GITHUB_TOKEN 等）。 */
   readToken(name: string): Promise<string | null> | string | null;
+  /**
+   * 是否注册 rank 执行器（默认 false）——注册后持主壳会执行 DB 中的 rank
+   * 实例（Electron 源）。启用前提：rank 结果已能同步回 Electron UI（P2b 反向
+   * 同步）；DSH 默认不启用，daemon（P3）未来启用。
+   */
+  includeRank?: boolean;
 }
 
 /**
@@ -28,6 +34,22 @@ export interface GithubSyncInstanceArgs {
 
 export const GITHUB_SYNC_KIND = 'github-sync';
 export const GITHUB_SYNC_INTERVAL_MINUTES = 60;
+
+/** rank 采集任务类型（P2：自身排名 headless 化；竞品可选）。 */
+export const RANK_KIND = 'rank';
+export const RANK_INTERVAL_MINUTES = 720;
+
+/** rank 实例参数（product 上下文可来自 instance 或 DB product_records）。 */
+export interface RankInstanceArgs {
+  projectName: string;
+  productId: string;
+  keyword: string;
+  queryLanguage: string;
+  storefront: string;
+  platform?: string | null;
+  /** 竞品 trackId（可选增强：无则只采集自身排名）。 */
+  competitorTrackIds?: string[];
+}
 
 /**
  * github-sync 执行产物 → githubSyncCache 同构条目（写共享 DB release_cache，
@@ -50,16 +72,76 @@ export function githubSyncCacheEntryFrom(
 /** 构建核心执行器注册表（kind → 执行器）。 */
 export function buildHeadlessExecutors(opts: HeadlessExecutorsOptions): Record<string, TaskExecutor> {
   const { readToken } = opts;
-  return {
+  const executors: Record<string, TaskExecutor> = {
     [GITHUB_SYNC_KIND]: {
       title: 'GitHub 发布同步',
       intervalMinutes: GITHUB_SYNC_INTERVAL_MINUTES,
       async run(ctx) {
-        const summary = await runGithubSyncInstance(ctx, readToken);
-        return summary;
+        return runGithubSyncInstance(ctx, readToken);
       },
     },
   };
+  if (opts.includeRank === true) {
+    executors[RANK_KIND] = buildRankExecutor();
+  }
+  return executors;
+}
+
+/** rank 执行器（P2：自身排名采集，结果写共享 DB rank_snapshots；竞品可选）。 */
+export function buildRankExecutor(): TaskExecutor {
+  return {
+    title: '排名采集',
+    intervalMinutes: RANK_INTERVAL_MINUTES,
+    run: runRankInstance,
+  };
+}
+
+/** rank 实例执行体：查产品上下文（DB product_records）→ core 采集 → 写 DB 快照。 */
+export async function runRankInstance(ctx: TaskExecutorContext): Promise<string> {
+  const { task, store, log } = ctx;
+  const args = (task.instance ?? {}) as Partial<RankInstanceArgs>;
+  if (!args.keyword || !args.storefront || !args.productId || !args.projectName) {
+    throw new Error('rank 实例参数不完整（keyword/storefront/productId/projectName）');
+  }
+  // 产品上下文优先从共享 DB product_records 取（daemon/壳一致）；缺失时回退 instance。
+  let trackId: string | number | null = null;
+  let platform: string | null = args.platform ?? null;
+  const products = store.products.listByProject(args.projectName);
+  const rec = products.find((p) => p.productId === args.productId);
+  if (rec) {
+    trackId = rec.trackId;
+    platform = rec.platform ?? platform;
+  }
+  if (!trackId) throw new Error(`rank 实例缺少 trackId（product_records 无 ${args.projectName}/${args.productId}）`);
+  const { searchAppStoreRank } = await import('@appilot-labs/appilot-core/rank-collector');
+  const result = await searchAppStoreRank({
+    term: args.keyword,
+    country: args.storefront,
+    trackId: String(trackId),
+    entity: platform === 'macos' ? 'macSoftware' : 'software',
+    candidateTrackIds:
+      Array.isArray(args.competitorTrackIds) && args.competitorTrackIds.length > 0
+        ? args.competitorTrackIds
+        : undefined,
+  });
+  const snap = {
+    projectName: args.projectName,
+    productId: args.productId,
+    keyword: args.keyword,
+    language: args.queryLanguage ?? 'en',
+    storefront: args.storefront,
+    rank: result.rank,
+    totalResults: result.totalResults,
+    checkedAt: new Date().toISOString(),
+  };
+  try {
+    store.snapshots.add([snap]);
+  } catch (err: any) {
+    log(`rank ${task.id}: 快照写入失败 ${err?.message || String(err)}`);
+  }
+  const competitorCount = result.candidateRanks ? Object.keys(result.candidateRanks).length : 0;
+  const rankText = snap.rank == null ? '未上榜' : `第 ${snap.rank} 名`;
+  return `${args.projectName}(${platform ?? '?'}): ${args.keyword} @ ${args.storefront} → ${rankText}（共 ${snap.totalResults} 结果${competitorCount > 0 ? `，竞品 ${competitorCount}` : ''}）`;
 }
 
 /** github-sync 实例执行体：深度检测（inspectProjectRelease）+ 写 DB 发布缓存。 */
