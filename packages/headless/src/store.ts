@@ -9,7 +9,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { migrate, type ProjectRow, type RankSnapshotRow, type TaskRow, type ProjectMetaRow, type ProductRecordRow } from './schema.js';
+import { migrate, type ProjectRow, type RankSnapshotRow, type TaskRow, type ProjectMetaRow, type ProductRecordRow, type ReleaseCacheRow } from './schema.js';
 
 /** 等待写锁的毫秒数（并发进程写竞争时避免立刻报 busy）。 */
 const BUSY_TIMEOUT_MS = 5000;
@@ -59,6 +59,11 @@ export interface AppilotStore {
   products: {
     upsert(row: ProductRecordRow): void;
     listByProject(projectName: string): ProductRecordRow[];
+  };
+  /** v6 富数据：发布页数据缓存（githubSyncCache 条目；UI 迁出 electron-store 前提）。 */
+  releaseCache: {
+    save(projectName: string, cache: Record<string, unknown>, syncedAt?: string): void;
+    get(projectName: string): ReleaseCacheRow | undefined;
   };
   lease: {
     /**
@@ -406,6 +411,33 @@ export function openStore(dbPath: string): AppilotStore {
           storeLinks: parseJsonArray(r.storeLinks),
           updatedAt: r.updatedAt,
         }));
+      },
+    },
+
+    releaseCache: {
+      save(projectName, cache, syncedAt) {
+        tx(() => {
+          db.prepare(
+            `INSERT INTO project_release_cache (projectName, cacheJson, syncedAt)
+             VALUES (?, ?, ?)
+             ON CONFLICT(projectName) DO UPDATE SET
+               cacheJson = excluded.cacheJson,
+               syncedAt = excluded.syncedAt`,
+          ).run(projectName, JSON.stringify(cache ?? {}), syncedAt ?? new Date().toISOString());
+        });
+      },
+      get(projectName) {
+        const r = db
+          .prepare('SELECT * FROM project_release_cache WHERE projectName = ?')
+          .get(projectName) as any;
+        if (!r) return undefined;
+        let cache: Record<string, unknown> = {};
+        try {
+          cache = JSON.parse(r.cacheJson);
+        } catch {
+          cache = {};
+        }
+        return { projectName: r.projectName, cache, syncedAt: r.syncedAt };
       },
     },
 

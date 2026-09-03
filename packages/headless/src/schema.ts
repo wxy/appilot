@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -99,6 +99,18 @@ export interface ProductRecordRow {
   /** Electron storeLinks（平台链接 JSON 保留）。 */
   storeLinks: unknown[];
   updatedAt: string;
+}
+
+/**
+ * 发布页数据缓存行（v6）：Electron githubSyncCache 条目（release material /
+ * Pull Requests / repo capabilities / releases），UI 数据源迁出 electron-store
+ * 的前提（M4-A 双写；迁移完成前 UI 仍读 electron-store）。
+ */
+export interface ReleaseCacheRow {
+  projectName: string;
+  /** githubSyncCache[projectId] 条目对象（JSON 原样保留，结构随壳变化）。 */
+  cache: Record<string, unknown>;
+  syncedAt: string;
 }
 
 export const DDL = `
@@ -243,5 +255,14 @@ export function migrate(db: {
       PRIMARY KEY (projectName, productId));
     CREATE INDEX IF NOT EXISTS idx_product_records_project ON product_records(projectName);`);
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 6) {
+    // v5→v6：发布页数据缓存入 DB（githubSyncCache：release material/PR/capabilities）。
+    // Electron 发布页 UI 数据源的迁出前提（M4-A）；UI 仍读 electron-store 期间双写。
+    db.exec(`CREATE TABLE IF NOT EXISTS project_release_cache (
+      projectName TEXT PRIMARY KEY,
+      cacheJson TEXT NOT NULL,
+      syncedAt TEXT NOT NULL);`);
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '6') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }

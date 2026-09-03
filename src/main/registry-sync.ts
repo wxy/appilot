@@ -20,6 +20,7 @@ import {
 import { log } from '@appilot-labs/appilot-core/logger';
 import { importRankHistoryToDb } from './rank-db-sync';
 import { mirrorTasksToDb } from './task-db-sync';
+import { syncReleaseCachesToDb } from './release-cache-sync';
 import { syncRichDataToDb } from './rich-data-sync';
 import { hydrateFromDbCore, syncRegistryCore } from './registry-sync-core';
 export { registryRecordOf } from './registry-sync-core';
@@ -116,6 +117,8 @@ export function startRegistrySync(
   let timer: ReturnType<typeof setInterval> | null = null;
   // 富数据规模签名（meta/products 计数）——仅变化时打日志去噪。
   let lastRichSig: string | null = null;
+  // 发布缓存条数签名——仅变化时打日志去噪。
+  let lastReleaseCacheCount: number | null = null;
 
   const hydrateOnce = async () => {
     try {
@@ -150,6 +153,17 @@ export function startRegistrySync(
         }
       } catch (err: any) {
         log.warn(`rich data sync failed: ${err.message}`);
+      }
+      // Phase M4-A：发布页缓存（githubSyncCache）双写共享 DB（UI 迁出前提）。
+      try {
+        const cache = (s.get('githubSyncCache') || {}) as Record<string, Record<string, unknown>>;
+        const n = syncReleaseCachesToDb(sharedStore(), projects as any[], cache);
+        if (n !== lastReleaseCacheCount) {
+          lastReleaseCacheCount = n;
+          log.info(`appilot: synced release caches to shared db (${n} projects)`);
+        }
+      } catch (err: any) {
+        log.warn(`release cache sync failed: ${err.message}`);
       }
     } catch (err: any) {
       log.warn(`registry sync failed: ${err.message}`);

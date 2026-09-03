@@ -5,7 +5,7 @@
  * Phase 1：SQLite Store（WAL + 事务 + 租约）；Phase 2：统一 DB 路径 + 旧 JSON 迁移。
  */
 export { SCHEMA_VERSION } from './schema.js';
-export type { ProjectRow, RankSnapshotRow, TaskRow, LeaseRow, ProjectMetaRow, ProductRecordRow } from './schema.js';
+export type { ProjectRow, RankSnapshotRow, TaskRow, LeaseRow, ProjectMetaRow, ProductRecordRow, ReleaseCacheRow } from './schema.js';
 export { openStore } from './store.js';
 export type { AppilotStore } from './store.js';
 export { defaultDbPath, defaultLegacyRegistryPath, importLegacyRegistry } from './paths.js';

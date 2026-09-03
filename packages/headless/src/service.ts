@@ -5,7 +5,7 @@
  * 调度器（租约选主）与 store 分开持有：壳各自 createLeaseScheduler 嵌入。
  */
 import type { AppilotStore } from './store.js';
-import type { ProjectRow, RankSnapshotRow, TaskRow, ProjectMetaRow, ProductRecordRow } from './schema.js';
+import type { ProjectRow, RankSnapshotRow, TaskRow, ProjectMetaRow, ProductRecordRow, ReleaseCacheRow } from './schema.js';
 
 export interface HeadlessService {
   projects: {
@@ -41,6 +41,10 @@ export interface HeadlessService {
   meta: {
     get(projectName: string): ProjectMetaRow | undefined;
   };
+  /** v6 富数据：发布页缓存（githubSyncCache 条目）。 */
+  releaseCache: {
+    get(projectName: string): ReleaseCacheRow | undefined;
+  };
   /** 底层 store（调度器/租约等高级能力）。 */
   readonly store: AppilotStore;
 }
@@ -71,6 +75,9 @@ export function createHeadlessService(store: AppilotStore): HeadlessService {
     },
     meta: {
       get: (projectName) => store.meta.get(projectName),
+    },
+    releaseCache: {
+      get: (projectName) => store.releaseCache.get(projectName),
     },
     store,
   };

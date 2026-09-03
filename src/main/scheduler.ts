@@ -758,6 +758,14 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       syncedAt: inspection.syncedAt,
     };
     store.set("githubSyncCache", all);
+    // M4-A：发布页缓存双写共享 DB（projectName 维度；UI 迁出 electron-store 前提）。
+    if (project?.name) {
+      try {
+        sharedStore().releaseCache.save(project.name, all[task.projectId] as Record<string, unknown>);
+      } catch (err: any) {
+        log.warn(`release cache write to shared db failed: ${err?.message || String(err)}`);
+      }
+    }
     notifyDataChanged("releases");
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
