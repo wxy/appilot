@@ -12,6 +12,7 @@ import { taskCenterTasksFromDb, taskCenterOverviewFromDb } from '../src/main/tas
 async function main(): Promise<void> {
   const store = openStore(join(mkdtempSync(join(tmpdir(), 'task-center-db-')), 'appilot.db'));
 
+  store.projects.save({ name: 'ai-pulse-macos', path: '/x/ai-pulse-macos', githubUrl: null, platform: 'macos', languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
   // 产品（Electron 双写）供 productName 查询
   store.products.upsert({
     projectName: 'ai-pulse-macos', productId: 'projX:macos', platform: 'macos',
@@ -20,8 +21,9 @@ async function main(): Promise<void> {
     updatedAt: new Date().toISOString(),
   });
   const gA = 'rank:projX:macos:macos:en:us';
-  store.tasks.upsert({ id: 'projX:macos:en:us:app', title: '排名采集', intervalMinutes: 720, lastRunAt: '2026-09-03T00:00:00Z', nextRunAt: '2026-09-04T00:00:00Z', lastStatus: 'ok', lastSummary: 's', runCount: 3, source: 'electron', kind: 'rank', instance: { projectName: 'ai-pulse-macos', productId: 'projX:macos', keyword: 'app', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
-  store.tasks.upsert({ id: 'projX:macos:en:us:kw2', title: '排名采集', intervalMinutes: 720, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron', kind: 'rank', instance: { projectName: 'ai-pulse-macos', productId: 'projX:macos', keyword: 'kw2', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
+  // 关键：rank instance 不带 projectName（Electron sync 现状）——归项目靠 DB product 索引
+  store.tasks.upsert({ id: 'projX:macos:en:us:app', title: '排名采集', intervalMinutes: 720, lastRunAt: '2026-09-03T00:00:00Z', nextRunAt: '2026-09-04T00:00:00Z', lastStatus: 'ok', lastSummary: 's', runCount: 3, source: 'electron', kind: 'rank', instance: { productId: 'projX:macos', keyword: 'app', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
+  store.tasks.upsert({ id: 'projX:macos:en:us:kw2', title: '排名采集', intervalMinutes: 720, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron', kind: 'rank', instance: { productId: 'projX:macos', keyword: 'kw2', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
   store.tasks.upsert({ id: 'github-sync:msszspx4', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: '2026-09-02T00:00:00Z', nextRunAt: '2026-09-03T00:00:00Z', lastStatus: 'error', lastSummary: 'e', runCount: 2, source: 'electron', kind: 'github-sync', instance: { projectId: 'msszspx4', projectName: 'GloWalk', path: '/x' } });
 
   const tasks = taskCenterTasksFromDb(store);
@@ -44,11 +46,18 @@ async function main(): Promise<void> {
   assert.equal(err?.lastStatus, 'failed', 'error → failed');
   assert.equal(err?.projectName, 'GloWalk');
 
+  // kind-null 镜像行（Electron ops/reviews/build-status）按 id 前缀推断
+  store.tasks.upsert({ id: 'ops-sync:msszspx4', title: '数据同步', intervalMinutes: 1440, lastRunAt: '2026-09-02T00:00:00Z', nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 1, source: 'electron' });
+  const tasks2 = taskCenterTasksFromDb(store);
+  const ops = tasks2.find((t) => t.id === 'ops-sync:msszspx4');
+  assert.equal(ops?.kind, 'ops-sync', 'kind-null 镜像行按 id 推断类型');
+
   const ov = taskCenterOverviewFromDb(store);
-  assert.equal(ov.total, 3);
+  assert.equal(ov.total, 4);
   assert.equal(ov.overdue, 1, 'nextRunAt <= now');
-  assert.equal(ov.executed, 2);
+  assert.equal(ov.executed, 3);
   assert.equal(ov.byKind['rank'], 2);
+  assert.equal(ov.byKind['ops-sync'], 1);
   assert.ok(ov.nextDueAt, '最近到期时间');
 
   store.close();

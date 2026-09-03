@@ -43,16 +43,36 @@ function electronStatus(s: TaskRow['lastStatus']): 'success' | 'failed' | undefi
   return undefined;
 }
 
+/** 旧镜像行（kind null）按 id 前缀推断类型（ops-sync:/reviews-sync:/build-status:/github-sync:）。 */
+export function inferKindFromId(id: string): string | null {
+  for (const k of ['ops-sync', 'reviews-sync', 'build-status', 'github-sync', 'rank']) {
+    if (id.startsWith(k + ':')) return k;
+  }
+  return null;
+}
+
+/** productId → { projectName, trackName, platform } 索引（DB products 反查，不依赖 instance.projectName）。 */
+export function productIndex(store: AppilotStore): Map<string, { projectName: string; trackName: string | null; platform: string | null }> {
+  const idx = new Map<string, { projectName: string; trackName: string | null; platform: string | null }>();
+  for (const p of store.projects.list()) {
+    for (const rec of store.products.listByProject(p.name)) {
+      idx.set(rec.productId, { projectName: p.name, trackName: rec.trackName, platform: rec.platform });
+    }
+  }
+  return idx;
+}
+
 /** DB 任务行（+ 项目/产品上下文）→ renderer 视图行。 */
 export function taskRowToView(
   row: TaskRow,
-  store: AppilotStore,
   rankGroups: Map<string, { ok: number; total: number }>,
+  products?: Map<string, { projectName: string; trackName: string | null; platform: string | null }>,
 ): TaskCenterTaskView {
   const inst = (row.instance ?? {}) as any;
+  const kind = row.kind ?? inferKindFromId(row.id) ?? 'unknown';
   const view: TaskCenterTaskView = {
     id: row.id,
-    kind: row.kind ?? 'unknown',
+    kind,
     intervalMinutes: row.intervalMinutes,
     nextRunAt: row.nextRunAt,
     lastRunAt: row.lastRunAt,
@@ -68,20 +88,24 @@ export function taskRowToView(
     queryLanguage: inst.queryLanguage,
     storefront: inst.storefront,
   };
-  if (row.kind === 'rank' && view.productId) {
+  if (kind === 'rank' && view.productId) {
     // Electron productId 惯例 `${projId}:${platform}` → projectId = 前缀
     view.projectId = String(view.productId).split(':')[0] ?? null;
-    view.projectName = inst.projectName ?? '已删除项目';
-    const products = store.products.listByProject(view.projectName as string);
-    const rec = products.find((p) => p.productId === view.productId);
-    view.productName = rec?.trackName ?? (view.projectName as string) ?? '未知产品';
-    view.platform = inst.platform ?? rec?.platform ?? null;
+    const ctx = products?.get(String(view.productId));
+    if (ctx) {
+      view.projectName = ctx.projectName;
+      view.platform = inst.platform ?? ctx.platform ?? null;
+      view.productName = ctx.trackName ?? ctx.projectName;
+    } else {
+      view.projectName = inst.projectName ?? '已删除项目';
+      view.productName = inst.projectName ?? '未知产品';
+    }
     if (inst.groupKey) {
       const g = rankGroups.get(String(inst.groupKey));
       if (g) view.round = { done: g.ok, total: g.total };
     }
   } else {
-    view.projectName = inst.projectName ?? inst.projectId ?? '已删除项目';
+    view.projectName = inst.projectName ?? '已删除项目';
     view.productName = inst.projectName ?? '';
   }
   return view;
@@ -94,8 +118,9 @@ export function taskCenterTasksFromDb(store: AppilotStore): TaskCenterTaskView[]
   for (const g of createHeadlessService(store).tasks.rankProgress()) {
     rankGroups.set(g.groupKey, { ok: g.ok, total: g.total });
   }
+  const products = productIndex(store);
   return rows
-    .map((r) => taskRowToView(r, store, rankGroups))
+    .map((r) => taskRowToView(r, rankGroups, products))
     .sort((a, b) => (a.kind ?? '').localeCompare(b.kind ?? '') || a.id.localeCompare(b.id));
 }
 
@@ -114,7 +139,8 @@ export function taskCenterOverviewFromDb(store: AppilotStore): {
   let executed = 0;
   let nextDueAt: string | null = null;
   for (const r of rows) {
-    byKind[r.kind ?? 'unknown'] = (byKind[r.kind ?? 'unknown'] ?? 0) + 1;
+    const k = r.kind ?? inferKindFromId(r.id) ?? 'unknown';
+    byKind[k] = (byKind[k] ?? 0) + 1;
     if (r.lastRunAt) executed += 1;
     if (r.nextRunAt) {
       const t = new Date(r.nextRunAt).getTime();
