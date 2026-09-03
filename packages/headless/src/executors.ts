@@ -100,19 +100,28 @@ export function buildRankExecutor(): TaskExecutor {
 export async function runRankInstance(ctx: TaskExecutorContext): Promise<string> {
   const { task, store, log } = ctx;
   const args = (task.instance ?? {}) as Partial<RankInstanceArgs>;
-  if (!args.keyword || !args.storefront || !args.productId || !args.projectName) {
-    throw new Error('rank 实例参数不完整（keyword/storefront/productId/projectName）');
+  if (!args.keyword || !args.storefront || !args.productId) {
+    throw new Error('rank 实例参数不完整（keyword/storefront/productId）');
   }
-  // 产品上下文优先从共享 DB product_records 取（daemon/壳一致）；缺失时回退 instance。
+  // 产品上下文：projectName 可能缺失（Electron 旧 sync 实例不带），从 product_records
+  // 反查（遍历注册项目的产品，productId 匹配）——不依赖 instance.projectName。
+  let projectName = args.projectName ?? null;
   let trackId: string | number | null = null;
   let platform: string | null = args.platform ?? null;
-  const products = store.products.listByProject(args.projectName);
-  const rec = products.find((p) => p.productId === args.productId);
-  if (rec) {
-    trackId = rec.trackId;
-    platform = rec.platform ?? platform;
+  for (const p of store.projects.list()) {
+    const rec = store.products.listByProject(p.name).find((x) => x.productId === args.productId);
+    if (rec) {
+      projectName = projectName ?? p.name;
+      trackId = rec.trackId;
+      platform = rec.platform ?? platform;
+      break;
+    }
   }
-  if (!trackId) throw new Error(`rank 实例缺少 trackId（product_records 无 ${args.projectName}/${args.productId}）`);
+  if (!projectName) {
+    // 无产品注册也能采自身排名：以实例自身参数为准（projectName 仅影响快照归属键）
+    projectName = args.productId;
+  }
+  if (!trackId) throw new Error(`rank 实例缺少 trackId（product_records 无 ${args.productId}）`);
   const { searchAppStoreRank } = await import('@appilot-labs/appilot-core/rank-collector');
   const result = await searchAppStoreRank({
     term: args.keyword,
@@ -125,7 +134,7 @@ export async function runRankInstance(ctx: TaskExecutorContext): Promise<string>
         : undefined,
   });
   const snap = {
-    projectName: args.projectName,
+    projectName,
     productId: args.productId,
     keyword: args.keyword,
     language: args.queryLanguage ?? 'en',
@@ -141,7 +150,7 @@ export async function runRankInstance(ctx: TaskExecutorContext): Promise<string>
   }
   const competitorCount = result.candidateRanks ? Object.keys(result.candidateRanks).length : 0;
   const rankText = snap.rank == null ? '未上榜' : `第 ${snap.rank} 名`;
-  return `${args.projectName}(${platform ?? '?'}): ${args.keyword} @ ${args.storefront} → ${rankText}（共 ${snap.totalResults} 结果${competitorCount > 0 ? `，竞品 ${competitorCount}` : ''}）`;
+  return `${projectName}(${platform ?? '?'}): ${args.keyword} @ ${args.storefront} → ${rankText}（共 ${snap.totalResults} 结果${competitorCount > 0 ? `，竞品 ${competitorCount}` : ''}）`;
 }
 
 /** github-sync 实例执行体：深度检测（inspectProjectRelease）+ 写 DB 发布缓存。 */
