@@ -85,9 +85,19 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
     env: process.env,
   });
   child.unref();
+  // daemon 快速 exit 0 = 单例仲裁让位（已有调度者——壳/其他 daemon 持主）：
+  // 调度已在跑，ensure 视为成功，无需继续等待/报错。
+  let gaveWay = false;
+  child.on('exit', (code) => {
+    if (code === 0) {
+      gaveWay = true;
+      log('scheduler exited 0（单例仲裁让位——已有调度者在跑）');
+    }
+  });
   // 3) 退避重试 ping（daemon 启动 + lease 仲裁；冲突输家退出后可能需重连已存在的）
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 400));
+    if (gaveWay) return true;
     if (await pingSocket(opts.socketPath)) {
       log('scheduler up');
       return true;
