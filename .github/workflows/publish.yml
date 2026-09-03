@@ -78,6 +78,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Publish @appilot-labs/appilot-scheduler
+        working-directory: packages/scheduler
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish @appilot-labs/appilot-mcp
         working-directory: packages/mcp
         run: npm publish --access public --provenance
