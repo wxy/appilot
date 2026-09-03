@@ -343,30 +343,45 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
   // M3.2：rank 任务实例（kind/参数）同步进共享 DB——Electron 调度语义不变
   // （reconcile 继续写 electron-store），DB 行由 reconcile 管理参数、
   // registry-sync 的 10s 镜像同步状态；DSH/CLI 可见 rank 实例与状态。
-  syncRankInstancesToDb(next);
+  syncRankInstancesToDb(store, next);
 }
 
 /**
  * 把 electron-store 的 rank 调度任务 reconcile 成共享 DB 实例行
  * （source=electron, kind=rank, instance 带 productId/keyword/语言/storefront）。
  */
-function syncRankInstancesToDb(tasks: ScheduledTask[]): void {
+function syncRankInstancesToDb(store: AppStore, tasks: ScheduledTask[]): void {
   try {
+    // productId（Electron `${projId}:${platform}`）→ 所属项目（projectName/platform），
+    // 补进 instance——daemon/DSH 执行 rank 需要 projectName 归快照与产品上下文。
+    const projects: any[] = store.get("projects") || [];
+    const projectOf = (productId: string): { name: string; platform: string } | null => {
+      const projId = String(productId).split(":")[0];
+      const project = projects.find((p: any) => p?.id === projId);
+      if (!project) return null;
+      const platform = String(productId).slice(projId.length + 1) || project.productType || "unknown";
+      return { name: project.name, platform };
+    };
     const specs: TaskInstanceSpec[] = tasks
       .filter((t): t is RankScheduledTask => t.kind === "rank")
-      .map((t) => ({
-        id: t.id,
-        kind: "rank",
-        title: `排名采集: ${t.keyword} @ ${t.storefront} (${t.queryLanguage})`,
-        intervalMinutes: t.intervalMinutes,
-        instance: {
-          productId: t.productId,
-          keyword: t.keyword,
-          queryLanguage: t.queryLanguage,
-          storefront: t.storefront,
-          groupKey: t.groupKey,
-        },
-      }));
+      .map((t) => {
+        const ctx = projectOf(t.productId);
+        return {
+          id: t.id,
+          kind: "rank",
+          title: `排名采集: ${t.keyword} @ ${t.storefront} (${t.queryLanguage})`,
+          intervalMinutes: t.intervalMinutes,
+          instance: {
+            productId: t.productId,
+            keyword: t.keyword,
+            queryLanguage: t.queryLanguage,
+            storefront: t.storefront,
+            groupKey: t.groupKey,
+            projectName: ctx?.name ?? null,
+            platform: ctx?.platform ?? null,
+          },
+        };
+      });
     if (specs.length === 0) {
       log.info("appilot: rank instances sync skipped (no rank tasks in scheduledTasks)");
       return;
