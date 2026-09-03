@@ -17,6 +17,7 @@
  * 错误信息写 stderr 并以非零码退出——适合脚本与 AI agent 消费。
  */
 import { basename, resolve } from 'node:path';
+import { controlRunNow } from '@appilot-labs/appilot-scheduler';
 import {
   buildHeadlessExecutors,
   buildHeadlessJobs,
@@ -287,6 +288,13 @@ export async function main(argv: string[]): Promise<void> {
       case 'run': {
         const id = argv[1];
         if (!id) return usage();
+        // 统一控制路由：daemon 主 → daemon 执行（可跑 github-sync/rank 等 daemon
+        // executor 覆盖的任务）；daemon 不可达 → 本地 scheduler 回退（github-sync）。
+        const daemonRes = await controlRunNow(id, { dbPath: store.path });
+        if (daemonRes.routed === 'daemon' && daemonRes.ok) {
+          process.stdout.write(JSON.stringify({ taskId: id, via: 'daemon', result: daemonRes.result }, null, 2) + '\n');
+          return;
+        }
         const scheduler = createLeaseScheduler({
           store,
           leaderId: `cli-${process.pid}`,
@@ -306,11 +314,13 @@ export async function main(argv: string[]): Promise<void> {
           }
           const result = await scheduler.runNow(id);
           if (!result) {
-            process.stderr.write(`未知任务: ${id}（可用: release-sync / readiness / github-sync:<项目名>）\n`);
+            process.stderr.write(
+              `未知任务或无法在本端执行: ${id}${daemonRes.routed === 'none' ? '（daemon 未运行，本地仅支持 github-sync）' : ''}\n`,
+            );
             process.exitCode = 1;
             return;
           }
-          process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+          process.stdout.write(JSON.stringify({ ...result, via: 'local' }, null, 2) + '\n');
         } finally {
           scheduler.dispose();
         }

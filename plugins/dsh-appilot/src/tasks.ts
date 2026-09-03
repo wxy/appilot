@@ -21,6 +21,7 @@ import {
   type LeaseScheduler,
 } from '@appilot-labs/appilot-headless';
 import {
+  controlRunNow,
   defaultSocketPath,
   ensureScheduler,
   resolveSchedulerCli,
@@ -157,10 +158,22 @@ export function createTaskRunTool(scheduler?: LeaseScheduler | null) {
     async execute(args: any) {
       const sched = scheduler ?? activeScheduler;
       const id = String(args?.taskId ?? '');
-      if (!sched) return jsonify({ error: '调度器未运行（dsh 服务未启动）' });
-      const result = await sched.runNow(id);
-      if (!result) return jsonify({ error: `未知任务实例: ${id}` });
-      return jsonify({ task: result });
+      // 统一控制路由：daemon 主 → daemon 执行（可跑 github-sync/rank 等）；
+      // daemon 不可达 → 本壳 scheduler（github-sync）或报错。
+      if (sched) {
+        const daemonRes = await controlRunNow(id, {
+          dbPath: process.env.APPILOT_DB_FILE || defaultDbPath(),
+        });
+        if (daemonRes.routed === 'daemon' && daemonRes.ok) {
+          return jsonify({ task: daemonRes.result, via: 'daemon' });
+        }
+        const result = await sched.runNow(id);
+        if (result) return jsonify({ task: result, via: 'local' });
+        return jsonify({
+          error: `未知任务实例或本端不可执行: ${id}${daemonRes.routed === 'none' ? '（daemon 未运行）' : ''}`,
+        });
+      }
+      return jsonify({ error: '调度器未运行（dsh 服务未启动）' });
     },
   });
 }

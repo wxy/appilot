@@ -10,6 +10,7 @@
  * DB 路径：默认 defaultDbPath()；APPILOT_DB_FILE 覆盖。日志走 stderr（不污染协议流）。
  */
 import { createInterface } from 'node:readline';
+import { controlRunNow } from '@appilot-labs/appilot-scheduler';
 import { basename, resolve } from 'node:path';
 import {
   buildHeadlessJobs,
@@ -207,9 +208,15 @@ async function serve(): Promise<void> {
         additionalProperties: false,
       },
       execute: async (a) => {
-        const result = await runShell.runNow(String(a.id));
-        if (!result) throw new Error(`未知任务: ${a.id}`);
-        return result;
+        const id = String(a.id);
+        // 统一控制路由：daemon 主 → daemon；否则本地 runShell。
+        const daemonRes = await controlRunNow(id, { dbPath: process.env.APPILOT_DB_FILE });
+        if (daemonRes.routed === 'daemon' && daemonRes.ok) {
+          return { task: daemonRes.result, via: 'daemon' };
+        }
+        const result = await runShell.runNow(id);
+        if (!result) throw new Error(`未知任务: ${id}（daemon 未运行，本地仅支持 github-sync）`);
+        return { task: result, via: 'local' };
       },
     },
   ];
