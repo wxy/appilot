@@ -13,11 +13,24 @@ import { decodeLine } from './protocol.js';
 
 export interface EnsureOptions {
   socketPath: string;
-  /** 启动守护进程的命令（argv）。默认用同进程可执行路径的 cli。 */
+  /** 启动守护进程的命令（argv）。缺省用 resolveSchedulerCli() 定位。 */
   spawnCommand?: string[];
   /** ping 重试总时长（默认 8s）。 */
   timeoutMs?: number;
   log?(msg: string): void;
+}
+
+/**
+ * 解析 appilot-scheduler cli 路径（壳依赖本包时用 createRequire 解析）。
+ * 解析失败返回 null（壳可跳过 ensure，回退自身调度）。
+ */
+export function resolveSchedulerCli(requirer?: { resolve(id: string): string }): string | null {
+  try {
+    const req = requirer ?? (require as unknown as { resolve(id: string): string });
+    return req.resolve('@appilot-labs/appilot-scheduler/dist/cli.js');
+  } catch {
+    return null;
+  }
 }
 
 function pingSocket(socketPath: string, timeoutMs = 1500): Promise<boolean> {
@@ -51,7 +64,8 @@ function pingSocket(socketPath: string, timeoutMs = 1500): Promise<boolean> {
 /** 确保守护进程在跑；返回 true = 可用。 */
 export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
   const log = opts.log ?? (() => {});
-  const spawnCommand = opts.spawnCommand ?? [process.execPath, 'appilot-scheduler'];
+  const spawnCommand =
+    opts.spawnCommand ?? (resolveSchedulerCli() ? [process.execPath, resolveSchedulerCli()!] : null);
   const deadline = Date.now() + (opts.timeoutMs ?? 8000);
 
   // 1) 直接 ping（已有 daemon）
@@ -59,11 +73,16 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
     log('scheduler already running');
     return true;
   }
-  // 2) spawn detached（不随父死；stdio 继承便于诊断）
+  if (!spawnCommand) {
+    log('appilot-scheduler cli 不可解析，跳过 ensure（回退壳内调度）');
+    return false;
+  }
+  // 2) spawn detached（不随父死；stdio 忽略）
   log(`spawning scheduler: ${spawnCommand.join(' ')}`);
   const child = spawn(spawnCommand[0], spawnCommand.slice(1), {
     detached: true,
     stdio: 'ignore',
+    env: process.env,
   });
   child.unref();
   // 3) 退避重试 ping（daemon 启动 + lease 仲裁；冲突输家退出后可能需重连已存在的）
