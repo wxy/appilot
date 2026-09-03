@@ -154,8 +154,10 @@ async function main(): Promise<void> {
   try {
     handle = await runDaemon(opts);
   } catch (err: any) {
-    // 单例仲裁退出：已有调度者（本仓库 dev 时 Electron/DSH 壳内调度可能持主）→ 安静退出。
+    // 单例仲裁退出：已有调度者（另一 daemon / Electron / DSH 壳内调度）。若持主者
+    // 刚退出，租约 TTL（默认 60s）未过也会拒绝——提示等 TTL 或查 status。
     console.log(`[appilot-scheduler] ${err?.message || String(err)}`);
+    console.log(`[appilot-scheduler] 提示：若刚停止其他调度者（Electron/DSH），租约 TTL（60s）内会拒绝新主——稍候重试，或用 status 查看当前调度者。`);
     process.exit(0);
   }
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
