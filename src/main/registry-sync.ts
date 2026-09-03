@@ -162,6 +162,25 @@ export function startRegistrySync(
           lastReleaseCacheCount = n;
           log.info(`appilot: synced release caches to shared db (${n} projects)`);
         }
+        // P1 反向同步：共享 DB release_cache（任何执行者写入）→ electron-store
+        // githubSyncCache——Electron 从者（DSH/daemon 持主执行）时发布页仍新鲜。
+        const dbStore = sharedStore();
+        const localCache = cache;
+        let backfilled = 0;
+        for (const p of (projects as any[]) || []) {
+          if (!p?.id || !p?.name) continue;
+          const row = dbStore.releaseCache.get(p.name);
+          if (!row) continue;
+          const existing = localCache[p.id] as any;
+          if (!existing || (existing as any)?.syncedAt < row.syncedAt) {
+            localCache[p.id] = row.cache;
+            backfilled += 1;
+          }
+        }
+        if (backfilled > 0) {
+          s.set('githubSyncCache', localCache);
+          log.info(`appilot: backfilled ${backfilled} release caches from shared db`);
+        }
       } catch (err: any) {
         log.warn(`release cache sync failed: ${err.message}`);
       }

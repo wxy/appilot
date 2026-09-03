@@ -83,6 +83,13 @@ async function main(): Promise<void> {
   assert.equal(store.tasks.all().length, 2, 'DSH 行应保留');
   console.log('✓ DSH 静态任务行不受镜像清理影响');
 
+  // 7. P1：kind 非空的 electron 实例行（reconcile 管理）不被镜像 prune
+  store.tasks.upsert({ id: 'github-sync:p1', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: '2026-09-01T00:00:00Z', nextRunAt: '2026-09-02T00:00:00Z', lastStatus: 'ok', lastSummary: 's', runCount: 2, source: 'electron', kind: 'github-sync', instance: { projectId: 'p1' } });
+  const withKind = mirrorTasksToDb(store, [rankTask] as any);
+  assert.equal(withKind.pruned, 0, 'kind 实例行不应被镜像清理（源里没有也保留）');
+  assert.ok(store.tasks.get('github-sync:p1'), '实例行应保留');
+  console.log('✓ kind 实例行不受镜像 prune 影响（P1）');
+
   store.close();
   console.log('task-db-sync 单测全部通过 ✓');
 }
