@@ -68,6 +68,7 @@ function usage(): never {
       '  appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]',
       '  appilot-headless snapshots prune <project> [--before <iso>]   # 默认清 90 天前',
       '  appilot-headless tasks list [--source dsh|electron|cli]',
+      '  appilot-headless tasks rank-progress [project] [--product <id>]',
       '  appilot-headless lease status        # 当前租约主（多壳调度验证）',
       '  appilot-headless run <taskId>   # release-sync | readiness',
       '',
@@ -240,6 +241,16 @@ export async function main(argv: string[]): Promise<void> {
       case 'tasks': {
         const sub = argv[1];
         const { flags } = parseArgs(argv.slice(2));
+        if (sub === 'rank-progress') {
+          const { flags, pos } = parseArgs(argv.slice(2));
+          const project = pos[0] || undefined;
+          const rows = svc.tasks.rankProgress({
+            projectName: project,
+            productId: flags.get('product') || undefined,
+          });
+          process.stdout.write(JSON.stringify({ project: project ?? null, groups: rows }, null, 2) + '\n');
+          return;
+        }
         if (sub === 'list' || sub === undefined) {
           const jobs = buildHeadlessJobs({ readToken: envToken });
           const definitions = jobs.map((j) => ({ id: j.id, title: j.title, intervalMinutes: j.intervalMinutes }));

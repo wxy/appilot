@@ -20,7 +20,7 @@ export type {
   SchedulerAccelOptions,
 } from './scheduler.js';
 export { createHeadlessService } from './service.js';
-export type { HeadlessService } from './service.js';
+export type { HeadlessService, RankGroupProgress } from './service.js';
 export { buildHeadlessJobs } from './jobs.js';
 export type { HeadlessJobsOptions } from './jobs.js';
 export {
