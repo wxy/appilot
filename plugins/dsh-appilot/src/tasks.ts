@@ -15,10 +15,17 @@ import { jsonify, openSharedHeadlessStore, type CredentialReader } from '@appilo
 import {
   buildHeadlessExecutors,
   createLeaseScheduler,
+  defaultDbPath,
   githubSyncInstancesFor,
   reconcileTaskInstances,
   type LeaseScheduler,
 } from '@appilot-labs/appilot-headless';
+import {
+  defaultSocketPath,
+  ensureScheduler,
+  resolveSchedulerCli,
+} from '@appilot-labs/appilot-scheduler';
+import { createRequire } from 'node:module';
 
 /** 本壳的调度租约身份。 */
 export const LEADER_ID = 'dsh';
@@ -28,6 +35,26 @@ const RECONCILE_INTERVAL_MS = 60_000;
 
 /** 当前进程内活跃的调度器（appilot_task_run 的 runNow 入口）；未启动为 null。 */
 let activeScheduler: LeaseScheduler | null = null;
+
+/**
+ * P4：best-effort 确保调度守护进程在跑（daemon 优先成为调度主；本壳调度
+ * 保留为 lease 仲裁下的 fallback——daemon acquire 失败（无主时被本壳抢到）或
+ * 未安装时本壳继续调度）。fire-and-forget，不阻塞插件启动。
+ */
+function ensureDaemon(): void {
+  try {
+    const requirer = createRequire(import.meta.url);
+    const cli = resolveSchedulerCli(requirer);
+    void ensureScheduler({
+      socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
+      spawnCommand: cli ? [process.execPath, cli] : undefined,
+      timeoutMs: 3000,
+      log: (m) => console.log(`[appilot-dsh] ${m}`),
+    });
+  } catch {
+    /* 依赖缺失/解析失败：跳过 ensure，壳内调度兜底 */
+  }
+}
 
 /** 启动 DSH 侧定时任务（返回清理函数）。由元插件 apply 调用。 */
 export function startAppilotTasks(reader: CredentialReader): () => void {
@@ -54,6 +81,9 @@ export function startAppilotTasks(reader: CredentialReader): () => void {
   };
   reconcile();
   const reconcileTimer = setInterval(reconcile, RECONCILE_INTERVAL_MS);
+
+  // P4：确保调度守护进程（daemon 优先成为主；本调度作 lease 仲裁 fallback）。
+  ensureDaemon();
 
   scheduler.start();
   return () => {

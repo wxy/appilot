@@ -19,7 +19,8 @@
     "@appilot-labs/appilot-common": "^0.1.0",
     "@appilot-labs/appilot-project": "^0.1.0",
     "@appilot-labs/appilot-release": "^0.1.0",
-    "@appilot-labs/appilot-headless": "^0.1.0"
+    "@appilot-labs/appilot-headless": "^0.1.0",
+    "@appilot-labs/appilot-scheduler": "^0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2"

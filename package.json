@@ -31,7 +31,8 @@
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.6.0",
     "zustand": "^5.0.0",
-    "@appilot-labs/appilot-headless": "^0.1.0"
+    "@appilot-labs/appilot-headless": "^0.1.0",
+    "@appilot-labs/appilot-scheduler": "^0.1.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

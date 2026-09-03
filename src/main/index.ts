@@ -67,6 +67,9 @@ function createWindow() {
 app.whenReady().then(() => {
   setupLogger();
   registerIpcHandlers();
+  // P4：确保调度守护进程（best-effort；daemon 优先成为主，本壳调度保留为
+  // lease 仲裁 fallback——Electron scheduleGate 会让位给 daemon）。
+  ensureSchedulerDaemon();
   startTaskScheduler();
   // 共享注册表（方案 A）：启动 hydrate + 初始写回 + watch 对侧变更。
   startRegistrySync(getStore);
@@ -80,3 +83,23 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => app.quit());
+
+/**
+ * P4：best-effort 确保调度守护进程在跑（fire-and-forget，不阻塞窗口创建）。
+ * daemon 优先 acquire 成为调度主；本壳旧调度保留（scheduleGate 会让位）。
+ */
+function ensureSchedulerDaemon(): void {
+  try {
+    const { ensureScheduler, defaultSocketPath, resolveSchedulerCli } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
+    const { defaultDbPath } = require("@appilot-labs/appilot-headless") as typeof import("@appilot-labs/appilot-headless");
+    const cli = resolveSchedulerCli();
+    void ensureScheduler({
+      socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
+      spawnCommand: cli ? [process.execPath, cli] : undefined,
+      timeoutMs: 3000,
+      log: (m) => log.info(`appilot: ${m}`),
+    });
+  } catch (err: any) {
+    log.warn(`scheduler ensure skipped: ${err?.message || String(err)}`);
+  }
+}
