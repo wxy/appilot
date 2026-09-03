@@ -59,8 +59,9 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
 
   const executors = buildHeadlessExecutors({
     readToken: (name) => Promise.resolve(process.env[name] ?? null),
-    // rank 执行待 P2b 反向同步就绪后启用；当前只执行 github-sync 类实例。
-    includeRank: false,
+    // P2b 后启用 rank：Electron hydrate 的反向同步会把 daemon 采集的排名
+    // 合并回 electron-store（Electron 排名页新鲜），daemon 可执行 rank 实例。
+    includeRank: process.env.APPILOT_SCHEDULER_INCLUDE_RANK !== '0',
   });
   const scheduler = createLeaseScheduler({
     store,
