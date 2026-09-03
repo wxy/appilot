@@ -10,6 +10,7 @@ export type ClientRequest =
   | { method: 'hello'; params: { client: string; pid: number } }
   | { method: 'ping'; params?: Record<string, never> }
   | { method: 'runNow'; params: { taskId: string } }
+  | { method: 'shutdown'; params?: Record<string, never> }
   | { method: 'bye'; params?: Record<string, never> };
 
 /** daemon → 客户端。 */

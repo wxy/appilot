@@ -77,13 +77,28 @@ async function main(): Promise<void> {
   assert.equal(code2, 0, '第二 daemon 应安静退出（单例仲裁）');
   console.log('✓ 双 spawn 单例（第二个 exit 0）');
 
-  // SIGTERM → 优雅退出
+  // shutdown（socket 命令）→ 优雅退出
+  const shutdown = new Promise<any>((resolve, reject) => {
+    const sock = connect(sockPath);
+    const rl = createInterface({ input: sock });
+    sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'shutdown', params: {} }) + '\n'));
+    rl.on('line', (line) => {
+      try {
+        const m = JSON.parse(line);
+        if (m.id === 9) resolve(m);
+      } catch {
+        /* ignore */
+      }
+    });
+    rl.on('error', reject);
+    setTimeout(() => reject(new Error('shutdown 超时')), 5000);
+  });
+  await shutdown;
   const exit1 = new Promise<number>((resolve) => d1.on('exit', (c) => resolve(c ?? -1)));
-  d1.kill('SIGTERM');
   const code1 = await Promise.race([exit1, sleep(5000).then(() => -999)]);
-  assert.notEqual(code1, -999, 'SIGTERM 后应退出');
+  assert.notEqual(code1, -999, 'shutdown 后应退出');
   assert.equal(code1, 0, `优雅退出 exit 0（实际 ${code1}）`);
-  console.log('✓ SIGTERM 优雅退出');
+  console.log('✓ shutdown（socket）优雅退出');
 
   console.log('daemon 进程级冒烟全部通过 ✓');
 }

@@ -9,6 +9,8 @@ import { runDaemon, type DaemonOptions } from './daemon.js';
 import { defaultDbPath } from '@appilot-labs/appilot-headless';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { connect } from 'node:net';
+import { createInterface } from 'node:readline';
 
 function launchAgentPath(): string {
   return join(homedir(), 'Library', 'LaunchAgents', 'com.appilot.scheduler.plist');
@@ -51,6 +53,46 @@ function uninstallLaunchAgent(): void {
   console.log('launchd LaunchAgent removed');
 }
 
+/** 向 daemon socket 发送一条请求并等待响应（客户端模式：status/stop）。 */
+function socketRequest(
+  socketPath: string,
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs = 5000,
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(socketPath);
+    const rl = createInterface({ input: socket });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('daemon 无响应（可能未在运行？）'));
+    }, timeoutMs);
+    socket.on('connect', () => {
+      socket.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) + '\n');
+    });
+    rl.on('line', (line) => {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.id === 1) {
+          clearTimeout(timer);
+          socket.destroy();
+          resolve(msg.result ?? msg.error);
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+    rl.on('error', () => {
+      clearTimeout(timer);
+      reject(new Error('daemon 连接失败（未在运行？）'));
+    });
+    socket.on('error', () => {
+      clearTimeout(timer);
+      reject(new Error('daemon 未在运行（socket 不存在）'));
+    });
+  });
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args[0] === 'install') {
@@ -61,9 +103,24 @@ async function main(): Promise<void> {
     uninstallLaunchAgent();
     return;
   }
-  const opts: DaemonOptions = {
-    dbPath: process.env.APPILOT_DB_FILE || defaultDbPath(),
-  };
+  const dbPath = process.env.APPILOT_DB_FILE || defaultDbPath();
+  const socketPath = join(dirname(dbPath), 'scheduler.sock');
+  if (args[0] === 'status') {
+    try {
+      const res = await socketRequest(socketPath, 'hello', { client: 'cli', pid: process.pid });
+      console.log(JSON.stringify({ running: true, ...(res?.ok ? res : {}) }, null, 2));
+    } catch (err: any) {
+      console.log(JSON.stringify({ running: false, error: err?.message || String(err) }, null, 2));
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (args[0] === 'stop') {
+    const res = await socketRequest(socketPath, 'shutdown', {});
+    console.log(JSON.stringify({ stopped: Boolean(res?.ok), ...(res ?? {}) }, null, 2));
+    return;
+  }
+  const opts: DaemonOptions = { dbPath };
   let handle: Awaited<ReturnType<typeof runDaemon>> | null = null;
   try {
     handle = await runDaemon(opts);

@@ -84,6 +84,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   reconcile();
   const reconcileTimer = setInterval(reconcile, opts.reconcileIntervalMs ?? RECONCILE_INTERVAL_MS);
 
+  let selfShutdown: (() => void) | null = null;
   const server = createSchedulerServer(socketPath, {
     onHello: ({ client, pid }) => {
       log(`client hello: ${client} (pid ${pid})`);
@@ -94,6 +95,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       if (!result) throw new Error(`未知任务实例: ${taskId}`);
       return result;
     },
+    onShutdown: () => selfShutdown?.(),
     log,
   });
   try {
@@ -123,6 +125,10 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     }
     store.close();
     log('daemon exited cleanly');
+  };
+  // shutdown（socket 命令）：优雅退出进程。
+  selfShutdown = () => {
+    void stop().then(() => process.exit(0));
   };
 
   return { store, scheduler, server, stop };
