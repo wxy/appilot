@@ -31066,6 +31066,158 @@ function TaskTab(props) {
     ] }) : null
   ] });
 }
+var KIND_LABELS = {
+  "github-sync": "GitHub \u53D1\u5E03\u540C\u6B65",
+  rank: "\u6392\u540D\u91C7\u96C6",
+  "(legacy)": "\u65E7\u6A21\u677F\u4EFB\u52A1"
+};
+function GlobalTaskCenter(props) {
+  const v = overviewValue(props.node);
+  const styleBox = {
+    border: "1px solid var(--dsw-alias-border-l2)",
+    borderRadius: 12,
+    padding: "10px 12px",
+    marginBottom: 8
+  };
+  const kvRow = {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    flexWrap: "wrap"
+  };
+  const fmtTime = (iso) => iso ? new Date(iso).toLocaleTimeString() : null;
+  if (!v) {
+    return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ap-empty", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-title", children: "\u5168\u5C40\u4EFB\u52A1\u4E2D\u5FC3" }),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ap-empty-hint", children: "\u70B9\u51FB\u4E0A\u65B9\u300C\u5237\u65B0\u4EFB\u52A1\u300D\uFF0Cagent \u4F1A\u8FD0\u884C appilot_tasks \u76F4\u8BFB\u5171\u4EAB\u6570\u636E\u5E93\u7684\u4EFB\u52A1\u72B6\u6001\u3002 \u82E5\u957F\u65F6\u95F4\u65E0\u6570\u636E\uFF1A\u8BF7\u5148\u6253\u5F00\u4EFB\u610F Appilot \u4E13\u5C5E\u4F1A\u8BDD\uFF08\u5BF9\u8BDD\u53F3\u4E0A\u89D2 Appilot \u9875\u7B7E\uFF09\u4EE5\u6CE8\u518C\u5DE5\u5177\u3002" })
+    ] });
+  }
+  const summary = v.summary || {};
+  const byKind = v.byKind || {};
+  const checkedAt = v.checkedAt || null;
+  const error = Number(summary.error ?? 0);
+  const total = Number(summary.total ?? 0);
+  const ok = Number(summary.ok ?? 0);
+  const never = Number(summary.never ?? 0);
+  const kinds = Object.keys(byKind).sort();
+  const ghInstances = (v.tasks || []).filter(
+    (t) => t.kind === "github-sync"
+  );
+  return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { children: [
+    error > 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+      "div",
+      {
+        style: {
+          ...styleBox,
+          borderColor: "var(--dsw-alias-state-error-primary)",
+          color: "var(--dsw-alias-state-error-primary)",
+          fontWeight: 500
+        },
+        children: [
+          "\u26A0 \u6709 ",
+          error,
+          " \u4E2A\u4EFB\u52A1\u5B9E\u4F8B\u5904\u4E8E\u5931\u8D25\u72B6\u6001\uFF08\u6309\u7C7B\u578B\u89C1\u4E0B\u65B9\uFF09\u2014\u2014\u5931\u8D25\u5B9E\u4F8B\u4F1A\u5728\u4E0B\u4E00\u5468\u671F \u81EA\u52A8\u91CD\u8BD5\uFF1B\u4E5F\u53EF\u7528\u300C\u6E05\u7406\u5E76\u91CD\u6392\u300D/ \u5404\u9879\u76EE\u300C\u7ACB\u5373\u8FD0\u884C\u300D\u5904\u7406\u3002"
+        ]
+      }
+    ) : total > 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+      "div",
+      {
+        style: {
+          ...styleBox,
+          borderColor: "var(--dsw-alias-state-success-primary)",
+          color: "var(--dsw-alias-state-success-primary)",
+          fontWeight: 500
+        },
+        children: [
+          "\u2713 \u5F53\u524D\u65E0\u5931\u8D25\u4EFB\u52A1\uFF08\u5171 ",
+          total,
+          " \u4E2A\u5B9E\u4F8B\uFF0C\u6700\u8FD1\u68C0\u67E5 ",
+          fmtTime(checkedAt) ?? fmtTime(props.checkedAt) ?? "\u2014",
+          "\uFF09"
+        ]
+      }
+    ) : /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: styleBox, children: "\u6682\u65E0\u4EFB\u52A1\u5B9E\u4F8B\uFF08\u6CE8\u518C\u9879\u76EE\u540E\u81EA\u52A8\u751F\u6210\uFF09\u3002" }),
+    /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: styleBox, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { fontWeight: 600, fontSize: 13, marginBottom: 6 }, children: "\u603B\u89C8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: kvRow, children: [
+        chip("\u5B9E\u4F8B " + total),
+        chip("\u6210\u529F " + ok, "pass"),
+        error > 0 ? chip("\u5931\u8D25 " + error, "fail") : chip("\u5931\u8D25 0", "pass"),
+        chip("\u672A\u8FD0\u884C " + never),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" }, children: [
+          "\u6570\u636E\u65F6\u95F4 ",
+          fmtTime(checkedAt) ?? fmtTime(props.checkedAt) ?? "\u672A\u77E5"
+        ] })
+      ] }),
+      props.onRefresh ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { marginTop: 8 }, children: /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+        "button",
+        {
+          type: "button",
+          className: "ap-btn",
+          disabled: props.busy || void 0,
+          onClick: props.onRefresh,
+          children: props.busy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1"
+        }
+      ) }) : null
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: styleBox, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { fontWeight: 600, fontSize: 13, marginBottom: 6 }, children: "\u6309\u4EFB\u52A1\u7C7B\u578B\uFF08kind \xD7 \u72B6\u6001\uFF09" }),
+      kinds.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }, children: "\u65E0\u6309\u7C7B\u578B\u805A\u5408\u6570\u636E" }) : kinds.map((k) => {
+        const agg = byKind[k];
+        return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+          "div",
+          {
+            style: {
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "6px 0",
+              borderBottom: "1px solid var(--dsw-alias-border-l2)"
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { style: { fontSize: 13 }, children: [
+                KIND_LABELS[k] ?? k,
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { style: { color: "var(--dsw-alias-label-tertiary)", marginLeft: 6 }, children: [
+                  agg.total,
+                  " \u5B9E\u4F8B"
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { style: { display: "flex", gap: 6 }, children: [
+                chip("ok " + agg.ok, "pass"),
+                agg.error > 0 ? chip("error " + agg.error, "fail") : chip("error 0", "pass"),
+                chip("never " + agg.never)
+              ] })
+            ]
+          },
+          k
+        );
+      })
+    ] }),
+    ghInstances.length > 0 && props.onRunTask ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: styleBox, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { fontWeight: 600, fontSize: 13, marginBottom: 6 }, children: "GitHub \u53D1\u5E03\u540C\u6B65\uFF08\u6BCF\u9879\u76EE\u5B9E\u4F8B\uFF09" }),
+      ghInstances.map((t) => /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: { ...kvRow, justifyContent: "space-between", padding: "4px 0" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { style: { fontSize: 13 }, children: [
+          t.title,
+          t.lastStatus === "ok" ? chip("ok", "pass") : t.lastStatus === "error" ? chip("\u5931\u8D25", "fail") : chip("\u672A\u8FD0\u884C", "")
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+          "button",
+          {
+            type: "button",
+            className: "ap-btn",
+            disabled: props.busy || void 0,
+            onClick: () => {
+              if (props.busy) return;
+              props.onRunTask?.(t.id);
+            },
+            children: "\u7ACB\u5373\u8FD0\u884C"
+          }
+        )
+      ] }, t.id))
+    ] }) : null,
+    /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" }, children: "\u4EFB\u52A1\u6570\u636E\u6765\u81EA appilot_tasks\uFF08agent \u76F4\u8BFB\u5171\u4EAB DB\uFF1B\u53EF\u5BA1\u8BA1\uFF09\u3002\u6267\u884C\u7531\u79DF\u7EA6\u4E3B \uFF08scheduler daemon / \u58F3\uFF09\u7EDF\u4E00\u8C03\u5EA6\uFF1B\u5931\u8D25\u5B9E\u4F8B\u6309\u5468\u671F\u81EA\u52A8\u91CD\u8BD5\u3002" })
+  ] });
+}
 
 // client/src/dedicated-session.ts
 var TITLE_PREFIX = "[Appilot] ";
@@ -31671,24 +31823,31 @@ function AppHome(props) {
   const [nodes, setNodes] = (0, import_react60.useState)([]);
   const [addPath, setAddPath] = (0, import_react60.useState)("");
   const [taskBusy, setTaskBusy] = (0, import_react60.useState)(false);
-  const [taskFetched, setTaskFetched] = (0, import_react60.useState)(false);
+  const [taskCheckedAt, setTaskCheckedAt] = (0, import_react60.useState)(null);
+  const [taskErr, setTaskErr] = (0, import_react60.useState)(null);
   const [homeTab, setHomeTab] = (0, import_react60.useState)("projects");
   (0, import_react60.useEffect)(() => {
     if (visible && currentCwd && !addPath) setAddPath(currentCwd);
   }, [visible, currentCwd]);
   (0, import_react60.useEffect)(() => subscribeHome(setVisible), []);
   (0, import_react60.useEffect)(() => {
-    if (!visible || taskFetched || !props.run) return;
-    setTaskFetched(true);
+    if (!visible || homeTab !== "tasks" || !props.run) return;
+    if (taskBusy) return;
     setTaskBusy(true);
-    Promise.resolve(props.run(TASKS_PROMPT)).catch(() => {
-    }).then(() => setTaskBusy(false));
-  }, [visible, taskFetched, props.run]);
+    setTaskErr(null);
+    Promise.resolve(props.run(TASKS_PROMPT)).catch((err) => setTaskErr(err && err.message ? err.message : String(err))).then(() => {
+      setTaskBusy(false);
+      setTaskCheckedAt((/* @__PURE__ */ new Date()).toISOString());
+    });
+  }, [visible, homeTab, props.run]);
   const runTaskAction = (prompt) => {
     if (!props.run || taskBusy) return;
     setTaskBusy(true);
-    Promise.resolve(props.run(prompt)).catch(() => {
-    }).then(() => setTaskBusy(false));
+    setTaskErr(null);
+    Promise.resolve(props.run(prompt)).catch((err) => setTaskErr(err && err.message ? err.message : String(err))).then(() => {
+      setTaskBusy(false);
+      setTaskCheckedAt((/* @__PURE__ */ new Date()).toISOString());
+    });
   };
   (0, import_react60.useEffect)(() => {
     const session = props.sessionObservable ? props.sessionObservable(currentId) : null;
@@ -31967,15 +32126,21 @@ function AppHome(props) {
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginTop: 6 }, children: "\u672A\u68C0\u6D4B\u5230 Apple \u5E73\u53F0\uFF08iOS/macOS\uFF09\u7684\u9879\u76EE\u6682\u4E0D\u652F\u6301\u8FD0\u8425\u529F\u80FD\uFF08\u6DFB\u52A0\u540E\u4ECD\u4F1A\u4FDD\u7559\u5728\u5217\u8868\u4E2D\u5E76\u6807\u6CE8\uFF09\u3002" })
           ] }) : homeTab === "tasks" ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { marginBottom: 8 }, children: [
               /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 16, fontWeight: 600 }, children: "\u4EFB\u52A1\u4E2D\u5FC3" }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { type: "button", style: smallBtn, disabled: taskBusy || void 0, onClick: () => runTaskAction(TASKS_PROMPT), children: taskBusy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1" })
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }, children: "\u5168\u5C40\u4EFB\u52A1\u72B6\u6001\uFF08\u5171\u4EAB\u6570\u636E\u5E93\u76F4\u8BFB\uFF09\u2014\u2014\u8FDB\u5165\u672C\u9875\u81EA\u52A8\u5237\u65B0" })
             ] }),
+            taskErr ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { color: "var(--dsw-alias-state-error-primary)", fontSize: 12, marginBottom: 8 }, children: [
+              "\u5237\u65B0\u5931\u8D25\uFF1A",
+              taskErr,
+              "\uFF08\u8BF7\u6253\u5F00\u4EFB\u610F Appilot \u4F1A\u8BDD\u540E\u518D\u8BD5\uFF09"
+            ] }) : null,
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-              TaskTab,
+              GlobalTaskCenter,
               {
                 node: results["appilot_tasks"],
                 busy: taskBusy,
+                checkedAt: taskCheckedAt,
                 onRefresh: () => runTaskAction(TASKS_PROMPT),
                 onRunTask: (taskId) => runTaskAction(taskRunPrompt(taskId))
               }
