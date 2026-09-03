@@ -126,6 +126,12 @@ async function main(): Promise<void> {
     assert.ok((row?.lastSummary ?? '').includes('tag=v2.0.0'), `摘要应含 tag: ${row?.lastSummary}`);
     assert.ok(row?.runCount >= 1);
 
+    // P1a：深度执行应把发布缓存写进共享 DB（projectName 维度，tag 可读）
+    const cache = store.releaseCache.get('proj-x');
+    assert.ok(cache, '执行后应有发布缓存行');
+    assert.equal((cache?.cache as any)?.tag, 'v2.0.0', `缓存应含 tag: ${JSON.stringify(cache?.cache).slice(0, 120)}`);
+    assert.ok((cache?.cache as any)?.syncedAt, '缓存应含 syncedAt');
+
     // runNow：显式触发（nextRunAt 已推未来，runNow 仍执行）
     const before = store.tasks.get('github-sync:proj-x')?.runCount ?? 0;
     const res = await sched.runNow('github-sync:proj-x');
