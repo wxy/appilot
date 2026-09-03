@@ -2,6 +2,7 @@
  * Appilot 工作台「发布」「趋势」tab：从 appilot_overview 节点渲染真实数据。
  */
 import { jsx, jsxs } from 'react/jsx-runtime';
+import type { CSSProperties } from 'react';
 import { resultOf, chip, statusTone, kv } from './helpers';
 
 function overviewValue(node: any): any {
@@ -299,6 +300,204 @@ export function TaskTab(props: {
           </div>
         </details>
       ) : null}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────
+ * 全局任务中心（主面板任务页）：共享 DB 真实状态聚合视图。
+ * 数据 = appilot_tasks 直读共享 DB 的 byKind/summary（error 计数等），
+ * 不再按 source 只显示单侧实例——daemon 主调度下 rank/github-sync
+ * 的全局 ok/error/never 一目了然。
+ * ──────────────────────────────────────────────── */
+
+const KIND_LABELS: Record<string, string> = {
+  'github-sync': 'GitHub 发布同步',
+  rank: '排名采集',
+  '(legacy)': '旧模板任务',
+};
+
+export function GlobalTaskCenter(props: {
+  node: any;
+  busy?: boolean;
+  checkedAt?: string | null;
+  onRefresh?: () => void;
+  onRunTask?: (taskId: string) => void;
+}) {
+  const v = overviewValue(props.node);
+  const styleBox: CSSProperties = {
+    border: '1px solid var(--dsw-alias-border-l2)',
+    borderRadius: 12,
+    padding: '10px 12px',
+    marginBottom: 8,
+  };
+  const kvRow: CSSProperties = {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  };
+  const fmtTime = (iso?: string) =>
+    iso ? new Date(iso).toLocaleTimeString() : null;
+
+  if (!v) {
+    return (
+      <div className="ap-empty">
+        <div className="ap-empty-title">全局任务中心</div>
+        <div className="ap-empty-hint">
+          点击上方「刷新任务」，agent 会运行 appilot_tasks 直读共享数据库的任务状态。
+          若长时间无数据：请先打开任意 Appilot 专属会话（对话右上角 Appilot 页签）以注册工具。
+        </div>
+      </div>
+    );
+  }
+
+  const summary = v.summary || {};
+  const byKind: Record<string, any> = v.byKind || {};
+  const checkedAt = v.checkedAt || null;
+  const error = Number(summary.error ?? 0);
+  const total = Number(summary.total ?? 0);
+  const ok = Number(summary.ok ?? 0);
+  const never = Number(summary.never ?? 0);
+  const kinds = Object.keys(byKind).sort();
+
+  // github-sync 实例行（每项目一条；可经 daemon runNow 立即运行）
+  const ghInstances = ((v.tasks || []) as any[]).filter(
+    (t: any) => t.kind === 'github-sync',
+  );
+
+  return (
+    <div>
+      {/* 全局健康横幅 */}
+      {error > 0 ? (
+        <div
+          style={{
+            ...styleBox,
+            borderColor: 'var(--dsw-alias-state-error-primary)',
+            color: 'var(--dsw-alias-state-error-primary)',
+            fontWeight: 500,
+          }}
+        >
+          ⚠ 有 {error} 个任务实例处于失败状态（按类型见下方）——失败实例会在下一周期
+          自动重试；也可用「清理并重排」/ 各项目「立即运行」处理。
+        </div>
+      ) : total > 0 ? (
+        <div
+          style={{
+            ...styleBox,
+            borderColor: 'var(--dsw-alias-state-success-primary)',
+            color: 'var(--dsw-alias-state-success-primary)',
+            fontWeight: 500,
+          }}
+        >
+          ✓ 当前无失败任务（共 {total} 个实例，最近检查 {fmtTime(checkedAt) ?? fmtTime(props.checkedAt) ?? '—'}）
+        </div>
+      ) : (
+        <div style={styleBox}>暂无任务实例（注册项目后自动生成）。</div>
+      )}
+
+      {/* 总览计数 */}
+      <div style={styleBox}>
+        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>总览</div>
+        <div style={kvRow}>
+          {chip('实例 ' + total)}
+          {chip('成功 ' + ok, 'pass')}
+          {error > 0 ? chip('失败 ' + error, 'fail') : chip('失败 0', 'pass')}
+          {chip('未运行 ' + never)}
+          <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' }}>
+            数据时间 {fmtTime(checkedAt) ?? fmtTime(props.checkedAt) ?? '未知'}
+          </span>
+        </div>
+        {props.onRefresh ? (
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="ap-btn"
+              disabled={props.busy || undefined}
+              onClick={props.onRefresh}
+            >
+              {props.busy ? '刷新中…' : '刷新任务'}
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {/* 按任务类型聚合 */}
+      <div style={styleBox}>
+        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+          按任务类型（kind × 状态）
+        </div>
+        {kinds.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>
+            无按类型聚合数据
+          </div>
+        ) : (
+          kinds.map((k) => {
+            const agg = byKind[k];
+            return (
+              <div
+                key={k}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '6px 0',
+                  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+                }}
+              >
+                <span style={{ fontSize: 13 }}>
+                  {KIND_LABELS[k] ?? k}
+                  <span style={{ color: 'var(--dsw-alias-label-tertiary)', marginLeft: 6 }}>
+                    {agg.total} 实例
+                  </span>
+                </span>
+                <span style={{ display: 'flex', gap: 6 }}>
+                  {chip('ok ' + agg.ok, 'pass')}
+                  {agg.error > 0 ? chip('error ' + agg.error, 'fail') : chip('error 0', 'pass')}
+                  {chip('never ' + agg.never)}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* github-sync 实例（每项目；可立即运行） */}
+      {ghInstances.length > 0 && props.onRunTask ? (
+        <div style={styleBox}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+            GitHub 发布同步（每项目实例）
+          </div>
+          {ghInstances.map((t: any) => (
+            <div key={t.id} style={{ ...kvRow, justifyContent: 'space-between', padding: '4px 0' }}>
+              <span style={{ fontSize: 13 }}>
+                {t.title}
+                {t.lastStatus === 'ok'
+                  ? chip('ok', 'pass')
+                  : t.lastStatus === 'error'
+                    ? chip('失败', 'fail')
+                    : chip('未运行', '')}
+              </span>
+              <button
+                type="button"
+                className="ap-btn"
+                disabled={props.busy || undefined}
+                onClick={() => {
+                  if (props.busy) return;
+                  props.onRunTask?.(t.id);
+                }}
+              >
+                立即运行
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' }}>
+        任务数据来自 appilot_tasks（agent 直读共享 DB；可审计）。执行由租约主
+        （scheduler daemon / 壳）统一调度；失败实例按周期自动重试。
+      </div>
     </div>
   );
 }

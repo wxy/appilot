@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { isHomeOpen, subscribeHome, closeHome } from './home-store';
 import { collectToolResults, resultOf } from './helpers';
-import { TaskTab } from './tabs';
+import { GlobalTaskCenter } from './tabs';
 import { TASKS_PROMPT, taskRunPrompt } from './workbench';
 import { setRegistryCache, maybeRefreshRegistry, REGISTRY_LIST_PROMPT } from './registry-cache';
 
@@ -73,7 +73,8 @@ export function AppHome(props: AppHomeProps) {
   const [nodes, setNodes] = useState<readonly any[]>([]);
   const [addPath, setAddPath] = useState<string>('');
   const [taskBusy, setTaskBusy] = useState(false);
-  const [taskFetched, setTaskFetched] = useState(false);
+  const [taskCheckedAt, setTaskCheckedAt] = useState<string | null>(null);
+  const [taskErr, setTaskErr] = useState<string | null>(null);
   const [homeTab, setHomeTab] = useState<'projects' | 'tasks' | 'settings'>('projects');
 
   // 默认填入当前工作区路径。
@@ -83,22 +84,31 @@ export function AppHome(props: AppHomeProps) {
 
   useEffect(() => subscribeHome(setVisible), []);
 
-  // 主面板任务中心：可见时首次自动拉取 appilot_tasks（当前会话节点，可审计）。
+  // 全局任务中心：进入任务页（或面板重新打开且停在任务页）即自动拉取
+  // appilot_tasks（agent 直读共享 DB；结果落当前会话节点，可审计）。
   useEffect(() => {
-    if (!visible || taskFetched || !props.run) return;
-    setTaskFetched(true);
+    if (!visible || homeTab !== 'tasks' || !props.run) return;
+    if (taskBusy) return;
     setTaskBusy(true);
+    setTaskErr(null);
     Promise.resolve(props.run(TASKS_PROMPT))
-      .catch(() => {})
-      .then(() => setTaskBusy(false));
-  }, [visible, taskFetched, props.run]);
+      .catch((err: any) => setTaskErr(err && err.message ? err.message : String(err)))
+      .then(() => {
+        setTaskBusy(false);
+        setTaskCheckedAt(new Date().toISOString());
+      });
+  }, [visible, homeTab, props.run]);
 
   const runTaskAction = (prompt: string) => {
     if (!props.run || taskBusy) return;
     setTaskBusy(true);
+    setTaskErr(null);
     Promise.resolve(props.run(prompt))
-      .catch(() => {})
-      .then(() => setTaskBusy(false));
+      .catch((err: any) => setTaskErr(err && err.message ? err.message : String(err)))
+      .then(() => {
+        setTaskBusy(false);
+        setTaskCheckedAt(new Date().toISOString());
+      });
   };
 
   // 订阅当前会话节点（list_projects / register_project 结果）。
@@ -424,15 +434,21 @@ export function AppHome(props: AppHomeProps) {
 
         ) : homeTab === 'tasks' ? (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 16, fontWeight: 600 }}>任务中心</div>
-              <button type="button" style={smallBtn} disabled={taskBusy || undefined} onClick={() => runTaskAction(TASKS_PROMPT)}>
-                {taskBusy ? '刷新中…' : '刷新任务'}
-              </button>
+              <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>
+                全局任务状态（共享数据库直读）——进入本页自动刷新
+              </div>
             </div>
-            <TaskTab
+            {taskErr ? (
+              <div style={{ color: 'var(--dsw-alias-state-error-primary)', fontSize: 12, marginBottom: 8 }}>
+                刷新失败：{taskErr}（请打开任意 Appilot 会话后再试）
+              </div>
+            ) : null}
+            <GlobalTaskCenter
               node={results['appilot_tasks']}
               busy={taskBusy}
+              checkedAt={taskCheckedAt}
               onRefresh={() => runTaskAction(TASKS_PROMPT)}
               onRunTask={(taskId) => runTaskAction(taskRunPrompt(taskId))}
             />

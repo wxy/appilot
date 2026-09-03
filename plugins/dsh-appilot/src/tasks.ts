@@ -125,15 +125,43 @@ export function createTasksStatusTool() {
         (t) => t.source === LEADER_ID && t.kind != null,
       );
       const electronTasks = all.filter((t) => t.source === 'electron');
+      // 全局聚合（按 kind × lastStatus）：主面板任务页据此展示共享 DB 真实状态。
+      const byKind: Record<
+        string,
+        { total: number; ok: number; error: number; never: number }
+      > = {};
+      let error = 0;
+      let ok = 0;
+      let never = 0;
+      for (const t of all) {
+        const k = t.kind ?? '(legacy)';
+        const agg = (byKind[k] ??= { total: 0, ok: 0, error: 0, never: 0 });
+        agg.total += 1;
+        if (t.lastStatus === 'ok') {
+          ok += 1;
+          agg.ok += 1;
+        } else if (t.lastStatus === 'error') {
+          error += 1;
+          agg.error += 1;
+        } else {
+          never += 1;
+          agg.never += 1;
+        }
+      }
       return jsonify({
         tasks: all,
         dshInstances,
+        byKind,
         summary: {
+          total: all.length,
           dsh: dshInstances.length,
           electron: electronTasks.length,
           cli: all.filter((t) => t.source === 'cli').length,
-          error: all.filter((t) => t.lastStatus === 'error').length,
+          ok,
+          error,
+          never,
         },
+        checkedAt: new Date().toISOString(),
       });
     },
   });
