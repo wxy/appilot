@@ -29,3 +29,10 @@
 ## 观察记录
 - 2026-09-03：真实库出现 `github-sync:<name>`（dsh/daemon 命名）与旧 `github-sync:<projectId>`（Electron 命名）双实例 → 已统一 name 命名（Electron reconcile 改），旧行由 prune 清理
 - rank 失败多为一次性（个别 keyword×storefront），需任务失败的重试/清理策略（见 #2）
+- 2026-09-04 运行事故复盘（rank 83→954 参数错误蔓延）：
+  - 根因：daemon 进程内存中为**旧 executors 代码**（修复 bb02f67 前的校验要求 instance.projectName）——profile dist 已更新但运行中进程不重载；daemon 15s tick × 20/批 → 每 ~15s 一批全部失败、nextRunAt 推 +12h
+  - 教训 A：**部署修复 ≠ 修复生效**——daemon 需重启才加载新 dist；升级流程应含「部署后重启调度者」步骤（壳 ensure 只在 ping 不通时拉起，不检测代码版本）
+  - 教训 B：**无节流批量重排会触发上游限流**——一次性把 ~1100 行置为到期 → iTunes Search API IP 级 403（单点探测也 403，持续 >10min）；修复后的全速排空产生 563 快照但伴随大量 403/429
+  - 教训 C：scheduler 失败处理无速率限制感知——403/429 与业务错误同等对待（+12h）；应加退避（403/429 → 短退避指数增长）与并发上限（见 #2 扩展）
+  - 恢复操作：杀旧 daemon → DB 重置错误行（error→never，nextRunAt 置过去）→ 新代码 daemon 重启 → 因限流改冷却摊铺（60-420min，~4 行/min）等 IP 解封后温和补采
+  - backlog #2 补充：批量清理/重排必须**限速摊铺**（避免同刻到期突刺），并识别 403/429 类限流错误做退避而非置 error
