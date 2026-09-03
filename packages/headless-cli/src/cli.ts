@@ -63,6 +63,7 @@ function usage(): never {
       '  appilot-headless projects remove <name>',
       '  appilot-headless projects products <name>   # 产品注册（富数据，M3）',
       '  appilot-headless projects meta <name>       # repo 状态（富数据，M3）',
+      '  appilot-headless projects release-cache <name>  # 发布页缓存（M4）',
       '  appilot-headless snapshots latest <project> [--product <id>]',
       '  appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]',
       '  appilot-headless snapshots prune <project> [--before <iso>]   # 默认清 90 天前',
@@ -166,6 +167,32 @@ export async function main(argv: string[]): Promise<void> {
             if (!name) return usage();
             const meta = svc.meta.get(name);
             process.stdout.write(JSON.stringify({ project: name, meta: meta ?? null }, null, 2) + '\n');
+            return;
+          }
+          case 'release-cache': {
+            const name = pos[0];
+            if (!name) return usage();
+            const row = svc.releaseCache.get(name);
+            if (!row) {
+              process.stderr.write(`该项目暂无发布缓存: ${name}\n`);
+              process.exitCode = 1;
+              return;
+            }
+            process.stdout.write(
+              JSON.stringify(
+                {
+                  project: name,
+                  syncedAt: row.syncedAt,
+                  tag: (row.cache as any)?.tag ?? null,
+                  lastSeenSha: (row.cache as any)?.lastSeenSha ?? null,
+                  pullRequests: ((row.cache as any)?.pullRequests ?? []).length,
+                  releases: ((row.cache as any)?.releases ?? []).length,
+                  repoCapabilities: (row.cache as any)?.repoCapabilities ?? null,
+                },
+                null,
+                2,
+              ) + '\n',
+            );
             return;
           }
           default:
