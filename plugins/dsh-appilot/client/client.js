@@ -31672,6 +31672,7 @@ function AppHome(props) {
   const [addPath, setAddPath] = (0, import_react60.useState)("");
   const [taskBusy, setTaskBusy] = (0, import_react60.useState)(false);
   const [taskFetched, setTaskFetched] = (0, import_react60.useState)(false);
+  const [homeTab, setHomeTab] = (0, import_react60.useState)("projects");
   (0, import_react60.useEffect)(() => {
     if (visible && currentCwd && !addPath) setAddPath(currentCwd);
   }, [visible, currentCwd]);
@@ -31843,123 +31844,132 @@ function AppHome(props) {
               ]
             }
           ),
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { display: "flex", gap: 6, marginBottom: 12, borderBottom: "1px solid var(--dsw-alias-border-l2)", paddingBottom: 10 }, children: ["projects", "tasks", "settings"].map((t) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+            "button",
+            {
+              type: "button",
+              onClick: () => setHomeTab(t),
+              style: {
+                padding: "5px 14px",
+                borderRadius: 999,
+                border: "1px solid var(--dsw-alias-border-l2)",
+                background: homeTab === t ? "var(--dsw-alias-button-info-fill)" : "transparent",
+                color: homeTab === t ? "#fff" : "var(--dsw-alias-label-secondary)",
+                fontSize: 13,
+                cursor: "pointer"
+              },
+              children: t === "projects" ? "\u9879\u76EE" : t === "tasks" ? "\u4EFB\u52A1" : "\u8BBE\u7F6E"
+            },
+            t
+          )) }),
           error ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { color: "var(--dsw-alias-state-error-primary)", fontSize: 12, marginBottom: 10 }, children: [
             "\u5931\u8D25\uFF1A",
             error
           ] }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { fontWeight: 600, fontSize: 14, marginBottom: 8 }, children: [
-            "\u5DF2\u6DFB\u52A0\u9879\u76EE",
-            records.length > 0 ? `\uFF08${records.length}\uFF09` : ""
-          ] }),
-          !listNode ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: emptyBox, children: "\u6B63\u5728\u83B7\u53D6\u9879\u76EE\u5217\u8868\uFF08agent \u8FD0\u884C list_projects\uFF09\u2026" }) : records.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: emptyBox, children: "\u6682\u65E0\u6CE8\u518C\u9879\u76EE\u2014\u2014\u4ECE\u4E0B\u65B9\u5DE5\u4F5C\u533A\u6CE8\u518C\uFF0C\u6216\u8F93\u5165\u8DEF\u5F84\u6DFB\u52A0\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("ul", { style: { margin: 0, padding: 0, listStyle: "none" }, children: records.map((p) => {
-            const noWs = !wsByPath.has(normPath(p.path));
-            const warnPlatform = !p.platform;
-            return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("li", { style: projectRow, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(AppIcon, { url: p.artworkUrl }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { minWidth: 0, flex: 1 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: { fontWeight: 500 }, children: p.name }),
-                  p.platform ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: platformBadge, children: p.platform }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-                    "span",
-                    {
-                      style: {
-                        ...platformBadge,
-                        background: "var(--dsw-alias-state-warn-tertiary)",
-                        color: "var(--dsw-alias-state-warn-primary)"
-                      },
-                      title: "\u672A\u68C0\u6D4B\u5230 Apple \u5E73\u53F0\uFF08iOS/macOS\uFF09\u2014\u2014\u53EF\u80FD\u4E0D\u9002\u5408 App Store \u8FD0\u8425",
-                      children: "\u672A\u8BC6\u522B Apple \u5E73\u53F0"
-                    }
-                  ),
-                  warnPlatform ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: { fontSize: 11, color: "var(--dsw-alias-state-warn-primary)" }, children: "\u6682\u4E0D\u652F\u6301\u5176\u8FD0\u8425\u529F\u80FD" }) : null
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: pathLine, children: [
-                  p.path,
-                  noWs ? " \xB7 \u672A\u5173\u8054\u5DE5\u4F5C\u533A" : " \xB7 \u5DF2\u5173\u8054\u5DE5\u4F5C\u533A"
-                ] })
-              ] }),
-              noWs ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-                "button",
-                {
-                  type: "button",
-                  disabled: !!busy,
-                  onClick: () => addToWorkspace(p.path),
-                  style: smallBtn,
-                  children: busy === "ws:" + normPath(p.path) ? "\u521B\u5EFA\u4E2D\u2026" : "\u6DFB\u52A0\u5230\u5DE5\u4F5C\u533A"
-                }
-              ) : null
-            ] }, p.name);
-          }) }),
-          unregisteredWs.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: [
-              "\u672A\u6CE8\u518C\u7684\u5DE5\u4F5C\u533A",
-              `\uFF08${unregisteredWs.length}\uFF09`
+          homeTab === "projects" ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { fontWeight: 600, fontSize: 14, marginBottom: 8 }, children: [
+              "\u5DF2\u6DFB\u52A0\u9879\u76EE",
+              records.length > 0 ? `\uFF08${records.length}\uFF09` : ""
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("ul", { style: { margin: 0, padding: 0, listStyle: "none" }, children: unregisteredWs.map((w) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("li", { style: projectRow, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(AppIcon, { url: null }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { minWidth: 0, flex: 1 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: wsName(w) }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: pathLine, children: w.path })
+            !listNode ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: emptyBox, children: "\u6B63\u5728\u83B7\u53D6\u9879\u76EE\u5217\u8868\uFF08agent \u8FD0\u884C list_projects\uFF09\u2026" }) : records.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: emptyBox, children: "\u6682\u65E0\u6CE8\u518C\u9879\u76EE\u2014\u2014\u4ECE\u4E0B\u65B9\u5DE5\u4F5C\u533A\u6CE8\u518C\uFF0C\u6216\u8F93\u5165\u8DEF\u5F84\u6DFB\u52A0\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("ul", { style: { margin: 0, padding: 0, listStyle: "none" }, children: records.map((p) => {
+              const noWs = !wsByPath.has(normPath(p.path));
+              const warnPlatform = !p.platform;
+              return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("li", { style: projectRow, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(AppIcon, { url: p.artworkUrl }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { minWidth: 0, flex: 1 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: { fontWeight: 500 }, children: p.name }),
+                    p.platform ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: platformBadge, children: p.platform }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                      "span",
+                      {
+                        style: {
+                          ...platformBadge,
+                          background: "var(--dsw-alias-state-warn-tertiary)",
+                          color: "var(--dsw-alias-state-warn-primary)"
+                        },
+                        title: "\u672A\u68C0\u6D4B\u5230 Apple \u5E73\u53F0\uFF08iOS/macOS\uFF09\u2014\u2014\u53EF\u80FD\u4E0D\u9002\u5408 App Store \u8FD0\u8425",
+                        children: "\u672A\u8BC6\u522B Apple \u5E73\u53F0"
+                      }
+                    ),
+                    warnPlatform ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { style: { fontSize: 11, color: "var(--dsw-alias-state-warn-primary)" }, children: "\u6682\u4E0D\u652F\u6301\u5176\u8FD0\u8425\u529F\u80FD" }) : null
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: pathLine, children: [
+                    p.path,
+                    noWs ? " \xB7 \u672A\u5173\u8054\u5DE5\u4F5C\u533A" : " \xB7 \u5DF2\u5173\u8054\u5DE5\u4F5C\u533A"
+                  ] })
+                ] }),
+                noWs ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    disabled: !!busy,
+                    onClick: () => addToWorkspace(p.path),
+                    style: smallBtn,
+                    children: busy === "ws:" + normPath(p.path) ? "\u521B\u5EFA\u4E2D\u2026" : "\u6DFB\u52A0\u5230\u5DE5\u4F5C\u533A"
+                  }
+                ) : null
+              ] }, p.name);
+            }) }),
+            unregisteredWs.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: [
+                "\u672A\u6CE8\u518C\u7684\u5DE5\u4F5C\u533A",
+                `\uFF08${unregisteredWs.length}\uFF09`
               ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("ul", { style: { margin: 0, padding: 0, listStyle: "none" }, children: unregisteredWs.map((w) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("li", { style: projectRow, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(AppIcon, { url: null }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { minWidth: 0, flex: 1 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: wsName(w) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: pathLine, children: w.path })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    disabled: !!busy,
+                    onClick: () => registerPath(w.path),
+                    style: smallBtn,
+                    children: busy === "reg:" + normPath(w.path) ? "\u6CE8\u518C\u4E2D\u2026" : "\u6CE8\u518C"
+                  }
+                )
+              ] }, w.workspaceId)) })
+            ] }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: "\u6DFB\u52A0\u65B0\u9879\u76EE" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                "input",
+                {
+                  value: addPath,
+                  onChange: (e) => setAddPath(e.target.value),
+                  placeholder: "\u9879\u76EE\u8DEF\u5F84\uFF08\u7F3A\u5DE5\u4F5C\u533A\u65F6\u81EA\u52A8\u65B0\u5EFA\uFF1B\u5C06\u8BC6\u522B\u662F\u5426\u9002\u5408 App Store\uFF09",
+                  style: {
+                    flex: 1,
+                    minWidth: 220,
+                    padding: "7px 12px",
+                    borderRadius: 10,
+                    border: "1px solid var(--dsw-alias-border-l2)",
+                    background: "var(--dsw-alias-bg-base)",
+                    color: "var(--dsw-alias-label-primary)",
+                    fontSize: 13,
+                    lineHeight: "20px"
+                  }
+                }
+              ),
               /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "button",
                 {
                   type: "button",
                   disabled: !!busy,
-                  onClick: () => registerPath(w.path),
-                  style: smallBtn,
-                  children: busy === "reg:" + normPath(w.path) ? "\u6CE8\u518C\u4E2D\u2026" : "\u6CE8\u518C"
+                  onClick: onAddProject,
+                  style: { ...actionBtn, background: "var(--dsw-alias-button-info-fill)", color: "#fff" },
+                  children: busy === "add" ? "\u6DFB\u52A0\u4E2D\u2026" : "\u6DFB\u52A0\u9879\u76EE"
                 }
               )
-            ] }, w.workspaceId)) })
-          ] }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: "\u6DFB\u52A0\u65B0\u9879\u76EE" }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-              "input",
-              {
-                value: addPath,
-                onChange: (e) => setAddPath(e.target.value),
-                placeholder: "\u9879\u76EE\u8DEF\u5F84\uFF08\u7F3A\u5DE5\u4F5C\u533A\u65F6\u81EA\u52A8\u65B0\u5EFA\uFF1B\u5C06\u8BC6\u522B\u662F\u5426\u9002\u5408 App Store\uFF09",
-                style: {
-                  flex: 1,
-                  minWidth: 220,
-                  padding: "7px 12px",
-                  borderRadius: 10,
-                  border: "1px solid var(--dsw-alias-border-l2)",
-                  background: "var(--dsw-alias-bg-base)",
-                  color: "var(--dsw-alias-label-primary)",
-                  fontSize: 13,
-                  lineHeight: "20px"
-                }
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-              "button",
-              {
-                type: "button",
-                disabled: !!busy,
-                onClick: onAddProject,
-                style: { ...actionBtn, background: "var(--dsw-alias-button-info-fill)", color: "#fff" },
-                children: busy === "add" ? "\u6DFB\u52A0\u4E2D\u2026" : "\u6DFB\u52A0\u9879\u76EE"
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginTop: 6 }, children: "\u672A\u68C0\u6D4B\u5230 Apple \u5E73\u53F0\uFF08iOS/macOS\uFF09\u7684\u9879\u76EE\u6682\u4E0D\u652F\u6301\u8FD0\u8425\u529F\u80FD\uFF08\u6DFB\u52A0\u540E\u4ECD\u4F1A\u4FDD\u7559\u5728\u5217\u8868\u4E2D\u5E76\u6807\u6CE8\uFF09\u3002" }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: "\u5168\u5C40" }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { marginTop: 18 }, children: [
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginTop: 6 }, children: "\u672A\u68C0\u6D4B\u5230 Apple \u5E73\u53F0\uFF08iOS/macOS\uFF09\u7684\u9879\u76EE\u6682\u4E0D\u652F\u6301\u8FD0\u8425\u529F\u80FD\uFF08\u6DFB\u52A0\u540E\u4ECD\u4F1A\u4FDD\u7559\u5728\u5217\u8868\u4E2D\u5E76\u6807\u6CE8\uFF09\u3002" })
+          ] }) : homeTab === "tasks" ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { children: [
             /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }, children: [
               /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 16, fontWeight: 600 }, children: "\u4EFB\u52A1\u4E2D\u5FC3" }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
-                "button",
-                {
-                  type: "button",
-                  style: smallBtn,
-                  disabled: taskBusy || void 0,
-                  onClick: () => runTaskAction(TASKS_PROMPT),
-                  children: taskBusy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1"
-                }
-              )
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { type: "button", style: smallBtn, disabled: taskBusy || void 0, onClick: () => runTaskAction(TASKS_PROMPT), children: taskBusy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1" })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               TaskTab,
@@ -31970,11 +31980,13 @@ function AppHome(props) {
                 onRunTask: (taskId) => runTaskAction(taskRunPrompt(taskId))
               }
             )
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 600, fontSize: 14, marginBottom: 8 }, children: "\u8BBE\u7F6E" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: entryCard, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: "\u51ED\u636E\u4E0E\u6CE8\u518C\u8868" }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: entryDesc, children: "Appilot \u914D\u7F6E\uFF08GitHub / App Store Connect \u51ED\u636E\u3001\u9879\u76EE\u6CE8\u518C\u8868\uFF09\u2014\u2014\u7531\u5404\u5DE5\u4F5C\u533A\u8BBE\u7F6E\u9875\u7BA1\u7406\u3002" })
+            ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }, children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: entryCard, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: "\u8BBE\u7F6E" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: entryDesc, children: "Appilot \u914D\u7F6E\uFF08\u51ED\u636E / \u9879\u76EE\u6CE8\u518C\u8868\uFF09\u2014\u2014\u89C4\u5212\u4E2D" })
-          ] }) }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { color: "var(--dsw-alias-label-tertiary)", fontSize: 11, marginTop: 12 }, children: "\u9879\u76EE\u6570\u636E\u6765\u81EA list_projects \u5DE5\u5177\u8FD0\u884C\u7ED3\u679C\uFF08\u5F53\u524D\u4F1A\u8BDD\uFF0C\u53EF\u5BA1\u8BA1\uFF09\uFF1B\u5DE5\u4F5C\u533A\u6570\u636E\u6765\u81EA\u5BBF\u4E3B\u3002" })
         ]
       }
