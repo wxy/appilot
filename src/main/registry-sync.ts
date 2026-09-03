@@ -21,6 +21,7 @@ import { log } from '@appilot-labs/appilot-core/logger';
 import { importRankHistoryToDb } from './rank-db-sync';
 import { mirrorTasksToDb } from './task-db-sync';
 import { syncReleaseCachesToDb } from './release-cache-sync';
+import { backfillRankSnapshotsToElectron } from './rank-backfill';
 import { syncRichDataToDb } from './rich-data-sync';
 import { hydrateFromDbCore, syncRegistryCore } from './registry-sync-core';
 export { registryRecordOf } from './registry-sync-core';
@@ -183,6 +184,17 @@ export function startRegistrySync(
         }
       } catch (err: any) {
         log.warn(`release cache sync failed: ${err.message}`);
+      }
+      // P2b：rank 快照反向同步（DB → electron-store 排名页）——DSH/daemon
+      // 持主执行的 rank 结果同步回 Electron UI；仅 DB 新于本地才写。
+      try {
+        const n = backfillRankSnapshotsToElectron(sharedStore(), projects as any[]);
+        if (n > 0) {
+          s.set('projects', projects);
+          log.info(`appilot: backfilled rank snapshots for ${n} products`);
+        }
+      } catch (err: any) {
+        log.warn(`rank backfill failed: ${err.message}`);
       }
     } catch (err: any) {
       log.warn(`registry sync failed: ${err.message}`);
