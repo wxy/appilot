@@ -53,45 +53,7 @@ function uninstallLaunchAgent(): void {
   console.log('launchd LaunchAgent removed');
 }
 
-/** 向 daemon socket 发送一条请求并等待响应（客户端模式：status/stop）。 */
-function socketRequest(
-  socketPath: string,
-  method: string,
-  params: Record<string, unknown>,
-  timeoutMs = 5000,
-): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const socket = connect(socketPath);
-    const rl = createInterface({ input: socket });
-    const timer = setTimeout(() => {
-      socket.destroy();
-      reject(new Error('daemon 无响应（可能未在运行？）'));
-    }, timeoutMs);
-    socket.on('connect', () => {
-      socket.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) + '\n');
-    });
-    rl.on('line', (line) => {
-      try {
-        const msg = JSON.parse(line);
-        if (msg.id === 1) {
-          clearTimeout(timer);
-          socket.destroy();
-          resolve(msg.result ?? msg.error);
-        }
-      } catch {
-        /* ignore */
-      }
-    });
-    rl.on('error', () => {
-      clearTimeout(timer);
-      reject(new Error('daemon 连接失败（未在运行？）'));
-    });
-    socket.on('error', () => {
-      clearTimeout(timer);
-      reject(new Error('daemon 未在运行（socket 不存在）'));
-    });
-  });
-}
+import { sendSchedulerCommand } from './client.js';
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -106,46 +68,46 @@ async function main(): Promise<void> {
   const dbPath = process.env.APPILOT_DB_FILE || defaultDbPath();
   const socketPath = join(dirname(dbPath), 'scheduler.sock');
   if (args[0] === 'status') {
-    try {
-      const res = await socketRequest(socketPath, 'hello', { client: 'cli', pid: process.pid });
-      console.log(JSON.stringify({ running: true, schedulerDaemon: true, ...(res?.ok ? res : {}) }, null, 2));
-    } catch (err: any) {
-      // socket 不通 → daemon 未跑；查共享 DB 租约看是否有壳（dsh/electron）在调度。
-      let leader: string | null = null;
-      let heartbeatAt: string | null = null;
-      try {
-        const { openStore } = require('@appilot-labs/appilot-headless') as typeof import('@appilot-labs/appilot-headless');
-        const s = openStore(dbPath);
-        const info = s.lease.info();
-        leader = info?.leaderId ?? null;
-        heartbeatAt = info?.heartbeatAt ?? null;
-        s.close();
-      } catch {
-        /* DB 不可读则保持 null */
-      }
-      const scheduled = leader !== null;
-      console.log(
-        JSON.stringify(
-          {
-            running: scheduled,
-            schedulerDaemon: false,
-            leader,
-            heartbeatAt,
-            note: scheduled
-              ? `调度者 = 壳进程「${leader}」（daemon 让位）——daemon 未在跑但调度在执行`
-              : '无调度者（未运行任何壳或 daemon）',
-            error: scheduled ? undefined : err?.message || String(err),
-          },
-          null,
-          2,
-        ),
-      );
-      if (!scheduled) process.exitCode = 1;
+    const res = await sendSchedulerCommand(socketPath, 'hello', { client: 'cli', pid: process.pid });
+    if (res.ok && res.result) {
+      console.log(JSON.stringify({ running: true, schedulerDaemon: true, ...(res.result as object) }, null, 2));
+      return;
     }
+    // daemon 未跑；查共享 DB 租约看是否有壳（dsh/electron）在调度。
+    let leader: string | null = null;
+    let heartbeatAt: string | null = null;
+    try {
+      const { openStore } = require('@appilot-labs/appilot-headless') as typeof import('@appilot-labs/appilot-headless');
+      const s = openStore(dbPath);
+      const info = s.lease.info();
+      leader = info?.leaderId ?? null;
+      heartbeatAt = info?.heartbeatAt ?? null;
+      s.close();
+    } catch {
+      /* DB 不可读则保持 null */
+    }
+    const scheduled = leader !== null;
+    console.log(
+      JSON.stringify(
+        {
+          running: scheduled,
+          schedulerDaemon: false,
+          leader,
+          heartbeatAt,
+          note: scheduled
+            ? `调度者 = 壳进程「${leader}」（daemon 让位）——daemon 未在跑但调度在执行`
+            : '无调度者（未运行任何壳或 daemon）',
+          error: scheduled ? undefined : res.error,
+        },
+        null,
+        2,
+      ),
+    );
+    if (!scheduled) process.exitCode = 1;
     return;
   }
   if (args[0] === 'stop') {
-    const res = await socketRequest(socketPath, 'shutdown', {});
+    const res = await sendSchedulerCommand(socketPath, 'shutdown', {});
     console.log(JSON.stringify({ stopped: Boolean(res?.ok), ...(res ?? {}) }, null, 2));
     return;
   }
@@ -153,10 +115,10 @@ async function main(): Promise<void> {
     const mode = args[1];
     if (mode === 'on' || mode === undefined) {
       const seconds = Number(args[2] ?? 0) || 300;
-      const res = await socketRequest(socketPath, 'accelerate', { on: true, seconds });
+      const res = await sendSchedulerCommand(socketPath, 'accelerate', { on: true, seconds });
       console.log(JSON.stringify({ accel: true, seconds, ok: Boolean(res?.ok) }, null, 2));
     } else if (mode === 'off') {
-      const res = await socketRequest(socketPath, 'accelerate', { on: false });
+      const res = await sendSchedulerCommand(socketPath, 'accelerate', { on: false });
       console.log(JSON.stringify({ accel: false, ok: Boolean(res?.ok) }, null, 2));
     } else {
       console.error('用法: appilot-scheduler accel [on [seconds]|off]');

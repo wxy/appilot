@@ -9,6 +9,7 @@ import {
 } from "../scheduler";
 import { computeRankSchedulerStatus } from "../scheduler-status";
 import { getStore } from "../store";
+import { sharedStore } from "../registry-sync";
 
 function computeTimeline(
   tasks: ScheduledTask[],
@@ -77,8 +78,17 @@ export function registerSchedulerHandlers(): void {
   });
 
   ipcMain.handle("scheduler:setAccel", async (_event, enabled: boolean) => {
-    await setSchedulerAccel(Boolean(enabled));
-    return true;
+    // P5-2a：本进程是调度主 → 壳内加速；daemon 主 → 发 daemon accelerate；
+    // 其他主（dsh 壳）→ 暂无干预通道（过渡期，返回 false）。
+    const leader = currentLeader();
+    if (leader === "electron") {
+      await setSchedulerAccel(Boolean(enabled));
+      return true;
+    }
+    if (leader === "scheduler") {
+      return sendToDaemon("accelerate", { on: Boolean(enabled), seconds: enabled ? 300 : undefined });
+    }
+    return false;
   });
 
   // 轻量统计：单独刷新顶部面板，避免被 1000+ 任务的完整列表计算拖慢。
@@ -276,7 +286,45 @@ export function registerSchedulerHandlers(): void {
   });
 
   ipcMain.handle("scheduler:runTaskNow", async (_event, taskId: string) => {
-    const { runTaskNow } = await import("../scheduler");
-    return runTaskNow(taskId);
+    // P5-2a：本进程主 → 壳内立即运行；daemon 主 → daemon runNow；其他主 → false。
+    const leader = currentLeader();
+    if (leader === "electron") {
+      const { runTaskNow } = await import("../scheduler");
+      return runTaskNow(taskId);
+    }
+    if (leader === "scheduler") {
+      const res = await sendToDaemon("runNow", { taskId });
+      return res === true;
+    }
+    return false;
   });
+}
+
+/**
+ * P5-2a 辅助：当前调度主 + daemon 命令发送。
+ */
+function currentLeader(): string | null {
+  try {
+    return sharedStore().lease.leader();
+  } catch {
+    return null;
+  }
+}
+
+async function sendToDaemon(
+  method: "accelerate" | "runNow",
+  params: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    const {
+      sendSchedulerCommand,
+      defaultSocketPath,
+    } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
+    const { defaultDbPath } = require("@appilot-labs/appilot-headless") as typeof import("@appilot-labs/appilot-headless");
+    const socketPath = defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath());
+    const res = await sendSchedulerCommand(socketPath, method, params);
+    return res.ok === true;
+  } catch {
+    return false;
+  }
 }
