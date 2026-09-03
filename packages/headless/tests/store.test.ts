@@ -141,8 +141,16 @@ try {
   db.close();
   assert.equal(s2.lease.acquire("shell-b", 60_000), true);
   assert.equal(s2.lease.leader(), "shell-b");
+  // 显式让位：仅当前主可 release；release 后其他主无需等 TTL 即可接管
+  assert.equal(s2.lease.release("shell-b"), true, "当前主应能 release");
+  assert.equal(s2.lease.leader(), null, "release 后无主");
+  assert.equal(s2.lease.release("shell-b"), false, "非主 release 返回 false");
+  const s3 = openStore(dbPath);
+  assert.equal(s3.lease.acquire("shell-c", 60_000), true, "release 后新主立即接管（免 TTL）");
+  assert.equal(s3.lease.leader(), "shell-c");
+  s3.close();
   s2.close();
-  pass("lease acquire / heartbeat / takeover");
+  pass("lease acquire / heartbeat / takeover / release");
 } catch (err) {
   fail("lease acquire / heartbeat / takeover", err);
 }

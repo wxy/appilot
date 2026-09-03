@@ -9,6 +9,7 @@ export const SCHEDULER_PROTOCOL_VERSION = 1;
 export type ClientRequest =
   | { method: 'hello'; params: { client: string; pid: number } }
   | { method: 'ping'; params?: Record<string, never> }
+  | { method: 'checkUpdate'; params?: Record<string, never> }
   | { method: 'runNow'; params: { taskId: string } }
   | { method: 'accelerate'; params: { on: boolean; seconds?: number } }
   | { method: 'shutdown'; params?: Record<string, never> }
