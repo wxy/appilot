@@ -12,12 +12,14 @@
  *   （项目移除/改名后不留幽灵实例）。不碰其他来源/其他 kind 的行。
  */
 import type { AppilotStore } from './store.js';
-import type { TaskRow } from './schema.js';
+import type { TaskRow, ProductRecordRow } from './schema.js';
 import {
   GITHUB_SYNC_KIND,
   GITHUB_SYNC_INTERVAL_MINUTES,
+  RANK_KIND,
   type GithubSyncInstanceArgs,
 } from './executors.js';
+import { storefrontsForLanguage } from '@appilot-labs/appilot-core/storefronts';
 
 export interface TaskInstanceSpec {
   id: string;
@@ -30,6 +32,74 @@ export interface TaskInstanceSpec {
 export interface ReconcileResult {
   seeded: number;
   pruned: number;
+}
+
+/** 关键词池条目形状（Electron trackedKeywords 对象 JSON 保留，含状态）。 */
+export interface KeywordPoolEntry {
+  keyword?: unknown;
+  language?: unknown;
+  status?: unknown;
+  pausedPlatforms?: string[];
+}
+
+/** rank 推导选项。 */
+export interface RankInstancesOptions {
+  /** 每次采集间隔（分钟；Electron 按 rankRunsPerDay 折算，缺省 720=每天 2 次）。 */
+  intervalMinutes?: number;
+  /** 暂停判定用平台（product.platform）；pausedPlatforms 含此平台的关键词跳过。 */
+  platformForPause?: string;
+}
+
+/**
+ * 由产品注册数据（product_records）推导期望 rank 实例集（P2：rank 脱离
+ * electron-store 上下文，daemon/壳可用同一推导）。语言展开与 storefront 逻辑
+ * 与 Electron reconcile 一致：en 产品只查 en；多语言产品查 [code, en]。
+ * 调用方负责暂停判定（core rank-keywords）后传入已过滤的关键词池。
+ */
+export function rankInstancesFor(
+  projectName: string,
+  product: ProductRecordRow,
+  pool: KeywordPoolEntry[],
+  opts: RankInstancesOptions = {},
+): TaskInstanceSpec[] {
+  const intervalMinutes = opts.intervalMinutes ?? 720;
+  const platform = product.platform ?? opts.platformForPause ?? null;
+  if (!product.trackId) return [];
+  const specs: TaskInstanceSpec[] = [];
+  for (const code of product.supportedLanguages) {
+    const queryLanguages = code === 'en' ? ['en'] : [code, 'en'];
+    for (const kw of pool ?? []) {
+      const keyword = String(kw.keyword ?? '');
+      const lang = String(kw.language ?? '');
+      if (!keyword || !lang) continue;
+      if (kw.status === 'paused') continue;
+      if (!queryLanguages.includes(lang)) continue;
+      if (platform && Array.isArray(kw.pausedPlatforms) && kw.pausedPlatforms.includes(platform)) {
+        continue;
+      }
+      for (const storefront of storefrontsForLanguage(code)) {
+        const id = `${product.productId}:${lang}:${storefront}:${keyword}`;
+        specs.push({
+          id,
+          kind: RANK_KIND,
+          title: `排名采集: ${keyword} @ ${storefront} (${lang})`,
+          intervalMinutes,
+          instance: {
+            projectName,
+            productId: product.productId,
+            keyword,
+            queryLanguage: lang,
+            storefront,
+            platform,
+            groupKey: platform
+              ? `rank:${product.productId}:${platform}:${lang}:${storefront}`
+              : `rank:${product.productId}:${lang}:${storefront}`,
+          },
+        });
+      }
+    }
+  }
+  return specs;
 }
 
 /** 项目级 github-sync 实例规格（每注册项目一行）。 */
