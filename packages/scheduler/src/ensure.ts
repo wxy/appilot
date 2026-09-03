@@ -27,7 +27,7 @@ export interface EnsureOptions {
 export function resolveSchedulerCli(requirer?: { resolve(id: string): string }): string | null {
   try {
     const req = requirer ?? (require as unknown as { resolve(id: string): string });
-    return req.resolve('@appilot-labs/appilot-scheduler/dist/cli.js');
+    return req.resolve('@appilot-labs/appilot-scheduler/cli');
   } catch {
     return null;
   }
