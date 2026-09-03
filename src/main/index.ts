@@ -5,6 +5,7 @@ import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
 import { startRegistrySync } from "./registry-sync";
 import { startTaskScheduler } from "./scheduler";
+import { registerHeadlessReadIpc } from "./headless-ipc";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
 import { setupLogger } from "./logger";
 
@@ -67,6 +68,7 @@ function createWindow() {
 app.whenReady().then(() => {
   setupLogger();
   registerIpcHandlers();
+  registerHeadlessReadIpc();
   // P4：确保调度守护进程（best-effort；daemon 优先成为主，本壳调度保留为
   // lease 仲裁 fallback——Electron scheduleGate 会让位给 daemon）。
   ensureSchedulerDaemon();
