@@ -1,9 +1,17 @@
-# Appilot 调度守护进程架构蓝图（方案 A）
+# Appilot 调度守护进程架构蓝图（方案 A · 修订 v2：常驻）
 
-> 状态：设计蓝图（P0）。目标：把「后台自动调度执行」从端侧（Electron / DSH）抽成
-> **独立常驻调度守护进程**；端侧只做展示与交互。任何端启动都会确保守护进程在跑，
-> 后启动的端检测到已运行的守护进程后直接与之通讯；守护进程在没有端与其通讯时
-> 平滑退出（不残留僵尸调度）。
+> 状态：设计蓝图（P0，v2 修订）。目标：把「后台自动调度执行」从端侧（Electron / DSH）
+> 抽成 **独立常驻调度守护进程**——采集与任何 UI 生命周期解耦（**无 UI 打开时也持续
+> 采集**，这是产品事实：运营监控不能随 UI 开合而中断）。端侧只做展示与交互；
+> 任何端启动都会确保守护进程在跑，后启动的端检测到已运行的守护进程后直接通讯。
+>
+> v2 修订（第一性原理评审结论）：
+> - 删除 v1 的「无客户端空闲退出」——它自相矛盾（daemon 的核心收益恰是无 UI 持续
+>   采集；UI 全关就让 daemon 退出等于否定该收益）。daemon **常驻**。
+> - 「不残留僵尸」不再靠空闲退出，而靠：单例仲裁（启动 acquire）+ 系统保活
+>   （launchd KeepAlive / 壳 ensure 兜底）+ 租约 TTL。
+> - 新增两处设计：**进程保活**（无 UI 时崩溃自动拉起）与**凭据源**（daemon 无 UI
+>   时的凭据获取）。
 >
 > 前置数据/执行统一（M4-C1/C2）完成前，本蓝图是目标形态；落地顺序见「里程碑」。
 
@@ -24,7 +32,7 @@
         │  - createLeaseScheduler({executors}).start() │ ← 唯一执行 tick
         │  - 本地 socket 服务：壳心跳 / runNow /     │
         │    任务事件推送（task:started/finished）  │
-        │  - 空闲退出：无客户端心跳 N 分钟 → 优雅退出 │
+        │  - 常驻：不因无客户端退出；保活见 §6       │
         └───────▲───────────────────▲───────────┘
       JSON-RPC  │   (Unix socket / named pipe)
         ┌───────┴─────┐      ┌──────┴────────┐
@@ -49,7 +57,7 @@
 | 壳（Electron/DSH） | 只调 headless service + scheduler 的 `ensureScheduler()` 助手 | 共享助手放 scheduler 包导出 |
 
 守护进程逻辑分层（便于单测）：
-- `src/daemon.ts`：生命周期（acquire / reconcile 周期 / scheduler.start / 空闲退出）
+- `src/daemon.ts`：生命周期（acquire 单例仲裁 / reconcile 周期 / scheduler.start / 优雅退出信号处理）
 - `src/protocol.ts`：JSON-RPC 消息类型（纯，单测）
 - `src/server.ts`：本地 socket 服务（连接/心跳/触发/事件推送）
 - `src/ensure.ts`：`ensureScheduler()`——供壳调用的「spawn detached + ping + 崩溃重拉」
@@ -70,10 +78,11 @@
 运行:
   socket 接受壳连接：ping → pong；runNow(id) → 调 sched.runNow 回结果；
   task 事件：sched 执行回调 → 广播 notify:task-started / task-finished
-空闲退出:
-  无客户端心跳（或全部断开）持续 IDLE_TTL（默认 2min）→ 平滑退出：
-  停 reconcile/scheduler → 关 socket → exit(0)
-  （租约无需显式释放：心跳停止后 TTL 过期，下个启动者自然接管）
+退出（v2：常驻，仅在以下情况退出）:
+  - SIGTERM/SIGINT（系统关机、升级替换：新 daemon 由保活拉起、旧的自退）
+  - 升级：新版本进程 acquire 成功后旧进程收到信号退出
+  退出动作：停 reconcile/scheduler → 关 socket → exit(0)（租约心跳停止，
+  TTL 过期后新启动者自然接管——常驻下接管仅发生在崩溃恢复路径）
 ```
 
 - reconcile 的数据源 = **共享 DB**（注册项目 → github-sync 实例；M4-C2 后
@@ -110,13 +119,20 @@ ensureScheduler():
 崩溃恢复：壳 ping 失败（守护进程崩）→ 回到 1 重拉（调度状态在 DB，无缝续跑）
 ```
 
-## 6. 退出与僵尸防护
+## 6. 常驻、保活与单例（v2：防僵尸不靠空闲退出）
 
-- daemon 空闲判定：无客户端 `ping`/连接持续 `IDLE_TTL`（默认 2min，
-  `APPILOT_SCHEDULER_IDLE_TTL_MS` 覆盖；设为 -1 = 永不空闲退出，供
-  headless 服务器部署）→ 优雅退出。
-- 双 daemon 竞争、daemon 崩溃、壳崩溃（未 bye 直接断连）都被心跳/租约覆盖，
-  不留僵尸：socket 文件随进程退出清理；租约 TTL 自动过期。
+- **常驻**：daemon 不因无客户端退出（产品事实：无 UI 也持续采集）。
+- **单例仲裁**：daemon 启动 `lease.acquire('scheduler', 60s)`——已有调度者（其他
+  daemon 或过渡期壳内调度）则自我退出。双壳同时拉起的竞态由此收敛。
+- **保活（无 UI 时崩溃自动拉起）**：
+  1. 首选 **launchd KeepAlive**（macOS LaunchAgent `~/Library/LaunchAgents/`，
+     `RunAtLoad` + `KeepAlive`；Windows 可服务化/任务计划）——系统级保活，
+     不依赖任何 UI；
+  2. 兜底：壳端 `ensureScheduler()`（UI 打开时 ping 失败 → spawn）——UI 开着时
+     不等 launchd 也能立刻恢复。
+- **崩溃恢复语义**：daemon 崩溃 → 任务状态全在 DB（实例行 nextRunAt/状态），
+  重启的 daemon 直接续跑（无进度丢失；进行中任务由幂等设计容忍重跑）。
+- 租约 TTL 仍兜底任何未知进程残留（无进程续租即过期）。
 
 ## 7. 数据流与 UI 实时性
 
@@ -134,11 +150,12 @@ ensureScheduler():
   headless 实例/新表表达；Electron rank 执行接 DB 实例；富数据 reconcile 从
   product_records/meta 推导（不读 electron-store）
 - **P3 守护进程包**：`@appilot-labs/appilot-scheduler`（daemon/server/protocol/
-  ensure + 进程级单测：acquire 单例、双 spawn 竞争、空闲退出）
+  ensure + 进程级单测：acquire 单例、双 spawn 竞争、崩溃重启续跑）+ launchd
+  LaunchAgent 安装（install/uninstall 子命令）
 - **P4 壳接入**：DSH 先行（纯 server 侧：启动 ensure + 停壳内调度 tick）→
   Electron 后（旧 scheduler 退役、接 ensure + 心跳 + 事件刷新）→ 真机验证
-  （Electron 关、DSH 开：调度继续由 daemon 执行；双端同时开：单 daemon；
-  全关后 daemon 2min 自退无残留）
+  （全 UI 关闭：daemon 继续采集；双端同时开：单 daemon；daemon 崩溃：launchd/
+  ensure 拉起后续跑；升级：旧 daemon 让位新版本）
 - **P5 清理**：electron-store `scheduledTasks`/`githubSyncCache` 退役；旧壳内
   租约身份（electron/dsh leaderId）退役；文档同步
 
@@ -148,6 +165,9 @@ ensureScheduler():
   P3/P4 在 P2 前只能跑 github-sync 类任务（可先作为「github-sync daemon」试点）。
 - 通讯协议是否要事件推送（notify） vs 纯 DB 轮询：建议先 notify（活动中心
   实时性），失败回退 DB 轮询。
-- 空闲 TTL 语义：个人单机默认 2min 自退；服务器部署设 -1 常驻。
+- **凭据源**：daemon 无 UI 时读取凭据的次序——环境变量（GITHUB_TOKEN /
+  APP_STORE_CONNECT_*）→ 共享凭据文件（~/.config/appilot/credentials.json，
+  由壳写入/daemon 只读）→ 现有 Electron ASC 密钥文件路径。M4-C 阶段随执行器
+  统一定义凭据抽象（readToken 已抽象，扩展 ASC）。
 - Electron 富数据仍须经 M3 双写留在 DB（daemon 不读 electron-store）——
   已满足；发布页 cache 已入 DB（M4-A ✓）。
