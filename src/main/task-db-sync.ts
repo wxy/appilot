@@ -103,10 +103,12 @@ export function mirrorTasksToDb(store: AppilotStore, tasks: ElectronTaskLike[]):
     store.tasks.upsert(row);
     mirrored += 1;
   }
-  // 清理：DB 中 source='electron' 但已不在当前源的任务行
+  // 清理：DB 中 source='electron' 但已不在当前源的任务行。
+  // P1：只清 kind 为 null 的纯镜像行——kind 非空的实例行由 reconcile 管理
+  // （github-sync 已切 DB 实例源；镜像清理不得删 reconcile 管理的实例行）。
   let pruned = 0;
   for (const row of store.tasks.all()) {
-    if (row.source === 'electron' && !sourceIds.has(row.id)) {
+    if (row.source === 'electron' && row.kind == null && !sourceIds.has(row.id)) {
       if (store.tasks.remove(row.id)) pruned += 1;
     }
   }

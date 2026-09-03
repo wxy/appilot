@@ -36,7 +36,7 @@ import {
 import { getStore } from "./store";
 import { scheduleGate, sharedStore } from "./registry-sync";
 import { recordRankSnapshotToDb } from "./rank-db-sync";
-import { reconcileTaskInstances, type TaskInstanceSpec } from "@appilot-labs/appilot-headless";
+import { reconcileTaskInstances, type TaskInstanceSpec, type TaskRow } from "@appilot-labs/appilot-headless";
 import type { AppStore } from "./store";
 
 interface ScheduledTaskBase {
@@ -410,46 +410,32 @@ function reconcileSchedulerRounds(store: AppStore, tasks: ScheduledTask[]): void
 }
 
 /**
- * One per-project background task that keeps the GitHub data cache warm:
- * fetch remote tags (never touches the worktree), then refresh the release
- * announcement + PR info cache so opening the workbench does not wait on the
- * GitHub API. The cache is consumed by checkForRelease via `githubCache`.
+ * P1：github-sync 执行源切共享 DB 实例——electron-store scheduledTasks 不再
+ * 生成 github-sync（由主 tick 从 DB 拉到期实例执行，见 runDueGithubSyncInstances）；
+ * 本函数只负责把期望实例集 reconcile 进共享 DB（source=electron）。
  */
 async function reconcileGithubSyncTasks(store: AppStore): Promise<void> {
   const projects: any[] = store.get("projects") || [];
+  // 移除 electron-store 里的 github-sync（执行源已切 DB；存量一次性清理）。
   const existing: ScheduledTask[] = store.get("scheduledTasks") || [];
-  const desired = new Map<string, GithubSyncTask>();
-  for (const project of projects) {
-    if (!project?.repo?.githubUrl) continue;
-    const id = githubSyncTaskId(project.id);
-    const previous = existing.find((task) => task.id === id) as
-      | GithubSyncTask
-      | undefined;
-    desired.set(id, {
-      id,
-      kind: "github-sync",
-      projectId: project.id,
-      intervalMinutes: previous?.intervalMinutes || 60,
-      nextRunAt: previous?.nextRunAt || nextRunAt(id, 60),
-      lastRunAt: previous?.lastRunAt ?? null,
-      firstRunAt: previous?.firstRunAt ?? null,
-      executionCount: previous?.executionCount || 0,
-      lastStatus: previous?.lastStatus,
-      enabled: previous?.enabled ?? true,
-      consecutiveFailures: previous?.consecutiveFailures || 0,
-      lastDurationMs: previous?.lastDurationMs,
-    });
+  const withoutGithub = existing.filter((task) => task.kind !== "github-sync");
+  if (withoutGithub.length !== existing.length) {
+    store.set("scheduledTasks", withoutGithub);
   }
-  const next: ScheduledTask[] = [
-    ...existing.filter((task) =>
-      task.kind === "rank" ||
-      task.kind === "ops-sync" ||
-      task.kind === "reviews-sync" ||
-      task.kind === "build-status",
-    ),
-    ...Array.from(desired.values()),
-  ];
-  store.set("scheduledTasks", next);
+  const specs: TaskInstanceSpec[] = projects
+    .filter((p: any) => p?.id && p?.name && p?.repo?.githubUrl && p?.localPath)
+    .map((p: any) => ({
+      id: githubSyncTaskId(p.id),
+      kind: "github-sync",
+      title: "GitHub 发布同步",
+      intervalMinutes: 60,
+      instance: { projectId: p.id, projectName: p.name, path: p.localPath },
+    }));
+  try {
+    reconcileTaskInstances(sharedStore(), specs, "electron");
+  } catch (err: any) {
+    log.warn(`github-sync instances reconcile failed: ${err?.message || String(err)}`);
+  }
 }
 
 async function reconcileOpsTasks(store: AppStore): Promise<void> {
@@ -729,50 +715,19 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
   let responseBytes = 0;
   let status: "success" | "failed" = "success";
   try {
-    if (!project?.localPath) throw new Error("Project not found");
-    // M2：github-sync 计算链收敛到 core 单一实现（inspectProjectRelease：
-    // fetchRemoteTags + listGitHubReleases + fetchRepoCapabilities +
-    // checkForRelease）。壳只保留 githubSyncCache 副作用与任务簿记。
-    const { inspectProjectRelease } = await import("@appilot-labs/appilot-core/project-sync");
-    // Background sync must never touch the worktree or local branches: fetch
-    // only updates remote-tracking refs and tags (inspect fetchRemote: true).
-    const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
-    const inspection = await inspectProjectRelease(project.localPath, {
-      token,
-      fetchRemote: true,
-      lastSeenSha: project.lastReleaseSha || null,
-      onApiStats: (rb, pb) => {
-        requestBytes += rb;
-        responseBytes += pb;
-      },
+    const stats = { requestBytes: 0, responseBytes: 0 };
+    await githubSyncBody(store, project, (rb, pb) => {
+      stats.requestBytes += rb;
+      stats.responseBytes += pb;
     });
-    const all: Record<string, any> = store.get("githubSyncCache") || {};
-    all[task.projectId] = {
-      tag: inspection.release?.tag ?? null,
-      release: inspection.material?.githubRelease ?? null,
-      pullRequests: inspection.material?.pullRequests || [],
-      prSchemaVersion: GITHUB_SYNC_CACHE_PR_SCHEMA,
-      releases: inspection.releases,
-      repoCapabilities: inspection.repoCapabilities,
-      lastSeenSha: inspection.lastSeenSha ?? project.lastReleaseSha ?? null,
-      syncedAt: inspection.syncedAt,
-    };
-    store.set("githubSyncCache", all);
-    // M4-A：发布页缓存双写共享 DB（projectName 维度；UI 迁出 electron-store 前提）。
-    if (project?.name) {
-      try {
-        sharedStore().releaseCache.save(project.name, all[task.projectId] as Record<string, unknown>);
-      } catch (err: any) {
-        log.warn(`release cache write to shared db failed: ${err?.message || String(err)}`);
-      }
-    }
-    notifyDataChanged("releases");
+    requestBytes = stats.requestBytes;
+    responseBytes = stats.responseBytes;
     task.consecutiveFailures = 0;
     task.lastStatus = "success";
   } catch (err: any) {
     status = "failed";
     durationMs = Date.now() - startedAt;
-    log.warn(`Scheduled GitHub sync failed for ${task.projectId}: ${err.message}`);
+    log.warn(`Scheduled GitHub sync failed for ${task.projectId}: ${err?.message || String(err)}`);
     task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
     task.lastStatus = "failed";
     if (task.consecutiveFailures >= 5) {
@@ -802,6 +757,117 @@ async function runGithubSyncTask(store: AppStore, task: GithubSyncTask): Promise
       : nextRunAt(task.id, task.intervalMinutes || 60);
   notifyDataChanged("tasks");
 }
+
+/**
+ * github-sync 共享执行体（P1/M2/M4-A）：inspect 深度检测 + 写 electron-store
+ * githubSyncCache（发布页 UI）+ 双写共享 DB release_cache。供旧 electron-store
+ * 任务与 P1 DB 实例两种模式复用。
+ */
+async function githubSyncBody(
+  store: AppStore,
+  project: any,
+  onApiStats?: (requestBytes: number, responseBytes: number) => void,
+): Promise<{ inspection: any; summary: string }> {
+  if (!project?.localPath) throw new Error("Project not found");
+  const { inspectProjectRelease } = await import("@appilot-labs/appilot-core/project-sync");
+  const token = resolveEffectiveCredentials(store, project.id).githubToken;
+  const inspection = await inspectProjectRelease(project.localPath, {
+    token,
+    fetchRemote: true,
+    lastSeenSha: project.lastReleaseSha || null,
+    onApiStats,
+  });
+  const all: Record<string, any> = store.get("githubSyncCache") || {};
+  all[project.id] = {
+    tag: inspection.release?.tag ?? null,
+    release: inspection.material?.githubRelease ?? null,
+    pullRequests: inspection.material?.pullRequests || [],
+    prSchemaVersion: GITHUB_SYNC_CACHE_PR_SCHEMA,
+    releases: inspection.releases,
+    repoCapabilities: inspection.repoCapabilities,
+    lastSeenSha: inspection.lastSeenSha ?? project.lastReleaseSha ?? null,
+    syncedAt: inspection.syncedAt,
+  };
+  store.set("githubSyncCache", all);
+  if (project?.name) {
+    try {
+      sharedStore().releaseCache.save(project.name, all[project.id] as Record<string, unknown>);
+    } catch (err: any) {
+      log.warn(`release cache write to shared db failed: ${err?.message || String(err)}`);
+    }
+  }
+  notifyDataChanged("releases");
+  return { inspection, summary: inspection.summary };
+}
+
+/** P1：DB 实例模式——执行到期 github-sync 实例并写回共享 DB 行状态。 */
+async function runGithubSyncInstanceDb(store: AppStore, row: TaskRow): Promise<void> {
+  const inst = (row.instance ?? {}) as any;
+  const project =
+    (store.get("projects") || []).find((p: any) => p?.id === inst.projectId) || null;
+  const startedIso = new Date().toISOString();
+  nowRunningTask = {
+    kind: "github-sync",
+    keyword: "GitHub 发布监听",
+    language: "",
+    storefront: "",
+    startedAt: startedIso,
+  };
+  const s = sharedStore();
+  const base: any = {
+    id: row.id,
+    title: row.title || "GitHub 发布同步",
+    intervalMinutes: row.intervalMinutes || 60,
+    runCount: (row.runCount ?? 0) + 1,
+    source: row.source,
+    kind: row.kind,
+    instance: row.instance,
+  };
+  try {
+    const { summary } = await githubSyncBody(store, project, () => {});
+    s.tasks.upsert({
+      ...base,
+      lastRunAt: startedIso,
+      nextRunAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastStatus: "ok",
+      lastSummary: `${inst.projectName ?? project?.name ?? project?.id}: ${summary}`,
+    });
+  } catch (err: any) {
+    log.warn(`Github sync instance failed for ${row.id}: ${err?.message || String(err)}`);
+    s.tasks.upsert({
+      ...base,
+      lastRunAt: startedIso,
+      nextRunAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      lastStatus: "error",
+      lastSummary: err?.message || String(err),
+    });
+  } finally {
+    nowRunningTask = null;
+  }
+}
+
+/** P1：主 tick 拉到期 github-sync DB 实例执行（上限 3/轮；Electron 作为执行宿主）。 */
+async function runDueGithubSyncInstances(store: AppStore): Promise<void> {
+  try {
+    const s = sharedStore();
+    const now = Date.now();
+    const due = s.tasks
+      .all()
+      .filter(
+        (t) =>
+          t.source === "electron" &&
+          t.kind === "github-sync" &&
+          (!t.nextRunAt || new Date(t.nextRunAt).getTime() <= now),
+      )
+      .slice(0, 3);
+    for (const row of due) {
+      await runGithubSyncInstanceDb(store, row);
+    }
+  } catch (err: any) {
+    log.warn(`github-sync db instances failed: ${err?.message || String(err)}`);
+  }
+}
+
 
 async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void> {
   const projects: any[] = store.get("projects") || [];
@@ -1107,6 +1173,9 @@ export async function schedulerTick(): Promise<void> {
     await reconcileRankTasks(store);
     await reconcileGithubSyncTasks(store);
     await reconcileOpsTasks(store);
+    // P1：github-sync 实例由本 tick 从共享 DB 拉取执行（谁持主谁执行；
+    // 新 seed 实例（nextRunAt=now）本 tick 即可执行首轮）。
+    await runDueGithubSyncInstances(store);
     // Migrate existing drafts to the appVersion identity (one copy per
     // target version) when legacy duplicates exist.
     const projectsForMigration = store.get("projects") || [];
