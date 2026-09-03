@@ -11,6 +11,8 @@ import { useEffect, useState } from 'react';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { isHomeOpen, subscribeHome, closeHome } from './home-store';
 import { collectToolResults, resultOf } from './helpers';
+import { TaskTab } from './tabs';
+import { TASKS_PROMPT, taskRunPrompt } from './workbench';
 import { setRegistryCache, maybeRefreshRegistry, REGISTRY_LIST_PROMPT } from './registry-cache';
 
 const LIST_PROMPT = REGISTRY_LIST_PROMPT;
@@ -70,6 +72,8 @@ export function AppHome(props: AppHomeProps) {
   const [error, setError] = useState<string | null>(null);
   const [nodes, setNodes] = useState<readonly any[]>([]);
   const [addPath, setAddPath] = useState<string>('');
+  const [taskBusy, setTaskBusy] = useState(false);
+  const [taskFetched, setTaskFetched] = useState(false);
 
   // 默认填入当前工作区路径。
   useEffect(() => {
@@ -77,6 +81,24 @@ export function AppHome(props: AppHomeProps) {
   }, [visible, currentCwd]);
 
   useEffect(() => subscribeHome(setVisible), []);
+
+  // 主面板任务中心：可见时首次自动拉取 appilot_tasks（当前会话节点，可审计）。
+  useEffect(() => {
+    if (!visible || taskFetched || !props.run) return;
+    setTaskFetched(true);
+    setTaskBusy(true);
+    Promise.resolve(props.run(TASKS_PROMPT))
+      .catch(() => {})
+      .then(() => setTaskBusy(false));
+  }, [visible, taskFetched, props.run]);
+
+  const runTaskAction = (prompt: string) => {
+    if (!props.run || taskBusy) return;
+    setTaskBusy(true);
+    Promise.resolve(props.run(prompt))
+      .catch(() => {})
+      .then(() => setTaskBusy(false));
+  };
 
   // 订阅当前会话节点（list_projects / register_project 结果）。
   useEffect(() => {
@@ -377,11 +399,28 @@ export function AppHome(props: AppHomeProps) {
 
         {/* 全局入口 */}
         <div style={{ fontWeight: 600, fontSize: 14, margin: '18px 0 8px' }}>全局</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div style={entryCard}>
-            <div style={{ fontWeight: 500 }}>任务中心</div>
-            <div style={entryDesc}>定时任务（发布同步 / readiness）的状态——见工作台「任务」标签页</div>
+        {/* 任务中心：全局活动任务（共享 DB，agent 经 appilot_tasks 读取；可立即运行） */}
+        <div style={{ marginTop: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>任务中心</div>
+            <button
+              type="button"
+              style={smallBtn}
+              disabled={taskBusy || undefined}
+              onClick={() => runTaskAction(TASKS_PROMPT)}
+            >
+              {taskBusy ? '刷新中…' : '刷新任务'}
+            </button>
           </div>
+          <TaskTab
+            node={results['appilot_tasks']}
+            busy={taskBusy}
+            onRefresh={() => runTaskAction(TASKS_PROMPT)}
+            onRunTask={(taskId) => runTaskAction(taskRunPrompt(taskId))}
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
           <div style={entryCard}>
             <div style={{ fontWeight: 500 }}>设置</div>
             <div style={entryDesc}>Appilot 配置（凭据 / 项目注册表）——规划中</div>

@@ -31670,10 +31670,25 @@ function AppHome(props) {
   const [error, setError] = (0, import_react60.useState)(null);
   const [nodes, setNodes] = (0, import_react60.useState)([]);
   const [addPath, setAddPath] = (0, import_react60.useState)("");
+  const [taskBusy, setTaskBusy] = (0, import_react60.useState)(false);
+  const [taskFetched, setTaskFetched] = (0, import_react60.useState)(false);
   (0, import_react60.useEffect)(() => {
     if (visible && currentCwd && !addPath) setAddPath(currentCwd);
   }, [visible, currentCwd]);
   (0, import_react60.useEffect)(() => subscribeHome(setVisible), []);
+  (0, import_react60.useEffect)(() => {
+    if (!visible || taskFetched || !props.run) return;
+    setTaskFetched(true);
+    setTaskBusy(true);
+    Promise.resolve(props.run(TASKS_PROMPT)).catch(() => {
+    }).then(() => setTaskBusy(false));
+  }, [visible, taskFetched, props.run]);
+  const runTaskAction = (prompt) => {
+    if (!props.run || taskBusy) return;
+    setTaskBusy(true);
+    Promise.resolve(props.run(prompt)).catch(() => {
+    }).then(() => setTaskBusy(false));
+  };
   (0, import_react60.useEffect)(() => {
     const session = props.sessionObservable ? props.sessionObservable(currentId) : null;
     if (!session) {
@@ -31932,16 +31947,34 @@ function AppHome(props) {
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginTop: 6 }, children: "\u672A\u68C0\u6D4B\u5230 Apple \u5E73\u53F0\uFF08iOS/macOS\uFF09\u7684\u9879\u76EE\u6682\u4E0D\u652F\u6301\u8FD0\u8425\u529F\u80FD\uFF08\u6DFB\u52A0\u540E\u4ECD\u4F1A\u4FDD\u7559\u5728\u5217\u8868\u4E2D\u5E76\u6807\u6CE8\uFF09\u3002" }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 600, fontSize: 14, margin: "18px 0 8px" }, children: "\u5168\u5C40" }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: entryCard, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: "\u4EFB\u52A1\u4E2D\u5FC3" }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: entryDesc, children: "\u5B9A\u65F6\u4EFB\u52A1\uFF08\u53D1\u5E03\u540C\u6B65 / readiness\uFF09\u7684\u72B6\u6001\u2014\u2014\u89C1\u5DE5\u4F5C\u53F0\u300C\u4EFB\u52A1\u300D\u6807\u7B7E\u9875" })
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { marginTop: 18 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontSize: 16, fontWeight: 600 }, children: "\u4EFB\u52A1\u4E2D\u5FC3" }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                "button",
+                {
+                  type: "button",
+                  style: smallBtn,
+                  disabled: taskBusy || void 0,
+                  onClick: () => runTaskAction(TASKS_PROMPT),
+                  children: taskBusy ? "\u5237\u65B0\u4E2D\u2026" : "\u5237\u65B0\u4EFB\u52A1"
+                }
+              )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: entryCard, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: "\u8BBE\u7F6E" }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: entryDesc, children: "Appilot \u914D\u7F6E\uFF08\u51ED\u636E / \u9879\u76EE\u6CE8\u518C\u8868\uFF09\u2014\u2014\u89C4\u5212\u4E2D" })
-            ] })
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+              TaskTab,
+              {
+                node: results["appilot_tasks"],
+                busy: taskBusy,
+                onRefresh: () => runTaskAction(TASKS_PROMPT),
+                onRunTask: (taskId) => runTaskAction(taskRunPrompt(taskId))
+              }
+            )
           ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }, children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { style: entryCard, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { fontWeight: 500 }, children: "\u8BBE\u7F6E" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: entryDesc, children: "Appilot \u914D\u7F6E\uFF08\u51ED\u636E / \u9879\u76EE\u6CE8\u518C\u8868\uFF09\u2014\u2014\u89C4\u5212\u4E2D" })
+          ] }) }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { style: { color: "var(--dsw-alias-label-tertiary)", fontSize: 11, marginTop: 12 }, children: "\u9879\u76EE\u6570\u636E\u6765\u81EA list_projects \u5DE5\u5177\u8FD0\u884C\u7ED3\u679C\uFF08\u5F53\u524D\u4F1A\u8BDD\uFF0C\u53EF\u5BA1\u8BA1\uFF09\uFF1B\u5DE5\u4F5C\u533A\u6570\u636E\u6765\u81EA\u5BBF\u4E3B\u3002" })
         ]
       }
