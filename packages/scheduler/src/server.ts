@@ -12,6 +12,8 @@ export interface ServerHandlers {
   onHello(client: { client: string; pid: number }): { protocolVersion: number; daemonPid: number };
   /** 显式运行任务；返回任务行或错误。 */
   onRunNow(taskId: string): Promise<unknown>;
+  /** shutdown：让 daemon 优雅退出（reply 后调用方自会关闭进程）。 */
+  onShutdown?(): void;
   /** 记录日志。 */
   log(msg: string): void;
 }
@@ -66,6 +68,11 @@ export function createSchedulerServer(socketPath: string, handlers: ServerHandle
             .catch((err: any) => reply(undefined, { code: -32000, message: err?.message || String(err) }));
           break;
         }
+        case 'shutdown':
+          reply({ ok: true });
+          // 延迟一拍，确保响应已写出再让调用方退出进程。
+          setTimeout(() => handlers.onShutdown?.(), 50);
+          break;
         case 'bye':
           socket.end();
           break;
