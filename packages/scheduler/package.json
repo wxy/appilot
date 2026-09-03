@@ -1,0 +1,27 @@
+{
+  "name": "@appilot-labs/appilot-scheduler",
+  "version": "0.1.0",
+  "description": "Appilot 调度守护进程——独立常驻的唯一调度者（无 UI）。端侧（Electron/DSH）启动时确保它运行并与之通讯；守护进程从共享 DB 拉取到期任务实例执行。",
+  "bin": { "appilot-scheduler": "./dist/cli.js" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./*": "./dist/*.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx tests/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@appilot-labs/appilot-headless": "^0.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1",
+    "typescript": "^5.7.0"
+  },
+  "files": ["dist"],
+  "publishConfig": { "access": "public" }
+}
