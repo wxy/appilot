@@ -108,10 +108,39 @@ async function main(): Promise<void> {
   if (args[0] === 'status') {
     try {
       const res = await socketRequest(socketPath, 'hello', { client: 'cli', pid: process.pid });
-      console.log(JSON.stringify({ running: true, ...(res?.ok ? res : {}) }, null, 2));
+      console.log(JSON.stringify({ running: true, schedulerDaemon: true, ...(res?.ok ? res : {}) }, null, 2));
     } catch (err: any) {
-      console.log(JSON.stringify({ running: false, error: err?.message || String(err) }, null, 2));
-      process.exitCode = 1;
+      // socket 不通 → daemon 未跑；查共享 DB 租约看是否有壳（dsh/electron）在调度。
+      let leader: string | null = null;
+      let heartbeatAt: string | null = null;
+      try {
+        const { openStore } = require('@appilot-labs/appilot-headless') as typeof import('@appilot-labs/appilot-headless');
+        const s = openStore(dbPath);
+        const info = s.lease.info();
+        leader = info?.leaderId ?? null;
+        heartbeatAt = info?.heartbeatAt ?? null;
+        s.close();
+      } catch {
+        /* DB 不可读则保持 null */
+      }
+      const scheduled = leader !== null;
+      console.log(
+        JSON.stringify(
+          {
+            running: scheduled,
+            schedulerDaemon: false,
+            leader,
+            heartbeatAt,
+            note: scheduled
+              ? `调度者 = 壳进程「${leader}」（daemon 让位）——daemon 未在跑但调度在执行`
+              : '无调度者（未运行任何壳或 daemon）',
+            error: scheduled ? undefined : err?.message || String(err),
+          },
+          null,
+          2,
+        ),
+      );
+      if (!scheduled) process.exitCode = 1;
     }
     return;
   }
