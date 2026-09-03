@@ -1,5 +1,4 @@
 import { ipcMain } from "electron";
-import { migrateLegacyStoreProducts, findProductContext } from "../project-state";
 import {
   isSchedulerTimerActive,
   schedulerStatusSnapshot,
@@ -10,6 +9,7 @@ import {
 import { computeRankSchedulerStatus } from "../scheduler-status";
 import { getStore } from "../store";
 import { sharedStore } from "../registry-sync";
+import { taskCenterTasksFromDb, taskCenterOverviewFromDb } from "../task-center-db";
 
 function computeTimeline(
   tasks: ScheduledTask[],
@@ -167,21 +167,12 @@ export function registerSchedulerHandlers(): void {
   });
 
   ipcMain.handle("scheduler:list", async () => {
+    // 最终要求：任务中心读共享 DB（与 DSH/CLI/MCP 同一份活动任务，
+    // 含 daemon 执行状态）。执行统计（executions）仍取 electron-store。
     const s = await getStore();
-    const projects: any[] = (s.get("projects") || []).map(migrateLegacyStoreProducts);
-    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
-    const rounds: Record<string, any> = s.get("schedulerRounds") || {};
-    // Fallback round info for task lists that have not been reconciled yet
-    // (e.g. right after an upgrade): members = group tasks, done = tasks that
-    // have a lastRunAt, so the progress column is never empty.
-    const roundByGroup: Record<string, { members: string[]; done: string[] }> = {};
-    for (const task of tasks) {
-      if (task.kind !== "rank" || !task.groupKey) continue;
-      const entry = roundByGroup[task.groupKey] || { members: [], done: [] };
-      entry.members.push(task.id);
-      if (task.lastRunAt) entry.done.push(task.id);
-      roundByGroup[task.groupKey] = entry;
-    }
+    const dbStore = sharedStore();
+    const dbTasks = taskCenterTasksFromDb(dbStore);
+    const dbOverview = taskCenterOverviewFromDb(dbStore);
     const now = Date.now();
     const executions: any[] = s.get("rankExecutions") || [];
     const dayMs = 24 * 60 * 60 * 1000;
@@ -189,10 +180,6 @@ export function registerSchedulerHandlers(): void {
       (entry) => new Date(entry.ts).getTime() >= now - dayMs,
     );
     const success = recent.filter((entry) => entry.status === "success");
-    const enabled = tasks.filter((task) => task.enabled);
-    const overdue = enabled.filter(
-      (task) => new Date(task.nextRunAt).getTime() <= now,
-    ).length;
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayExecutedTaskIds = new Set(
@@ -207,10 +194,10 @@ export function registerSchedulerHandlers(): void {
     const executedToday = executions.filter(
       (entry) => new Date(entry.ts).getTime() >= todayStart.getTime(),
     ).length;
-    const pending = enabled.filter(
+    const pending = dbTasks.filter(
       (task) => !todayExecutedTaskIds.has(task.id),
     ).length;
-    const totalExecuted = tasks.reduce(
+    const totalExecuted = dbTasks.reduce(
       (sum, task) => sum + (task.executionCount || 0),
       0,
     );
@@ -229,16 +216,13 @@ export function registerSchedulerHandlers(): void {
             100,
         )
       : null;
-    const nextDue = enabled
-      .map((task) => new Date(task.nextRunAt).getTime())
-      .sort((a, b) => a - b)[0];
 
     return {
       ...schedulerStatusSnapshot(),
       overview: {
-        total: tasks.length,
+        total: dbOverview.total,
         pending,
-        overdue,
+        overdue: dbOverview.overdue,
         executedToday,
         totalExecuted,
         avgDurationMs,
@@ -247,36 +231,9 @@ export function registerSchedulerHandlers(): void {
         hitRate,
         requestBytes: recent.reduce((sum, entry) => sum + (entry.requestBytes || 0), 0),
         responseBytes: recent.reduce((sum, entry) => sum + (entry.responseBytes || 0), 0),
-        nextDueAt: nextDue ? new Date(nextDue).toISOString() : null,
+        nextDueAt: dbOverview.nextDueAt,
       },
-      tasks: tasks.map((task) => {
-        const isProjectTask = task.kind === "github-sync" || task.kind === "ops-sync";
-        const context: { project: any; product?: any } | null = isProjectTask
-          ? { project: projects.find((item: any) => item.id === task.projectId) || null }
-          : findProductContext(projects, task.productId);
-        const project = context?.project || null;
-        const round =
-          task.kind === "rank" && task.groupKey
-            ? rounds[task.groupKey] || roundByGroup[task.groupKey] || null
-            : null;
-        return {
-          ...task,
-          projectId: context?.project?.id || (task as any).projectId || null,
-          projectName: project?.name || "已删除项目",
-          productName: isProjectTask
-            ? project?.name || ""
-            : context?.product.trackName || context?.project.name || "未知产品",
-          platform: isProjectTask ? null : context?.product.platform || "unknown",
-          round: round
-            ? {
-                done: Array.isArray(round.done) ? round.done.length : 0,
-                total: Array.isArray(round.members) ? round.members.length : 0,
-                roundStartedAt: round.roundStartedAt || null,
-                lastCompletedAt: round.lastCompletedAt || null,
-              }
-            : null,
-        };
-      }),
+      tasks: dbTasks,
     };
   });
 
