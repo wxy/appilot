@@ -29,7 +29,14 @@ export function syncReleaseCachesToDb(
     if (!p?.name || !p?.id) continue;
     const entry = cacheByProjectId?.[p.id];
     if (!entry) continue;
-    store.releaseCache.save(p.name, entry);
+    // syncedAt 取条目自带时间（真实同步时刻）——不能用默认 now 覆盖，否则 DB
+    // syncedAt 每轮 hydrate 都被刷新成当前时间，导致反向同步（syncedAt 比较）
+    // 永远触发、每 10s 无意义 backfill + 日志噪音。
+    const entrySyncedAt =
+      typeof (entry as any)?.syncedAt === 'string'
+        ? ((entry as any).syncedAt as string)
+        : undefined;
+    store.releaseCache.save(p.name, entry, entrySyncedAt);
     n += 1;
   }
   return n;

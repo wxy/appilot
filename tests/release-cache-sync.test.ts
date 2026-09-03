@@ -44,11 +44,13 @@ async function main(): Promise<void> {
   const a = store.releaseCache.get('ai-pulse-macos');
   assert.equal(a?.cache.tag, 'v1.2.8');
   assert.deepEqual(a?.cache.releases, [{ tag: 'v1.2.8', draft: false }], 'releases 数组 JSON 保留');
+  assert.equal(a?.syncedAt, '2026-09-02T00:00:00Z', 'syncedAt 应保留条目自带时间（非 now）');
   assert.equal(store.releaseCache.get('no-id'), undefined);
   // 幂等覆盖更新
-  syncReleaseCachesToDb(store, projects as any, { 'projA-id': { tag: 'v1.3.0', releases: [], pullRequests: [], repoCapabilities: null, lastSeenSha: 'x', syncedAt: 'x' } } as any);
+  syncReleaseCachesToDb(store, projects as any, { 'projA-id': { tag: 'v1.3.0', releases: [], pullRequests: [], repoCapabilities: null, lastSeenSha: 'x', syncedAt: '2026-09-02T06:00:00Z' } } as any);
   assert.equal(store.releaseCache.get('ai-pulse-macos')?.cache.tag, 'v1.3.0', '覆盖更新');
-  console.log('✓ cacheByProjectId → DB 映射 + 幂等覆盖');
+  assert.equal(store.releaseCache.get('ai-pulse-macos')?.syncedAt, '2026-09-02T06:00:00Z', '覆盖后 syncedAt 仍取条目值');
+  console.log('✓ cacheByProjectId → DB 映射 + 幂等覆盖 + syncedAt 保留');
 
   store.close();
   console.log('release-cache-sync 单测全部通过 ✓');
