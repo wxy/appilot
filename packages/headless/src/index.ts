@@ -17,6 +17,7 @@ export type {
   LeaseSchedulerOptions,
   TaskExecutor,
   TaskExecutorContext,
+  SchedulerAccelOptions,
 } from './scheduler.js';
 export { createHeadlessService } from './service.js';
 export type { HeadlessService } from './service.js';

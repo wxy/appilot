@@ -55,6 +55,8 @@ export interface LeaseSchedulerOptions {
   ttlMs?: number;
   /** 心跳/抢占检查间隔（默认 15s）。 */
   heartbeatMs?: number;
+  /** 加速模式参数（可选；提供即启用 setAccel 能力）。 */
+  accel?: SchedulerAccelOptions;
   log?(msg: string): void;
 }
 
@@ -66,6 +68,21 @@ export interface LeaseScheduler {
   snapshot(): TaskRow[];
   /** 立即运行一个任务（显式触发；非主也可用）。 */
   runNow(id: string): Promise<TaskRow | undefined>;
+  /**
+   * 加速模式（P5-1）：主 tick 间隔缩短 + 每轮实例上限放大（催快积压）。
+   * 非主时无副作用（从者不调度）。返回当前是否处于加速。
+   */
+  setAccel(on: boolean): boolean;
+  /** 当前是否加速。 */
+  isAccel(): boolean;
+}
+
+/** 加速模式参数（opt-in）。 */
+export interface SchedulerAccelOptions {
+  /** 加速时 tick 间隔（默认 2000ms）。 */
+  tickMs?: number;
+  /** 加速时每轮实例上限（默认 100）。 */
+  tickLimit?: number;
 }
 
 export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseScheduler {
@@ -73,9 +90,11 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   const executors = opts.executors ?? {};
   const ttlMs = opts.ttlMs ?? 60_000;
   const heartbeatMs = opts.heartbeatMs ?? 15_000;
+  const accelOpts = opts.accel ?? { tickMs: 2000, tickLimit: 100 };
   const log = opts.log ?? (() => {});
   let leader = false;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let accel = false;
   const running = new Set<string>();
 
   async function execute(job: ScheduledJob): Promise<void> {
@@ -166,7 +185,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
           t.kind in executors &&
           (!t.nextRunAt || new Date(t.nextRunAt).getTime() <= now),
       )
-      .slice(0, 20); // 单 tick 上限，避免大批量一次拖垮主 tick
+      .slice(0, accel ? (accelOpts.tickLimit ?? 100) : 20); // 单 tick 上限（加速放大）
   }
 
   /** 单次 tick：主 → 续租 + 跑到期任务；从 → 尝试抢占。 */
@@ -187,16 +206,36 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     for (const inst of dueInstances()) void executeInstance(inst);
   }
 
+  function restartTimer(): void {
+    if (timer) clearInterval(timer);
+    timer = setInterval(tick, accel ? (accelOpts.tickMs ?? 2000) : heartbeatMs);
+  }
+
   return {
     start() {
       if (timer) return;
       tick();
-      timer = setInterval(tick, heartbeatMs);
+      restartTimer();
+    },
+    setAccel(on) {
+      accel = on;
+      if (timer) restartTimer(); // 立即应用新节拍
+      if (on) {
+        log(`[scheduler:${leaderId}] accel on`);
+        tick(); // 立刻多跑一轮
+      } else {
+        log(`[scheduler:${leaderId}] accel off`);
+      }
+      return accel;
+    },
+    isAccel() {
+      return accel;
     },
     dispose() {
       if (timer) clearInterval(timer);
       timer = null;
       leader = false;
+      accel = false;
     },
     isLeader() {
       return leader;

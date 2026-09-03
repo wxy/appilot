@@ -160,6 +160,41 @@ async function main(): Promise<void> {
     store.close();
   });
 
+
+  /* ── 5. 加速模式：tick 间隔缩短 + 上限放大 ── */
+  await run('加速模式', async () => {
+    const dbPath = join(dir, 'accel.db');
+    const store = openStore(dbPath);
+    const repo = makeGitRepo('accel-proj', 'v3.0.0');
+    reconcileTaskInstances(store, githubSyncInstancesFor([{ name: 'accel-proj', path: repo }]), 'dsh');
+    const executors = buildHeadlessExecutors({ readToken: () => null });
+    const sched = createLeaseScheduler({
+      store,
+      leaderId: 'accel-test',
+      jobs: [],
+      executors,
+      heartbeatMs: 200,
+      accel: { tickMs: 50, tickLimit: 100 },
+    });
+    sched.start();
+    assert.equal(sched.isAccel(), false);
+    sched.setAccel(true);
+    assert.equal(sched.isAccel(), true, 'setAccel(true) 后应处于加速');
+    // 加速立刻触发一轮 tick —— 到期实例应被执行
+    const deadline = Date.now() + 6000;
+    let row: any = null;
+    while (Date.now() < deadline) {
+      row = store.tasks.get('github-sync:accel-proj');
+      if (row && row.lastStatus === 'ok') break;
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    assert.equal(row?.lastStatus, 'ok', '加速轮应执行实例');
+    sched.setAccel(false);
+    assert.equal(sched.isAccel(), false);
+    sched.dispose();
+    store.close();
+  });
+
   if (failures.length > 0) {
     console.error(`\n${failures.length} test(s) FAILED`);
     process.exit(1);

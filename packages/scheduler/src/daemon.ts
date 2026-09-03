@@ -70,8 +70,10 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     executors,
     ttlMs: opts.ttlMs ?? DEFAULT_TTL_MS,
     heartbeatMs: opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS,
+    accel: { tickMs: 2000, tickLimit: 100 },
     log,
   });
+  let accelOffTimer: ReturnType<typeof setTimeout> | null = null;
 
   // reconcile：共享 DB 注册项目 → github-sync 实例（DSH 同一推导）。
   const reconcile = () => {
@@ -95,6 +97,23 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       const result = await scheduler.runNow(taskId);
       if (!result) throw new Error(`未知任务实例: ${taskId}`);
       return result;
+    },
+    onAccelerate: (on, seconds) => {
+      if (accelOffTimer) clearTimeout(accelOffTimer);
+      accelOffTimer = null;
+      if (on) {
+        scheduler.setAccel(true);
+        log(`accelerate on${seconds ? ` for ${seconds}s` : ''}`);
+        const ms = Math.min(seconds && seconds > 0 ? seconds * 1000 : 5 * 60_000, 30 * 60_000);
+        accelOffTimer = setTimeout(() => {
+          scheduler.setAccel(false);
+          accelOffTimer = null;
+          log('accelerate auto-off');
+        }, ms);
+      } else {
+        scheduler.setAccel(false);
+        log('accelerate off');
+      }
     },
     onShutdown: () => selfShutdown?.(),
     log,

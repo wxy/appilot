@@ -104,7 +104,40 @@ async function main(): Promise<void> {
   assert.equal(runNow.result?.taskId, 'github-sync:proj');
   console.log('✓ socket runNow');
 
-  // 6. 优雅停止（stop 内关闭 store——停止后不可再查 store）
+  // 6. accelerate（socket 命令）→ daemon scheduler 加速（isAccel true 无法直接读，
+  //    以无异常响应为验证；加速开启不影响后续 stop）
+  const accelRes = await new Promise<any>((resolve, reject) => {
+    const sock = connect(socketPath);
+    const rl = createInterface({ input: sock });
+    sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 8, method: 'accelerate', params: { on: true, seconds: 60 } }) + '\n'));
+    rl.on('line', (line) => {
+      try {
+        const m = JSON.parse(line);
+        if (m.id === 8) resolve(m);
+      } catch {
+        /* ignore */
+      }
+    });
+    sock.on('error', reject);
+    setTimeout(() => reject(new Error('accelerate 超时')), 5000);
+  });
+  assert.equal(accelRes.result?.ok, true, 'accelerate 应 ok');
+  console.log('✓ socket accelerate');
+  // 关闭加速（避免影响后续）
+  await new Promise<any>((resolve) => {
+    const sock = connect(socketPath);
+    const rl = createInterface({ input: sock });
+    sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 10, method: 'accelerate', params: { on: false } }) + '\n'));
+    rl.on('line', () => {
+      sock.destroy();
+      resolve(null);
+    });
+    sock.on('error', () => resolve(null));
+    setTimeout(() => resolve(null), 3000);
+  });
+  console.log('✓ socket accelerate off');
+
+  // 7. 优雅停止（stop 内关闭 store——停止后不可再查 store）
   await d1.stop();
   assert.ok(logs.some((l) => l.includes('daemon exited cleanly')), '应记录干净退出');
   console.log('✓ 优雅停止');

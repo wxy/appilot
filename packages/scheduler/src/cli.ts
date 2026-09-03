@@ -149,6 +149,21 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ stopped: Boolean(res?.ok), ...(res ?? {}) }, null, 2));
     return;
   }
+  if (args[0] === 'accel') {
+    const mode = args[1];
+    if (mode === 'on' || mode === undefined) {
+      const seconds = Number(args[2] ?? 0) || 300;
+      const res = await socketRequest(socketPath, 'accelerate', { on: true, seconds });
+      console.log(JSON.stringify({ accel: true, seconds, ok: Boolean(res?.ok) }, null, 2));
+    } else if (mode === 'off') {
+      const res = await socketRequest(socketPath, 'accelerate', { on: false });
+      console.log(JSON.stringify({ accel: false, ok: Boolean(res?.ok) }, null, 2));
+    } else {
+      console.error('用法: appilot-scheduler accel [on [seconds]|off]');
+      process.exit(2);
+    }
+    return;
+  }
   const opts: DaemonOptions = { dbPath };
   let handle: Awaited<ReturnType<typeof runDaemon>> | null = null;
   try {
