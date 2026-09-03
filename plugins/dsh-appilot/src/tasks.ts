@@ -41,18 +41,19 @@ let activeScheduler: LeaseScheduler | null = null;
  * 保留为 lease 仲裁下的 fallback——daemon acquire 失败（无主时被本壳抢到）或
  * 未安装时本壳继续调度）。fire-and-forget，不阻塞插件启动。
  */
-function ensureDaemon(): void {
+async function ensureDaemon(): Promise<boolean> {
   try {
     const requirer = createRequire(import.meta.url);
     const cli = resolveSchedulerCli(requirer);
-    void ensureScheduler({
+    const ok = await ensureScheduler({
       socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
       spawnCommand: cli ? [process.execPath, cli] : undefined,
       timeoutMs: 3000,
       log: (m) => console.log(`[appilot-dsh] ${m}`),
     });
+    return ok;
   } catch {
-    /* 依赖缺失/解析失败：跳过 ensure，壳内调度兜底 */
+    return false; // 依赖缺失/解析失败：回退壳内调度
   }
 }
 
@@ -82,10 +83,16 @@ export function startAppilotTasks(reader: CredentialReader): () => void {
   reconcile();
   const reconcileTimer = setInterval(reconcile, RECONCILE_INTERVAL_MS);
 
-  // P4：确保调度守护进程（daemon 优先成为主；本调度作 lease 仲裁 fallback）。
-  ensureDaemon();
-
-  scheduler.start();
+  // P4：确保调度守护进程（阻塞一次，≤3s）。daemon 就绪（socket up 或已在跑）
+  // → 本壳不再启动调度 tick（daemon 主；runNow 不经主仍可用）；daemon 不可用
+  // （cli 缺失/未拉起）→ 壳内调度 fallback（lease 仲裁防双跑）。
+  void ensureDaemon().then((daemonUp) => {
+    if (daemonUp) {
+      console.log('[appilot-dsh] scheduler daemon active — shell scheduler disabled');
+    } else {
+      scheduler.start();
+    }
+  });
   return () => {
     clearInterval(reconcileTimer);
     activeScheduler = null;
