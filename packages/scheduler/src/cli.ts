@@ -7,6 +7,7 @@
  */
 import { runDaemon, type DaemonOptions } from './daemon.js';
 import { defaultDbPath } from '@appilot-labs/appilot-headless';
+import { parseMonitorDirsEnv } from './self-update.js';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { connect } from 'node:net';
@@ -126,7 +127,24 @@ async function main(): Promise<void> {
     }
     return;
   }
+  if (args[0] === 'checkUpdate') {
+    // 手动触发一次代码自检（等同壳启动通知）：changed=true 时 daemon 将自重启。
+    const res = await sendSchedulerCommand(socketPath, 'checkUpdate', {});
+    console.log(JSON.stringify({ checked: Boolean(res?.ok), ...(res ?? {}) }, null, 2));
+    return;
+  }
   const opts: DaemonOptions = { dbPath };
+  // 代码自检可配（测试/运维）：周期毫秒 + 监控目录（, 或 ; 分隔）。
+  const checkMs = process.env.APPILOT_SCHEDULER_UPDATE_CHECK_MS;
+  if (checkMs) {
+    const n = Number(checkMs);
+    if (Number.isFinite(n) && n >= 0) opts.updateCheckIntervalMs = n;
+  }
+  const monitorRaw = process.env.APPILOT_SCHEDULER_MONITOR_DIRS;
+  if (monitorRaw) {
+    const dirs = parseMonitorDirsEnv(monitorRaw);
+    if (dirs.length > 0) opts.monitorDirs = dirs;
+  }
   let handle: Awaited<ReturnType<typeof runDaemon>> | null = null;
   try {
     handle = await runDaemon(opts);

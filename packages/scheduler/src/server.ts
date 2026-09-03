@@ -14,6 +14,11 @@ export interface ServerHandlers {
   onRunNow(taskId: string): Promise<unknown>;
   /** accelerate：开/关加速（催快积压）。 */
   onAccelerate?(on: boolean, seconds?: number): void;
+  /**
+   * checkUpdate：立即检查磁盘代码是否已更新（壳启动通知；daemon 随后自重启）。
+   * 返回是否检测到变更——自重启在响应写回后由 daemon 内部调度。
+   */
+  onCheckUpdate?(): { changed: boolean };
   /** shutdown：让 daemon 优雅退出（reply 后调用方自会关闭进程）。 */
   onShutdown?(): void;
   /** 记录日志。 */
@@ -62,6 +67,11 @@ export function createSchedulerServer(socketPath: string, handlers: ServerHandle
         case 'ping':
           reply({ ok: true, ts: new Date().toISOString() });
           break;
+        case 'checkUpdate': {
+          const info = handlers.onCheckUpdate?.() ?? { changed: false };
+          reply({ ok: true, ...info });
+          break;
+        }
         case 'runNow': {
           const id = String(msg.params?.taskId ?? '');
           handlers

@@ -61,6 +61,20 @@ function pingSocket(socketPath: string, timeoutMs = 1500): Promise<boolean> {
   });
 }
 
+/** 通知 daemon 检查代码是否已更新（fire-and-forget；daemon 发现变更会自重启）。 */
+export function notifyCheckUpdate(socketPath: string): void {
+  try {
+    const socket = connect(socketPath);
+    socket.on('connect', () => {
+      socket.write(JSON.stringify({ jsonrpc: '2.0', method: 'checkUpdate', params: {} }) + '\n');
+      socket.end();
+    });
+    socket.on('error', () => socket.destroy());
+  } catch {
+    /* 通知失败无碍（daemon 自身会周期自检） */
+  }
+}
+
 /** 确保守护进程在跑；返回 true = 可用。 */
 export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
   const log = opts.log ?? (() => {});
@@ -68,9 +82,10 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
     opts.spawnCommand ?? (resolveSchedulerCli() ? [process.execPath, resolveSchedulerCli()!] : null);
   const deadline = Date.now() + (opts.timeoutMs ?? 8000);
 
-  // 1) 直接 ping（已有 daemon）
+  // 1) 直接 ping（已有 daemon）→ 顺手通知代码自检（壳启动即触发，不等 daemon 周期）
   if (await pingSocket(opts.socketPath)) {
     log('scheduler already running');
+    notifyCheckUpdate(opts.socketPath);
     return true;
   }
   if (!spawnCommand) {
@@ -100,6 +115,7 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
     if (gaveWay) return true;
     if (await pingSocket(opts.socketPath)) {
       log('scheduler up');
+      notifyCheckUpdate(opts.socketPath);
       return true;
     }
   }

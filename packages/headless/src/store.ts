@@ -79,6 +79,11 @@ export interface AppilotStore {
     leader(): string | null;
     /** 租约详情（leader + 最近心跳时间）；无主返回 null。 */
     info(): { leaderId: string; heartbeatAt: string } | null;
+    /**
+     * 显式让位（自更新重启/升级用）：仅当前主可释放，立即删除租约行，
+     * 让继任者无需等 TTL 即可接管。非当前主调用返回 false（无副作用）。
+     */
+    release(leaderId: string): boolean;
   };
   close(): void;
 }
@@ -324,6 +329,14 @@ export function openStore(dbPath: string): AppilotStore {
       info() {
         const r = db.prepare('SELECT leaderId, heartbeatAt FROM lease WHERE id = 1').get() as any;
         return r ? { leaderId: r.leaderId, heartbeatAt: r.heartbeatAt } : null;
+      },
+      release(leaderId) {
+        return tx(() => {
+          const existing = db.prepare('SELECT leaderId FROM lease WHERE id = 1').get() as any;
+          if (!existing || existing.leaderId !== leaderId) return false;
+          db.prepare('DELETE FROM lease WHERE id = 1').run();
+          return true;
+        });
       },
     },
 

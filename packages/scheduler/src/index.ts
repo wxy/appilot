@@ -10,3 +10,14 @@ export type { CommandResult } from './client.js';
 export type { EnsureOptions } from './ensure.js';
 export { encode, decodeLine, SCHEDULER_PROTOCOL_VERSION } from './protocol.js';
 export type { ClientRequest, ServerMessage, HelloAck } from './protocol.js';
+export { notifyCheckUpdate } from './ensure.js';
+export {
+  fingerprintDirs,
+  isChanged,
+  resolveCodeDirs,
+  restartSpec,
+  spawnRestartProcess,
+  parseMonitorDirsEnv,
+  RESTART_COOLDOWN_MS,
+} from './self-update.js';
+export type { CodeFingerprint, RestartSpec } from './self-update.js';

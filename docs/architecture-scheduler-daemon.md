@@ -171,3 +171,25 @@ ensureScheduler():
   统一定义凭据抽象（readToken 已抽象，扩展 ASC）。
 - Electron 富数据仍须经 M3 双写留在 DB（daemon 不读 electron-store）——
   已满足；发布页 cache 已入 DB（M4-A ✓）。
+
+## 10. 代码自更新（自重启；2026-09-04 运行事故教训 A 落成）
+
+问题：daemon 常驻进程把依赖 dist 加载进内存，部署新代码（覆盖磁盘文件）后不重启
+则执行器仍是旧逻辑（曾致 rank 大规模「参数不完整」误判——修复已部署但进程未重启）。
+
+机制（self-update.ts）：
+- **基线**：daemon 启动时对「本包 dist + appilot-headless dist + appilot-core dist」全部
+  `.js` 取内容哈希（sha256 前 16 位）作快照。
+- **检测**：周期（默认 60s，`APPILOT_SCHEDULER_UPDATE_CHECK_MS` 可调）重扫对比；
+  任何被监控文件哈希变化（含新增文件）→ 判定代码已更新。
+- **自重启**：`requestRestart()` → 摘除 socket 文件 → spawn 同命令新进程（detached）→
+  租约让位（lease.release，继任者免等 TTL）→ 优雅 stop → exit 0。新进程加载即最新代码。
+- **外部触发**：壳 `ensureScheduler`（Electron 启动 / DSH 任务页打开）ping 成功后发
+  `checkUpdate` socket 通知 → daemon 立即检查一次（无需等周期）；CLI
+  `appilot-scheduler checkUpdate` 亦可手动触发。
+- **防抖**：两次自重启间隔 ≥ 30s（部署持续写入时避免重启风暴）；spawn 失败则不退出，
+  下周期再试。
+- 监控目录可用 env 覆盖（`APPILOT_SCHEDULER_MONITOR_DIRS`，测试/运维用）。
+
+效果：部署新 dist 后至多一个检查周期（或任一壳下次启动时）daemon 自动换到新代码，
+壳与后台不再「一边新一边旧」。
