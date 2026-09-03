@@ -77,6 +77,10 @@ export function startAppilotTasks(reader: CredentialReader): () => void {
         .list()
         .map((p) => ({ name: p.name, path: p.path }));
       reconcileTaskInstances(store, githubSyncInstancesFor(projects), LEADER_ID);
+      // 退役清理：M1.5 前 DSH 汇总模板（release-sync/readiness）行残留
+      for (const legacy of ['release-sync', 'readiness']) {
+        store.tasks.remove(legacy);
+      }
     } catch {
       /* 下轮再试 */
     }

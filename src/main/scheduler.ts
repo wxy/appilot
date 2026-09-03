@@ -168,10 +168,6 @@ function taskSeed(task: Pick<RankScheduledTask, "productId" | "keyword" | "query
   return [task.productId, task.queryLanguage, task.storefront, task.keyword].join(":");
 }
 
-function githubSyncTaskId(projectId: string): string {
-  return `github-sync:${projectId}`;
-}
-
 /**
  * Bump when the shape of the cached PR list changes (e.g. new fields like
  * titles/commit counts/commit shas). Entries written by older builds must not
@@ -425,7 +421,9 @@ async function reconcileGithubSyncTasks(store: AppStore): Promise<void> {
   const specs: TaskInstanceSpec[] = projects
     .filter((p: any) => p?.id && p?.name && p?.repo?.githubUrl && p?.localPath)
     .map((p: any) => ({
-      id: githubSyncTaskId(p.id),
+      // id 用 projectName（与 DSH/daemon 的 githubSyncInstancesFor 一致——同一
+      // 项目只有一个 github-sync 实例；旧 projectId id 行由 reconcile prune 清理）。
+      id: `github-sync:${p.name}`,
       kind: "github-sync",
       title: "GitHub 发布同步",
       intervalMinutes: 60,
