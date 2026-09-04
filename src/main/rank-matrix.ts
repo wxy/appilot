@@ -20,12 +20,12 @@ import { STOREFRONTS_BY_LANGUAGE } from '@appilot-labs/appilot-core/storefronts'
 /** 英语地区商店（英语关键词×英语商店 = "英语"组；×其他语言商店 = "全局"组）。 */
 const EN_STOREFRONTS = new Set(STOREFRONTS_BY_LANGUAGE.en ?? []);
 
-/** 每桶关键词数（产品参数，与原型一致）。 */
-export const COVERAGE_BUCKET_KEYWORDS = 5;
+/** 每桶关键词数（用户确认 4 词一桶，更细粒度）。 */
+export const COVERAGE_BUCKET_KEYWORDS = 4;
 /** 覆盖窗口：成功快照不超过此时长即视为本轮已采到（严格 12h）。 */
 export const COVERAGE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
-export type BucketTone = 'cov' | 'part' | 'err' | 'pend' | 'stale';
+export type BucketTone = 'cov' | 'half' | 'part' | 'err' | 'pend' | 'stale';
 
 export interface MatrixBucket {
   tone: BucketTone;
@@ -105,8 +105,21 @@ export function bucketTone(
     else if (it.nextRunAt && new Date(it.nextRunAt).getTime() > now) pend += 1;
     else stale += 1;
   }
+  // 色阶（用户确认）：满→绿；≥半数→中间（青，没采完但过半）；(0,半)→黄；
+  // 有失败→红；0 且未到期→灰；0 且有已到期未采→橙
+  const len = insts.length;
   const tone: BucketTone =
-    err > 0 ? 'err' : cov === insts.length && insts.length > 0 ? 'cov' : cov > 0 ? 'part' : stale > 0 ? 'stale' : 'pend';
+    err > 0
+      ? 'err'
+      : len > 0 && cov === len
+        ? 'cov'
+        : len > 0 && cov / len >= 0.5
+          ? 'half'
+          : cov > 0
+            ? 'part'
+            : stale > 0
+              ? 'stale'
+              : 'pend';
   return { tone, keywords };
 }
 

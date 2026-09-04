@@ -83,15 +83,19 @@ async function main(): Promise<void> {
   const de = row.cells[1]; // columns[1] = en|de（global）
   assert.equal(us.total, 4);
   assert.equal(us.buckets.length, 1, '4 词 → 1 桶');
-  assert.equal(us.buckets[0].tone, 'part', '3 覆盖 + 1 过期未采 → part');
+  assert.equal(us.buckets[0].tone, 'half', '3/4 覆盖（≥半数）→ half');
   assert.equal(de.total, 5);
-  assert.equal(de.buckets.length, 1, '5 词 → 1 桶');
-  assert.equal(de.buckets[0].tone, 'err', '含 error → err（最差优先）');
+  assert.equal(de.buckets.length, 2, '5 词 → 2 桶（4+1）');
+  assert.equal(de.buckets[0].tone, 'cov', '桶1（alpha..delta 均 12h 覆盖）→ cov');
+  assert.equal(de.buckets[1].tone, 'err', '桶2（zeta error）→ err');
 
-  // bucketTone 边界：全覆盖 → cov；全未到期 → pend
+  // bucketTone 边界：全覆盖 → cov；低于半数 → part；全未到期 → pend
   const okOnly = store.tasks.all().filter((t) => t.id.startsWith('u') && t.id !== 'u4');
   const okOnlyTone = bucketTone(okOnly, store.snapshots.latestCheckedAtByKey(), NOW);
   assert.equal(okOnlyTone.tone, 'cov', '全部 12h 内覆盖 → cov');
+  const de4 = store.tasks.all().filter((t) => t.id.startsWith('d') && t.id !== 'd5');
+  const de4Tone = bucketTone(de4, store.snapshots.latestCheckedAtByKey(), NOW);
+  assert.equal(de4Tone.tone, 'cov', 'de 前 4 词 12h 内覆盖 → cov');
   // chunk 排序：按 keyword 字典序
   const chunks = chunkInstances(store.tasks.all(), COVERAGE_BUCKET_KEYWORDS);
   const firstChunkKeywords = chunks[0].map((t) => String(((t.instance as any)?.keyword)));
