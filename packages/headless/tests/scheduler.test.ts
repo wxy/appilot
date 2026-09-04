@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore } from "../src/store";
-import { createLeaseScheduler, type ScheduledJob } from "../src/scheduler";
+import { createLeaseScheduler, isRateLimitError, rateLimitBackoffMinutes, type ScheduledJob } from "../src/scheduler";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -14,6 +14,20 @@ function main() {
     failures += 1;
     console.error(`❌ FAIL: ${name} — ${err instanceof Error ? err.message : String(err)}`);
   };
+
+  // 限流识别与退避（教训 C）
+  {
+    assert.equal(isRateLimitError("iTunes Search API 403"), true, "403 → 限流");
+    assert.equal(isRateLimitError("iTunes Search API 429"), true, "429 → 限流");
+    assert.equal(isRateLimitError("rate limit exceeded"), true);
+    assert.equal(isRateLimitError("rank 实例缺少 trackId"), false, "业务错误非限流");
+    assert.equal(rateLimitBackoffMinutes(1, 720), 5, "首退避 5min");
+    assert.equal(rateLimitBackoffMinutes(2, 720), 10, "二次 10min");
+    assert.equal(rateLimitBackoffMinutes(6, 720), 160, "指数封顶 160min");
+    assert.equal(rateLimitBackoffMinutes(3, 60), 20, "不超过 interval(60) 前 20");
+    assert.equal(rateLimitBackoffMinutes(6, 30), 30, "超过 interval 时以 interval 封顶");
+    console.log("✅ PASS: 限流识别 + 指数退避");
+  }
 
   const dir = mkdtempSync(join(tmpdir(), "headless-sched-"));
   const dbPath = join(dir, "appilot.db");

@@ -12,6 +12,28 @@
 import type { AppilotStore } from './store.js';
 import type { TaskRow } from './schema.js';
 
+/**
+ * 限流类失败判定（教训 C 落码）：上游临时限制（HTTP 403/429 / rate limit /
+ * too many requests）≠ 业务错误——失败实例应短退避自动重试，而非等同业务
+ * 错误推回整周期（rank 曾因 iTunes IP 限流全池 403）。
+ */
+export function isRateLimitError(message: string): boolean {
+  return /(\b403\b|\b429\b|rate.?limit|too many requests)/i.test(message || '');
+}
+
+/**
+ * 限流退避分钟（指数增长）：5 → 10 → 20 → 40 → 80 → 160 min（streak 封顶 6），
+ * 且不超过任务自身周期/3h——既给上游冷却时间，又不把实例推过正常周期太多。
+ */
+export function rateLimitBackoffMinutes(streak: number, intervalMinutes: number): number {
+  const exp = 5 * 2 ** Math.max(0, Math.min(streak - 1, 5));
+  return Math.min(exp, 180, intervalMinutes || 180);
+}
+
+/** 实例执行最大并发（网络型任务；超出留待下个 tick——任务仍到期不会丢）。 */
+export const MAX_INFLIGHT_INSTANCES = 10;
+
+
 export interface ScheduledJobContext {
   store: AppilotStore;
   log(msg: string): void;
@@ -154,11 +176,27 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         lastSummary: summary,
       });
     } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const rateLimited = isRateLimitError(msg);
+      let nextRunAt = base.nextRunAt;
+      let lastSummary = msg;
+      if (rateLimited) {
+        // 限流：指数短退避自动重试（连续限流 streak 累进，RATELIMIT:n 标记），
+        // 而非把实例推回整个 interval（教训 C——曾全池 403 需等 12h 才重试）。
+        const prev = store.tasks.get(task.id);
+        const prevMatch = /^RATELIMIT:(\d+)/.exec((prev && prev.lastSummary) || '');
+        const streak = prevMatch ? Number(prevMatch[1]) + 1 : 1;
+        lastSummary = `RATELIMIT:${streak}: ${msg}`;
+        nextRunAt = new Date(
+          Date.now() + rateLimitBackoffMinutes(streak, base.intervalMinutes) * 60_000,
+        ).toISOString();
+      }
       store.tasks.upsert({
         ...base,
+        nextRunAt,
         lastRunAt: started,
         lastStatus: 'error' as const,
-        lastSummary: err instanceof Error ? err.message : String(err),
+        lastSummary,
       });
     } finally {
       running.delete(task.id);
@@ -203,7 +241,12 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       return; // 存在活主，等待其过期
     }
     for (const job of dueJobs()) void execute(job);
-    for (const inst of dueInstances()) void executeInstance(inst);
+    // 并发上限：避免网络型实例（github-sync/rank）执行堆积叠加触发上游限流
+    // （教训 B——全量到期时 tick 叠加曾把 iTunes 打到 IP 级 403）。
+    for (const inst of dueInstances()) {
+      if (running.size >= MAX_INFLIGHT_INSTANCES) break;
+      void executeInstance(inst);
+    }
   }
 
   function restartTimer(): void {
