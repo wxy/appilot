@@ -37,6 +37,8 @@ export interface AppilotStore {
     ): RankSnapshotRow[];
     /** 清理某项目早于 checkedAt 的旧快照（保留最近 N 天）。 */
     pruneOlderThan(projectName: string, beforeIso: string): number;
+    /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
+    pruneAllOlderThan(beforeIso: string): number;
   };
   tasks: {
     /**
@@ -220,6 +222,13 @@ export function openStore(dbPath: string): AppilotStore {
         const res = db
           .prepare('DELETE FROM rank_snapshots WHERE projectName = ? AND checkedAt < ?')
           .run(projectName, beforeIso);
+        return Number(res.changes);
+      },
+      /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
+      pruneAllOlderThan(beforeIso) {
+        const res = db
+          .prepare('DELETE FROM rank_snapshots WHERE checkedAt < ?')
+          .run(beforeIso);
         return Number(res.changes);
       },
       recent(projectName, opts = {}) {

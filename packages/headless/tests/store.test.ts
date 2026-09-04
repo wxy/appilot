@@ -84,8 +84,16 @@ try {
   assert.equal(us?.rank, 7); // 后写者（t2）胜
   const pruned = store.snapshots.pruneOlderThan("keep", "2026-09-02T00:00:00.000Z");
   assert.ok(pruned >= 1);
+  // 全库清理 pruneAllOlderThan：跨项目删除早于阈值快照
+  store.snapshots.add([
+    { projectName: "other", keyword: "k2", language: "en", storefront: "de", rank: 3, totalResults: 90, checkedAt: "2026-08-31T00:00:00.000Z" },
+    { projectName: "other", keyword: "k2", language: "en", storefront: "de", rank: 4, totalResults: 90, checkedAt: t2 },
+  ]);
+  const removedAll = store.snapshots.pruneAllOlderThan("2026-09-02T00:00:00.000Z");
+  assert.equal(removedAll, 1, "只删 8-31 那条（keep 的 t1 已被上一步清理）");
+  assert.equal(store.snapshots.latestByKey("other").length, 1, "t2 行保留");
   store.close();
-  pass("snapshots add / latestByKey / prune");
+  pass("snapshots add / latestByKey / prune / pruneAll");
 } catch (err) {
   fail("snapshots add / latestByKey / prune", err);
 }
