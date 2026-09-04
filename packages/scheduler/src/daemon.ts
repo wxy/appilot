@@ -80,8 +80,12 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const store = openStore(dbPath);
   // 单例仲裁：已有调度者（其他 daemon / 过渡期壳内调度）→ 自我退出。
   if (!store.lease.acquire(SCHEDULER_LEADER_ID, opts.ttlMs ?? DEFAULT_TTL_MS)) {
+    const info = store.lease.info();
     store.close();
-    throw new Error('已有调度者持有租约（single-instance 仲裁退出）');
+    throw new Error(
+      `已有调度主在跑（leader=${info?.leaderId ?? '?'} @ ${info?.heartbeatAt ?? '?'}，heartbeat 新鲜）——` +
+        'daemon 单例仲裁退出（若刚重启壳，是壳调度先抢到租约的启动竞态，属正常让位）',
+    );
   }
   log(`became schedule leader (${SCHEDULER_LEADER_ID}) @ ${dbPath}`);
 
