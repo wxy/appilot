@@ -51,7 +51,7 @@ export function TaskCenterPage() {
   const [failBusy, setFailBusy] = useState<string | null>(null);
   const [failMsg, setFailMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   // 顶部视图切换：统计 / 时间线 / 覆盖热力（避免整页过长）
-  const [viewTab, setViewTab] = useState<"stats" | "timeline" | "heatmap">("stats");
+  const [viewTab, setViewTab] = useState<"stats" | "timeline" | "heatmap" | "tasks">("tasks");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
@@ -500,6 +500,7 @@ export function TaskCenterPage() {
             ["stats", "统计"],
             ["timeline", "时间线"],
             ["heatmap", "覆盖热力"],
+            ["tasks", "任务列表"],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -580,6 +581,8 @@ export function TaskCenterPage() {
 
       {viewTab === "heatmap" && <RankCoverageHeatmap />}
 
+      {viewTab === "tasks" && (
+        <>
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
         <select
           value={typeFilter}
@@ -662,6 +665,8 @@ export function TaskCenterPage() {
           onRunComplete={refreshNow}
         />
       </div>
+        </>
+      )}
     </div>
   );
 }

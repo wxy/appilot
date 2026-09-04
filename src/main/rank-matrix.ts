@@ -15,6 +15,10 @@
  * 纯 node（不 import electron），可单测。
  */
 import type { AppilotStore, TaskRow } from '@appilot-labs/appilot-headless';
+import { STOREFRONTS_BY_LANGUAGE } from '@appilot-labs/appilot-core/storefronts';
+
+/** 英语地区商店（英语关键词×英语商店 = "英语"组；×其他语言商店 = "全局"组）。 */
+const EN_STOREFRONTS = new Set(STOREFRONTS_BY_LANGUAGE.en ?? []);
 
 /** 每桶关键词数（产品参数，与原型一致）。 */
 export const COVERAGE_BUCKET_KEYWORDS = 5;
@@ -32,6 +36,21 @@ export interface MatrixBucket {
 export interface MatrixColumn {
   lang: string;
   storefront: string;
+  /**
+   * 展示分组（表头合并行）：
+   * - 'local:en'：英语关键词 × 英语地区商店（英语组）
+   * - 'global'：英语关键词 × 其他语言商店（全局组——英语是全球通用检索语言）
+   * - 'local:<lang>'：本地化语言关键词（按 lang 分组，不区分商店地区）
+   */
+  group: string;
+}
+
+/** 列分组名（local:en / global / local:de …）。 */
+export function columnGroupOf(lang: string, storefront: string): string {
+  if (lang === 'en') {
+    return EN_STOREFRONTS.has(storefront) ? 'local:en' : 'global';
+  }
+  return `local:${lang}`;
 }
 
 export interface MatrixCell {
@@ -137,18 +156,26 @@ export function buildRankCoverageMatrix(
     }
   }
 
-  // 列 = (lang, storefront) 并集（lang 优先排序 → 同语言商店聚在一起）
+  // 列 = (lang, storefront) 并集。分组：英语组(英语×英语商店) → 全局组
+  // (英语×其他语言商店) → 其余本地化语言组。组内按 (lang, storefront) 排序。
   const colSet = new Set<string>();
   for (const k of groups.keys()) {
     const [, lang, storefront] = k.split('|');
     colSet.add(`${lang}|${storefront}`);
   }
+  const groupRank = (g: string) =>
+    g === 'local:en' ? 0 : g === 'global' ? 1 : 2;
   const columns: MatrixColumn[] = [...colSet]
     .map((s) => {
       const [lang, storefront] = s.split('|');
-      return { lang, storefront };
+      return { lang, storefront, group: columnGroupOf(lang, storefront) };
     })
-    .sort((a, b) => (a.lang + '|' + a.storefront).localeCompare(b.lang + '|' + b.storefront));
+    .sort((a, b) => {
+      const ga = groupRank(a.group);
+      const gb = groupRank(b.group);
+      if (ga !== gb) return ga - gb;
+      return (a.lang + '|' + a.storefront).localeCompare(b.lang + '|' + b.storefront);
+    });
 
   const productIds = [...new Set([...groups.keys()].map((k) => k.split('|')[0]))].sort();
   const rows: MatrixRow[] = productIds.map((productId) => {
