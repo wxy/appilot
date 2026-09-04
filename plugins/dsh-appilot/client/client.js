@@ -211,92 +211,8 @@ function OverviewCard(props) {
   ] });
 }
 
-// client/src/quick-actions.tsx
-var import_react = require("react");
-var import_jsx_runtime3 = require("react/jsx-runtime");
-var TITLE_PREFIX = "[Appilot] ";
-var ACTIONS = [
-  {
-    id: "refresh",
-    label: "\u5237\u65B0\u603B\u89C8",
-    title: "\u8FD0\u884C appilot_overview \u805A\u5408\u9879\u76EE/\u53D1\u5E03/readiness/\u6392\u540D/\u6D3B\u52A8\u6570\u636E",
-    prompt: "\u8BF7\u8FD0\u884C appilot_overview\uFF08\u8DEF\u5F84\u4F7F\u7528\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\uFF09\u5237\u65B0 Appilot \u603B\u89C8\u6570\u636E\uFF1B\u5982\u679C\u5DF2\u77E5\u8BE5\u4EA7\u54C1\u7684\u8DDF\u8E2A\u5173\u952E\u8BCD\uFF0C\u8BF7\u4E00\u5E76\u4F20\u5165 keywords \u53C2\u6570\u3002\u7136\u540E\u7B80\u8981\u6C47\u62A5\u7ED3\u679C\u3002"
-  },
-  {
-    id: "release",
-    label: "\u53D1\u5E03\u72B6\u6001",
-    title: "\u8FD0\u884C sync_release_status \u6C47\u603B git tag \u4E0E GitHub \u53D1\u5E03",
-    prompt: "\u8BF7\u8FD0\u884C sync_release_status\uFF08\u8DEF\u5F84\u4F7F\u7528\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\uFF09\uFF0C\u6C47\u603B\u53D1\u5E03\u72B6\u6001\u3002"
-  },
-  {
-    id: "rank",
-    label: "\u91C7\u96C6\u6392\u540D",
-    title: "\u8FD0\u884C appilot_overview \u91C7\u96C6\u5173\u952E\u8BCD\u5B9E\u65F6\u6392\u540D\uFF08\u9700 keywords\uFF09",
-    prompt: "\u8BF7\u8FD0\u884C appilot_overview\uFF08\u8DEF\u5F84\u4F7F\u7528\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\uFF0Ckeywords \u4F7F\u7528\u672C\u9879\u76EE\u8DDF\u8E2A\u5173\u952E\u8BCD\uFF09\uFF0C\u91C7\u96C6\u5173\u952E\u8BCD\u5728\u5404\u5546\u5E97\u7684\u5B9E\u65F6\u6392\u540D\u5E76\u6C47\u62A5\u3002"
-  },
-  {
-    id: "brief",
-    label: "\u751F\u6210\u7B80\u62A5",
-    title: "\u8FD0\u884C appilot_overview\uFF08includeBrief=true\uFF09\u751F\u6210 AI \u7B80\u62A5",
-    prompt: "\u8BF7\u8FD0\u884C appilot_overview\uFF08\u8DEF\u5F84\u4F7F\u7528\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\uFF0CincludeBrief=true\uFF09\uFF0C\u751F\u6210 Appilot AI \u7B80\u62A5\uFF08\u526F\u9A7E\u9A76\u7B80\u62A5\uFF09\uFF0C\u7136\u540E\u7B80\u8981\u6C47\u62A5\u5EFA\u8BAE\u4E8B\u9879\u3002"
-  }
-];
-function QuickActions(props) {
-  const [busyId, setBusyId] = (0, import_react.useState)(null);
-  const [error, setError] = (0, import_react.useState)(null);
-  const current = props.useSessions((s) => s.current ? s.byId?.[s.current] : null);
-  const isDedicated = !!current && !!current.displayTitle && current.displayTitle.startsWith(TITLE_PREFIX);
-  if (!isDedicated || !props.send) return null;
-  function run(action) {
-    if (busyId) return;
-    setBusyId(action.id);
-    setError(null);
-    Promise.resolve(props.send(action.prompt)).catch((err) => setError(err && err.message ? err.message : String(err))).then(() => setBusyId(null));
-  }
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
-    "div",
-    {
-      style: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "2px 16px 10px",
-        flexWrap: "wrap"
-      },
-      children: [
-        ACTIONS.map((action) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-          "button",
-          {
-            type: "button",
-            title: action.title,
-            disabled: busyId === action.id || void 0,
-            onClick: () => run(action),
-            style: {
-              padding: "4px 10px",
-              borderRadius: 8,
-              border: "1px solid var(--dsw-alias-border-l2)",
-              background: "var(--dsw-alias-interactive-bg-hover)",
-              color: "var(--dsw-alias-label-primary)",
-              fontSize: 12,
-              lineHeight: "18px",
-              cursor: "pointer",
-              opacity: busyId === action.id ? 0.6 : 1
-            },
-            children: busyId === action.id ? "\u8FD0\u884C\u4E2D\u2026" : action.label
-          },
-          action.id
-        )),
-        error ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)" }, children: [
-          "\u5931\u8D25\uFF1A",
-          error
-        ] }) : null
-      ]
-    }
-  );
-}
-
 // client/src/ai-usage.tsx
-var import_jsx_runtime4 = require("react/jsx-runtime");
+var import_jsx_runtime3 = require("react/jsx-runtime");
 function AiUsage(props) {
   let usage = null;
   if (props.useProjection) {
@@ -313,7 +229,7 @@ function AiUsage(props) {
   const output = usage.outputTokens || 0;
   const total = input + cacheRead + cacheWrite + output;
   if (total === 0) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
     "span",
     {
       title: `AI \u7528\u91CF\uFF08\u672C\u4F1A\u8BDD\uFF09\uFF1A\u8F93\u5165 ${input} \xB7 \u7F13\u5B58\u8BFB ${cacheRead} \xB7 \u7F13\u5B58\u5199 ${cacheWrite} \xB7 \u8F93\u51FA ${output}`,
@@ -331,7 +247,7 @@ function AiUsage(props) {
         whiteSpace: "nowrap"
       },
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { "aria-hidden": true, children: "\u26A1" }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { "aria-hidden": true, children: "\u26A1" }),
         total.toLocaleString(),
         " tokens"
       ]
@@ -359,25 +275,6 @@ function apply(ctx) {
         label: "AI \u7528\u91CF"
       },
       AiUsage
-    )
-  );
-  ctx.slots.inject(
-    "conversation.composer.dock",
-    () => ctx.slots.register(
-      {
-        name: "conversation.composer.dock",
-        id: "appilot-quick-actions",
-        order: 0,
-        label: "Appilot \u5FEB\u6377\u64CD\u4F5C",
-        inject: (dockSessionId) => ({
-          send: (prompt) => {
-            const conversation = ctx.sessions.scope(dockSessionId).get("conversation");
-            if (!conversation) return Promise.reject(new Error("conversation \u670D\u52A1\u4E0D\u53EF\u7528"));
-            return conversation.send(prompt);
-          }
-        })
-      },
-      QuickActions
     )
   );
   const cards = [

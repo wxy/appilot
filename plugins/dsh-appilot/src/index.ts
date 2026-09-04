@@ -5,6 +5,7 @@ import * as releaseDomain from '@appilot-labs/appilot-release';
 import { createAppilotOverviewTool } from './overview.js';
 import { startAppilotTasks, createTasksStatusTool, createTaskRunTool } from './tasks.js';
 import { createSnapshotsQueryTool } from './snapshots.js';
+import { registerAppilotCommands } from './commands.js';
 
 /**
  * @appilot-labs/dsh — Appilot 的 DeepSeek Harness 元插件（插件组）。
@@ -16,7 +17,7 @@ import { createSnapshotsQueryTool } from './snapshots.js';
  * 存储：共享注册表文件（方案 A）——Electron 与 DSH 共用 registry.json。
  */
 export const name = 'appilot';
-export const inject = ['tools'];
+export const inject = ['tools', 'commands'];
 
 export function apply(ctx: Context): void {
   const reader = ctxCredentialReader(ctx);
@@ -32,4 +33,6 @@ export function apply(ctx: Context): void {
   // 任务显式触发（runNow：release-sync / readiness）。
   ctx.tools.register(createTaskRunTool());
   startAppilotTasks(reader);
+  // 斜杠命令（/appilot task …）：任意会话可用，直读共享 DB，不经模型。
+  registerAppilotCommands(ctx);
 }
