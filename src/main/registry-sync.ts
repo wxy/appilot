@@ -120,6 +120,9 @@ export function startRegistrySync(
   let lastRichSig: string | null = null;
   // 发布缓存条数签名——仅变化时打日志去噪。
   let lastReleaseCacheCount: number | null = null;
+  // rank 反向同步日志节流（聚合窗口 ≥60s；rank 恢复期高频命中时不刷屏）。
+  let backfillAccum = 0;
+  let lastBackfillLogAt = 0;
 
   const hydrateOnce = async () => {
     try {
@@ -187,11 +190,21 @@ export function startRegistrySync(
       }
       // P2b：rank 快照反向同步（DB → electron-store 排名页）——DSH/daemon
       // 持主执行的 rank 结果同步回 Electron UI；仅 DB 新于本地才写。
+      // 日志节流：rank 恢复期 daemon 持续产出时每 10s 轮询都会命中，
+      // 聚合到 ≥60s 才记一条（避免每 10s 噪音）。
       try {
         const n = backfillRankSnapshotsToElectron(sharedStore(), projects as any[]);
         if (n > 0) {
           s.set('projects', projects);
-          log.info(`appilot: backfilled rank snapshots for ${n} products`);
+          backfillAccum += n;
+          const nowMs = Date.now();
+          if (nowMs - lastBackfillLogAt >= 60_000) {
+            log.info(
+              `appilot: backfilled rank snapshots (${backfillAccum} products since last log)`,
+            );
+            backfillAccum = 0;
+            lastBackfillLogAt = nowMs;
+          }
         }
       } catch (err: any) {
         log.warn(`rank backfill failed: ${err.message}`);
