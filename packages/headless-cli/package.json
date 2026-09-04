@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot-headless-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Appilot headless CLI——直接对接 headless 服务 API（projects/snapshots/tasks），无壳依赖。",
   "bin": {
     "appilot-headless": "./dist/cli.js"

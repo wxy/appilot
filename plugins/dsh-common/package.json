@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot-common",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Appilot DSH 插件共享基础设施（凭据读取 / 项目存储 / JSON 规范化）",
   "type": "module",
   "main": "./dist/index.js",
