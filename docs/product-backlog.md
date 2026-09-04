@@ -10,12 +10,13 @@
   删除需级联清理（tasks 实例 / product_records / project_meta / release_cache / 快照）
 - 归属：Electron 项目管理（按收敛决策，DSH 不再做项目管理 GUI）
 
-## 2. 失败任务批量处理按钮（含限流感知）
-- 需求：任务中心对**失败的活动任务**提供批量操作：
-  1. **全部清理**——清除失败状态（不再报这些错误）
-  2. **清理并重新安排运行**——清除失败并尽快重排一轮（重排必须**限速摊铺**，见观察记录）
-- 补充（2026-09-04 事故教训 C）：识别 403/429 类限流错误做**指数退避**而非等同业务错误置 error
-- 归属：Electron 任务中心 + daemon 控制（重置语义待定：清 lastStatus/error + nextRunAt 摊铺）
+## 2. 失败任务批量处理——✅ 主体完成（2026-09-04）
+- Electron 任务中心横幅（清除失败 / 清除并重新调度，id 哈希限速摊铺 30–210min）
+  + DSH `/appilot task clear|reschedule`——双端同一语义（PR #171/#172）
+- 双源清除修复：失败状态在 electron-store，mirror 每 10s 写回 DB——只清 DB 会被
+  mirror 复活；现双源（electron-store 源清 failed + DB 非 electron 行直清）（PR #173）
+- 遗留：教训 C（403/429 识别 → 指数退避 + 并发上限）尚未落码——事故中真实触发
+  iTunes IP 封禁，待 C5 实现
 
 ## 3. DSH 会话「活动」视图 —— ⚠️ 已按架构收敛撤销（2026-09-04）
 - 原诉求（DSH 会话内做活动视图/全局任务中心 GUI）已被决策取代：DSH 只做轻量工具插件，
@@ -32,4 +33,6 @@
 - 2026-09-04 运行事故复盘（rank 83→954 参数错误蔓延）：根因 = daemon 内存旧 executors（部署未重启），
   教训 A 已落成 daemon 代码自更新（PR #164）；教训 B/C 见 #2（限速摊铺 + 403/429 退避）
 - 2026-09-04 架构收敛决策：Electron 唯一完整壳 + DSH 轻量工具插件（见 docs/architecture-convergence.md，
-  里程碑 C1–C5）
+  里程碑 C1–C5；C1–C4 + 租约同 id 互斥已合）
+- 2026-09-04 事故（双 daemon 并存）复盘补充：Electron dev 拉起的 repo daemon 与手动起的
+  profile daemon 同 id 并存并跑——lease acquire 同 id 心跳新鲜不再无条件续租（PR #175）
