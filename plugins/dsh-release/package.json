@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot-release",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Appilot DSH 域插件：release（发布草稿 / readiness / 状态 / 文案生成与修订）",
   "type": "module",
   "main": "./dist/index.js",

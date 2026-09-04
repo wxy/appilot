@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot-project",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Appilot DSH 域插件：project（项目识别 / 上下文 / 注册表）",
   "type": "module",
   "main": "./dist/index.js",

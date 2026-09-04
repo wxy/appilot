@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Appilot DeepSeek Harness plugin — App 运营 Agent 工具（项目上下文 / 发布草稿 / readiness / 文案）",
   "type": "module",
   "main": "./dist/index.js",
