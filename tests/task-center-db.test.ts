@@ -21,10 +21,12 @@ async function main(): Promise<void> {
     updatedAt: new Date().toISOString(),
   });
   const gA = 'rank:projX:macos:macos:en:us';
+  // 时间用相对值（now 偏移）——固定日期会随真实时钟老化导致 overdue 断言漂移。
+  const d = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
   // 关键：rank instance 不带 projectName（Electron sync 现状）——归项目靠 DB product 索引
-  store.tasks.upsert({ id: 'projX:macos:en:us:app', title: '排名采集', intervalMinutes: 720, lastRunAt: '2026-09-03T00:00:00Z', nextRunAt: '2026-09-04T00:00:00Z', lastStatus: 'ok', lastSummary: 's', runCount: 3, source: 'electron', kind: 'rank', instance: { productId: 'projX:macos', keyword: 'app', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
+  store.tasks.upsert({ id: 'projX:macos:en:us:app', title: '排名采集', intervalMinutes: 720, lastRunAt: d(-1), nextRunAt: d(1), lastStatus: 'ok', lastSummary: 's', runCount: 3, source: 'electron', kind: 'rank', instance: { productId: 'projX:macos', keyword: 'app', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
   store.tasks.upsert({ id: 'projX:macos:en:us:kw2', title: '排名采集', intervalMinutes: 720, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron', kind: 'rank', instance: { productId: 'projX:macos', keyword: 'kw2', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
-  store.tasks.upsert({ id: 'github-sync:msszspx4', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: '2026-09-02T00:00:00Z', nextRunAt: '2026-09-03T00:00:00Z', lastStatus: 'error', lastSummary: 'e', runCount: 2, source: 'electron', kind: 'github-sync', instance: { projectId: 'msszspx4', projectName: 'GloWalk', path: '/x' } });
+  store.tasks.upsert({ id: 'github-sync:msszspx4', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: d(-2), nextRunAt: d(-1), lastStatus: 'error', lastSummary: 'e', runCount: 2, source: 'electron', kind: 'github-sync', instance: { projectId: 'msszspx4', projectName: 'GloWalk', path: '/x' } });
 
   const tasks = taskCenterTasksFromDb(store);
   assert.equal(tasks.length, 3);
@@ -47,7 +49,7 @@ async function main(): Promise<void> {
   assert.equal(err?.projectName, 'GloWalk');
 
   // kind-null 镜像行（Electron ops/reviews/build-status）按 id 前缀推断
-  store.tasks.upsert({ id: 'ops-sync:msszspx4', title: '数据同步', intervalMinutes: 1440, lastRunAt: '2026-09-02T00:00:00Z', nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 1, source: 'electron' });
+  store.tasks.upsert({ id: 'ops-sync:msszspx4', title: '数据同步', intervalMinutes: 1440, lastRunAt: d(-2), nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 1, source: 'electron' });
   const tasks2 = taskCenterTasksFromDb(store);
   const ops = tasks2.find((t) => t.id === 'ops-sync:msszspx4');
   assert.equal(ops?.kind, 'ops-sync', 'kind-null 镜像行按 id 推断类型');
