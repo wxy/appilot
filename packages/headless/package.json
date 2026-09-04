@@ -26,5 +26,9 @@
   },
   "dependencies": {
     "@appilot-labs/appilot-core": "^1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wxy/appilot.git"
   }
 }
