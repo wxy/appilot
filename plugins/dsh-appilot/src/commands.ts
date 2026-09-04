@@ -46,7 +46,7 @@ function hashOf(s: string): number {
   return Math.abs(h);
 }
 
-/** 任务状态摘要（与 appilot_tasks 同一数据源，压缩为命令行文本）。 */
+/** 任务状态摘要（与 appilot_tasks 同一数据源；按类型 × 状态表格文本）。 */
 function taskSummary(): string {
   const store = openSharedHeadlessStore();
   const all = store.tasks.all();
@@ -65,10 +65,10 @@ function taskSummary(): string {
     } else if (t.lastStatus === 'error') {
       error++;
       agg.error++;
-      if (failures.length < 5) {
+      if (failures.length < 8) {
         const label = KIND_LABELS[t.kind ?? ''] ?? t.kind ?? '(legacy)';
-        const msg = (t.lastSummary ?? '').slice(0, 60);
-        failures.push(`  - ${label} ${t.id}${msg ? `：${msg}` : ''}`);
+        const msg = (t.lastSummary ?? '').slice(0, 70);
+        failures.push(`- ${label} ${t.id}${msg ? `：${msg}` : ''}`);
       }
     } else {
       never++;
@@ -76,26 +76,31 @@ function taskSummary(): string {
     }
   }
   const leader = store.lease.leader();
-  const lines: string[] = [
-    `任务中心（共享 DB 直读 · 数据时间 ${new Date().toLocaleTimeString()}）`,
-    `调度主：${leader ?? '无（未运行）'} · 共 ${all.length} 实例：成功 ${ok} / 失败 ${error} / 未运行 ${never}`,
+  const head = [
+    `任务中心（数据时间 ${new Date().toLocaleTimeString()}）`,
+    `调度主：${leader ?? '无（未运行）'} · 共 ${all.length} 实例 · 总 ok ${ok} / err ${error} / never ${never}`,
   ];
-  const kinds = Object.keys(byKind).sort();
-  for (const k of kinds) {
+  const rows: string[][] = [];
+  for (const k of Object.keys(byKind).sort()) {
     const agg = byKind[k];
-    const label = KIND_LABELS[k] ?? k;
-    lines.push(
-      `  ${label}（${agg.total}）：ok ${agg.ok} / error ${agg.error} / never ${agg.never}`,
-    );
+    rows.push([
+      KIND_LABELS[k] ?? k,
+      String(agg.total),
+      String(agg.ok),
+      String(agg.error),
+      String(agg.never),
+    ]);
   }
+  const tail: string[] = [];
   if (error > 0) {
-    lines.push(`失败明细（前 ${failures.length}）：`);
-    lines.push(...failures);
-    lines.push('处理：/appilot task clear（清状态）或 /appilot task reschedule（清并重排）');
+    tail.push(`失败明细（前 ${failures.length}）：`);
+    tail.push(...failures);
+    tail.push('处理：/appilot task clear（清状态）或 /appilot task reschedule（清并重排）');
   } else {
-    lines.push('✓ 当前无失败任务');
+    tail.push('✓ 当前无失败任务');
   }
-  return lines.join('\n');
+  const body = tableText(null, ['任务类型', '实例', 'ok', 'error', 'never'], rows);
+  return [head[0], head[1], body].concat(tail).join('\n');
 }
 
 /** 失败批量处理：clear / reschedule（语义与 Electron 任务中心一致）。 */

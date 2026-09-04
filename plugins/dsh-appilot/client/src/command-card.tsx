@@ -119,7 +119,7 @@ function TableBlock({ rows }: { rows: string[][] }) {
       jsx('thead', {
         children: jsx('tr', {
           children: header.map((h, i) =>
-            jsx('th', { key: i, style: thStyle, children: tintCell(h) }),
+            jsx('th', { key: i, style: thStyle, children: h }),
           ),
         }),
       }),

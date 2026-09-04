@@ -332,7 +332,7 @@ function TableBlock({ rows }) {
       (0, import_jsx_runtime4.jsx)("thead", {
         children: (0, import_jsx_runtime4.jsx)("tr", {
           children: header.map(
-            (h, i) => (0, import_jsx_runtime4.jsx)("th", { key: i, style: thStyle, children: tintCell(h) })
+            (h, i) => (0, import_jsx_runtime4.jsx)("th", { key: i, style: thStyle, children: h })
           )
         })
       }),
