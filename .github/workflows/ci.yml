@@ -10,25 +10,44 @@ jobs:
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
+    env:
+      # 类型检查/单测不需要 Electron 运行时二进制——跳过下载
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # npm ci 冷装 621 包要 4–7 分钟（实测主瓶颈）——缓存 node_modules，
+      # 同 lock 命中即跳过 npm ci（typecheck 与 test 共享同一份）
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+      - if: steps.nm-cache.outputs.cache-hit != 'true'
+        run: npm ci
       - run: npm run typecheck
 
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - uses: actions/cache@v4
+        id: nm-cache-test
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+      - if: steps.nm-cache-test.outputs.cache-hit != 'true'
+        run: npm ci
       - run: npm test
 
   # Platform build — only on master push (expensive: macOS 10x, Windows 2x).
