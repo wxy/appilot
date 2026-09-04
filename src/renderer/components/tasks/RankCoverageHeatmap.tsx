@@ -83,7 +83,7 @@ export function RankCoverageHeatmap() {
         <div>
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名覆盖热力图</h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            产品（仓库 + 平台）× 语言/商店的覆盖——每点 = 5 个关键字；悬停格子看关键词明细
+            产品（仓库 + 平台）× 语言/商店的覆盖——英语×英语商店=「英语」，英语×其他语言商店=「全局」，其余为本地化语言组；每点 = 5 个关键字
             {generatedAt ? ` · ${new Date(generatedAt).toLocaleTimeString()}` : ""}
           </p>
         </div>
@@ -124,16 +124,27 @@ export function RankCoverageHeatmap() {
                       const heads: any[] = [];
                       let i = 0;
                       while (i < columns.length) {
-                        const lang = columns[i].lang;
+                        const group = columns[i].group;
                         let j = i;
-                        while (j < columns.length && columns[j].lang === lang) j++;
+                        while (j < columns.length && columns[j].group === group) j++;
+                        const name =
+                          group === "global"
+                            ? "全局"
+                            : group === "local:en"
+                              ? "英语"
+                              : langLabel(group.replace(/^local:/, ""));
                         heads.push(
                           <th
-                            key={"lg:" + lang}
+                            key={"g:" + group}
                             colSpan={j - i}
                             className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 text-center border-b border-zinc-100 dark:border-zinc-800"
+                            title={
+                              group === "global"
+                                ? "全局：英语关键词在其他语言商店的查询（英语为全球通用检索词）"
+                                : undefined
+                            }
                           >
-                            {langLabel(lang)}
+                            {name}
                           </th>,
                         );
                         i = j;

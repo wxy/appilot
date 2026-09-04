@@ -11,6 +11,7 @@ import {
   buildRankCoverageMatrix,
   chunkInstances,
   bucketTone,
+  columnGroupOf,
   COVERAGE_BUCKET_KEYWORDS,
 } from '../src/main/rank-matrix';
 
@@ -62,7 +63,15 @@ async function main(): Promise<void> {
   ]);
 
   const m = buildRankCoverageMatrix(store, { now: NOW });
-  assert.deepEqual(m.columns, [{ lang: 'en', storefront: 'de' }, { lang: 'en', storefront: 'us' }], '列=(语言×商店) 排序');
+  assert.deepEqual(
+    m.columns,
+    [
+      { lang: 'en', storefront: 'us', group: 'local:en' }, // 英语×英语商店 → 英语组（groupRank 0）
+      { lang: 'en', storefront: 'de', group: 'global' }, // 英语×非英语商店 → 全局组（groupRank 1）
+    ],
+    '列排序：英语组 → 全局组',
+  );
+  assert.equal(columnGroupOf('de', 'de'), 'local:de', '本地化语言关键词归本地组');
   assert.equal(m.rows.length, 1, '一个产品行');
   const row = m.rows[0];
   assert.equal(row.productId, 'app-a:ios');
@@ -70,8 +79,8 @@ async function main(): Promise<void> {
   assert.equal(row.platform, 'ios', '平台');
   assert.equal(row.productName, 'App A', 'product_records trackName');
   assert.equal(row.cells.length, 2, 'cells 与 columns 对齐');
-  const us = row.cells[1]; // columns[1] = en|us
-  const de = row.cells[0]; // columns[0] = en|de
+  const us = row.cells[0]; // columns[0] = en|us（local:en）
+  const de = row.cells[1]; // columns[1] = en|de（global）
   assert.equal(us.total, 4);
   assert.equal(us.buckets.length, 1, '4 词 → 1 桶');
   assert.equal(us.buckets[0].tone, 'part', '3 覆盖 + 1 过期未采 → part');
