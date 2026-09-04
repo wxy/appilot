@@ -92,6 +92,14 @@ try {
   const removedAll = store.snapshots.pruneAllOlderThan("2026-09-02T00:00:00.000Z");
   assert.equal(removedAll, 1, "只删 8-31 那条（keep 的 t1 已被上一步清理）");
   assert.equal(store.snapshots.latestByKey("other").length, 1, "t2 行保留");
+  // latestCheckedAtByKey：每 (productId,keyword,language,storefront) 最新时间表
+  store.snapshots.add([
+    { projectName: "keep", productId: "p1:ios", keyword: "kw", language: "en", storefront: "us", rank: 1, totalResults: 5, checkedAt: "2026-09-01T00:00:00.000Z" },
+    { projectName: "keep", productId: "p1:ios", keyword: "kw", language: "en", storefront: "us", rank: 2, totalResults: 5, checkedAt: "2026-09-03T00:00:00.000Z" },
+  ]);
+  const byKey = store.snapshots.latestCheckedAtByKey();
+  assert.equal(byKey["p1:ios|kw|en|us"], "2026-09-03T00:00:00.000Z", "同 key 取最新");
+  assert.equal(Object.keys(byKey).length >= 1, true);
   store.close();
   pass("snapshots add / latestByKey / prune / pruneAll");
 } catch (err) {

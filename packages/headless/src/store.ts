@@ -39,6 +39,11 @@ export interface AppilotStore {
     pruneOlderThan(projectName: string, beforeIso: string): number;
     /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
     pruneAllOlderThan(beforeIso: string): number;
+    /**
+     * 每个 (productId, keyword, language, storefront) 的最新快照时间表
+     * （覆盖热力图等全局聚合用）。key = `productId|keyword|language|storefront`。
+     */
+    latestCheckedAtByKey(): Record<string, string>;
   };
   tasks: {
     /**
@@ -232,6 +237,27 @@ export function openStore(dbPath: string): AppilotStore {
           .prepare('DELETE FROM rank_snapshots WHERE checkedAt < ?')
           .run(beforeIso);
         return Number(res.changes);
+      },
+      latestCheckedAtByKey() {
+        const out: Record<string, string> = {};
+        const rows = db
+          .prepare(
+            `SELECT productId, keyword, language, storefront, MAX(checkedAt) AS latest
+             FROM rank_snapshots
+             WHERE productId IS NOT NULL
+             GROUP BY productId, keyword, language, storefront`,
+          )
+          .all() as Array<{
+            productId: string;
+            keyword: string;
+            language: string;
+            storefront: string;
+            latest: string;
+          }>;
+        for (const r of rows) {
+          out[`${r.productId}|${r.keyword}|${r.language}|${r.storefront}`] = r.latest;
+        }
+        return out;
       },
       recent(projectName, opts = {}) {
         const limit = Math.min(Math.max(opts.limit ?? 200, 1), 2000);
