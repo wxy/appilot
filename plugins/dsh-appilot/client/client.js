@@ -257,64 +257,168 @@ function AiUsage(props) {
 
 // client/src/command-card.tsx
 var import_jsx_runtime4 = require("react/jsx-runtime");
-var SUB_LABEL = {
-  projects: "\u9879\u76EE\u4E0E\u4EA7\u54C1",
-  rank: "\u6392\u540D\u91C7\u96C6\u6982\u89C8",
-  release: "\u53D1\u5E03\u6458\u8981",
-  task: "\u4EFB\u52A1\u4E2D\u5FC3"
+var import_jsx_runtime5 = require("react/jsx-runtime");
+var THEME = {
+  projects: { accent: "#6366f1", label: "\u9879\u76EE\u4E0E\u4EA7\u54C1", soft: "#eef2ff" },
+  rank: { accent: "#8b5cf6", label: "\u6392\u540D\u91C7\u96C6\u6982\u89C8", soft: "#f5f3ff" },
+  release: { accent: "#0ea5e9", label: "\u53D1\u5E03\u6458\u8981", soft: "#f0f9ff" },
+  task: { accent: "#10b981", label: "\u4EFB\u52A1\u4E2D\u5FC3", soft: "#ecfdf5" }
 };
+var FALLBACK_THEME = { accent: "#71717a", label: "Appilot", soft: "#f4f4f5" };
+var TOKEN_RULES = [
+  { re: /✓/g, color: "var(--dsw-alias-state-success-primary)" },
+  { re: /\bok \d+\b/g, color: "var(--dsw-alias-state-success-primary)" },
+  { re: /\b(err|error) \d+\b/g, color: "var(--dsw-alias-state-error-primary)" },
+  { re: /\bnever \d+\b/g, color: "var(--dsw-alias-label-tertiary)" },
+  { re: /\b(失败|未运行|未到期|已到期未采到|部分覆盖|有失败)\b/g, color: "var(--dsw-alias-state-error-primary)" },
+  { re: /\b(已全采到|全采到|覆盖齐)\b/g, color: "var(--dsw-alias-state-success-primary)" },
+  { re: /\b(未过半|过半)\b/g, color: "var(--dsw-alias-state-warn-primary)" }
+];
+function tint(text) {
+  const parts = [];
+  let rest = text;
+  const find = () => {
+    let best = null;
+    for (const r of TOKEN_RULES) {
+      const m = r.re.exec(rest);
+      if (m && (best === null || m.index < best.index)) {
+        best = { index: m.index, len: m[0].length, color: r.color, raw: m[0] };
+      }
+    }
+    for (const r of TOKEN_RULES) r.re.lastIndex = 0;
+    return best;
+  };
+  let guard = 0;
+  while (rest.length > 0 && guard++ < 200) {
+    const hit = find();
+    if (!hit || hit.index > rest.length) {
+      if (rest) parts.push(rest);
+      break;
+    }
+    if (hit.index > 0) parts.push(rest.slice(0, hit.index));
+    parts.push(
+      (0, import_jsx_runtime4.jsx)("span", { style: { color: hit.color, fontWeight: 600 }, children: hit.raw })
+    );
+    rest = rest.slice(hit.index + hit.len);
+  }
+  if (parts.length === 0) parts.push(rest);
+  return parts;
+}
+function Row({ kind, children }) {
+  const base = { lineHeight: "19px" };
+  if (kind === "bullet") {
+    return (0, import_jsx_runtime4.jsx)("div", {
+      style: { ...base, display: "flex", gap: 6, alignItems: "baseline" },
+      children: [
+        (0, import_jsx_runtime4.jsx)("span", { style: { color: "var(--dsw-alias-label-tertiary)" }, children: "\u25B8" }),
+        (0, import_jsx_runtime4.jsx)("span", { style: { flex: 1, minWidth: 0 }, children })
+      ]
+    });
+  }
+  if (kind === "kv") {
+    const [label, ...valueParts] = children.props?.content ?? [];
+    const labelText = label;
+    const valueText = (valueParts || []).join("\uFF1A");
+    return (0, import_jsx_runtime4.jsx)("div", {
+      style: { ...base, display: "flex", gap: 8 },
+      children: [
+        (0, import_jsx_runtime4.jsx)("span", {
+          style: { flex: "0 0 120px", color: "var(--dsw-alias-label-tertiary)", fontSize: 12 },
+          children: labelText
+        }),
+        (0, import_jsx_runtime4.jsx)("span", { style: { flex: 1, minWidth: 0 }, children: valueText })
+      ]
+    });
+  }
+  return (0, import_jsx_runtime4.jsx)("div", { style: { ...base, paddingLeft: 2 }, children });
+}
+function Lines({ text }) {
+  const out = [];
+  const lines = String(text || "").split("\n");
+  lines.forEach((ln, i) => {
+    const line = ln.trimEnd();
+    if (!line.trim()) return;
+    const isFirst = i === 0;
+    const content = tint(line);
+    let node;
+    if (line.startsWith("\u2022 ")) {
+      node = (0, import_jsx_runtime4.jsx)(Row, { kind: "bullet", children: content });
+    } else {
+      const ci = line.indexOf("\uFF1A");
+      const kv = !line.startsWith(" ") && ci > 0 && ci <= 22 && !line.includes("\u7528\u6CD5") && !line.includes("\xB7 ");
+      if (kv) {
+        node = (0, import_jsx_runtime4.jsx)(Row, {
+          kind: "kv",
+          children: { props: { content: [line.slice(0, ci), line.slice(ci + 1)] } }
+        });
+      } else {
+        node = (0, import_jsx_runtime4.jsx)("div", {
+          style: isFirst ? { fontWeight: 600, color: "var(--dsw-alias-label-primary)", marginBottom: 2, lineHeight: "20px" } : { paddingLeft: 2, lineHeight: "19px" },
+          children: content
+        });
+      }
+    }
+    out.push((0, import_jsx_runtime4.jsx)(import_jsx_runtime4.Fragment, { key: i, children: node }));
+  });
+  return (0, import_jsx_runtime4.jsx)("div", { style: { display: "flex", flexDirection: "column", gap: 3 }, children: out });
+}
 function AppilotCommandCard(props) {
   const cmd = props?.node?.data ?? props?.node ?? null;
   const outcome = cmd?.outcome ?? null;
   const args = cmd?.args ?? "";
   const sub = String(args.trim().split(/\s+/)[0] ?? "").toLowerCase();
-  const subLabel = SUB_LABEL[sub] ?? (sub ? sub : "\u5E2E\u52A9");
-  const card = {
-    borderRadius: 12,
-    border: "1px solid var(--dsw-alias-border-l2)",
-    background: "var(--dsw-alias-bg-layer-3)",
-    padding: "10px 12px",
-    maxWidth: 640
-  };
-  const head = {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 6
-  };
-  const title = {
-    fontSize: 13,
-    fontWeight: 600,
-    color: "var(--dsw-alias-label-primary)"
-  };
-  const dot = {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    background: outcome ? outcome.kind === "error" ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)",
-    animation: outcome ? void 0 : "dsw-pulse 1s infinite"
-  };
-  const body = {
-    margin: 0,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    fontSize: 12.5,
-    lineHeight: "19px",
-    color: outcome?.kind === "error" ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-label-secondary)",
-    fontFamily: "inherit"
-  };
+  const theme = THEME[sub] ?? FALLBACK_THEME;
+  const running = !outcome;
+  const isError = outcome?.kind === "error";
   const text = outcome?.text ?? "";
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: card, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: head, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: dot }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { style: title, children: [
-        "Appilot \xB7 ",
-        subLabel
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" }, children: outcome ? outcome.kind === "error" ? "\u6267\u884C\u5931\u8D25" : "\u6267\u884C\u5B8C\u6210" : "\u6267\u884C\u4E2D\u2026" })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("pre", { style: body, children: text || (outcome ? "(\u65E0\u8F93\u51FA)" : "\u6B63\u5728\u8BFB\u53D6\u5171\u4EAB\u6570\u636E\u5E93\u2026") })
-  ] });
+  return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+    "div",
+    {
+      style: {
+        borderRadius: 14,
+        border: "1px solid var(--dsw-alias-border-l2)",
+        overflow: "hidden",
+        maxWidth: 680,
+        boxShadow: "var(--dsw-shadow-lv1)"
+      },
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { height: 3, background: `linear-gradient(90deg, ${theme.accent}, transparent)` } }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+          "div",
+          {
+            style: {
+              background: theme.soft,
+              padding: "8px 14px",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              borderBottom: "1px solid var(--dsw-alias-border-l2)"
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                "span",
+                {
+                  style: {
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: running ? "var(--dsw-alias-state-warn-primary)" : isError ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-state-success-primary)"
+                  }
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" }, children: [
+                "/appilot ",
+                sub
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" }, children: running ? "\u6267\u884C\u4E2D\u2026" : isError ? "\u6267\u884C\u5931\u8D25" : "\u6267\u884C\u5B8C\u6210" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { marginLeft: "auto", fontSize: 11, color: "var(--dsw-alias-label-tertiary)" }, children: theme.label })
+            ]
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { padding: "10px 14px 12px", background: "var(--dsw-alias-bg-layer-3)" }, children: running ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { fontSize: 12.5, color: "var(--dsw-alias-label-secondary)" }, children: "\u6B63\u5728\u8BFB\u53D6\u5171\u4EAB\u6570\u636E\u5E93\u2026" }) : text ? (0, import_jsx_runtime4.jsx)(Lines, { text }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { fontSize: 12.5, color: "var(--dsw-alias-label-tertiary)" }, children: "\uFF08\u65E0\u8F93\u51FA\uFF09" }) })
+      ]
+    }
+  );
 }
 
 // client/src/index.tsx

@@ -1,109 +1,15 @@
 /**
- * Appilot 定时任务（Phase 3 headless 租约选主调度；v4 实例任务统一：M1.5 DSH 接入）。
+ * Appilot 任务工具（架构收敛后 DSH = 纯查询/命令端）。
  *
- * - 任务 = 共享 DB 的实例行（kind + instance 参数）+ headless 核心执行器
- *   （buildHeadlessExecutors），由 lease 主 tick 执行；不存在壳特有任务；
- * - DSH 侧 reconcile：注册项目 → 每项目 github-sync 实例（source='dsh'），
- *   启动 + 每 60s 差异同步（注册/移除项目自动增删实例）；
- * - 状态统一在共享 DB tasks 表（appilot_tasks 读、appilot_task_run 显式触发）。
- *
- * 说明：任务只在 dsh 服务运行期间生效（Electron 桌面应用同理）；legacy
- * 汇总模板 buildHeadlessJobs（release-sync/readiness）不再由 DSH 调度装载。
+ * - 任务执行统一由**常驻调度 daemon / Electron** 承担（租约主 tick 执行共享
+ *   DB 实例行）；DSH **不再拉起调度器、不参与租约仲裁**（2026-09-04 收敛）。
+ * - appilot_tasks：只读共享 DB 任务状态（byKind/summary）；appilot_task_run：
+ *   显式触发经 daemon（controlRunNow）——daemon 未运行给出指引而非自行拉起。
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { jsonify, openSharedHeadlessStore, type CredentialReader } from '@appilot-labs/appilot-common';
-import {
-  buildHeadlessExecutors,
-  createLeaseScheduler,
-  defaultDbPath,
-  githubSyncInstancesFor,
-  reconcileTaskInstances,
-  type LeaseScheduler,
-} from '@appilot-labs/appilot-headless';
-import {
-  controlRunNow,
-  defaultSocketPath,
-  ensureScheduler,
-  resolveSchedulerCli,
-} from '@appilot-labs/appilot-scheduler';
-import { createRequire } from 'node:module';
-
-/** 本壳的调度租约身份。 */
-export const LEADER_ID = 'dsh';
-
-/** 实例差异同步间隔（ms）：注册/移除项目后 ≤60s 自动增删任务实例。 */
-const RECONCILE_INTERVAL_MS = 60_000;
-
-/** 当前进程内活跃的调度器（appilot_task_run 的 runNow 入口）；未启动为 null。 */
-let activeScheduler: LeaseScheduler | null = null;
-
-/**
- * P4：best-effort 确保调度守护进程在跑（daemon 优先成为调度主；本壳调度
- * 保留为 lease 仲裁下的 fallback——daemon acquire 失败（无主时被本壳抢到）或
- * 未安装时本壳继续调度）。fire-and-forget，不阻塞插件启动。
- */
-async function ensureDaemon(): Promise<boolean> {
-  try {
-    const requirer = createRequire(import.meta.url);
-    const cli = resolveSchedulerCli(requirer);
-    const ok = await ensureScheduler({
-      socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
-      spawnCommand: cli ? [process.execPath, cli] : undefined,
-      timeoutMs: 3000,
-      log: (m) => console.log(`[appilot-dsh] ${m}`),
-    });
-    return ok;
-  } catch {
-    return false; // 依赖缺失/解析失败：回退壳内调度
-  }
-}
-
-/** 启动 DSH 侧定时任务（返回清理函数）。由元插件 apply 调用。 */
-export function startAppilotTasks(reader: CredentialReader): () => void {
-  const store = openSharedHeadlessStore();
-  const scheduler = createLeaseScheduler({
-    store,
-    leaderId: LEADER_ID,
-    jobs: [], // v4：任务全部实例化（汇总模板退役）
-    executors: buildHeadlessExecutors({ readToken: (name) => reader(name) }),
-  });
-  activeScheduler = scheduler;
-
-  // reconcile：注册项目 → github-sync 实例（seed/参数刷新/清理）。多壳可并发跑，
-  // 幂等（seed 前检查存在）；写失败不阻断调度。
-  const reconcile = () => {
-    try {
-      const projects = store.projects
-        .list()
-        .map((p) => ({ name: p.name, path: p.path }));
-      reconcileTaskInstances(store, githubSyncInstancesFor(projects), LEADER_ID);
-      // 退役清理：M1.5 前 DSH 汇总模板（release-sync/readiness）行残留
-      for (const legacy of ['release-sync', 'readiness']) {
-        store.tasks.remove(legacy);
-      }
-    } catch {
-      /* 下轮再试 */
-    }
-  };
-  reconcile();
-  const reconcileTimer = setInterval(reconcile, RECONCILE_INTERVAL_MS);
-
-  // P4：确保调度守护进程（阻塞一次，≤3s）。daemon 就绪（socket up 或已在跑）
-  // → 本壳不再启动调度 tick（daemon 主；runNow 不经主仍可用）；daemon 不可用
-  // （cli 缺失/未拉起）→ 壳内调度 fallback（lease 仲裁防双跑）。
-  void ensureDaemon().then((daemonUp) => {
-    if (daemonUp) {
-      console.log('[appilot-dsh] scheduler daemon active — shell scheduler disabled');
-    } else {
-      scheduler.start();
-    }
-  });
-  return () => {
-    clearInterval(reconcileTimer);
-    activeScheduler = null;
-    scheduler.dispose();
-  };
-}
+import { jsonify, openSharedHeadlessStore } from '@appilot-labs/appilot-common';
+import { defaultDbPath } from '@appilot-labs/appilot-headless';
+import { controlRunNow } from '@appilot-labs/appilot-scheduler';
 
 /** appilot_tasks 状态工具：任务实例与状态（agent/前端读取）。 */
 export function createTasksStatusTool() {
@@ -121,9 +27,9 @@ export function createTasksStatusTool() {
     async execute() {
       const store = openSharedHeadlessStore();
       const all = store.tasks.all();
-      const dshInstances = all.filter(
-        (t) => t.source === LEADER_ID && t.kind != null,
-      );
+      // 架构收敛：DSH 不再产生/调度实例（daemon 源 = 'scheduler'）——
+      // dshInstances 恒空，保留字段仅为兼容旧消费者。
+      const dshInstances: typeof all = [];
       const electronTasks = all.filter((t) => t.source === 'electron');
       // 全局聚合（按 kind × lastStatus）：主面板任务页据此展示共享 DB 真实状态。
       const byKind: Record<
@@ -167,8 +73,8 @@ export function createTasksStatusTool() {
   });
 }
 
-/** appilot_task_run 工具：显式立即运行一个任务实例（同步等待结果）。 */
-export function createTaskRunTool(scheduler?: LeaseScheduler | null) {
+/** appilot_task_run 工具：显式立即运行一个任务实例（同步等待结果，经常驻 daemon）。 */
+export function createTaskRunTool() {
   return defineTool({
     name: 'appilot_task_run',
     description:
@@ -188,24 +94,21 @@ export function createTaskRunTool(scheduler?: LeaseScheduler | null) {
       ],
     },
     async execute(args: any) {
-      const sched = scheduler ?? activeScheduler;
       const id = String(args?.taskId ?? '');
-      // 统一控制路由：daemon 主 → daemon 执行（可跑 github-sync/rank 等）；
-      // daemon 不可达 → 本壳 scheduler（github-sync）或报错。
-      if (sched) {
-        const daemonRes = await controlRunNow(id, {
-          dbPath: process.env.APPILOT_DB_FILE || defaultDbPath(),
-        });
-        if (daemonRes.routed === 'daemon' && daemonRes.ok) {
-          return jsonify({ task: daemonRes.result, via: 'daemon' });
-        }
-        const result = await sched.runNow(id);
-        if (result) return jsonify({ task: result, via: 'local' });
-        return jsonify({
-          error: `未知任务实例或本端不可执行: ${id}${daemonRes.routed === 'none' ? '（daemon 未运行）' : ''}`,
-        });
+      // 架构收敛：DSH 仅是查询/命令端，不自行拉起调度器——执行统一由常驻
+      // daemon（Electron 任务中心启动/启动任务中心）承担。
+      const daemonRes = await controlRunNow(id, {
+        dbPath: process.env.APPILOT_DB_FILE || defaultDbPath(),
+      });
+      if (daemonRes.routed === 'daemon' && daemonRes.ok) {
+        return jsonify({ task: daemonRes.result, via: 'daemon' });
       }
-      return jsonify({ error: '调度器未运行（dsh 服务未启动）' });
+      return jsonify({
+        error:
+          daemonRes.routed === 'none'
+            ? `调度守护进程未运行——请先在 Electron「任务中心」启动任务中心，或运行 appilot-scheduler`
+            : `未知任务实例或无法执行: ${id}`,
+      });
     },
   });
 }
