@@ -224,3 +224,19 @@ export function startRegistrySync(
     gateTimer = null;
   };
 }
+
+/**
+ * 退出时释放 Electron 调度租约（架构收敛）：应用正常退出即让位，
+ * 重启/后续 daemon 无需等 TTL（60s）即可接管，避免「明明清了后台，
+ * 新 daemon 启动却因旧心跳被拒」的时序问题。
+ */
+export function releaseElectronLease(): void {
+  try {
+    const s = sharedStore();
+    if (s.lease.leader() === 'electron') {
+      s.lease.release('electron');
+    }
+  } catch {
+    /* 退出路径静默 */
+  }
+}

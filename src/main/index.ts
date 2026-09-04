@@ -3,7 +3,7 @@ import path from "path";
 import log from "electron-log";
 import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
-import { startRegistrySync } from "./registry-sync";
+import { startRegistrySync, releaseElectronLease } from "./registry-sync";
 import { startTaskScheduler } from "./scheduler";
 import { registerHeadlessReadIpc } from "./headless-ipc";
 import { registerDbAdminHandlers } from "./db-admin";
@@ -87,6 +87,14 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => app.quit());
+app.on("will-quit", () => {
+  try {
+    releaseElectronLease();
+  } catch {
+    /* 退出路径静默 */
+  }
+});
+
 
 /**
  * P4：best-effort 确保调度守护进程在跑（fire-and-forget，不阻塞窗口创建）。

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import { openStore } from '@appilot-labs/appilot-headless';
-import { mirrorTasksToDb, toTaskRow } from '../src/main/task-db-sync';
+import { mirrorTasksToDb, toTaskRow, clearElectronFailures } from '../src/main/task-db-sync';
 
 async function main(): Promise<void> {
   const dbPath = join(mkdtempSync(join(tmpdir(), 'task-db-sync-test-')), 'appilot.db');
@@ -89,6 +89,32 @@ async function main(): Promise<void> {
   assert.equal(withKind.pruned, 0, 'kind 实例行不应被镜像清理（源里没有也保留）');
   assert.ok(store.tasks.get('github-sync:p1'), '实例行应保留');
   console.log('✓ kind 实例行不受镜像 prune 影响（P1）');
+
+  // 8. 清除失败（双源修复的 electron 源侧）：failed → 无状态；reschedule 摊铺
+  const failedTasks = [
+    { id: 't1', kind: 'rank', intervalMinutes: 720, nextRunAt: '2026-09-05T00:00:00Z', lastRunAt: '2026-09-04T00:00:00Z', lastStatus: 'failed' },
+    { id: 't2', kind: 'rank', intervalMinutes: 720, nextRunAt: '2026-09-05T00:00:00Z', lastStatus: 'failed' },
+    { id: 'ok1', kind: 'rank', intervalMinutes: 720, lastStatus: 'success' },
+  ] as any;
+  const cleared = clearElectronFailures(failedTasks, 'clear');
+  assert.equal(cleared.cleared, 2, 'clear 应清除 2 个 failed');
+  assert.equal(cleared.tasks[0].lastStatus, undefined, 'failed 状态应清除');
+  assert.equal(cleared.tasks[0].lastRunAt, undefined, 'lastRunAt 应清除（防 mirror 误标 ok）');
+  assert.equal(cleared.tasks[0].nextRunAt, '2026-09-05T00:00:00Z', 'clear 保留原排期');
+  assert.equal(cleared.tasks[2].lastStatus, 'success', '非 failed 行不动');
+  // reschedule：nextRunAt 落到未来 30–210min 窗口
+  const rs = clearElectronFailures(failedTasks, 'reschedule');
+  assert.equal(rs.cleared, 2);
+  for (const t of rs.tasks) {
+    if (t.id === 'ok1') continue;
+    const ms = new Date(t.nextRunAt as string).getTime() - Date.now();
+    assert.ok(ms >= 30 * 60_000 && ms <= 210 * 60_000, `重排应在 30–210min: ${t.id} ${ms}`);
+  }
+  // 清除后镜像到 DB → 不再出现 failed/error
+  const store2 = openStore(join(mkdtempSync(join(tmpdir(), 'tdb-clear-')), 'appilot.db'));
+  const dbRow = toTaskRow(cleared.tasks[0]);
+  assert.equal(dbRow?.lastStatus, 'never', '清除后 mirror 映射为 never');
+  console.log('✓ clearElectronFailures（clear/reschedule/镜像映射）');
 
   store.close();
   console.log('task-db-sync 单测全部通过 ✓');
