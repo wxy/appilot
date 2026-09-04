@@ -9,7 +9,7 @@ export type { ProjectRow, RankSnapshotRow, TaskRow, LeaseRow, ProjectMetaRow, Pr
 export { openStore } from './store.js';
 export type { AppilotStore } from './store.js';
 export { defaultDbPath, defaultLegacyRegistryPath, importLegacyRegistry } from './paths.js';
-export { createLeaseScheduler } from './scheduler.js';
+export { createLeaseScheduler, isRateLimitError, rateLimitBackoffMinutes, MAX_INFLIGHT_INSTANCES } from './scheduler.js';
 export type {
   ScheduledJob,
   ScheduledJobContext,
