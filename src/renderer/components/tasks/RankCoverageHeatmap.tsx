@@ -26,14 +26,16 @@ const langLabel = (l: string) => LANG_LABEL[l] ?? l;
 const PLATFORM_LABEL: Record<string, string> = { ios: "iOS", macos: "macOS" };
 
 const TONE_LABEL: Record<string, string> = {
-  cov: "本轮已全采到",
-  part: "部分覆盖",
+  cov: "已全采到",
+  half: "过半采到",
+  part: "未过半",
   err: "有失败",
   pend: "未到期（等待）",
   stale: "已到期未采到",
 };
 const TONE_CLS: Record<string, string> = {
   cov: "bg-emerald-500",
+  half: "bg-teal-400",
   part: "bg-amber-400",
   err: "bg-red-500",
   pend: "bg-zinc-200 dark:bg-zinc-700",
@@ -47,8 +49,9 @@ const WINDOW_OPTIONS = [
 ];
 
 const LEGEND: Array<{ tone: string; label: string }> = [
-  { tone: "cov", label: "覆盖齐" },
-  { tone: "part", label: "部分" },
+  { tone: "cov", label: "已全采" },
+  { tone: "half", label: "过半" },
+  { tone: "part", label: "未过半" },
   { tone: "err", label: "有失败" },
   { tone: "pend", label: "未到期" },
   { tone: "stale", label: "过期未采" },
@@ -83,7 +86,7 @@ export function RankCoverageHeatmap() {
         <div>
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名覆盖热力图</h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            产品（仓库 + 平台）× 语言/商店的覆盖——英语×英语商店=「英语」，英语×其他语言商店=「全局」，其余为本地化语言组；每点 = 5 个关键字
+            产品（仓库 + 平台）× 语言/商店的覆盖——英语×英语商店=「英语」，英语×其他语言商店=「全局」，其余为本地化语言组；每点 = 4 个关键字
             {generatedAt ? ` · ${new Date(generatedAt).toLocaleTimeString()}` : ""}
           </p>
         </div>
@@ -115,9 +118,9 @@ export function RankCoverageHeatmap() {
                   ))}
                 </colgroup>
                 <thead>
-                  {/* 第一行：按语言分组 */}
+                  {/* 第一行：按语言分组（带背景，可见格界） */}
                   <tr>
-                    <th rowSpan={2} className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 text-left px-1.5 align-bottom">
+                    <th rowSpan={2} className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 text-left px-1.5 align-bottom bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60">
                       产品
                     </th>
                     {(() => {
@@ -137,12 +140,7 @@ export function RankCoverageHeatmap() {
                           <th
                             key={"g:" + group}
                             colSpan={j - i}
-                            className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 text-center border-b border-zinc-100 dark:border-zinc-800"
-                            title={
-                              group === "global"
-                                ? "全局：英语关键词在其他语言商店的查询（英语为全球通用检索词）"
-                                : undefined
-                            }
+                            className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 text-center bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60"
                           >
                             {name}
                           </th>,
@@ -157,7 +155,7 @@ export function RankCoverageHeatmap() {
                     {columns.map((col: any) => (
                       <th
                         key={col.lang + "|" + col.storefront}
-                        className="text-[9px] font-medium text-zinc-400 dark:text-zinc-500 px-0.5 text-center"
+                        className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 px-0.5 text-center bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60"
                       >
                         {storefrontDisplayName(col.storefront)}
                       </th>
