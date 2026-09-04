@@ -1,6 +1,6 @@
 {
   "name": "appilot",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Appilot CLI 启动器：dsh --profile appilot（App 运营 Agent 的独立入口）",
   "bin": {

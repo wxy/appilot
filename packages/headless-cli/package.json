@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot-headless-cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Appilot headless CLI——直接对接 headless 服务 API（projects/snapshots/tasks），无壳依赖。",
   "bin": {
     "appilot-headless": "./dist/cli.js"
@@ -14,8 +14,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@appilot-labs/appilot-headless": "^0.1.0",
-    "@appilot-labs/appilot-scheduler": "^0.1.0"
+    "@appilot-labs/appilot-headless": "^1.0.0",
+    "@appilot-labs/appilot-scheduler": "^1.0.0"
   },
   "devDependencies": {
     "tsx": "^4.23.1",
