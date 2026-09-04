@@ -291,7 +291,11 @@ export function registerSchedulerHandlers(): void {
   });
 
   // 排名覆盖热力图（全局监督视图）：产品×商店 × 5词/桶 点阵。
-  ipcMain.handle("scheduler:matrix", async () => buildRankCoverageMatrix(sharedStore()));
+  ipcMain.handle("scheduler:matrix", async (_e, opts?: { windowHours?: number }) => {
+    const h = Number(opts?.windowHours ?? 24);
+    const windowMs = (Number.isFinite(h) && h > 0 ? h : 24) * 3600 * 1000;
+    return buildRankCoverageMatrix(sharedStore(), { windowMs });
+  });
 
   // ── 任务中心控制（架构收敛 C2）：daemon（常驻）启停 + 本壳 fallback 同步 ──
   ipcMain.handle("scheduler:daemonStart", async () => {

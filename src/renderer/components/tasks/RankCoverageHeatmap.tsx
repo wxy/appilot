@@ -39,11 +39,18 @@ const TONE_CLS: Record<string, string> = {
   stale: "bg-orange-500",
 };
 
+const WINDOW_OPTIONS = [
+  { h: 12, label: "严格 12h" },
+  { h: 24, label: "24h" },
+  { h: 48, label: "48h" },
+];
+
 export function RankCoverageHeatmap() {
   const [matrix, setMatrix] = useState<any>(null);
+  const [windowHours, setWindowHours] = useState(24);
 
-  const load = () => {
-    (window as any).appilot?.scheduler?.matrix()
+  const load = (wh: number = windowHours) => {
+    (window as any).appilot?.scheduler?.matrix({ windowHours: wh })
       .then(setMatrix)
       .catch(() => undefined);
   };
@@ -57,7 +64,12 @@ export function RankCoverageHeatmap() {
     };
     window.addEventListener("appilot:data-changed", handler);
     return () => window.removeEventListener("appilot:data-changed", handler);
-  }, []);
+  }, [windowHours]);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowHours]);
 
   if (!matrix) return null;
   const { columns = [], rows = [], generatedAt } = matrix;
@@ -69,7 +81,17 @@ export function RankCoverageHeatmap() {
           排名覆盖热力图
         </h3>
         <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-          每点 = 5 个关键字 · 严格 12h 窗口
+          每点 = 5 个关键字 · 覆盖窗口
+          <select
+            value={String(windowHours)}
+            onChange={(e) => setWindowHours(Number(e.target.value))}
+            className="ml-1 px-1 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-[11px] text-zinc-500 dark:text-zinc-400"
+            title="成功快照多久以内算已采到（采集为每词 12h 错峰轮转，12h 会常见部分覆盖）"
+          >
+            {WINDOW_OPTIONS.map((o) => (
+              <option key={o.h} value={String(o.h)}>{o.label}</option>
+            ))}
+          </select>
           {generatedAt ? ` · ${new Date(generatedAt).toLocaleTimeString()}` : ""}
         </span>
       </div>
@@ -85,17 +107,41 @@ export function RankCoverageHeatmap() {
             ))}
           </colgroup>
           <thead>
+            {/* 第一行：按语言分组（columns 已按 lang 连续排序） */}
             <tr>
-              <th className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 text-left px-1.5 py-1">
-                产品 \ 语言/商店
+              <th rowSpan={2} className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 text-left px-1.5 py-1 align-bottom">
+                产品
               </th>
+              {(() => {
+                const heads: any[] = [];
+                let i = 0;
+                while (i < columns.length) {
+                  const lang = columns[i].lang;
+                  let j = i;
+                  while (j < columns.length && columns[j].lang === lang) j++;
+                  heads.push(
+                    <th
+                      key={"lg:" + lang}
+                      colSpan={j - i}
+                      className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 text-center border-b border-zinc-100 dark:border-zinc-800"
+                      title={langLabel(lang)}
+                    >
+                      {langLabel(lang)}
+                    </th>,
+                  );
+                  i = j;
+                }
+                return heads;
+              })()}
+            </tr>
+            {/* 第二行：商店全称 */}
+            <tr>
               {columns.map((col: any) => (
                 <th
                   key={col.lang + "|" + col.storefront}
-                  className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 px-0.5 text-center"
-                  title={`语言 ${langLabel(col.lang)} · 商店 ${storefrontDisplayName(col.storefront)}`}
+                  className="text-[9px] font-medium text-zinc-400 dark:text-zinc-500 px-0.5 text-center"
                 >
-                  {langLabel(col.lang)}·{storefrontDisplayName(col.storefront)}
+                  {storefrontDisplayName(col.storefront)}
                 </th>
               ))}
             </tr>
@@ -109,15 +155,20 @@ export function RankCoverageHeatmap() {
               return (
                 <tr key={row.productId}>
                   <td
-                    className="text-xs font-semibold text-zinc-700 dark:text-zinc-200 px-2 py-1 align-middle bg-zinc-50 dark:bg-zinc-800/60 rounded-l-md whitespace-pre-line"
+                    className="px-2 py-1 align-middle bg-zinc-50 dark:bg-zinc-800/60 rounded-l-md whitespace-pre-line"
                     title={`${row.productId}${row.productName ? ` · ${row.productName}` : ""}`}
                   >
-                    {rowLabel}
+                    <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                      {row.projectName || row.productId}
+                    </div>
+                    <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">
+                      {PLATFORM_LABEL[row.platform] ?? row.platform ?? ""}
+                    </div>
                   </td>
                   {row.cells.map((cell: any, ci: number) => {
                     if (cell.total === 0) {
                       return (
-                        <td key={ci} className="bg-zinc-100 dark:bg-zinc-800/40 rounded-[3px]" style={{ height: 56 }} />
+                        <td key={ci} title="无跟踪任务" style={{ height: 56 }} />
                       );
                     }
                     const col = columns[ci];
