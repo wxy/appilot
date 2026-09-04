@@ -69,23 +69,25 @@ headless（SQLite 单库 + 实例任务引擎 + 租约调度 + daemon 常驻）�
 - 所有动作走 IPC → main 用 headless store（与调度同一 DB，busy_timeout 并发安全），
   结果回传影响行数/新大小。
 
-## 4. DSH：轻量工具插件（降级收敛）
+## 4. DSH：轻量工具插件（降级收敛，交互 = 斜杠命令）
 
 - **保留**：
   - 服务端工具：`appilot_tasks`（状态直读，已含 byKind/summary）、`appilot_task_run`
     （经 daemon 控制）、`appilot_snapshots`、`appilot_overview`（+ dsh-project 的
     list/register——注册表工具，不属于本插件）；
-  - `tool.call.toolview` 结果卡片（工具输出在会话里可视化）——agent 交互的最小 UI；
-- **移除/禁用（大型 GUI 复刻，沉没成本不再追加）**：
-  - `shell.overlay` AppHome 全局首页浮层（三 tab：项目/任务/设置）；
-  - `sidebar.footer.action` 首页入口；
-  - `conversation.view` Appilot 工作台大面板（总览/发布/趋势/任务 tab 复刻）——
-    会话内如需看数据，让 agent 跑工具（结果卡呈现）；
-  - `conversation.composer.dock` 快捷按钮组（可选：保留一个「任务状态」最小按钮，
-    按下即让 agent 汇报——属轻量交互，未定，见 C4）。
-- **信息口径（轻量定义）**：Harness 只给「用户最关心的」——各项目发布同步与排名采集的
-  健康状态（ok/error/never 聚合 + 最新失败）、最近排名轨迹摘要、可执行的检查/同步动作；
-  深链路（逐 storefront 排名表、发布草稿编辑器等）留在 Electron。
+  - `tool.call.toolview` 结果卡片（工具输出在会话里可视化）；
+  - **斜杠命令 `/appilot`**（2026-09-04，宿主 `ctx.commands`）：handler **直读共享
+    SQLite**、输出渲染为命令行——不经模型、零 token、任意会话可用。这是
+    「任务数据在数据库里、不经对话获取」的最终形态：
+    `/appilot`（帮助）、`/appilot task`（状态摘要 byKind + 失败明细 + 调度主）、
+    `/appilot task clear|reschedule`（失败批量处理，重排限速摊铺 30–210min）。
+- **移除（大型 GUI 复刻，沉没成本不再追加）**：
+  - `shell.overlay` AppHome 全局首页浮层、`sidebar.footer.action` 首页入口、
+    `conversation.view` 工作台大面板、`conversation.composer.dock` 悬浮按钮组；
+  - 对应 client 源文件（app-home/workbench/tabs/overview-dsh/dedicated-session/
+    quick-actions/registry-cache/home-store/project-home）已删除；专属会话机制停用。
+- **信息口径（轻量定义）**：Harness 只给「用户最关心的」——任务健康（ok/error/never）、
+  最新失败与处理动作、排名轨迹摘要、可执行的检查/同步；深链路留在 Electron。
 
 ## 5. 保留不动的地基（不随壳收缩回退）
 
@@ -101,8 +103,8 @@ headless（SQLite 单库 + 实例任务引擎 + 租约调度 + daemon 常驻）�
 | C1 | 收敛决策固化 | 本文档 + product-backlog 更新 ✅ |
 | C2 | Electron 任务中心控制 | §2 的 IPC + 顶栏状态条/启停按钮 |
 | C3 | Electron 数据管理 | §3 的 db:info + 清理/备份/压缩 UI |
-| C4 | DSH 插件降级 | §4 移除大 UI 挂载点、保留工具+卡片；验证 agent 汇报链路 |
-| C5 | 协调逻辑收窄（可选） | 壳内调度 fallback 退役评估、reconcile 单主化收窄 |
+| C4 | DSH 插件降级 | §4 移除大 UI 挂载点、保留工具+卡片、**新增 /appilot 斜杠命令**（PR #172）；client 1229KB→14KB |
+| C5 | 协调逻辑收窄 | ✅ 租约同 id 互斥（PR #175，防双 daemon）；⏳ 403/429 限流退避 + 并发上限（教训 C 落码）；壳内调度 fallback 退役评估 |
 
 ## 7. 边界与不做
 
