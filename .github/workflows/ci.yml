@@ -10,6 +10,9 @@ jobs:
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
+    env:
+      # 类型检查不需要 Electron 运行时二进制——跳过下载（npm ci 提速，多 job 各省一次）
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
