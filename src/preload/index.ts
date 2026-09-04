@@ -280,7 +280,8 @@ contextBridge.exposeInMainWorld("appilot", {
     runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
     runTaskNow: (taskId: string): Promise<boolean> =>
       ipcRenderer.invoke("scheduler:runTaskNow", taskId),
-    matrix: (): Promise<any> => ipcRenderer.invoke("scheduler:matrix"),
+    matrix: (opts?: { windowHours?: number }): Promise<any> =>
+      ipcRenderer.invoke("scheduler:matrix", opts),
     daemonStart: (): Promise<any> => ipcRenderer.invoke("scheduler:daemonStart"),
     daemonStop: (): Promise<any> => ipcRenderer.invoke("scheduler:daemonStop"),
     clearFailures: (mode: "clear" | "reschedule"): Promise<any> =>
