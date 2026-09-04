@@ -38,6 +38,14 @@ export function TaskCenterPage() {
   } | undefined>(undefined);
   const [accel, setAccel] = useState(false);
   const [accelRemainingMs, setAccelRemainingMs] = useState<number | null>(null);
+  // 任务中心控制（架构收敛 C2）：daemon/壳调度启停状态。
+  const [daemonCtrl, setDaemonCtrl] = useState<{
+    userStopped: boolean;
+    leader: string | null;
+    daemon: { running: boolean } | null;
+  } | null>(null);
+  const [ctrlBusy, setCtrlBusy] = useState(false);
+  const [ctrlErr, setCtrlErr] = useState<string | null>(null);
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
@@ -105,7 +113,7 @@ export function TaskCenterPage() {
       .catch(() => undefined);
   };
 
-  // 读取当前加速模式状态。
+  // 读取当前加速模式 + 任务中心启停状态。
   useEffect(() => {
     (window as any).appilot?.scheduler?.status()
       .then((status: any) => {
@@ -113,9 +121,59 @@ export function TaskCenterPage() {
         setAccelRemainingMs(
           typeof status?.accelRemainingMs === "number" ? status.accelRemainingMs : null,
         );
+        setDaemonCtrl({
+          userStopped: Boolean(status?.userStopped),
+          leader: status?.leader ?? null,
+          daemon: status?.daemon ?? null,
+        });
       })
       .catch(() => undefined);
   }, []);
+
+  // 启停动作后重读状态（daemon 让位/拉起是异步的，稍后刷新）。
+  const readCtrl = () => {
+    (window as any).appilot?.scheduler?.status()
+      .then((status: any) => {
+        setDaemonCtrl({
+          userStopped: Boolean(status?.userStopped),
+          leader: status?.leader ?? null,
+          daemon: status?.daemon ?? null,
+        });
+        return (window as any).appilot?.scheduler?.list();
+      })
+      .then(setData)
+      .catch(() => undefined);
+  };
+
+  const daemonStart = () => {
+    if (ctrlBusy) return;
+    setCtrlBusy(true);
+    setCtrlErr(null);
+    (window as any).appilot?.scheduler?.daemonStart()
+      .then((r: any) => {
+        if (!r?.ok) setCtrlErr(r?.error || "任务中心启动失败（daemon 不可用）");
+      })
+      .catch((e: any) => setCtrlErr(e?.message || String(e)))
+      .finally(() => {
+        setCtrlBusy(false);
+        readCtrl();
+      });
+  };
+
+  const daemonStop = () => {
+    if (ctrlBusy) return;
+    setCtrlBusy(true);
+    setCtrlErr(null);
+    (window as any).appilot?.scheduler?.daemonStop()
+      .then((r: any) => {
+        if (!r?.ok) setCtrlErr("停止任务中心失败（daemon 未响应）");
+      })
+      .catch((e: any) => setCtrlErr(e?.message || String(e)))
+      .finally(() => {
+        setCtrlBusy(false);
+        readCtrl();
+      });
+  };
 
   // 主进程数据变更推送：任务状态变化时立即刷新（节流 1.5 秒，避免每任务全量重拉）。
   useEffect(() => {
@@ -284,6 +342,65 @@ export function TaskCenterPage() {
             {data?.running ? "调度器运行中" : "调度器未运行"}
           </span>
         </div>
+      </div>
+
+      {/* 任务中心控制（架构收敛 C2）：daemon 常驻启停 + 壳 fallback 同步 */}
+      <div className="mb-5 flex flex-wrap items-center gap-2 text-xs">
+        <span
+          className={cn(
+            "px-2.5 py-1 rounded-full font-medium",
+            daemonCtrl?.userStopped
+              ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300"
+              : daemonCtrl?.daemon?.running || daemonCtrl?.leader === "scheduler"
+                ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                : daemonCtrl?.leader === "electron"
+                  ? "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+          )}
+        >
+          {daemonCtrl == null
+            ? "任务中心状态读取中…"
+            : daemonCtrl.userStopped
+              ? "任务中心已停止"
+              : daemonCtrl.daemon?.running || daemonCtrl.leader === "scheduler"
+                ? "常驻调度中（daemon）"
+                : daemonCtrl.leader === "electron"
+                  ? "调度中（本应用）"
+                  : "调度器未运行"}
+        </span>
+
+        {daemonCtrl != null &&
+          (daemonCtrl.userStopped ||
+          !daemonCtrl.daemon?.running &&
+            daemonCtrl.leader !== "electron" ? (
+            <button
+              type="button"
+              disabled={ctrlBusy}
+              onClick={daemonStart}
+              className="inline-flex items-center px-3 py-1.5 rounded-lg border border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-xs font-medium hover:border-emerald-600 disabled:opacity-50"
+              title="启动常驻任务中心（appilot-scheduler daemon）；重启应用后也会随启动恢复"
+            >
+              {ctrlBusy ? "启动中…" : "启动任务中心"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={ctrlBusy}
+              onClick={daemonStop}
+              className="inline-flex items-center px-3 py-1.5 rounded-lg border border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 text-xs font-medium hover:border-red-600 disabled:opacity-50"
+              title="停止任务中心：关停常驻 daemon 并暂停本应用调度（手动运行仍可用）"
+            >
+              {ctrlBusy ? "停止中…" : "停止任务中心"}
+            </button>
+          ))}
+        {daemonCtrl?.userStopped ? (
+          <span className="text-zinc-400 dark:text-zinc-500">
+            已手动停止——后台不再自动采集（重启应用后随启动恢复；加速/立即运行仍可用）
+          </span>
+        ) : null}
+        {ctrlErr ? (
+          <span className="text-red-500 dark:text-red-400">{ctrlErr}</span>
+        ) : null}
       </div>
 
       {data === null && (

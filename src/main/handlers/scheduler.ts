@@ -1,6 +1,10 @@
 import { ipcMain } from "electron";
+import { log } from "@appilot-labs/appilot-core/logger";
 import {
   isSchedulerTimerActive,
+  isTaskCenterStopped,
+  enableTaskScheduler,
+  stopTaskScheduler,
   schedulerStatusSnapshot,
   schedulerTick,
   setSchedulerAccel,
@@ -10,6 +14,31 @@ import { computeRankSchedulerStatus } from "../scheduler-status";
 import { getStore } from "../store";
 import { sharedStore } from "../registry-sync";
 import { taskCenterTasksFromDb, taskCenterOverviewFromDb } from "../task-center-db";
+
+// 租约心跳新鲜度窗口（与各壳 acquire TTL 一致 60s；daemon 心跳 15s）。
+const DAEMON_HEARTBEAT_TTL_MS = 60_000;
+
+/** 当前调度主（lease 直读；DB 不可读返回 null）。 */
+function currentLeader(): string | null {
+  try {
+    return sharedStore().lease.leader();
+  } catch {
+    return null;
+  }
+}
+
+/** daemon 状态：租约主为 scheduler 且心跳新鲜 = 常驻 daemon 在调度。 */
+function daemonStatus(): { running: boolean; leaderId: string | null; heartbeatAt: string | null } {
+  try {
+    const info = sharedStore().lease.info();
+    const running =
+      info?.leaderId === "scheduler" &&
+      new Date(info.heartbeatAt).getTime() >= Date.now() - DAEMON_HEARTBEAT_TTL_MS;
+    return { running, leaderId: info?.leaderId ?? null, heartbeatAt: info?.heartbeatAt ?? null };
+  } catch {
+    return { running: false, leaderId: null, heartbeatAt: null };
+  }
+}
 
 function computeTimeline(
   tasks: ScheduledTask[],
@@ -71,8 +100,11 @@ export function registerSchedulerHandlers(): void {
         : null;
     return {
       enabled: isSchedulerTimerActive(),
+      userStopped: isTaskCenterStopped(),
       accel,
       accelRemainingMs,
+      leader: currentLeader(),
+      daemon: daemonStatus(),
       ...computeRankSchedulerStatus(tasks, now),
     };
   });
@@ -255,21 +287,53 @@ export function registerSchedulerHandlers(): void {
     }
     return false;
   });
+
+  // ── 任务中心控制（架构收敛 C2）：daemon（常驻）启停 + 本壳 fallback 同步 ──
+  ipcMain.handle("scheduler:daemonStart", async () => {
+    // 1) 恢复本壳 fallback（先清除停止标记——若 daemon 拉起失败仍有壳兜底）
+    enableTaskScheduler();
+    // 2) 确保 daemon 在跑（在跑则复用；未跑 spawn detached；单例仲裁自动处理）
+    try {
+      const { ensureScheduler, defaultSocketPath, resolveSchedulerCli } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
+      const { defaultDbPath } = require("@appilot-labs/appilot-headless") as typeof import("@appilot-labs/appilot-headless");
+      const cli = resolveSchedulerCli();
+      const ok = await ensureScheduler({
+        socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
+        spawnCommand: cli ? [process.execPath, cli] : undefined,
+        timeoutMs: 5000,
+        log: (m) => log.info(`appilot: ${m}`),
+      });
+      return { ok, stopped: false };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle("scheduler:daemonStop", async () => {
+    const leader = currentLeader();
+    let daemonStopped = false;
+    if (leader === "scheduler") {
+      // daemon 主：发 shutdown → daemon 优雅让位退出
+      daemonStopped = await sendToDaemon("shutdown", {});
+    }
+    // 本壳 fallback 一并暂停——避免 daemon 让位后壳循环在下一 tick 接管（等于没停）
+    stopTaskScheduler();
+    return {
+      ok: daemonStopped || leader !== "scheduler",
+      stoppedDaemon: daemonStopped,
+      stoppedShell: true,
+      leader,
+    };
+  });
 }
 
 /**
- * P5-2a 辅助：当前调度主 + daemon 命令发送。
+ * P5-2a/C2 辅助：当前调度主 + daemon 命令发送。
+ * （currentLeader/daemonStatus 定义见文件头——daemon 启停用 lease 状态判断。）
  */
-function currentLeader(): string | null {
-  try {
-    return sharedStore().lease.leader();
-  } catch {
-    return null;
-  }
-}
 
 async function sendToDaemon(
-  method: "accelerate" | "runNow",
+  method: "accelerate" | "runNow" | "shutdown",
   params: Record<string, unknown>,
 ): Promise<boolean> {
   try {

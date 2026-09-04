@@ -272,6 +272,8 @@ contextBridge.exposeInMainWorld("appilot", {
     runDue: (): Promise<boolean> => ipcRenderer.invoke("scheduler:runDue"),
     runTaskNow: (taskId: string): Promise<boolean> =>
       ipcRenderer.invoke("scheduler:runTaskNow", taskId),
+    daemonStart: (): Promise<any> => ipcRenderer.invoke("scheduler:daemonStart"),
+    daemonStop: (): Promise<any> => ipcRenderer.invoke("scheduler:daemonStop"),
   },
 
   ai: {
