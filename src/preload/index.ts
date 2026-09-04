@@ -262,6 +262,14 @@ contextBridge.exposeInMainWorld("appilot", {
       ),
   },
 
+  storage: {
+    info: (): Promise<any> => ipcRenderer.invoke("db:admin:info"),
+    pruneSnapshots: (days: number): Promise<any> =>
+      ipcRenderer.invoke("db:admin:pruneSnapshots", days),
+    vacuum: (): Promise<any> => ipcRenderer.invoke("db:admin:vacuum"),
+    backup: (): Promise<any> => ipcRenderer.invoke("db:admin:backup"),
+  },
+
   scheduler: {
     status: (): Promise<any> => ipcRenderer.invoke("scheduler:status"),
     setAccel: (enabled: boolean): Promise<boolean> =>

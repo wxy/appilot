@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../../stores/theme";
 import { btnPrimary, btnSecondary, inputClass } from "../ui/styles";
+import { DataStorageCard } from "./DataStorageCard";
 import { CredentialsForm } from "./CredentialsForm";
 
 const AI_PRESETS = [
@@ -265,6 +266,8 @@ export function SettingsPage() {
           </select>
         </div>
       </div>
+
+      <DataStorageCard />
 
       <p className="text-[11px] text-zinc-400 dark:text-zinc-500">Appilot · Phase A</p>
     </div>
