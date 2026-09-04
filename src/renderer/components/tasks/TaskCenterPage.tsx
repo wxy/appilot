@@ -50,6 +50,8 @@ export function TaskCenterPage() {
   // 失败任务批量处理（backlog #2）
   const [failBusy, setFailBusy] = useState<string | null>(null);
   const [failMsg, setFailMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // 顶部视图切换：统计 / 时间线 / 覆盖热力（避免整页过长）
+  const [viewTab, setViewTab] = useState<"stats" | "timeline" | "heatmap">("stats");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
@@ -491,14 +493,39 @@ export function TaskCenterPage() {
         ) : null}
       </div>
 
-      {data === null && (
+      {/* 视图切换：统计卡片 / 执行时间线 / 覆盖热力 */}
+      <div className="mb-4 flex gap-1.5">
+        {(
+          [
+            ["stats", "统计"],
+            ["timeline", "时间线"],
+            ["heatmap", "覆盖热力"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setViewTab(key)}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+              viewTab === key
+                ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {viewTab === "stats" && data === null && (
         <div className="mb-6 flex items-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
           <span className="w-4 h-4 rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-transparent animate-spin" />
           正在载入任务中心…
         </div>
       )}
 
-      {overview && (
+      {viewTab === "stats" && overview && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           <StatCard
             label="任务总数"
@@ -549,9 +576,9 @@ export function TaskCenterPage() {
         </div>
       )}
 
-      <TaskTimelineChart timeline={timeline} accel={accel} />
+      {viewTab === "timeline" && <TaskTimelineChart timeline={timeline} accel={accel} />}
 
-      <RankCoverageHeatmap />
+      {viewTab === "heatmap" && <RankCoverageHeatmap />}
 
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
         <select
