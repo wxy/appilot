@@ -26,7 +26,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # OIDC trusted publishing 需 npm ≥ 11.5.1（Node 24 自带 npm 11）
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
 
       - run: npm ci
@@ -90,7 +91,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-# OIDC 升级（Trusted Publishing）：
-# 1) 在 npmjs.com 每个包页面 → Settings → Trusted Publishing，绑定本仓库 + 本 workflow
-# 2) 移除 NPM_TOKEN secret，认证改为 GitHub OIDC 直接换发 npm token
-# 3) workflow 已带 permissions: id-token: write 与 --provenance，就绪
+# OIDC Trusted Publishing（2026-09 流程，见 https://docs.npmjs.com/trusted-publishers/）：
+# 1) npmjs.com → 每个包 Settings → Trusted Publisher → GitHub Actions：
+#    Org/User=wxy · Repository=appilot · Workflow filename=publish.yml
+#    Allowed actions 勾选「npm publish」（9/3 后默认仅 stage，需显式允许直接发布）
+# 2) 本 workflow 已带 permissions: id-token: write + registry-url（Node 24/npm≥11.5.1）
+# 3) 全部 9 包配置完成后移除 NPM_TOKEN secret —— OIDC 发布自动生成 provenance
