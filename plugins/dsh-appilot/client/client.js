@@ -255,6 +255,68 @@ function AiUsage(props) {
   );
 }
 
+// client/src/command-card.tsx
+var import_jsx_runtime4 = require("react/jsx-runtime");
+var SUB_LABEL = {
+  projects: "\u9879\u76EE\u4E0E\u4EA7\u54C1",
+  rank: "\u6392\u540D\u91C7\u96C6\u6982\u89C8",
+  release: "\u53D1\u5E03\u6458\u8981",
+  task: "\u4EFB\u52A1\u4E2D\u5FC3"
+};
+function AppilotCommandCard(props) {
+  const cmd = props?.node?.data ?? props?.node ?? null;
+  const outcome = cmd?.outcome ?? null;
+  const args = cmd?.args ?? "";
+  const sub = String(args.trim().split(/\s+/)[0] ?? "").toLowerCase();
+  const subLabel = SUB_LABEL[sub] ?? (sub ? sub : "\u5E2E\u52A9");
+  const card = {
+    borderRadius: 12,
+    border: "1px solid var(--dsw-alias-border-l2)",
+    background: "var(--dsw-alias-bg-layer-3)",
+    padding: "10px 12px",
+    maxWidth: 640
+  };
+  const head = {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 6
+  };
+  const title = {
+    fontSize: 13,
+    fontWeight: 600,
+    color: "var(--dsw-alias-label-primary)"
+  };
+  const dot = {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    background: outcome ? outcome.kind === "error" ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)",
+    animation: outcome ? void 0 : "dsw-pulse 1s infinite"
+  };
+  const body = {
+    margin: 0,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    fontSize: 12.5,
+    lineHeight: "19px",
+    color: outcome?.kind === "error" ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-label-secondary)",
+    fontFamily: "inherit"
+  };
+  const text = outcome?.text ?? "";
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: card, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: head, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: dot }),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { style: title, children: [
+        "Appilot \xB7 ",
+        subLabel
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" }, children: outcome ? outcome.kind === "error" ? "\u6267\u884C\u5931\u8D25" : "\u6267\u884C\u5B8C\u6210" : "\u6267\u884C\u4E2D\u2026" })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("pre", { style: body, children: text || (outcome ? "(\u65E0\u8F93\u51FA)" : "\u6B63\u5728\u8BFB\u53D6\u5171\u4EAB\u6570\u636E\u5E93\u2026") })
+  ] });
+}
+
 // client/src/index.tsx
 if (typeof document !== "undefined" && !document.querySelector(`style[data-plugin-css="${CSS_ID}"]`)) {
   const style = document.createElement("style");
@@ -275,6 +337,18 @@ function apply(ctx) {
         label: "AI \u7528\u91CF"
       },
       AiUsage
+    )
+  );
+  ctx.slots.inject(
+    "conversation.chat.commandview",
+    () => ctx.slots.register(
+      {
+        name: "conversation.chat.commandview",
+        key: "appilot",
+        order: 0,
+        label: "Appilot \u547D\u4EE4"
+      },
+      AppilotCommandCard
     )
   );
   const cards = [

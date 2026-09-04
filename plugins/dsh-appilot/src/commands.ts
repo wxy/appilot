@@ -230,6 +230,18 @@ function releaseSummary(filterProject?: string): string {
   return lines.join('\n');
 }
 
+/** 项目名解析：精确 → 前缀/包含（大小写不敏感）唯一 → 返回名；多/零候选 → '__candidates__'。 */
+function resolveProjectFilter(raw: string): string | '__candidates__' {
+  if (!raw) return '';
+  const projects = openSharedHeadlessStore().projects.list().map((p) => p.name);
+  const q = raw.toLowerCase();
+  const exact = projects.find((n) => n === raw);
+  if (exact) return exact;
+  const hits = projects.filter((n) => n.toLowerCase().includes(q));
+  if (hits.length === 1) return hits[0];
+  return '__candidates__';
+}
+
 export function registerAppilotCommands(ctx: Context): void {
   // 宿主未提供 commands 服务（非交互部署）→ 静默跳过，不影响工具集。
   const commands = (ctx as any).commands;
@@ -246,7 +258,18 @@ export function registerAppilotCommands(ctx: Context): void {
         if (!action) return { kind: 'success', text: USAGE };
         if (action === 'projects') return { kind: 'success', text: projectsSummary() };
         if (action === 'rank' || action === 'release') {
-          const filter = String(rest[0] ?? '').trim();
+          const raw = String(rest[0] ?? '').trim();
+          const filter = resolveProjectFilter(raw);
+          if (filter === '__candidates__') {
+            const names = openSharedHeadlessStore()
+              .projects.list()
+              .map((p) => p.name)
+              .join('、');
+            return {
+              kind: 'error',
+              text: `未匹配到项目「${raw}」。可用的项目名：${names}\n（支持前缀/包含匹配，大小写不敏感；不带项目名则显示全部）`,
+            };
+          }
           return {
             kind: 'success',
             text: action === 'rank' ? rankSummary(filter || undefined) : releaseSummary(filter || undefined),
