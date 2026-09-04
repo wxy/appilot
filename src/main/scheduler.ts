@@ -115,6 +115,9 @@ const ACCEL_MAX_ROUNDS = 6;
 const ACCEL_MAX_TASKS_PER_TICK = 40;
 const ACCEL_AUTO_OFF_MS = 5 * 60_000;
 let schedulerPaused = false;
+// 任务中心「停止」状态（架构收敛 C2）：用户经壳显式停止自动调度（daemon 关停 +
+// 本壳 fallback 暂停）。置位后调度循环不再启动/重排，直到「启动」清除。
+let taskCenterStopped = false;
 // 单次加速会话中已处理过的任务：添油时跳过，避免执行后被推回未来的任务被反复拉取。
 let accelHandledTaskIds = new Set<string>();
 // 执行记录的写入链：调度 tick 与手动触发并发写时保证串行，避免互相覆盖
@@ -1372,8 +1375,30 @@ async function schedulerLoopOnceInner(): Promise<void> {
 
 function startSchedulerLoop(): void {
   if (schedulerTimer) return;
+  // 任务中心已被用户显式停止：不启动/不重排（resume / setAccel 等路径也过此守卫）。
+  if (taskCenterStopped) return;
   schedulerPaused = false;
   void schedulerLoopOnce();
+}
+
+/** 任务中心是否已被用户显式停止（P 收敛 C2）。 */
+export function isTaskCenterStopped(): boolean {
+  return taskCenterStopped;
+}
+
+/**
+ * 停止任务中心（用户显式）：暂停本壳 fallback 调度循环。
+ * daemon 的关停由调用方（IPC handler）另行发送 shutdown——两处都停才算「停了」。
+ */
+export function stopTaskScheduler(): void {
+  taskCenterStopped = true;
+  pauseTaskScheduler();
+}
+
+/** 启动任务中心：清除停止标记并恢复调度循环（daemon 拉起由调用方 ensure）。 */
+export function enableTaskScheduler(): void {
+  taskCenterStopped = false;
+  startSchedulerLoop();
 }
 
 /** Stop the scheduler timer so sleep is not disturbed while the system suspends. */
