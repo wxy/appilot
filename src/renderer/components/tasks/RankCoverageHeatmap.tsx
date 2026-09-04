@@ -25,14 +25,6 @@ const LANG_LABEL: Record<string, string> = {
 const langLabel = (l: string) => LANG_LABEL[l] ?? l;
 const PLATFORM_LABEL: Record<string, string> = { ios: "iOS", macos: "macOS" };
 
-const TONE_LABEL: Record<string, string> = {
-  cov: "已全采到",
-  half: "过半采到",
-  part: "未过半",
-  err: "有失败",
-  pend: "未到期（等待）",
-  stale: "已到期未采到",
-};
 const TONE_CLS: Record<string, string> = {
   cov: "bg-emerald-500",
   half: "bg-teal-400",
@@ -165,10 +157,7 @@ export function RankCoverageHeatmap() {
                 <tbody>
                   {rows.map((row: any) => (
                     <tr key={row.productId}>
-                      <td
-                        className="px-2 py-1 align-middle bg-zinc-50 dark:bg-zinc-800/60 rounded-l-md"
-                        title={`${row.productId}${row.productName ? ` · ${row.productName}` : ""}`}
-                      >
+                      <td className="px-2 py-1 align-middle bg-zinc-50 dark:bg-zinc-800/60 rounded-l-md">
                         <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200 whitespace-nowrap">
                           {row.projectName || row.productId}
                         </div>
@@ -178,24 +167,14 @@ export function RankCoverageHeatmap() {
                       </td>
                       {row.cells.map((cell: any, ci: number) => {
                         if (cell.total === 0) {
-                          return <td key={ci} title="无跟踪任务" style={{ height: 56 }} />;
+                          return <td key={ci} style={{ height: 56 }} />;
                         }
-                        const col = columns[ci];
-                        const tip =
-                          `${row.projectName || row.productId} · ${langLabel(col?.lang)} ${storefrontDisplayName(col?.storefront)} · ${cell.total} 词（${cell.buckets.length} 桶×5）\n` +
-                          cell.buckets
-                            .map(
-                              (b: any) =>
-                                `${TONE_LABEL[b.tone] ?? b.tone}: ${b.keywords?.map((k: any) => `${k.keyword}(${k.lang})`).join("、")}`,
-                            )
-                            .join("\n");
                         return (
-                          <td key={ci} title={tip} className="align-middle text-center" style={{ height: 56, minWidth: 34 }}>
+                          <td key={ci} className="align-middle text-center border border-zinc-100 dark:border-zinc-800/60" style={{ height: 56, minWidth: 34 }}>
                             <div className="flex flex-wrap justify-center content-center gap-[3px]" style={{ minHeight: 44 }}>
                               {cell.buckets.map((b: any, bi: number) => (
                                 <span
                                   key={bi}
-                                  title={TONE_LABEL[b.tone] ?? b.tone}
                                   className={cn("inline-block w-2 h-2 rounded-[2px]", TONE_CLS[b.tone] ?? "bg-zinc-300")}
                                 />
                               ))}
