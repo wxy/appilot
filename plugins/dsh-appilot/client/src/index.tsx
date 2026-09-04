@@ -18,6 +18,7 @@
 import { CSS, CSS_ID } from './styles';
 import { ProjectCard, ReadinessCard, ReleaseStatusCard, OverviewCard } from './toolcards';
 import { AiUsage } from './ai-usage';
+import { AppilotCommandCard } from './command-card';
 
 /* ── 主题样式注入（模块物化时执行；node 侧无 document 时跳过）── */
 if (
@@ -46,6 +47,20 @@ export function apply(ctx: any) {
         label: 'AI 用量',
       },
       AiUsage,
+    ),
+  );
+
+  // 2b. /appilot 命令结果卡片：keyed on command name —— 默认全展开（宿主
+  //     折叠被自定义行替换），消除「部分响应仅一行 / 卡片未展开」。
+  ctx.slots.inject('conversation.chat.commandview', () =>
+    ctx.slots.register(
+      {
+        name: 'conversation.chat.commandview',
+        key: 'appilot',
+        order: 0,
+        label: 'Appilot 命令',
+      },
+      AppilotCommandCard,
     ),
   );
 
