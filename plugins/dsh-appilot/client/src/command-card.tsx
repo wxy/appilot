@@ -8,13 +8,15 @@
 import { jsx, Fragment } from 'react/jsx-runtime';
 
 /* ── 子命令主题色（头部色条/标题点） ── */
-const THEME: Record<string, { accent: string; label: string; soft: string }> = {
-  projects: { accent: '#6366f1', label: '项目与产品', soft: '#eef2ff' },
-  rank: { accent: '#8b5cf6', label: '排名采集概览', soft: '#f5f3ff' },
-  release: { accent: '#0ea5e9', label: '发布摘要', soft: '#f0f9ff' },
-  task: { accent: '#10b981', label: '任务中心', soft: '#ecfdf5' },
+const THEME: Record<string, { accent: string; label: string }> = {
+  projects: { accent: '#818cf8', label: '项目与产品' },
+  rank: { accent: '#a78bfa', label: '排名采集概览' },
+  release: { accent: '#38bdf8', label: '发布摘要' },
+  task: { accent: '#34d399', label: '任务中心' },
 };
-const FALLBACK_THEME = { accent: '#71717a', label: 'Appilot', soft: '#f4f4f5' };
+const FALLBACK_THEME = { accent: '#a1a1aa', label: 'Appilot' };
+/** 主题色 12% 叠加（亮暗主题都安全：暗色下偏黑、亮色下浅 tint）。 */
+const softOf = (accent: string) => `color-mix(in srgb, ${accent} 14%, transparent)`;
 
 /* 行内状态词 → 语义色 */
 const TOKEN_RULES: Array<{ re: RegExp; color: string }> = [
@@ -90,36 +92,87 @@ function Row({ kind, children }: { kind: 'kv' | 'bullet' | 'para'; children: any
   return jsx('div', { style: { ...base, paddingLeft: 2 }, children });
 }
 
+function TableBlock({ rows }: { rows: string[][] }) {
+  const header = rows[0] ?? [];
+  const body = rows.slice(1);
+  const cellStyle: React.CSSProperties = {
+    padding: '3px 10px 3px 0',
+    fontSize: 12,
+    textAlign: 'left',
+    whiteSpace: 'nowrap',
+  };
+  const thStyle: React.CSSProperties = {
+    ...cellStyle,
+    color: 'var(--dsw-alias-label-tertiary)',
+    fontWeight: 600,
+    borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  };
+  const tdStyle: React.CSSProperties = {
+    ...cellStyle,
+    color: 'var(--dsw-alias-label-secondary)',
+    borderBottom: '1px solid var(--dsw-alias-border-l1)',
+  };
+  const tintCell = (v: string) => jsx('span', { children: tint(v) });
+  return jsx('table', {
+    style: { borderCollapse: 'collapse', width: '100%' },
+    children: [
+      jsx('thead', {
+        children: jsx('tr', {
+          children: header.map((h, i) =>
+            jsx('th', { key: i, style: thStyle, children: tintCell(h) }),
+          ),
+        }),
+      }),
+      jsx('tbody', {
+        children: body.map((r, ri) =>
+          jsx('tr', {
+            key: ri,
+            children: r.map((v, ci) =>
+              jsx('td', { key: ci, style: tdStyle, children: tintCell(v) }),
+            ),
+          }),
+        ),
+      }),
+    ],
+  });
+}
+
 function Lines({ text }: { text: string }) {
-  const out: any[] = [];
   const lines = String(text || '').split('\n');
+  const out: any[] = [];
+  // 收集连续含 '|' 的行 → 表格块；其余按普通行渲染
+  let tableRows: string[][] | null = null;
+  const flushTable = () => {
+    if (tableRows && tableRows.length > 0) {
+      out.push(jsx('div', { key: 't' + out.length, style: { overflowX: 'auto' }, children: jsx(TableBlock, { rows: tableRows }) }));
+      tableRows = null;
+    }
+  };
   lines.forEach((ln, i) => {
     const line = ln.trimEnd();
-    if (!line.trim()) return;
+    if (!line.trim()) {
+      flushTable();
+      return;
+    }
+    if (line.includes('|')) {
+      tableRows = tableRows ?? [];
+      tableRows.push(line.split('|').map((s) => s.trim()).filter((s, idx, arr) => !(idx === 0 && s === '') && !(idx === arr.length - 1 && s === '')));
+      return;
+    }
+    flushTable();
     const isFirst = i === 0;
     const content = tint(line);
-    let node: any;
-    if (line.startsWith('• ')) {
-      node = jsx(Row, { kind: 'bullet', children: content });
-    } else {
-      const ci = line.indexOf('：');
-      const kv = !line.startsWith(' ') && ci > 0 && ci <= 22 && !line.includes('用法') && !line.includes('· ');
-      if (kv) {
-        node = jsx(Row, {
-          kind: 'kv',
-          children: { props: { content: [line.slice(0, ci), line.slice(ci + 1)] } },
-        });
-      } else {
-        node = jsx('div', {
-          style: isFirst
-            ? { fontWeight: 600, color: 'var(--dsw-alias-label-primary)', marginBottom: 2, lineHeight: '20px' }
-            : { paddingLeft: 2, lineHeight: '19px' },
-          children: content,
-        });
-      }
-    }
-    out.push(jsx(Fragment, { key: i, children: node }));
+    out.push(
+      jsx('div', {
+        key: i,
+        style: isFirst
+          ? { fontWeight: 600, color: 'var(--dsw-alias-label-primary)', marginBottom: 3, lineHeight: '20px' }
+          : { paddingLeft: 2, lineHeight: '19px' },
+        children: content,
+      }),
+    );
   });
+  flushTable();
   return jsx('div', { style: { display: 'flex', flexDirection: 'column', gap: 3 }, children: out });
 }
 
@@ -147,7 +200,7 @@ export function AppilotCommandCard(props: any) {
       <div style={{ height: 3, background: `linear-gradient(90deg, ${theme.accent}, transparent)` }} />
       <div
         style={{
-          background: theme.soft,
+          background: softOf(theme.accent),
           padding: '8px 14px',
           display: 'flex',
           alignItems: 'center',

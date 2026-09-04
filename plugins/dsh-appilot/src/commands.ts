@@ -139,12 +139,36 @@ function clearFailures(reschedule: boolean): string {
   );
 }
 
-/** 项目/产品摘要（直读注册表 + 富数据）。 */
+/** 组装「|」分隔的表格文本块（客户端据此渲染真表格；首行为表头）。 */
+function tableText(title: string | null, header: string[], rows: string[][]): string {
+  const lines: string[] = [];
+  if (title) lines.push(title);
+  lines.push('| ' + header.join(' | '));
+  for (const r of rows) lines.push('| ' + r.join(' | '));
+  return lines.join('\n');
+}
+
+const shortTime = (iso?: string | null) =>
+  iso ? new Date(iso).toLocaleString() : '从未';
+
+/** 项目名解析：精确 → 前缀/包含（大小写不敏感）唯一 → 返回名；多/零候选 → '__candidates__'。 */
+function resolveProjectFilter(raw: string): string | '__candidates__' {
+  if (!raw) return '';
+  const projects = openSharedHeadlessStore().projects.list().map((p) => p.name);
+  const q = raw.toLowerCase();
+  const exact = projects.find((n) => n === raw);
+  if (exact) return exact;
+  const hits = projects.filter((n) => n.toLowerCase().includes(q));
+  if (hits.length === 1) return hits[0];
+  return '__candidates__';
+}
+
+/** 项目/产品摘要（直读注册表 + 富数据，表格文本）。 */
 function projectsSummary(): string {
   const store = openSharedHeadlessStore();
   const projects = store.projects.list();
   if (projects.length === 0) return '暂无注册项目（agent 可运行 register_project 注册）。';
-  const lines: string[] = [`注册项目（${projects.length}）· 数据时间 ${new Date().toLocaleTimeString()}`];
+  const rows: string[][] = [];
   for (const p of projects) {
     const products = store.products.listByProject(p.name);
     const kws = products.reduce(
@@ -153,24 +177,25 @@ function projectsSummary(): string {
     );
     const platforms = [...new Set(products.map((pr) => pr.platform).filter(Boolean))];
     const short = (p.path ?? '').split(/[/\\]/).filter(Boolean).pop() || p.path || '';
-    lines.push(
-      `• ${p.name}（${short}）· 平台 ${platforms.join('/') || p.platform || '?'} · ` +
-        `产品 ${products.length} · 跟踪关键词 ${kws}`,
-    );
+    rows.push([
+      p.name,
+      short,
+      platforms.join('/') || p.platform || '?',
+      String(products.length),
+      String(kws),
+    ]);
   }
-  return lines.join('\n');
+  return tableText(`注册项目（${projects.length}）`, ['名称', '路径', '平台', '产品', '跟踪关键词'], rows);
 }
 
-/** 排名采集概览：每产品关键词任务状态 + 最新快照时间（可过滤项目）。 */
+/** 排名采集概览：每产品关键词任务状态 + 最新快照时间（可过滤项目，表格文本）。 */
 function rankSummary(filterProject?: string): string {
   const store = openSharedHeadlessStore();
   const latest = store.snapshots.latestCheckedAtByKey();
   const prodMeta = new Map<string, { trackName: string | null; platform: string | null; projectName: string }>();
-  const projectOf = new Set<string>();
   for (const p of store.projects.list()) {
     for (const pr of store.products.listByProject(p.name)) {
       prodMeta.set(pr.productId, { trackName: pr.trackName ?? null, platform: pr.platform ?? null, projectName: p.name });
-      projectOf.add(p.name);
     }
   }
   const pidOf = new Map<string, { ok: number; err: number; never: number; latest: string | null }>();
@@ -184,62 +209,52 @@ function rankSummary(filterProject?: string): string {
     else e.never++;
     pidOf.set(inst.productId, e);
   }
-  // 最新快照时间（productId 前缀匹配 latestCheckedAtByKey 的 key）
   for (const [key, checkedAt] of Object.entries(latest)) {
     const pid = key.split('|')[0];
     const e = pidOf.get(pid);
     if (e && (!e.latest || checkedAt > e.latest)) e.latest = checkedAt;
   }
-  const time = (iso?: string | null) => (iso ? new Date(iso).toLocaleString() : '从未');
-  const lines: string[] = [];
+  const rows: string[][] = [];
   for (const [pid, e] of [...pidOf.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const meta = prodMeta.get(pid);
     if (filterProject && meta?.projectName !== filterProject) continue;
     if (filterProject && !meta) continue;
-    const name = meta?.trackName || pid;
-    lines.push(
-      `• ${name}（${meta?.platform ?? '?'}·${meta?.projectName ?? '?'}）：kw ${e.ok + e.err + e.never} · ` +
-        `ok ${e.ok} / err ${e.err} / never ${e.never} · 最新采集 ${time(e.latest)}`,
-    );
+    rows.push([
+      meta?.trackName || pid,
+      meta?.platform ?? '?',
+      meta?.projectName ?? '?',
+      String(e.ok + e.err + e.never),
+      String(e.ok),
+      String(e.err),
+      String(e.never),
+      shortTime(e.latest),
+    ]);
   }
-  if (lines.length === 0) return `没有可展示的排名数据${filterProject ? `（项目 ${filterProject}）` : ''}。`;
-  return lines.join('\n');
+  if (rows.length === 0) return `没有可展示的排名数据${filterProject ? `（项目 ${filterProject}）` : ''}。`;
+  const title = filterProject ? `排名采集概览（${filterProject}）` : '排名采集概览';
+  return tableText(title, ['产品', '平台', '项目', '关键词', 'ok', 'err', 'never', '最新采集'], rows);
 }
 
-/** GitHub 发布 / 发布页缓存摘要（可过滤项目）。 */
+/** GitHub 发布 / 发布页缓存摘要（可过滤项目，表格文本）。 */
 function releaseSummary(filterProject?: string): string {
   const store = openSharedHeadlessStore();
   const projects = store.projects.list();
-  const lines: string[] = [];
+  const rows: string[][] = [];
   for (const p of projects) {
     if (filterProject && p.name !== filterProject) continue;
     const row = store.releaseCache.get(p.name);
     if (!row) {
-      lines.push(`• ${p.name}：暂无发布页缓存（github-sync 未执行/未同步）`);
+      rows.push([p.name, '—', '—', '—', '无缓存']);
       continue;
     }
     const cache = (row.cache ?? {}) as Record<string, any>;
     const releases = Array.isArray(cache.releases) ? cache.releases : [];
     const drafts = releases.filter((r: any) => r && r.draft).length;
-    lines.push(
-      `• ${p.name}：tag ${cache.tag ?? '无'} · GitHub 发布 ${releases.length}（草稿 ${drafts}）` +
-        ` · 同步 ${row.syncedAt ? new Date(row.syncedAt).toLocaleString() : '?'}`,
-    );
+    rows.push([p.name, cache.tag ?? '无', String(releases.length), String(drafts), shortTime(row.syncedAt)]);
   }
-  if (lines.length === 0) return '没有可展示的发布数据。';
-  return lines.join('\n');
-}
-
-/** 项目名解析：精确 → 前缀/包含（大小写不敏感）唯一 → 返回名；多/零候选 → '__candidates__'。 */
-function resolveProjectFilter(raw: string): string | '__candidates__' {
-  if (!raw) return '';
-  const projects = openSharedHeadlessStore().projects.list().map((p) => p.name);
-  const q = raw.toLowerCase();
-  const exact = projects.find((n) => n === raw);
-  if (exact) return exact;
-  const hits = projects.filter((n) => n.toLowerCase().includes(q));
-  if (hits.length === 1) return hits[0];
-  return '__candidates__';
+  if (rows.length === 0) return '没有可展示的发布数据。';
+  const title = filterProject ? `发布摘要（${filterProject}）` : '发布摘要';
+  return tableText(title, ['项目', 'tag', 'GitHub 发布', '草稿', '同步时间'], rows);
 }
 
 export function registerAppilotCommands(ctx: Context): void {
