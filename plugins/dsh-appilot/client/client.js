@@ -259,12 +259,13 @@ function AiUsage(props) {
 var import_jsx_runtime4 = require("react/jsx-runtime");
 var import_jsx_runtime5 = require("react/jsx-runtime");
 var THEME = {
-  projects: { accent: "#6366f1", label: "\u9879\u76EE\u4E0E\u4EA7\u54C1", soft: "#eef2ff" },
-  rank: { accent: "#8b5cf6", label: "\u6392\u540D\u91C7\u96C6\u6982\u89C8", soft: "#f5f3ff" },
-  release: { accent: "#0ea5e9", label: "\u53D1\u5E03\u6458\u8981", soft: "#f0f9ff" },
-  task: { accent: "#10b981", label: "\u4EFB\u52A1\u4E2D\u5FC3", soft: "#ecfdf5" }
+  projects: { accent: "#818cf8", label: "\u9879\u76EE\u4E0E\u4EA7\u54C1" },
+  rank: { accent: "#a78bfa", label: "\u6392\u540D\u91C7\u96C6\u6982\u89C8" },
+  release: { accent: "#38bdf8", label: "\u53D1\u5E03\u6458\u8981" },
+  task: { accent: "#34d399", label: "\u4EFB\u52A1\u4E2D\u5FC3" }
 };
-var FALLBACK_THEME = { accent: "#71717a", label: "Appilot", soft: "#f4f4f5" };
+var FALLBACK_THEME = { accent: "#a1a1aa", label: "Appilot" };
+var softOf = (accent) => `color-mix(in srgb, ${accent} 14%, transparent)`;
 var TOKEN_RULES = [
   { re: /✓/g, color: "var(--dsw-alias-state-success-primary)" },
   { re: /\bok \d+\b/g, color: "var(--dsw-alias-state-success-primary)" },
@@ -304,62 +305,83 @@ function tint(text) {
   if (parts.length === 0) parts.push(rest);
   return parts;
 }
-function Row({ kind, children }) {
-  const base = { lineHeight: "19px" };
-  if (kind === "bullet") {
-    return (0, import_jsx_runtime4.jsx)("div", {
-      style: { ...base, display: "flex", gap: 6, alignItems: "baseline" },
-      children: [
-        (0, import_jsx_runtime4.jsx)("span", { style: { color: "var(--dsw-alias-label-tertiary)" }, children: "\u25B8" }),
-        (0, import_jsx_runtime4.jsx)("span", { style: { flex: 1, minWidth: 0 }, children })
-      ]
-    });
-  }
-  if (kind === "kv") {
-    const [label, ...valueParts] = children.props?.content ?? [];
-    const labelText = label;
-    const valueText = (valueParts || []).join("\uFF1A");
-    return (0, import_jsx_runtime4.jsx)("div", {
-      style: { ...base, display: "flex", gap: 8 },
-      children: [
-        (0, import_jsx_runtime4.jsx)("span", {
-          style: { flex: "0 0 120px", color: "var(--dsw-alias-label-tertiary)", fontSize: 12 },
-          children: labelText
-        }),
-        (0, import_jsx_runtime4.jsx)("span", { style: { flex: 1, minWidth: 0 }, children: valueText })
-      ]
-    });
-  }
-  return (0, import_jsx_runtime4.jsx)("div", { style: { ...base, paddingLeft: 2 }, children });
+function TableBlock({ rows }) {
+  const header = rows[0] ?? [];
+  const body = rows.slice(1);
+  const cellStyle = {
+    padding: "3px 10px 3px 0",
+    fontSize: 12,
+    textAlign: "left",
+    whiteSpace: "nowrap"
+  };
+  const thStyle = {
+    ...cellStyle,
+    color: "var(--dsw-alias-label-tertiary)",
+    fontWeight: 600,
+    borderBottom: "1px solid var(--dsw-alias-border-l2)"
+  };
+  const tdStyle = {
+    ...cellStyle,
+    color: "var(--dsw-alias-label-secondary)",
+    borderBottom: "1px solid var(--dsw-alias-border-l1)"
+  };
+  const tintCell = (v) => (0, import_jsx_runtime4.jsx)("span", { children: tint(v) });
+  return (0, import_jsx_runtime4.jsx)("table", {
+    style: { borderCollapse: "collapse", width: "100%" },
+    children: [
+      (0, import_jsx_runtime4.jsx)("thead", {
+        children: (0, import_jsx_runtime4.jsx)("tr", {
+          children: header.map(
+            (h, i) => (0, import_jsx_runtime4.jsx)("th", { key: i, style: thStyle, children: tintCell(h) })
+          )
+        })
+      }),
+      (0, import_jsx_runtime4.jsx)("tbody", {
+        children: body.map(
+          (r, ri) => (0, import_jsx_runtime4.jsx)("tr", {
+            key: ri,
+            children: r.map(
+              (v, ci) => (0, import_jsx_runtime4.jsx)("td", { key: ci, style: tdStyle, children: tintCell(v) })
+            )
+          })
+        )
+      })
+    ]
+  });
 }
 function Lines({ text }) {
-  const out = [];
   const lines = String(text || "").split("\n");
+  const out = [];
+  let tableRows = null;
+  const flushTable = () => {
+    if (tableRows && tableRows.length > 0) {
+      out.push((0, import_jsx_runtime4.jsx)("div", { key: "t" + out.length, style: { overflowX: "auto" }, children: (0, import_jsx_runtime4.jsx)(TableBlock, { rows: tableRows }) }));
+      tableRows = null;
+    }
+  };
   lines.forEach((ln, i) => {
     const line = ln.trimEnd();
-    if (!line.trim()) return;
+    if (!line.trim()) {
+      flushTable();
+      return;
+    }
+    if (line.includes("|")) {
+      tableRows = tableRows ?? [];
+      tableRows.push(line.split("|").map((s) => s.trim()).filter((s, idx, arr) => !(idx === 0 && s === "") && !(idx === arr.length - 1 && s === "")));
+      return;
+    }
+    flushTable();
     const isFirst = i === 0;
     const content = tint(line);
-    let node;
-    if (line.startsWith("\u2022 ")) {
-      node = (0, import_jsx_runtime4.jsx)(Row, { kind: "bullet", children: content });
-    } else {
-      const ci = line.indexOf("\uFF1A");
-      const kv = !line.startsWith(" ") && ci > 0 && ci <= 22 && !line.includes("\u7528\u6CD5") && !line.includes("\xB7 ");
-      if (kv) {
-        node = (0, import_jsx_runtime4.jsx)(Row, {
-          kind: "kv",
-          children: { props: { content: [line.slice(0, ci), line.slice(ci + 1)] } }
-        });
-      } else {
-        node = (0, import_jsx_runtime4.jsx)("div", {
-          style: isFirst ? { fontWeight: 600, color: "var(--dsw-alias-label-primary)", marginBottom: 2, lineHeight: "20px" } : { paddingLeft: 2, lineHeight: "19px" },
-          children: content
-        });
-      }
-    }
-    out.push((0, import_jsx_runtime4.jsx)(import_jsx_runtime4.Fragment, { key: i, children: node }));
+    out.push(
+      (0, import_jsx_runtime4.jsx)("div", {
+        key: i,
+        style: isFirst ? { fontWeight: 600, color: "var(--dsw-alias-label-primary)", marginBottom: 3, lineHeight: "20px" } : { paddingLeft: 2, lineHeight: "19px" },
+        children: content
+      })
+    );
   });
+  flushTable();
   return (0, import_jsx_runtime4.jsx)("div", { style: { display: "flex", flexDirection: "column", gap: 3 }, children: out });
 }
 function AppilotCommandCard(props) {
@@ -387,7 +409,7 @@ function AppilotCommandCard(props) {
           "div",
           {
             style: {
-              background: theme.soft,
+              background: softOf(theme.accent),
               padding: "8px 14px",
               display: "flex",
               alignItems: "center",
