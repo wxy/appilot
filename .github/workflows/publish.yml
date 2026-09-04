@@ -38,55 +38,55 @@ jobs:
       # apps/desktop、packages/cli、profiles/ 不发布。
       - name: Publish @appilot-labs/appilot-core
         working-directory: packages/core
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-headless
         working-directory: packages/headless
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-common
         working-directory: plugins/dsh-common
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-project
         working-directory: plugins/dsh-project
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-release
         working-directory: plugins/dsh-release
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot (dsh 插件)
         working-directory: plugins/dsh-appilot
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-headless-cli
         working-directory: packages/headless-cli
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-scheduler
         working-directory: packages/scheduler
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-mcp
         working-directory: packages/mcp
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
