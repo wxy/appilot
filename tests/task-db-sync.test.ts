@@ -110,8 +110,7 @@ async function main(): Promise<void> {
     const ms = new Date(t.nextRunAt as string).getTime() - Date.now();
     assert.ok(ms >= 30 * 60_000 && ms <= 210 * 60_000, `重排应在 30–210min: ${t.id} ${ms}`);
   }
-  // 清除后镜像到 DB → 不再出现 failed/error
-  const store2 = openStore(join(mkdtempSync(join(tmpdir(), 'tdb-clear-')), 'appilot.db'));
+  // 清除后镜像映射 → DB 不再出现 failed/error
   const dbRow = toTaskRow(cleared.tasks[0]);
   assert.equal(dbRow?.lastStatus, 'never', '清除后 mirror 映射为 never');
   console.log('✓ clearElectronFailures（clear/reschedule/镜像映射）');
