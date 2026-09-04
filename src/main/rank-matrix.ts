@@ -1,15 +1,16 @@
 /**
  * 排名采集覆盖热力图数据层（原型确认后落 React 版）。
  *
- * 全局监督视图：产品 × 商店矩阵，每格点阵 = 关键字每 5 词一桶，
- * 桶色 = 该桶在窗口内的采集覆盖状态。回答「哪些市场覆盖齐全、哪里掉队」。
+ * 全局监督视图：产品 × (语言×商店) 矩阵，每格点阵 = 关键字每 5 词一桶，
+ * 桶色 = 该桶在窗口内的采集覆盖状态。回答「哪些市场的排名关键词覆盖齐全、哪里掉队」。
  *
  * 语义（与原型一致）：
  * - 窗口：成功快照 checkedAt 距今 ≤ 12h（严格周期对齐）算"采到"；
  * - 桶状态：任一 error → 红；全采到 → 绿；部分 → 黄；0 且全部未到期 → 灰
  *   （等待中，正常）；0 且有已到期未采 → 橙（掉队）。
- * - 语言隐含于商店（storefront 集合由产品语言决定），格 = product × storefront
- *   下全部 keyword×language 实例。
+ * - 列 = (queryLanguage × storefront)：同一商店跟踪多语言时分列；
+ *   格 = product × 该 (语言, 商店) 下全部 keyword 实例。
+ * - 产品行标签用仓库名（projectName）+ 平台（UI 层拼装），productId 仅作身份/兜底。
  *
  * 纯 node（不 import electron），可单测。
  */
@@ -28,9 +29,13 @@ export interface MatrixBucket {
   keywords: Array<{ keyword: string; lang: string }>;
 }
 
-export interface MatrixCell {
+export interface MatrixColumn {
+  lang: string;
   storefront: string;
-  /** 该格关键字实例数。 */
+}
+
+export interface MatrixCell {
+  /** 该格关键字实例数（0 = 该产品不跟踪此 (语言,商店)）。 */
   total: number;
   buckets: MatrixBucket[];
 }
@@ -38,19 +43,24 @@ export interface MatrixCell {
 export interface MatrixRow {
   /** productId（含平台段，如 msszspx4-r12ipi:ios）。 */
   productId: string;
-  /** product_records trackName（无则 null）。 */
+  /** 仓库名（product_records.projectName；行标签主体）。 */
+  projectName: string | null;
+  /** 平台（ios/macos…）。 */
+  platform: string | null;
+  /** product_records trackName（hover 补充）。 */
   productName: string | null;
+  /** cells 与 columns 对齐（无跟踪的列为空 cell）。 */
   cells: MatrixCell[];
 }
 
 export interface RankCoverageMatrix {
-  storefronts: string[];
+  columns: MatrixColumn[];
   rows: MatrixRow[];
   /** 聚合时刻（ISO）。 */
   generatedAt: string;
 }
 
-/** 单桶基调（最差优先：error > stale > 覆盖比例）。 */
+/** 单桶基调（最差优先：error > 过期未采 > 覆盖比例）。 */
 export function bucketTone(
   insts: TaskRow[],
   latestByKey: Record<string, string>,
@@ -105,34 +115,61 @@ export function buildRankCoverageMatrix(
   const latestByKey = store.snapshots.latestCheckedAtByKey();
 
   const rankInsts = store.tasks.all().filter((t) => t.kind === 'rank');
+  // 组：productId × lang × storefront
   const groups = new Map<string, TaskRow[]>();
   for (const t of rankInsts) {
     const inst = (t.instance ?? {}) as any;
     if (!inst.productId || !inst.storefront) continue;
-    const k = `${inst.productId}|${inst.storefront}`;
+    const lang = String(inst.queryLanguage ?? 'en');
+    const k = `${inst.productId}|${lang}|${inst.storefront}`;
     (groups.get(k) ?? groups.set(k, [] as TaskRow[]).get(k)!)!.push(t);
   }
-  const productNameOf = new Map<string, string | null>();
+
+  // 产品元信息（仓库名/平台/trackName）
+  const metaByProduct = new Map<string, { projectName: string | null; platform: string | null; productName: string | null }>();
   for (const p of store.projects.list()) {
     for (const pr of store.products.listByProject(p.name)) {
-      productNameOf.set(pr.productId, pr.trackName ?? null);
+      metaByProduct.set(pr.productId, {
+        projectName: p.name,
+        platform: pr.platform ?? null,
+        productName: pr.trackName ?? null,
+      });
     }
   }
-  const storefronts = [...new Set([...groups.keys()].map((k) => k.split('|')[1]))].sort();
-  const productIds = [...new Set([...groups.keys()].map((k) => k.split('|')[0]))].sort();
 
-  const rows: MatrixRow[] = productIds.map((productId) => ({
-    productId,
-    productName: productNameOf.get(productId) ?? null,
-    cells: storefronts.map((storefront) => {
-      const insts = groups.get(`${productId}|${storefront}`) ?? [];
+  // 列 = (lang, storefront) 并集（lang 优先排序 → 同语言商店聚在一起）
+  const colSet = new Set<string>();
+  for (const k of groups.keys()) {
+    const [, lang, storefront] = k.split('|');
+    colSet.add(`${lang}|${storefront}`);
+  }
+  const columns: MatrixColumn[] = [...colSet]
+    .map((s) => {
+      const [lang, storefront] = s.split('|');
+      return { lang, storefront };
+    })
+    .sort((a, b) => (a.lang + '|' + a.storefront).localeCompare(b.lang + '|' + b.storefront));
+
+  const productIds = [...new Set([...groups.keys()].map((k) => k.split('|')[0]))].sort();
+  const rows: MatrixRow[] = productIds.map((productId) => {
+    const meta = metaByProduct.get(productId);
+    const cells: MatrixCell[] = columns.map((col) => {
+      const insts = groups.get(`${productId}|${col.lang}|${col.storefront}`) ?? [];
+      if (insts.length === 0) return { total: 0, buckets: [] };
       const buckets = chunkInstances(insts).map((chunk) => {
         const { tone, keywords } = bucketTone(chunk, latestByKey, now, windowMs);
         return { tone, keywords };
       });
-      return { storefront, total: insts.length, buckets };
-    }),
-  }));
+      return { total: insts.length, buckets };
+    });
+    return {
+      productId,
+      projectName: meta?.projectName ?? null,
+      platform: meta?.platform ?? null,
+      productName: meta?.productName ?? null,
+      cells,
+    };
+  });
 
-  return { storefronts, rows, generatedAt: new Date(now).toISOString() };
+  return { columns, rows, generatedAt: new Date(now).toISOString() };
 }

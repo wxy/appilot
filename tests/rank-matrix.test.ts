@@ -62,13 +62,16 @@ async function main(): Promise<void> {
   ]);
 
   const m = buildRankCoverageMatrix(store, { now: NOW });
-  assert.deepEqual(m.storefronts, ['de', 'us'], '商店排序');
+  assert.deepEqual(m.columns, [{ lang: 'en', storefront: 'de' }, { lang: 'en', storefront: 'us' }], '列=(语言×商店) 排序');
   assert.equal(m.rows.length, 1, '一个产品行');
   const row = m.rows[0];
   assert.equal(row.productId, 'app-a:ios');
+  assert.equal(row.projectName, 'proj-a', '仓库名');
+  assert.equal(row.platform, 'ios', '平台');
   assert.equal(row.productName, 'App A', 'product_records trackName');
-  const us = row.cells.find((c) => c.storefront === 'us')!;
-  const de = row.cells.find((c) => c.storefront === 'de')!;
+  assert.equal(row.cells.length, 2, 'cells 与 columns 对齐');
+  const us = row.cells[1]; // columns[1] = en|us
+  const de = row.cells[0]; // columns[0] = en|de
   assert.equal(us.total, 4);
   assert.equal(us.buckets.length, 1, '4 词 → 1 桶');
   assert.equal(us.buckets[0].tone, 'part', '3 覆盖 + 1 过期未采 → part');
