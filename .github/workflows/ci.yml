@@ -26,8 +26,18 @@ jobs:
         with:
           path: node_modules
           key: nm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-      - if: steps.nm-cache.outputs.cache-hit != 'true'
-        run: npm ci
+          restore-keys: |
+            nm-${{ runner.os }}-
+      - name: Install deps（命中跳过 / 未命中增量）
+        shell: bash
+        run: |
+          if [ "${{ steps.nm-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "node_modules 缓存命中（lock 未变）——跳过安装"
+          else
+            # lock 变更（如版本 bump）时不做 npm ci 全量冷装（4–7min），
+            # 在恢复的 node_modules 上增量同步差异，通常 1min 内完成。
+            npm install --no-audit --no-fund --prefer-offline
+          fi
       - run: npm run typecheck
 
   test:
@@ -46,8 +56,16 @@ jobs:
         with:
           path: node_modules
           key: nm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-      - if: steps.nm-cache-test.outputs.cache-hit != 'true'
-        run: npm ci
+          restore-keys: |
+            nm-${{ runner.os }}-
+      - name: Install deps（命中跳过 / 未命中增量）
+        shell: bash
+        run: |
+          if [ "${{ steps.nm-cache-test.outputs.cache-hit }}" = "true" ]; then
+            echo "node_modules 缓存命中（lock 未变）——跳过安装"
+          else
+            npm install --no-audit --no-fund --prefer-offline
+          fi
       - run: npm test
 
   # Platform build — only on master push (expensive: macOS 10x, Windows 2x).

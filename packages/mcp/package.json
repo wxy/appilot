@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot-mcp",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Appilot MCP stdio server — 把 headless 服务 API（项目/快照/任务）暴露为标准 MCP 工具，供 Claude Desktop / Cursor 等客户端调用。",
   "bin": {
     "appilot-mcp": "./dist/mcp.js"
@@ -13,8 +13,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@appilot-labs/appilot-headless": "^0.1.0",
-    "@appilot-labs/appilot-scheduler": "^0.1.0"
+    "@appilot-labs/appilot-headless": "^1.0.0",
+    "@appilot-labs/appilot-scheduler": "^1.0.0"
   },
   "devDependencies": {
     "tsx": "^4.23.1",
