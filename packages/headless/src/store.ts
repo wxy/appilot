@@ -69,10 +69,12 @@ export interface AppilotStore {
   };
   lease: {
     /**
-     * 尝试获取租约：当前无主或主心跳过期则成为主。返回是否成功。
+     * 尝试获取租约：无主或主心跳过期则成为主。返回是否成功。
      * ⚠️ TTL 语义：过期判定用**调用方传入的 ttlMs** 作窗口（心跳距今 > ttlMs
      * 视为主已崩溃）。所有壳必须使用一致的 TTL（如 60s），否则窗口不一致会
      * 导致接管判断失真（详见 tests/multiprocess.test.ts 第 4 步）。
+     * ⚠️ 同 id 语义：同 id 且心跳新鲜 = 已有同 id 活主（双进程并存）→ 拒绝
+     * （防双 daemon 并跑）；心跳过期 → 允许接管崩溃主的班。续租请用 heartbeat。
      */
     acquire(leaderId: string, ttlMs: number): boolean;
     /** 续租：仅当前主可续；主已换人则失败。 */
@@ -305,8 +307,14 @@ export function openStore(dbPath: string): AppilotStore {
           const now = Date.now();
           if (existing) {
             const heartbeat = new Date(existing.heartbeatAt).getTime();
-            if (existing.leaderId !== leaderId && now - heartbeat < ttlMs) {
-              return false; // 还有活主
+            const fresh = now - heartbeat < ttlMs;
+            if (existing.leaderId === leaderId) {
+              // 同 id：心跳新鲜 = 已有**同 id 活主**（如双 daemon 并存）→ 拒绝，
+              // 防第二个同 id 进程把活主心跳当"自己续租"而并跑（2026-09-04 事故）。
+              // 心跳过期（同 id 主崩溃）→ 允许接管。
+              if (fresh) return false;
+            } else if (fresh) {
+              return false; // 还有活主（异 id）
             }
             db.prepare('UPDATE lease SET leaderId = ?, heartbeatAt = ? WHERE id = 1').run(
               leaderId,
