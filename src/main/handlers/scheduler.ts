@@ -15,6 +15,7 @@ import { getStore } from "../store";
 import { sharedStore } from "../registry-sync";
 import { taskCenterTasksFromDb, taskCenterOverviewFromDb } from "../task-center-db";
 import { clearElectronFailures, mirrorTasksToDb } from "../task-db-sync";
+import { buildRankCoverageMatrix } from "../rank-matrix";
 
 // 租约心跳新鲜度窗口（与各壳 acquire TTL 一致 60s；daemon 心跳 15s）。
 const DAEMON_HEARTBEAT_TTL_MS = 60_000;
@@ -288,6 +289,9 @@ export function registerSchedulerHandlers(): void {
     }
     return false;
   });
+
+  // 排名覆盖热力图（全局监督视图）：产品×商店 × 5词/桶 点阵。
+  ipcMain.handle("scheduler:matrix", async () => buildRankCoverageMatrix(sharedStore()));
 
   // ── 任务中心控制（架构收敛 C2）：daemon（常驻）启停 + 本壳 fallback 同步 ──
   ipcMain.handle("scheduler:daemonStart", async () => {

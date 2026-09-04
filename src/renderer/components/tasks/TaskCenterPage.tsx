@@ -14,6 +14,7 @@ import { cn } from "../../lib/utils";
 import { GithubIcon } from "../ui/Icons";
 import { inputLineClass } from "../ui/styles";
 import { ValueFlash } from "../ui/ValueFlash";
+import { RankCoverageHeatmap } from "./RankCoverageHeatmap";
 
 const KIND_LABELS: Record<string, string> = {
   "github-sync": "GitHub 发布监听",
@@ -549,6 +550,8 @@ export function TaskCenterPage() {
       )}
 
       <TaskTimelineChart timeline={timeline} accel={accel} />
+
+      <RankCoverageHeatmap />
 
       <div className="mt-6 mb-6 flex flex-wrap gap-2">
         <select
