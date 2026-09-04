@@ -14,6 +14,7 @@ import { computeRankSchedulerStatus } from "../scheduler-status";
 import { getStore } from "../store";
 import { sharedStore } from "../registry-sync";
 import { taskCenterTasksFromDb, taskCenterOverviewFromDb } from "../task-center-db";
+import { clearElectronFailures, mirrorTasksToDb } from "../task-db-sync";
 
 // 租约心跳新鲜度窗口（与各壳 acquire TTL 一致 60s；daemon 心跳 15s）。
 const DAEMON_HEARTBEAT_TTL_MS = 60_000;
@@ -330,15 +331,34 @@ export function registerSchedulerHandlers(): void {
   //    reschedule = 清错误态 + nextRunAt 限速摊铺（教训 B：同刻到期会触发
   //    上游限流，如 iTunes Search 403/429）──
   ipcMain.handle("scheduler:clearFailures", async (_e, mode: string) => {
-    const store = sharedStore();
     const reschedule = mode === "reschedule";
+    // 双源清除（backlog #2 修复）：失败状态可能来自 electron-store（Electron
+    // 池任务，mirror 每 10s 写回 DB → 只清 DB 会被 mirror 复活）或 daemon 域。
+    // 1) Electron 源：清 failed 状态（原排期/摊铺重排）→ 立即 mirror 刷新 DB
+    const s = await getStore();
+    const tasks: any[] = s.get("scheduledTasks") || [];
+    const clearedElectron = clearElectronFailures(tasks, reschedule ? "reschedule" : "clear");
+    if (clearedElectron.cleared > 0) {
+      s.set("scheduledTasks", clearedElectron.tasks);
+      try {
+        mirrorTasksToDb(sharedStore(), clearedElectron.tasks);
+      } catch {
+        /* 下轮 hydrate 会再镜像 */
+      }
+    }
+    // 2) 非 Electron 源失败实例行（daemon/CLI 等）直清 DB
+    const store = sharedStore();
     const rows = store.tasks
       .all()
-      .filter((t) => t.kind != null && t.lastStatus === "error");
+      .filter(
+        (t) =>
+          t.kind != null &&
+          t.lastStatus === "error" &&
+          (t.source ?? "electron") !== "electron",
+      );
     const byKind: Record<string, number> = {};
     const now = Date.now();
     for (const r of rows) {
-      // 摊铺窗口 30–210min（id 哈希均匀散布），每批少量到期 → 温和重跑。
       const spreadMin = reschedule ? 30 + (hashOf(r.id) % 180) : 0;
       store.tasks.upsert({
         id: r.id,
@@ -358,7 +378,13 @@ export function registerSchedulerHandlers(): void {
       const k = r.kind ?? "?";
       byKind[k] = (byKind[k] ?? 0) + 1;
     }
-    return { mode: reschedule ? "reschedule" : "clear", cleared: rows.length, byKind };
+    return {
+      mode: reschedule ? "reschedule" : "clear",
+      cleared: clearedElectron.cleared + rows.length,
+      electronCleared: clearedElectron.cleared,
+      dbCleared: rows.length,
+      byKind,
+    };
   });
 }
 

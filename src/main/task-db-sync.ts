@@ -114,3 +114,39 @@ export function mirrorTasksToDb(store: AppilotStore, tasks: ElectronTaskLike[]):
   }
   return { mirrored, pruned };
 }
+
+/** 稳定字符串哈希（重排摊铺偏移用）。 */
+function hashOf(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+/**
+ * 清除 electron-store 任务的失败状态（backlog #2 的 Electron 源侧）。
+ * 只读纯函数：返回新数组与清除数——不清 DB（DB 由 mirrorTasksToDb 从源刷新）。
+ * - clear：失败 → 无状态（lastStatus/lastRunAt 清除，nextRunAt 保留原排期）——
+ *   mirror 映射为 never（未运行），任务按原排期自然重试；
+ * - reschedule：同 clear + nextRunAt 限速摊铺 30–210min（id 哈希，防上游限流）。
+ */
+export function clearElectronFailures(
+  tasks: ElectronTaskLike[],
+  mode: 'clear' | 'reschedule',
+): { tasks: ElectronTaskLike[]; cleared: number } {
+  const reschedule = mode === 'reschedule';
+  const now = Date.now();
+  let cleared = 0;
+  const next = (tasks ?? []).map((t) => {
+    if (!t || typeof t.id !== 'string' || t.lastStatus !== 'failed') return t;
+    const copy: Record<string, unknown> = { ...t };
+    delete copy.lastStatus; // 无状态 → mirror 映射为 never（不再显示失败）
+    delete copy.lastRunAt; // 避免 mirror 按残留 lastRunAt 误标 ok
+    if (reschedule) {
+      const spreadMin = 30 + (hashOf(t.id) % 180);
+      copy.nextRunAt = new Date(now + spreadMin * 60_000).toISOString();
+    }
+    cleared += 1;
+    return copy;
+  });
+  return { tasks: next, cleared };
+}
