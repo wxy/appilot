@@ -46,6 +46,9 @@ export function TaskCenterPage() {
   } | null>(null);
   const [ctrlBusy, setCtrlBusy] = useState(false);
   const [ctrlErr, setCtrlErr] = useState<string | null>(null);
+  // 失败任务批量处理（backlog #2）
+  const [failBusy, setFailBusy] = useState<string | null>(null);
+  const [failMsg, setFailMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [languageFilter, setLanguageFilter] = useState<string>("all");
@@ -175,6 +178,41 @@ export function TaskCenterPage() {
       });
   };
 
+  // 失败任务批量处理：clear（清错误态）/ reschedule（清 + 限速重排）
+  const clearFailures = (mode: "clear" | "reschedule") => {
+    if (failBusy) return;
+    if (
+      mode === "reschedule" &&
+      !window.confirm(
+        "清除失败状态并重新调度：失败实例将在未来 30–210 分钟内限速重跑（避免触发上游限流）。继续？",
+      )
+    )
+      return;
+    if (mode === "clear" && !window.confirm("清除全部失败状态（按原排期稍后自然重试）？"))
+      return;
+    setFailBusy(mode);
+    setFailMsg(null);
+    (window as any).appilot?.scheduler?.clearFailures(mode)
+      .then((r: any) => {
+        if (r && r.cleared > 0) {
+          setFailMsg({
+            kind: "ok",
+            text:
+              r.mode === "reschedule"
+                ? `已清除并重新调度 ${r.cleared} 个失败实例（限速摊铺）`
+                : `已清除 ${r.cleared} 个失败实例`,
+          });
+        } else {
+          setFailMsg({ kind: "ok", text: "没有需要处理的失败实例" });
+        }
+        (window as any).appilot?.scheduler?.list()
+          .then(setData)
+          .catch(() => undefined);
+      })
+      .catch((e: any) => setFailMsg({ kind: "err", text: e?.message || String(e) }))
+      .finally(() => setFailBusy(null));
+  };
+
   // 主进程数据变更推送：任务状态变化时立即刷新（节流 1.5 秒，避免每任务全量重拉）。
   useEffect(() => {
     let last = 0;
@@ -269,6 +307,35 @@ export function TaskCenterPage() {
   const pendingGroups = groupTasks(pending);
   const failedGroups = groupTasks(failed);
   const overview = data?.overview;
+
+  // 引擎状态（统一模型）：运行（daemon/本应用）/ 已暂停 / 未运行 ——
+  // 供头部控制条与加速可用性派生。
+  const engineStopped = daemonCtrl?.userStopped ?? false;
+  const engineByDaemon =
+    !engineStopped && Boolean(daemonCtrl?.daemon?.running || daemonCtrl?.leader === "scheduler");
+  const engineByElectron = !engineStopped && daemonCtrl?.leader === "electron";
+  const engineActive = engineByDaemon || engineByElectron;
+  const engineLabel =
+    daemonCtrl == null
+      ? "任务中心读取中…"
+      : engineStopped
+        ? "已暂停"
+        : engineByDaemon
+          ? "运行中 · 常驻 daemon"
+          : engineByElectron
+            ? "运行中 · 本应用"
+            : "未运行";
+  const enginePillCls = daemonCtrl == null
+    ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+    : engineStopped
+      ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300"
+      : engineActive
+        ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+        : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400";
+  // 失败任务数（整页范围，非筛选后——横幅反映全局健康）
+  const totalFailed = (data?.tasks || []).filter(
+    (t: any) => t.lastStatus === "failed",
+  ).length;
   const nowRunning = data?.nowRunning;
 
   return (
@@ -280,16 +347,53 @@ export function TaskCenterPage() {
             后台数据采集与同步的调度健康度、执行负载与时间线。
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {nowRunning && (
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {nowRunning && engineActive && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
               正在执行{" "}
               {nowRunning.kind === "github-sync" ? "GitHub 发布监听" : nowRunning.keyword}
             </span>
           )}
+          <span
+            className={cn("px-2.5 py-1 rounded-full text-xs font-medium", enginePillCls)}
+            title={
+              engineStopped
+                ? "任务中心已暂停：自动调度停止；重启应用后随启动恢复"
+                : engineActive
+                  ? "任务中心自动调度运行中"
+                  : "任务中心未运行"
+            }
+          >
+            {engineLabel}
+          </span>
           <button
             type="button"
+            disabled={ctrlBusy || daemonCtrl == null}
+            onClick={() => (engineActive ? daemonStop() : daemonStart())}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-50",
+              engineActive
+                ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600"
+                : "border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:border-emerald-600",
+            )}
+            title={
+              engineActive
+                ? "暂停任务中心：关停常驻 daemon 并暂停本应用调度（手动运行仍可用；重启应用随启动恢复）"
+                : "启动任务中心：拉起常驻 daemon（appilot-scheduler），自动调度恢复"
+            }
+          >
+            {ctrlBusy
+              ? engineActive
+                ? "暂停中…"
+                : "启动中…"
+              : engineActive
+                ? "暂停任务中心"
+                : "启动任务中心"}
+          </button>
+          <button
+            type="button"
+            disabled={!engineActive || ctrlBusy}
             onClick={() => {
               // 未开启 → 开启；已开启 → 延长 5 分钟。
               (window as any).appilot?.scheduler?.setAccel(true)
@@ -309,15 +413,17 @@ export function TaskCenterPage() {
                 .catch(() => undefined);
             }}
             className={cn(
-              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
               accel
                 ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
                 : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
             )}
             title={
-              accel
-                ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
-                : "开启加速模式，以更快速度处理积压任务"
+              !engineActive
+                ? "任务中心已暂停——先「启动任务中心」再加速"
+                : accel
+                  ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
+                  : "开启加速模式，以更快速度处理积压任务"
             }
           >
             {accel ? (
@@ -331,75 +437,56 @@ export function TaskCenterPage() {
               "加速模式"
             )}
           </button>
-          <span
-            className={cn(
-              "px-2.5 py-1 rounded-full text-xs font-medium",
-              data?.running
-                ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
-            )}
-          >
-            {data?.running ? "调度器运行中" : "调度器未运行"}
-          </span>
+          {ctrlErr && (
+            <span className="text-red-500 dark:text-red-400 text-xs">{ctrlErr}</span>
+          )}
         </div>
       </div>
 
-      {/* 任务中心控制（架构收敛 C2）：daemon 常驻启停 + 壳 fallback 同步 */}
-      <div className="mb-5 flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={cn(
-            "px-2.5 py-1 rounded-full font-medium",
-            daemonCtrl?.userStopped
-              ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300"
-              : daemonCtrl?.daemon?.running || daemonCtrl?.leader === "scheduler"
-                ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                : daemonCtrl?.leader === "electron"
-                  ? "bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400"
-                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
-          )}
-        >
-          {daemonCtrl == null
-            ? "任务中心状态读取中…"
-            : daemonCtrl.userStopped
-              ? "任务中心已停止"
-              : daemonCtrl.daemon?.running || daemonCtrl.leader === "scheduler"
-                ? "常驻调度中（daemon）"
-                : daemonCtrl.leader === "electron"
-                  ? "调度中（本应用）"
-                  : "调度器未运行"}
-        </span>
-
-        {daemonCtrl != null &&
-          (daemonCtrl.userStopped ||
-          !daemonCtrl.daemon?.running &&
-            daemonCtrl.leader !== "electron" ? (
-            <button
-              type="button"
-              disabled={ctrlBusy}
-              onClick={daemonStart}
-              className="inline-flex items-center px-3 py-1.5 rounded-lg border border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 text-xs font-medium hover:border-emerald-600 disabled:opacity-50"
-              title="启动常驻任务中心（appilot-scheduler daemon）；重启应用后也会随启动恢复"
-            >
-              {ctrlBusy ? "启动中…" : "启动任务中心"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={ctrlBusy}
-              onClick={daemonStop}
-              className="inline-flex items-center px-3 py-1.5 rounded-lg border border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 text-xs font-medium hover:border-red-600 disabled:opacity-50"
-              title="停止任务中心：关停常驻 daemon 并暂停本应用调度（手动运行仍可用）"
-            >
-              {ctrlBusy ? "停止中…" : "停止任务中心"}
-            </button>
-          ))}
-        {daemonCtrl?.userStopped ? (
-          <span className="text-zinc-400 dark:text-zinc-500">
-            已手动停止——后台不再自动采集（重启应用后随启动恢复；加速/立即运行仍可用）
-          </span>
+      {/* 引擎说明 + 失败任务批量处理（backlog #2） */}
+      <div className="mb-5 space-y-2 text-xs">
+        {engineStopped ? (
+          <p className="text-zinc-400 dark:text-zinc-500">
+            已暂停——后台不再自动采集；重启应用后随启动恢复（手动「立即运行 / 加速」仍可用）。
+          </p>
         ) : null}
-        {ctrlErr ? (
-          <span className="text-red-500 dark:text-red-400">{ctrlErr}</span>
+        {data != null && totalFailed > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-500/10 px-4 py-3 text-red-700 dark:text-red-400">
+            <span className="font-medium">有 {totalFailed} 个任务实例处于失败状态</span>
+            <span className="text-red-500/70 dark:text-red-400/70">
+              （失败后自动推后约 12h，不会无限重试）
+            </span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              disabled={failBusy != null}
+              onClick={() => clearFailures("clear")}
+              className="inline-flex items-center px-3 py-1 rounded-lg border border-red-500/60 bg-white dark:bg-transparent text-xs font-medium hover:bg-red-100 dark:hover:bg-red-500/20 disabled:opacity-50"
+              title="清除失败状态（按原排期稍后自然重试）"
+            >
+              {failBusy === "clear" ? "清除中…" : "清除失败"}
+            </button>
+            <button
+              type="button"
+              disabled={failBusy != null}
+              onClick={() => clearFailures("reschedule")}
+              className="inline-flex items-center px-3 py-1 rounded-lg border border-red-600 bg-red-600 text-white text-xs font-medium hover:bg-red-700 disabled:opacity-50"
+              title="清除失败并在未来 30–210 分钟内限速重跑"
+            >
+              {failBusy === "reschedule" ? "重排中…" : "清除并重新调度"}
+            </button>
+          </div>
+        ) : null}
+        {failMsg ? (
+          <p
+            className={
+              failMsg.kind === "ok"
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-red-500 dark:text-red-400"
+            }
+          >
+            {failMsg.text}
+          </p>
         ) : null}
       </div>
 

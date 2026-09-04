@@ -325,6 +325,48 @@ export function registerSchedulerHandlers(): void {
       leader,
     };
   });
+
+  // ── 失败任务批量处理（backlog #2）：clear = 清错误态按原排期；
+  //    reschedule = 清错误态 + nextRunAt 限速摊铺（教训 B：同刻到期会触发
+  //    上游限流，如 iTunes Search 403/429）──
+  ipcMain.handle("scheduler:clearFailures", async (_e, mode: string) => {
+    const store = sharedStore();
+    const reschedule = mode === "reschedule";
+    const rows = store.tasks
+      .all()
+      .filter((t) => t.kind != null && t.lastStatus === "error");
+    const byKind: Record<string, number> = {};
+    const now = Date.now();
+    for (const r of rows) {
+      // 摊铺窗口 30–210min（id 哈希均匀散布），每批少量到期 → 温和重跑。
+      const spreadMin = reschedule ? 30 + (hashOf(r.id) % 180) : 0;
+      store.tasks.upsert({
+        id: r.id,
+        title: r.title,
+        intervalMinutes: r.intervalMinutes,
+        lastRunAt: r.lastRunAt,
+        nextRunAt: reschedule
+          ? new Date(now + spreadMin * 60_000).toISOString()
+          : r.nextRunAt,
+        lastStatus: "never",
+        lastSummary: null,
+        runCount: r.runCount,
+        source: r.source,
+        kind: r.kind,
+        instance: r.instance,
+      });
+      const k = r.kind ?? "?";
+      byKind[k] = (byKind[k] ?? 0) + 1;
+    }
+    return { mode: reschedule ? "reschedule" : "clear", cleared: rows.length, byKind };
+  });
+}
+
+/** 稳定字符串哈希（id → 摊铺偏移用，无需加密强度）。 */
+function hashOf(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
 
 /**

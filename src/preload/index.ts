@@ -282,6 +282,8 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("scheduler:runTaskNow", taskId),
     daemonStart: (): Promise<any> => ipcRenderer.invoke("scheduler:daemonStart"),
     daemonStop: (): Promise<any> => ipcRenderer.invoke("scheduler:daemonStop"),
+    clearFailures: (mode: "clear" | "reschedule"): Promise<any> =>
+      ipcRenderer.invoke("scheduler:clearFailures", mode),
   },
 
   ai: {
