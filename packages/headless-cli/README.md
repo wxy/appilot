@@ -1,48 +1,41 @@
+<!--
+  This is the English README (shown on the npm page).
+  Chinese version: [README.zh.md](./README.zh.md)
+-->
+
 # @appilot-labs/appilot-headless-cli
 
-Appilot headless CLI —— 直接对接 headless 服务 API 的命令行工具（无任何壳依赖）。
+Command-line access to the headless service API (projects / snapshots / tasks /
+lease) — no shell dependency. Reads & writes the same shared SQLite DB as
+Electron / DSH / daemon.
 
-与 Electron / DSH 共享同一 SQLite 数据库（`~/Library/Application Support/Appilot/appilot.db`），
-可读写同一份项目注册表、排名快照与任务状态；可显式触发共享定时任务
-（任务定义与 DSH 一致：`buildHeadlessJobs`，仅租约主执行，这里用独立 leaderId 显式触发）。
-
-## 用法
+## Usage
 
 ```bash
-# 打印当前共享数据库路径
+# show shared DB path
 appilot-headless db
 
-# 项目注册表
+# project registry
 appilot-headless projects list
 appilot-headless projects get <name>
 appilot-headless projects register <path> [--name <name>]
 appilot-headless projects remove <name>
 
-# 排名快照
+# rank snapshots
 appilot-headless snapshots latest <project> [--product <id>]
 appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]
-appilot-headless snapshots prune <project> [--before <iso>]   # 默认清 90 天前旧点
+appilot-headless snapshots prune <project> [--before <iso>]   # default: 90 days
 
-# 定时任务与调度观测
-appilot-headless tasks list [--source dsh|electron|cli]   # 默认全部来源
-appilot-headless lease status          # 当前租约主（多壳调度：DSH=主 或 electron=主）
-appilot-headless run <taskId>          # release-sync | readiness
+# tasks & scheduling
+appilot-headless tasks list [--source dsh|electron|cli|scheduler]
+appilot-headless lease status          # current lease leader
+appilot-headless run <taskId>          # explicit run
 ```
 
-输出一律 JSON（stdout）；错误写 stderr 并以非零码退出，适合脚本 / AI agent 消费。
-`tasks list` 行自带 `source`（dsh = 共享静态任务 / electron = Electron 动态任务镜像 /
-cli = 显式触发），`snapshots prune` 与 core 的 90 天窗口常量对齐（生命周期维护）。
+Output is JSON on stdout; errors go to stderr with non-zero exit — script/agent friendly.
 
-## 环境变量
+## Environment
 
-| 变量 | 说明 |
+| Variable | Meaning |
 | --- | --- |
-| `APPILOT_DB_FILE` | 覆盖数据库路径（测试/隔离用） |
-| `GITHUB_TOKEN` | GitHub API 凭据（release-sync 任务用；缺省走公开数据降级） |
-
-## 开发
-
-```bash
-npm run build -w @appilot-labs/appilot-headless-cli   # tsc → dist
-npx tsx tests/cli.test.ts                              # 端到端测试（隔离临时 DB）
-```
+| `APPILOT_DB_FILE` | override DB path (testing/isolation) |
