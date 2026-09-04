@@ -28,12 +28,15 @@ const USAGE = [
   'Appilot 斜杠命令（直读共享数据库，不经模型）',
   '',
   '用法：',
-  '  /appilot                      本帮助',
-  '  /appilot task                 任务中心状态（各类型 ok/error/never + 失败明细）',
-  '  /appilot task clear           清除全部失败状态（按原排期自然重试）',
-  '  /appilot task reschedule      清除失败并限速重排（30–210 分钟内温和重跑）',
+  '  /appilot                       本帮助',
+  '  /appilot projects              注册项目与产品（仓库/平台/跟踪关键词）',
+  '  /appilot rank [项目]           排名采集概览（每产品关键词 ok/error/never + 最新采集时间）',
+  '  /appilot release [项目]        GitHub 发布与发布页缓存摘要',
+  '  /appilot task                  任务中心状态（各类型 ok/error/never + 失败明细）',
+  '  /appilot task clear            清除全部失败状态（按原排期自然重试）',
+  '  /appilot task reschedule       清除失败并限速重排（30–210 分钟内温和重跑）',
   '',
-  '更多数据请让 agent 运行 appilot_tasks / appilot_snapshots / appilot_overview。',
+  '「项目」参数用注册仓库名（projects 首列）。评论/竞品等富数据仅存于 Electron，命令不提供。',
 ].join('\n');
 
 /** 稳定字符串哈希（id → 重排摊铺偏移）。 */
@@ -136,6 +139,97 @@ function clearFailures(reschedule: boolean): string {
   );
 }
 
+/** 项目/产品摘要（直读注册表 + 富数据）。 */
+function projectsSummary(): string {
+  const store = openSharedHeadlessStore();
+  const projects = store.projects.list();
+  if (projects.length === 0) return '暂无注册项目（agent 可运行 register_project 注册）。';
+  const lines: string[] = [`注册项目（${projects.length}）· 数据时间 ${new Date().toLocaleTimeString()}`];
+  for (const p of projects) {
+    const products = store.products.listByProject(p.name);
+    const kws = products.reduce(
+      (s, pr) => s + (Array.isArray(pr.trackedKeywords) ? pr.trackedKeywords.length : 0),
+      0,
+    );
+    const platforms = [...new Set(products.map((pr) => pr.platform).filter(Boolean))];
+    const short = (p.path ?? '').split(/[/\\]/).filter(Boolean).pop() || p.path || '';
+    lines.push(
+      `• ${p.name}（${short}）· 平台 ${platforms.join('/') || p.platform || '?'} · ` +
+        `产品 ${products.length} · 跟踪关键词 ${kws}`,
+    );
+  }
+  return lines.join('\n');
+}
+
+/** 排名采集概览：每产品关键词任务状态 + 最新快照时间（可过滤项目）。 */
+function rankSummary(filterProject?: string): string {
+  const store = openSharedHeadlessStore();
+  const latest = store.snapshots.latestCheckedAtByKey();
+  const prodMeta = new Map<string, { trackName: string | null; platform: string | null; projectName: string }>();
+  const projectOf = new Set<string>();
+  for (const p of store.projects.list()) {
+    for (const pr of store.products.listByProject(p.name)) {
+      prodMeta.set(pr.productId, { trackName: pr.trackName ?? null, platform: pr.platform ?? null, projectName: p.name });
+      projectOf.add(p.name);
+    }
+  }
+  const pidOf = new Map<string, { ok: number; err: number; never: number; latest: string | null }>();
+  for (const t of store.tasks.all()) {
+    if (t.kind !== 'rank') continue;
+    const inst = (t.instance ?? {}) as any;
+    if (!inst.productId) continue;
+    const e = pidOf.get(inst.productId) ?? { ok: 0, err: 0, never: 0, latest: null };
+    if (t.lastStatus === 'ok') e.ok++;
+    else if (t.lastStatus === 'error') e.err++;
+    else e.never++;
+    pidOf.set(inst.productId, e);
+  }
+  // 最新快照时间（productId 前缀匹配 latestCheckedAtByKey 的 key）
+  for (const [key, checkedAt] of Object.entries(latest)) {
+    const pid = key.split('|')[0];
+    const e = pidOf.get(pid);
+    if (e && (!e.latest || checkedAt > e.latest)) e.latest = checkedAt;
+  }
+  const time = (iso?: string | null) => (iso ? new Date(iso).toLocaleString() : '从未');
+  const lines: string[] = [];
+  for (const [pid, e] of [...pidOf.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const meta = prodMeta.get(pid);
+    if (filterProject && meta?.projectName !== filterProject) continue;
+    if (filterProject && !meta) continue;
+    const name = meta?.trackName || pid;
+    lines.push(
+      `• ${name}（${meta?.platform ?? '?'}·${meta?.projectName ?? '?'}）：kw ${e.ok + e.err + e.never} · ` +
+        `ok ${e.ok} / err ${e.err} / never ${e.never} · 最新采集 ${time(e.latest)}`,
+    );
+  }
+  if (lines.length === 0) return `没有可展示的排名数据${filterProject ? `（项目 ${filterProject}）` : ''}。`;
+  return lines.join('\n');
+}
+
+/** GitHub 发布 / 发布页缓存摘要（可过滤项目）。 */
+function releaseSummary(filterProject?: string): string {
+  const store = openSharedHeadlessStore();
+  const projects = store.projects.list();
+  const lines: string[] = [];
+  for (const p of projects) {
+    if (filterProject && p.name !== filterProject) continue;
+    const row = store.releaseCache.get(p.name);
+    if (!row) {
+      lines.push(`• ${p.name}：暂无发布页缓存（github-sync 未执行/未同步）`);
+      continue;
+    }
+    const cache = (row.cache ?? {}) as Record<string, any>;
+    const releases = Array.isArray(cache.releases) ? cache.releases : [];
+    const drafts = releases.filter((r: any) => r && r.draft).length;
+    lines.push(
+      `• ${p.name}：tag ${cache.tag ?? '无'} · GitHub 发布 ${releases.length}（草稿 ${drafts}）` +
+        ` · 同步 ${row.syncedAt ? new Date(row.syncedAt).toLocaleString() : '?'}`,
+    );
+  }
+  if (lines.length === 0) return '没有可展示的发布数据。';
+  return lines.join('\n');
+}
+
 export function registerAppilotCommands(ctx: Context): void {
   // 宿主未提供 commands 服务（非交互部署）→ 静默跳过，不影响工具集。
   const commands = (ctx as any).commands;
@@ -143,13 +237,21 @@ export function registerAppilotCommands(ctx: Context): void {
   commands.register({
     name: 'appilot',
     description: 'Appilot 运营数据与任务中心（直读共享数据库，不经模型）',
-    input: { hint: 'task | task clear | task reschedule' },
+    input: { hint: 'projects | rank [项目] | release [项目] | task [clear|reschedule]' },
     handler: async (inv: any) => {
       const raw = String(inv?.rawInput ?? '').trim();
       const [sub, ...rest] = raw.split(/\s+/);
       const action = String(sub || '').toLowerCase();
       try {
         if (!action) return { kind: 'success', text: USAGE };
+        if (action === 'projects') return { kind: 'success', text: projectsSummary() };
+        if (action === 'rank' || action === 'release') {
+          const filter = String(rest[0] ?? '').trim();
+          return {
+            kind: 'success',
+            text: action === 'rank' ? rankSummary(filter || undefined) : releaseSummary(filter || undefined),
+          };
+        }
         if (action === 'task') {
           const mode = String(rest[0] ?? '').toLowerCase();
           if (mode === 'clear') return { kind: 'success', text: clearFailures(false) };
