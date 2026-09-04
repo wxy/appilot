@@ -1,54 +1,37 @@
+<!--
+  This is the English README (shown on the npm page).
+  Chinese version: [README.zh.md](./README.zh.md)
+-->
+
 # @appilot-labs/appilot-mcp
 
-Appilot MCP server（stdio）—— 把 headless 服务 API（项目 / 排名快照 / 定时任务）
-暴露为标准 [MCP](https://modelcontextprotocol.io) 工具，供 Claude Desktop、Cursor、
-任意 MCP 客户端调用。
+Appilot MCP server (stdio) — exposes the headless service API (projects / rank
+snapshots / tasks) as standard [MCP](https://modelcontextprotocol.io) tools for
+Claude Desktop, Cursor and any MCP client. Shares the same SQLite DB as
+Electron / DSH / daemon.
 
-与 Electron / DSH 共享同一 SQLite 数据库；任务定义与 DSH 一致（`buildHeadlessJobs`）。
+## Tools
 
-## 工具
-
-| 工具 | 说明 |
+| Tool | Description |
 | --- | --- |
-| `projects_list` | 列出已注册项目 |
-| `projects_get` | 按名取项目 |
-| `projects_register` | 登记项目（path 必填，name 缺省取 basename） |
-| `projects_remove` | 移除项目 |
-| `snapshots_latest` | 每 (keyword, language, storefront) 最新排名快照，可按 productId 过滤 |
-| `snapshots_history` | 最近时间序列点（降序），可按 productId / keyword / limit 过滤 |
-| `snapshots_prune` | 清理某项目早于指定 ISO 时间的旧快照（返回删除行数） |
-| `tasks_list` | 共享任务定义 + 运行状态；可按 source（dsh/electron/cli）过滤 |
-| `task_run` | 立即运行共享任务（release-sync / readiness） |
+| `projects_list` | list registered projects |
+| `projects_get` | get a project by name |
+| `projects_register` | register a project (path required) |
+| `projects_remove` | remove a project |
+| `snapshots_latest` | latest rank snapshot per (keyword, language, storefront) |
+| `snapshots_history` | recent snapshot series, filterable |
+| `snapshots_prune` | prune old snapshots before an ISO time |
+| `tasks_list` | shared tasks + state, filterable by source |
+| `task_run` | explicitly run a task instance (routes to the scheduler daemon) |
 
-## 客户端接入示例
-
-Claude Desktop `claude_desktop_config.json`：
+## Client config example (Claude Desktop)
 
 ```json
 {
-  "mcpServers": {
-    "appilot": {
-      "command": "appilot-mcp",
-      "args": []
-    }
-  }
+  "mcpServers": { "appilot": { "command": "appilot-mcp", "args": [] } }
 }
 ```
 
-## 环境变量
+## Environment
 
-- `APPILOT_DB_FILE`：覆盖数据库路径
-- `GITHUB_TOKEN`：GitHub API 凭据（release-sync 用）
-
-## 协议说明
-
-MCP stdio transport = 换行分隔 JSON-RPC 2.0（每行一个 JSON 消息）。
-支持 `initialize` / `notifications/initialized` / `ping` / `tools/list` / `tools/call`。
-日志走 stderr，不污染协议流。
-
-## 开发
-
-```bash
-npm run build -w @appilot-labs/appilot-mcp   # tsc → dist
-npx tsx tests/mcp.test.ts                    # 端到端协议测试（spawn 进程）
-```
+- `APPILOT_DB_FILE`: override DB path
