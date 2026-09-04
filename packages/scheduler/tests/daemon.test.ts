@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   } catch (err: any) {
     // 同 id 双进程：acquire 视为续租，单例由 socket 独占兜底（bind 失败退出）；
     // 跨 id（壳内调度过渡期）由 acquire 拒绝。
-    conflict = /已有调度者|single-instance|socket 启动失败/.test(err?.message || '');
+    conflict = /已有调度者|已有调度主|single-instance|socket 启动失败/.test(err?.message || '');
   }
   assert.equal(conflict, true, '第二 daemon 应仲裁退出（acquire 或 socket 独占）');
   console.log('✓ 单例仲裁（第二 daemon acquire 失败）');

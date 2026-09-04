@@ -8,6 +8,7 @@
 import { connect } from 'node:net';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { dirname, join } from 'node:path';
 import type { ServerMessage } from './protocol.js';
 import { decodeLine } from './protocol.js';
 
@@ -106,7 +107,23 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
   child.on('exit', (code) => {
     if (code === 0) {
       gaveWay = true;
-      log('scheduler exited 0（单例仲裁让位——已有调度者在跑）');
+      // 让位信息带上当前调度主：让「谁在跑」可读（避免误读为残留调度器）。
+      let leader: string | null = null;
+      try {
+        const { openStore, defaultDbPath } = require('@appilot-labs/appilot-headless') as typeof import('@appilot-labs/appilot-headless');
+        // socket 与 DB 同目录（默认约定：dirname(db)/scheduler.sock）→ 反推 DB 路径
+        const dbPath = join(dirname(opts.socketPath), 'appilot.db');
+        const s = openStore(dbPath);
+        leader = s.lease.leader();
+        s.close();
+      } catch {
+        /* leader 读取失败不阻塞 */
+      }
+      log(
+        leader
+          ? `scheduler exited 0（单例仲裁让位——调度主在跑：${leader}；启动竞态时壳会先抢主，属正常）`
+          : 'scheduler exited 0（单例仲裁让位）',
+      );
     }
   });
   // 3) 退避重试 ping（daemon 启动 + lease 仲裁；冲突输家退出后可能需重连已存在的）
