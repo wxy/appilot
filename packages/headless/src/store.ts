@@ -47,6 +47,16 @@ export interface AppilotStore {
       projectName: string,
       opts?: { productId?: string | null; keyword?: string; limit?: number },
     ): RankSnapshotRow[];
+    /**
+     * 某产品的时间序列（读侧项目视图用）：90 天窗口内、每个
+     * (keyword, language, storefront) 保留最近最多 120 条，按 checkedAt 升序返回——
+     * 与 electron kv 侧 appendRankSnapshots 的裁剪语义一致，避免 recent() 的全产品
+     * 2000 行上限把早期历史挤掉。
+     */
+    history(
+      projectName: string,
+      opts?: { productId?: string | null; keyword?: string },
+    ): RankSnapshotRow[];
     /** 清理某项目早于 checkedAt 的旧快照（保留最近 N 天）。 */
     pruneOlderThan(projectName: string, beforeIso: string): number;
     /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
@@ -325,6 +335,43 @@ export function openStore(dbPath: string): AppilotStore {
               )
               .all(projectName, productId, limit) as any[]);
         return rows.map(stripId);
+      },
+      history(projectName, opts = {}) {
+        const productId = opts.productId ?? null;
+        const windowMs = 90 * 24 * 60 * 60 * 1000; // 与 core RANK_SNAPSHOT_WINDOW_MS 一致
+        const maxPerKey = 120; // 与 core RANK_SNAPSHOT_MAX_PER_KEY 一致
+        const since = new Date(Date.now() - windowMs).toISOString();
+        const sql = opts.keyword
+          ? `SELECT * FROM rank_snapshots
+             WHERE projectName = ? AND productId IS ? AND keyword = ? AND checkedAt >= ?
+             ORDER BY checkedAt ASC, id ASC`
+          : `SELECT * FROM rank_snapshots
+             WHERE projectName = ? AND productId IS ? AND checkedAt >= ?
+             ORDER BY checkedAt ASC, id ASC`;
+        const params = opts.keyword
+          ? [projectName, productId, opts.keyword, since]
+          : [projectName, productId, since];
+        const rows = db.prepare(sql).all(...params) as any[];
+        // 按 (keyword, language, storefront) 分组，每 key 保留最近 maxPerKey 条
+        const byKey = new Map<string, any[]>();
+        for (const r of rows) {
+          const key = `${r.keyword}\u0000${r.language}\u0000${r.storefront}`;
+          let list = byKey.get(key);
+          if (!list) {
+            list = [];
+            byKey.set(key, list);
+          }
+          list.push(r);
+        }
+        const out: any[] = [];
+        for (const list of byKey.values()) {
+          out.push(...list.slice(-maxPerKey));
+        }
+        return out.sort(
+          (a, b) =>
+            new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime() ||
+            (a.id as number) - (b.id as number),
+        ).map(stripId);
       },
     },
 

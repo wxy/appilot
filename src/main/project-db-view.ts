@@ -46,8 +46,6 @@ export interface DbProjectView {
   }[];
 }
 
-const SNAPSHOT_READ_LIMIT = 200_000;
-
 export interface AssembleOptions {
   includeSnapshots?: boolean;
 }
@@ -70,12 +68,9 @@ export function assembleProjectViews(
     const storeProducts = products.map((p) => {
       let rankSnapshots: unknown[] = [];
       if (opts.includeSnapshots) {
-        const rows = store.snapshots.recent(rec.name, {
-          productId: p.productId,
-          limit: SNAPSHOT_READ_LIMIT,
-        });
-        // recent 为 checkedAt 降序（最新在前）→ 翻转为升序历史点
-        rankSnapshots = [...rows].reverse();
+        // 与 kv 侧 appendRankSnapshots 同语义：90 天窗内每 (keyword, lang, store)
+        // 保留最近 120 条、升序——避免 recent() 全产品 2000 行上限挤掉早期历史。
+        rankSnapshots = store.snapshots.history(rec.name, { productId: p.productId });
       }
       return {
         id: p.productId,
