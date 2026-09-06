@@ -819,7 +819,7 @@ async function githubSyncBody(
     lastSeenSha: inspection.lastSeenSha ?? project.lastReleaseSha ?? null,
     syncedAt: inspection.syncedAt,
   };
-  store.set("githubSyncCache", all);
+  // 写直连 DB（release_cache）；kv 仅作迁移前存量兜底读取，不再写入。
   if (project?.name) {
     try {
       sharedStore().releaseCache.save(project.name, all[project.id] as Record<string, unknown>);
