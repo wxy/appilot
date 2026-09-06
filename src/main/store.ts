@@ -5,7 +5,7 @@ import { sharedStore } from "./registry-sync";
 import { migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
-import { mirrorTasksToDb, electronTaskFromRow, backfillTaskHistoryFromExecutions } from "./task-db-sync";
+import { mirrorTasksToDb, electronTaskFromRow, backfillTaskHistoryFromExecutions, purgeOrphanProjectTasks } from "./task-db-sync";
 import { buildLightProjects } from "./projects-db-light";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
@@ -104,6 +104,17 @@ export async function getStore(): Promise<AppStore> {
       if (n > 0) log.info(`appilot: backfilled task history for ${n} tasks from executions`);
     } catch (err: any) {
       log.warn(`task history backfill failed: ${err.message}`);
+    }
+    // 孤儿任务兜底清理：删除引用已删除项目/产品的残留任务行（demo 等历史遗留；
+    // 删除时的级联清理只覆盖删除之后的动作，这里补删更早残留的行）。
+    try {
+      const orphaned = purgeOrphanProjectTasks(shared);
+      if (orphaned.length > 0) {
+        const preview = orphaned.slice(0, 10).join(", ");
+        log.info(`appilot: 清理了 ${orphaned.length} 个孤儿任务（引用已删除项目）: ${preview}${orphaned.length > 10 ? " …" : ""}`);
+      }
+    } catch (err: any) {
+      log.warn(`孤儿任务清理失败: ${err.message}`);
     }
     // 引擎任务源已切 DB：DB tasks 存在 electron 行时，删除 kv 遗留 scheduledTasks 键。
     try {

@@ -62,51 +62,95 @@ export function productIndex(store: AppilotStore): Map<string, { projectName: st
   return idx;
 }
 
-/** DB 任务行（+ 项目/产品上下文）→ renderer 视图行。 */
+/** 无损 electronJson → 对象（解析失败/缺失返回 null）。 */
+function parseElectron(row: TaskRow): any | null {
+  if (!row.electronJson) return null;
+  try {
+    const e = JSON.parse(row.electronJson);
+    return e && typeof e === 'object' ? e : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * DB 任务行（+ 项目/产品上下文）→ renderer 视图行。
+ *
+ * 字段解析优先级：instance 参数 → 无损 electronJson → 注册表/产品索引反查 →
+ * 执行记录最早时间（firstRunAt 兜底）。Electron ops/reviews/build-status 镜像行
+ * 的 instance 为空，只有 electronJson 带 projectId/productId——此前归项目全靠
+ * instance.projectName，缺了就显示「已删除项目」（实际项目仍存活）。现在先按
+ * projectId 查注册表（projNames: 项目 id 与名称 → 显示名），再回退 instance。
+ */
 export function taskRowToView(
   row: TaskRow,
   rankGroups: Map<string, { ok: number; total: number }>,
   products?: Map<string, { projectName: string; trackName: string | null; platform: string | null }>,
+  projNames?: Map<string, string>,
+  execFirst?: Map<string, string>,
 ): TaskCenterTaskView {
   const inst = (row.instance ?? {}) as any;
-  const kind = row.kind ?? inferKindFromId(row.id) ?? 'unknown';
+  const electron = parseElectron(row);
+  const kind =
+    row.kind ??
+    inferKindFromId(row.id) ??
+    (typeof electron?.kind === 'string' ? electron.kind : null) ??
+    'unknown';
+  const productId = String(inst.productId ?? electron?.productId ?? '') || null;
+  // Electron productId 惯例 `${projId}:${platform}` → projectId = 前缀
+  const projectId0 = inst.projectId ?? electron?.projectId ?? (productId ? productId.split(':')[0] : null);
+  const projectId = projectId0 ? String(projectId0) : null;
+  const platform =
+    inst.platform ??
+    (electron && typeof electron.platform === 'string' ? electron.platform : null) ??
+    (productId && productId.includes(':') ? productId.split(':').slice(1).join(':') : null);
+  const electronFirst = electron && typeof electron.firstRunAt === 'string' && electron.firstRunAt ? electron.firstRunAt : null;
+  const instFirst = typeof inst.firstRunAt === 'string' && inst.firstRunAt ? inst.firstRunAt : null;
+  // DB 任务行未记首次：electronJson/instance 有就用，否则用最早可追溯执行时间。
+  const firstRunAt = electronFirst ?? instFirst ?? execFirst?.get(row.id) ?? null;
+  const groupKey = inst.groupKey ?? electron?.groupKey ?? undefined;
   const view: TaskCenterTaskView = {
     id: row.id,
     kind,
+    title: row.title ?? null,
     intervalMinutes: row.intervalMinutes,
     nextRunAt: row.nextRunAt,
-    lastRunAt: row.lastRunAt,
-    firstRunAt: null, // DB 未记录首次执行（降级：列为 —）
+    lastRunAt: row.lastRunAt ?? (electron && typeof electron.lastRunAt === 'string' ? electron.lastRunAt : null),
+    firstRunAt,
     lastStatus: electronStatus(row.lastStatus),
     executionCount: row.runCount ?? 0,
     enabled: true,
-    projectId: inst.projectId ?? null,
-    productId: inst.productId ?? null,
-    platform: inst.platform ?? null,
-    groupKey: inst.groupKey ?? undefined,
-    keyword: inst.keyword,
-    queryLanguage: inst.queryLanguage,
-    storefront: inst.storefront,
+    projectId,
+    productId,
+    platform,
+    groupKey,
+    keyword: inst.keyword ?? electron?.keyword,
+    queryLanguage: inst.queryLanguage ?? electron?.queryLanguage,
+    storefront: inst.storefront ?? electron?.storefront,
   };
-  if (kind === 'rank' && view.productId) {
-    // Electron productId 惯例 `${projId}:${platform}` → projectId = 前缀
-    view.projectId = String(view.productId).split(':')[0] ?? null;
-    const ctx = products?.get(String(view.productId));
-    if (ctx) {
-      view.projectName = ctx.projectName;
-      view.platform = inst.platform ?? ctx.platform ?? null;
-      view.productName = ctx.trackName ?? ctx.projectName;
-    } else {
-      view.projectName = inst.projectName ?? '已删除项目';
-      view.productName = inst.projectName ?? '未知产品';
-    }
-    if (inst.groupKey) {
-      const g = rankGroups.get(String(inst.groupKey));
+  const ctx = productId ? products?.get(productId) : undefined;
+  // 项目归属：产品索引 → 注册表（id/名称）→ instance.projectName → electron → 兜底
+  let projectName: string | undefined;
+  if (ctx?.projectName) projectName = ctx.projectName;
+  else if (projectId && projNames?.has(projectId)) projectName = projNames.get(projectId);
+  else if (typeof inst.projectName === 'string' && inst.projectName) projectName = inst.projectName;
+  else if (electron && typeof electron.projectName === 'string' && electron.projectName) projectName = electron.projectName;
+  view.projectName = projectName ?? '已删除项目';
+  const instName: string | undefined =
+    typeof inst.projectName === 'string' && inst.projectName
+      ? inst.projectName
+      : electron && typeof electron.projectName === 'string' && electron.projectName
+        ? electron.projectName
+        : undefined;
+  if (kind === 'rank') {
+    if (!view.platform && ctx?.platform) view.platform = ctx.platform;
+    view.productName = ctx ? ctx.trackName ?? ctx.projectName : instName ?? '未知产品';
+    if (groupKey) {
+      const g = rankGroups.get(String(groupKey));
       if (g) view.round = { done: g.ok, total: g.total };
     }
   } else {
-    view.projectName = inst.projectName ?? '已删除项目';
-    view.productName = inst.projectName ?? '';
+    view.productName = ctx ? ctx.trackName ?? ctx.projectName : instName ?? '';
   }
   return view;
 }
@@ -119,8 +163,29 @@ export function taskCenterTasksFromDb(store: AppilotStore): TaskCenterTaskView[]
     rankGroups.set(g.groupKey, { ok: g.ok, total: g.total });
   }
   const products = productIndex(store);
+  // 注册表索引（项目 id 与名称 → 显示名）：instance 为空的 Electron 镜像行按
+  // electronJson.projectId 归项目，而非一律显示「已删除项目」。
+  const projNames = new Map<string, string>();
+  for (const p of store.projects.list()) {
+    projNames.set(p.name, p.name);
+    if (p.id) projNames.set(p.id, p.name);
+  }
+  // firstRunAt 兜底：任务对象/instance 未记首次执行时，用 DB 最早可追溯执行
+  // （历史迁移前未记录的首次时间无法还原，最早执行即最接近的近似）。
+  const execFirst = new Map<string, string>();
+  try {
+    for (const e of store.executions.since('2000-01-01T00:00:00Z', 200000)) {
+      const id = String(e?.taskId ?? '');
+      const ts = String(e?.ts ?? '');
+      if (!id || !ts) continue;
+      const cur = execFirst.get(id);
+      if (!cur || ts < cur) execFirst.set(id, ts);
+    }
+  } catch {
+    // 执行表不可用时忽略首次兜底（仅影响展示）。
+  }
   return rows
-    .map((r) => taskRowToView(r, rankGroups, products))
+    .map((r) => taskRowToView(r, rankGroups, products, projNames, execFirst))
     .sort((a, b) => (a.kind ?? '').localeCompare(b.kind ?? '') || a.id.localeCompare(b.id));
 }
 
