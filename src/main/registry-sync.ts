@@ -135,10 +135,7 @@ export function startRegistrySync(
   getStore: () => Promise<{ get<T = any>(k: string): T; set(k: string, v: unknown): void }>,
 ): () => void {
   let timer: ReturnType<typeof setInterval> | null = null;
-  // 富数据规模签名（meta/products 计数）——仅变化时打日志去噪。
-  let lastRichSig: string | null = null;
-  // 发布缓存条数签名——仅变化时打日志去噪。
-  let lastReleaseCacheCount: number | null = null;
+
   // rank 反向同步日志节流（聚合窗口 ≥60s；rank 恢复期高频命中时不刷屏）。
   let backfillAccum = 0;
   let lastBackfillLogAt = 0;
@@ -194,25 +191,15 @@ export function startRegistrySync(
       }
       // Phase M3：Electron 富数据（storeProducts / repo 状态）双写共享 DB——
       // product_records / project_meta（rank 等富数据任务实例化与跨壳读的前提）。
-      // 仅在规模有变化时记录（避免每 10s 全量 upsert 的同步噪音）。
       try {
-        const { meta, products } = syncRichDataToDb(sharedStore(), projects as any[]);
-        const sig = `${meta}/${products}`;
-        if (sig !== lastRichSig) {
-          lastRichSig = sig;
-          log.debug(`appilot: synced rich data to shared db (${meta} meta, ${products} products)`);
-        }
+        syncRichDataToDb(sharedStore(), projects as any[]);
       } catch (err: any) {
         log.warn(`rich data sync failed: ${err.message}`);
       }
       // Phase M4-A：发布页缓存（githubSyncCache）双写共享 DB（UI 迁出前提）。
       try {
         const cache = (s.get('githubSyncCache') || {}) as Record<string, Record<string, unknown>>;
-        const n = syncReleaseCachesToDb(sharedStore(), projects as any[], cache);
-        if (n !== lastReleaseCacheCount) {
-          lastReleaseCacheCount = n;
-          log.debug(`appilot: synced release caches to shared db (${n} projects)`);
-        }
+        syncReleaseCachesToDb(sharedStore(), projects as any[], cache);
         // P1 反向同步：共享 DB release_cache（任何执行者写入）→ electron-store
         // githubSyncCache——Electron 从者（DSH/daemon 持主执行）时发布页仍新鲜。
         const dbStore = sharedStore();
