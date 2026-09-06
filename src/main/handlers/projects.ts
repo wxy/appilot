@@ -110,10 +110,25 @@ export function registerProjectsHandlers(): void {
       try {
         const { assembleProjectViews } = await import("../project-db-view");
         const { buildUiProjects } = await import("../project-list-merge");
+        const shared = sharedStore();
         const merged = buildUiProjects(
-          assembleProjectViews(sharedStore(), { includeSnapshots: true }),
+          assembleProjectViews(shared, { includeSnapshots: true }),
           kvProjects,
         );
+        // 草稿注入：DB 组装结果缺 storeSubmissionDrafts 时从 project_blobs 补
+        // （写切(2)：kv projects 退役后草稿源 = DB blob）。
+        const { DRAFT_BLOB_DOMAIN } = await import("../projects-db-light");
+        for (const p of merged.projects as any[]) {
+          if (!p?.name) continue;
+          const hasDrafts = Array.isArray(p.storeSubmissionDrafts) && p.storeSubmissionDrafts.length > 0;
+          if (hasDrafts) continue;
+          try {
+            const d = shared.blobs.get(DRAFT_BLOB_DOMAIN, p.name);
+            if (Array.isArray(d) && d.length > 0) p.storeSubmissionDrafts = d;
+          } catch {
+            // 忽略单条草稿注入失败
+          }
+        }
         raw = merged.projects;
       } catch (err: any) {
         log.warn(`projects:list: DB 组装失败，已回退 electron kv: ${err.message}`);
