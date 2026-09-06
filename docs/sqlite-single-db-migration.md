@@ -64,3 +64,27 @@ project_meta / rank_snapshots / tasks 镜像。
 
 回归矩阵（每步后）：tsc、headless 测试、projects:list 形状等价、调度不回归、
 `npm run dev` 实测（项目/排名/发布/评论/趋势/设置页正常，删除项目不复活）。
+
+## 完成状态（2026-09-06）
+
+**目标已达成**：全部业务存储落在单一 SQLite 文件（`appilot.db`），electron-store /
+config.json 已退役（config.json 归档为 `config.json.migrated-*`，electron-store 依赖已卸载）。
+
+落地内容：
+- 阶段一 KV：`app_kv` 表 + `getStore()` 改由 SQLite 支撑 + config.json 一次性导入归档（真实环境已验证）。
+- 结构化表（与 app_kv 同库）：
+  - 注册表 `projects`（v8 起含 electron id）、`product_records`（含 submission/removedKeywords 扩展列）、
+    `project_meta`、`rank_snapshots`、`tasks`、`lease`、`project_release_cache`、
+    `rank_executions`（v9，唯一 (ts,taskId)）、`project_blobs`（v11，竞品/流量/ASC 缓存/ops 状态等域）。
+- 读侧切换（DB 优先 + kv 兜底）：`projects:list`（DB 组装）、任务中心 executions 统计、
+  traffic/asc/竞品快照；项目删除级联清注册表/产品/快照/发布缓存/残留任务（demo 任务 bug 已修）。
+- 双写：projects 写入 ≤300ms 镜像 DB；rank 执行记录双写；blob 域写入即镜像（含一次性导入标记）。
+
+保留项（有意为之，同库 SQLite 内）：
+- `app_kv` 仍承载少量域（scheduledTasks / schedulerRounds / readinessChecks / ascAnalytics /
+  凭据(safeStorage 加密) / AI 设置 / 发布草稿等），作为通用键值兜底——它们已在 SQLite 单库内，
+  不影响"单库 + electron-store 退役"目标。
+- 跨壳调和（registry hydrate / rich / release / executions / tasks 镜像、DB→kv 回填）保留，
+  用于 Electron ↔ DSH/daemon 一致性；日志仅在规模变化时打印。
+
+可选后续（超出本目标，未实施）：调度引擎执行源彻底切 DB tasks、凭据/设置表化、app_kv 全量清空退役。
