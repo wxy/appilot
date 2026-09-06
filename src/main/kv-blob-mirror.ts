@@ -18,6 +18,9 @@ export const KV_BLOB_DOMAINS: Record<string, string> = {
   competitors: 'competitors',
   competitorSnapshots: 'competitorSnapshots',
   competitorRankSnapshots: 'competitorRankSnapshots',
+  readinessChecks: 'readinessChecks',
+  reviews: 'reviews',
+  feedback: 'feedback',
 };
 
 /** 同步一个域：整体覆盖式镜像（先写后清陈旧 key）。 */

@@ -147,7 +147,8 @@ export function registerOpsHandlers(): void {
   ipcMain.handle("reviews:list", async (_event, productId: string) => {
     productId = assertNonEmptyString(productId, "productId");
     const s = await getStore();
-    return (s.get("reviews") || {})[productId] || {};
+    const dbReviews = blobGet(sharedStore(), "reviews", productId) as Record<string, unknown> | undefined;
+    return dbReviews ?? (s.get("reviews") || {})[productId] ?? {};
   });
 
   ipcMain.handle("reviews:sync", async (_event, productId: string) => {
@@ -212,7 +213,9 @@ export function registerOpsHandlers(): void {
     projectId = assertNonEmptyString(projectId, "projectId");
     draftId = assertNonEmptyString(draftId, "draftId");
     const s = await getStore();
-    return (s.get("readinessChecks") || {})[projectId]?.[draftId] || null;
+    const kvR = (s.get("readinessChecks") || {})[projectId];
+    const dbR = blobGet(sharedStore(), "readinessChecks", projectId) as Record<string, unknown> | undefined;
+    return (dbR?.[draftId] ?? kvR?.[draftId]) || null;
   });
 
   ipcMain.handle("readiness:check", async (_event, projectId: string, productId: string, releaseTag: string) => {

@@ -4,19 +4,25 @@ import { createAiProvider } from "../ai-service";
 import { buildProjectProfileFor } from "../release-service";
 import { findProductContext } from "../project-state";
 import { getStore } from "../store";
+import { sharedStore } from "../registry-sync";
+import { blobGet } from "../db-blob-read";
 import { assertNonEmptyString } from "../util";
 
 export function registerFeedbackHandlers(): void {
   ipcMain.handle("feedback:list", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
-    return (s.get("feedback") || {})[projectId]?.items || [];
+    const dbF = blobGet(sharedStore(), "feedback", projectId) as { items?: unknown[] } | undefined;
+    const kvF = (s.get("feedback") || {})[projectId];
+    return (dbF?.items ?? kvF?.items) || [];
   });
 
   ipcMain.handle("feedback:themes", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
-    return (s.get("feedback") || {})[projectId]?.themes || [];
+    const dbF = blobGet(sharedStore(), "feedback", projectId) as { themes?: unknown[] } | undefined;
+    const kvF = (s.get("feedback") || {})[projectId];
+    return (dbF?.themes ?? kvF?.themes) || [];
   });
 
   ipcMain.handle("feedback:sync", async (_event, projectId: string) => {
@@ -31,7 +37,9 @@ export function registerFeedbackHandlers(): void {
     const context = findProductContext(s.get("projects") || [], productId);
     if (!context) throw new Error("Store product not found");
     const { project, product } = context;
-    const entry = (s.get("feedback") || {})[projectId] || { items: [] };
+    const dbF = blobGet(sharedStore(), "feedback", projectId) as { items?: unknown[] } | undefined;
+    const kvF = (s.get("feedback") || {})[projectId];
+    const entry = dbF ?? kvF ?? { items: [] };
     const items = (entry.items || []).filter(
       (item: any) => item.source === "issue" || item.productId === productId,
     );

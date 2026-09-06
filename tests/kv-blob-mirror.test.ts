@@ -53,7 +53,7 @@ async function main() {
 
   // 3. 镜像域清单完整（覆盖六个 kv 域）
   {
-    const expect = ['opsStatus', 'trafficSnapshots', 'ascCache', 'competitors', 'competitorSnapshots', 'competitorRankSnapshots'];
+    const expect = ['opsStatus', 'trafficSnapshots', 'ascCache', 'competitors', 'competitorSnapshots', 'competitorRankSnapshots', 'readinessChecks', 'reviews', 'feedback'];
     assert.deepEqual(Object.values(KV_BLOB_DOMAINS).sort(), [...expect].sort());
     console.log('✅ KV_BLOB_DOMAINS 清单');
   }
