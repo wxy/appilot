@@ -638,11 +638,30 @@ export function registerProjectsHandlers(): void {
     emitProjectsChanged();
     // 共享 DB 级联删除：清掉注册表 / 产品注册 / repo 元数据 / 快照 / 发布缓存，
     // 否则下一轮 registry hydration 会把残留注册表行重新水合回来（项目“复活”）。
+    // 另：tasks 行不存 projectName，需按 id/instance 关联清理，否则“项目删了任务还在跑”。
     try {
+      const removedProductIds = new Set<string>(
+        (removed?.storeProducts || []).map((product: any) => product.id),
+      );
       const projectName = removed?.name;
       if (projectName) {
         const { sharedStore } = await import("../registry-sync");
-        sharedStore().projects.removeDeep(projectName);
+        const { taskReferencesProject } = await import("../task-project-ref");
+        const shared = sharedStore();
+        shared.projects.removeDeep(projectName);
+        const leftovers = shared.tasks
+          .all()
+          .filter((task) =>
+            taskReferencesProject(task as any, {
+              name: projectName,
+              path: removed?.localPath,
+              productIds: [...removedProductIds],
+            }),
+          );
+        for (const task of leftovers) shared.tasks.remove(task.id);
+        if (leftovers.length > 0) {
+          log.info(`projects:remove: 级联清理 ${leftovers.length} 条共享任务（${id}）`);
+        }
       }
     } catch (err: any) {
       log.warn(`projects:remove: shared db cleanup failed for ${id}: ${err.message}`);
