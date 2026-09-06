@@ -57,6 +57,10 @@ export function buildLightProjects(store: AppilotStore): LightProject[] {
           remoteUrl: meta.githubUrl,
           headSha: meta.headSha,
           headDate: meta.headDate,
+          branch: meta.branch ?? null,
+          headMessage: meta.headMessage ?? null,
+          dirty: meta.dirty ?? null,
+          description: meta.description ?? null,
           capturedAt: meta.updatedAt,
         }
       : null;

@@ -19,6 +19,10 @@ export interface ElectronProjectRich {
     githubUrl?: string | null;
     headSha?: string | null;
     headDate?: string | null;
+    branch?: string | null;
+    headMessage?: string | null;
+    dirty?: boolean | null;
+    description?: string | null;
   } | null;
   lastReleaseSha?: string | null;
   /** 发布草稿/历史（写切(2)：镜像进 project_blobs，供 kv 退役后读取）。 */
@@ -53,6 +57,10 @@ export function toProjectMeta(p: ElectronProjectRich): ProjectMetaRow | null {
     headSha: p.repo?.headSha ?? null,
     headDate: p.repo?.headDate ?? null,
     lastReleaseSha: p.lastReleaseSha ?? null,
+    branch: p.repo?.branch ?? null,
+    headMessage: p.repo?.headMessage ?? null,
+    dirty: p.repo?.dirty ?? null,
+    description: p.repo?.description ?? null,
     updatedAt: new Date().toISOString(),
   };
 }

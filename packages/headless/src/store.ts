@@ -573,13 +573,17 @@ export function openStore(dbPath: string): AppilotStore {
       save(row) {
         tx(() => {
           db.prepare(
-            `INSERT INTO project_meta (projectName, githubUrl, headSha, headDate, lastReleaseSha, updatedAt)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO project_meta (projectName, githubUrl, headSha, headDate, lastReleaseSha, branch, headMessage, dirty, description, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(projectName) DO UPDATE SET
                githubUrl = excluded.githubUrl,
                headSha = excluded.headSha,
                headDate = excluded.headDate,
                lastReleaseSha = excluded.lastReleaseSha,
+               branch = excluded.branch,
+               headMessage = excluded.headMessage,
+               dirty = excluded.dirty,
+               description = excluded.description,
                updatedAt = excluded.updatedAt`,
           ).run(
             row.projectName,
@@ -587,6 +591,10 @@ export function openStore(dbPath: string): AppilotStore {
             row.headSha,
             row.headDate,
             row.lastReleaseSha,
+            row.branch ?? null,
+            row.headMessage ?? null,
+            row.dirty === true ? 1 : 0,
+            row.description ?? null,
             row.updatedAt,
           );
         });
@@ -600,6 +608,10 @@ export function openStore(dbPath: string): AppilotStore {
           headSha: r.headSha,
           headDate: r.headDate,
           lastReleaseSha: r.lastReleaseSha,
+          branch: r.branch ?? null,
+          headMessage: r.headMessage ?? null,
+          dirty: r.dirty == null ? null : Number(r.dirty) === 1,
+          description: r.description ?? null,
           updatedAt: r.updatedAt,
         };
       },
