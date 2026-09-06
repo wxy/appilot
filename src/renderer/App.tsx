@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
 import { useTheme } from "./stores/theme";
 import { useProject } from "./stores/project";
@@ -33,48 +33,84 @@ function ProjectSidebar() {
     useProject();
   const location = useLocation();
   const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
 
   const handleAdd = async () => {
+    setMenuOpen(false);
     const folder = await (window as any).appilot?.dialog?.selectFolder();
     if (folder) await addByFolder(folder);
   };
 
-  // 选中项目/平台；若正停留在首页，选中后进入项目总览。
   const choose = (projectId: string, productId?: string) => {
+    setMenuOpen(false);
     select(projectId);
     if (productId) selectProduct(productId);
     if (location.pathname === "/") navigate("/overview");
   };
 
+  const currentProject = projects.find((p) => p.id === currentProjectId) || null;
+  const currentProduct =
+    currentProject?.storeProducts?.find((product) => product.id === currentProductId) ||
+    currentProject?.storeProducts?.[0] ||
+    null;
+  const label = currentProject
+    ? currentProject.storeProducts.length > 1 && currentProduct
+      ? `${currentProject.name} · ${platformLabel(currentProduct.platform)}`
+      : currentProject.name
+    : "选择项目";
+
   return (
-    <aside className="shrink-0 w-60 border-r border-zinc-200/70 dark:border-zinc-800/70 bg-white/60 dark:bg-zinc-900/40 flex flex-col">
-      <div className="flex-1 overflow-y-auto px-2 py-3">
-        {/* 项目切换 */}
-        <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-          项目
-        </div>
-        {projects.length === 0 ? (
-          <div className="px-2 py-2 text-xs text-zinc-400 dark:text-zinc-500">
-            还没有项目，点击下方「＋ 添加项目」接入一个应用仓库。
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {projects.map((p) => {
-              const products = p.storeProducts || [];
-              if (products.length > 1) {
-                return (
-                  <div key={p.id} className="py-0.5">
-                    <div className="flex items-center gap-2 px-2.5 py-1 text-[13px] text-zinc-700 dark:text-zinc-300">
-                      <span className="text-xs text-transparent">✓</span>
-                      <span className="truncate">{p.name}</span>
-                    </div>
-                    <div className="mt-0.5 space-y-0.5">
+    <aside className="shrink-0 w-32 border-r border-zinc-200/70 dark:border-zinc-800/70 bg-white/60 dark:bg-zinc-900/40 p-2">
+      {/* 单一区块：先选项目（下拉），其下即是该项目的页面 */}
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-visible shadow-sm">
+        <div ref={menuRef} className="relative">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            title={currentProject ? `当前项目：${label}（点击切换项目）` : "还没有项目，点击添加"}
+            className="w-full flex items-center justify-between gap-1 pl-2 pr-1.5 h-9 text-[12.5px] text-zinc-700 dark:text-zinc-200"
+          >
+            <span className="truncate">{label}</span>
+            <span
+              className={cn(
+                "text-[10px] text-zinc-400 transition-transform shrink-0",
+                menuOpen && "rotate-180",
+              )}
+            >
+              ▾
+            </span>
+          </button>
+
+          {menuOpen && (
+            <div className="absolute left-0 top-full mt-1 z-40 w-60 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 max-h-[70vh] overflow-auto">
+              {projects.length === 0 && (
+                <div className="px-3 py-2 text-xs text-zinc-400 dark:text-zinc-500">
+                  还没有项目，先添加一个。
+                </div>
+              )}
+              {projects.map((p) => {
+                const products = p.storeProducts || [];
+                if (products.length > 1) {
+                  return (
+                    <div key={p.id} className="py-1">
+                      <div className="w-full flex items-center gap-2 px-3 py-1 text-sm text-zinc-600 dark:text-zinc-400">
+                        <span className="text-xs text-transparent">✓</span>
+                        <span className="truncate">{p.name}</span>
+                      </div>
                       {products.map((product) => (
                         <button
                           key={product.id}
                           onClick={() => choose(p.id, product.id)}
                           className={cn(
-                            "w-full flex items-center gap-2 pl-7 pr-2.5 py-1.5 text-xs text-left rounded-lg",
+                            "w-full flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs text-left",
                             product.id === currentProductId
                               ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
                               : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
@@ -92,42 +128,52 @@ function ProjectSidebar() {
                         </button>
                       ))}
                     </div>
-                  </div>
-                );
-              }
-
-              const product = products[0];
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => choose(p.id, product?.id)}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2.5 py-1.5 text-[13px] text-left rounded-lg",
-                    p.id === currentProjectId
-                      ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                      : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                  )}
-                >
-                  <span
+                  );
+                }
+                const product = products[0];
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => choose(p.id, product?.id)}
                     className={cn(
-                      "text-xs",
-                      p.id === currentProjectId ? "text-amber-500" : "text-transparent",
+                      "w-full flex items-center gap-2 px-3 py-2 text-sm text-left",
+                      p.id === currentProjectId
+                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                        : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
                     )}
                   >
-                    ✓
-                  </span>
-                  <span className="truncate">{p.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* 项目页面导航 */}
-        <div className="mt-5 pt-3 border-t border-zinc-100 dark:border-zinc-800 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-          页面
+                    <span
+                      className={cn(
+                        "text-xs",
+                        p.id === currentProjectId ? "text-amber-500" : "text-transparent",
+                      )}
+                    >
+                      ✓
+                    </span>
+                    <span className="truncate">{p.name}</span>
+                  </button>
+                );
+              })}
+              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+              <button
+                onClick={handleAdd}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+              >
+                <span className="text-amber-500">＋</span> 添加项目
+              </button>
+              <Link
+                to="/projects"
+                onClick={() => setMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+              >
+                <span className="text-zinc-400">⚙</span> 管理项目
+              </Link>
+            </div>
+          )}
         </div>
-        <nav className="space-y-0.5">
+
+        {/* 项目页面：与项目下拉在同一区块内 */}
+        <nav className="border-t border-zinc-100 dark:border-zinc-800 p-1 space-y-0.5">
           {PROJECT_NAV_ITEMS.map((item) => {
             const active = location.pathname === item.to;
             return (
@@ -136,7 +182,7 @@ function ProjectSidebar() {
                 to={item.to}
                 title={item.title}
                 className={cn(
-                  "flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-lg transition-colors",
+                  "flex items-center px-2 py-1.5 text-[12.5px] rounded-lg transition-colors",
                   active
                     ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
                     : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
@@ -147,22 +193,6 @@ function ProjectSidebar() {
             );
           })}
         </nav>
-      </div>
-
-      {/* 底部：添加 / 管理项目 */}
-      <div className="shrink-0 border-t border-zinc-100 dark:border-zinc-800 px-2 py-2 space-y-0.5">
-        <button
-          onClick={handleAdd}
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[13px] text-left rounded-lg text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-        >
-          <span className="text-amber-500">＋</span> 添加项目
-        </button>
-        <Link
-          to="/projects"
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[13px] text-left rounded-lg text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-        >
-          <span className="text-zinc-400">⚙</span> 管理项目
-        </Link>
       </div>
     </aside>
   );
