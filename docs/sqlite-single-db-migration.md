@@ -20,7 +20,10 @@
   - 主进程 `getStore()` 改由 `appilot.db` 的 `app_kv` 支撑，接口（get/set + projects 变更防抖同步注册表）不变；
   - 启动首次调用 getStore 时把旧 `config.json` 全量导入 `app_kv`，成功后改名归档为
     `config.json.migrated-<ts>`（保留一份可人工恢复），从此不再读取 config.json；
-  - 卸载 electron-store 依赖（代码已无引用）。
+  - 卸载 electron-store 依赖（代码已无引用）；
+  - 迁移逻辑抽为纯函数 `src/main/kv-migrate.ts`（无 electron 依赖）并由
+    `tests/kv-migrate.test.ts` 覆盖（首次导入+归档 / 幂等 / 无 config / 损坏 JSON），
+    已注册进 `npm test`。
 - [ ] **阶段二：项目富数据结构化**——projects（storeProducts/trackedKeywords/rankSnapshots
       主副本/草稿/竞品关联）抽表并重写读写方（迁移完成前 UI 仍走 KV）。
 - [ ] **阶段三：执行记录与调度**——rankExecutions / schedulerRounds / scheduledTasks 抽表
