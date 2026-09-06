@@ -395,8 +395,7 @@ function syncRankInstancesToDb(store: AppStore, tasks: ScheduledTask[]): void {
       log.info("appilot: rank instances sync skipped (no rank tasks in scheduledTasks)");
       return;
     }
-    const res = reconcileTaskInstances(sharedStore(), specs, "electron");
-    log.debug(`appilot: synced rank instances to shared db (seeded ${res.seeded}, pruned ${res.pruned}, of ${specs.length})`);
+    reconcileTaskInstances(sharedStore(), specs, "electron");
   } catch (err: any) {
     log.warn(`rank instances sync to shared db failed: ${err?.message || String(err)}`);
   }
