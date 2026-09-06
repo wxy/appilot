@@ -600,15 +600,15 @@ export function OverviewContent(props: OverviewContentProps) {
                       }
                     />
                   </span>
-                  {row.language === "en" ? (
-                    <span className="shrink-0 inline-flex px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-                      全局
+                  <span
+                    className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-medium text-zinc-500 dark:text-zinc-400"
+                    title={`最佳名次来自 ${storefrontDisplayName(row.storefront)} 商店`}
+                  >
+                    {row.language === "en" ? "全局" : languageLabel(row.language)}
+                    <span className="text-zinc-400 dark:text-zinc-500">
+                      · {storefrontDisplayName(row.storefront)}
                     </span>
-                  ) : (
-                    <span className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500">
-                      {languageLabel(row.language)}
-                    </span>
-                  )}
+                  </span>
                   <ValueFlash
                     value={row.bestRank}
                     mode="box"
