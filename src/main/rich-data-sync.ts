@@ -21,6 +21,8 @@ export interface ElectronProjectRich {
     headDate?: string | null;
   } | null;
   lastReleaseSha?: string | null;
+  /** 发布草稿/历史（写切(2)：镜像进 project_blobs，供 kv 退役后读取）。 */
+  storeSubmissionDrafts?: unknown[];
   storeProducts?: Array<{
     id?: string | null;
     platform?: string | null;
