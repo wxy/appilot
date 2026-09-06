@@ -88,6 +88,24 @@ export async function getStore(): Promise<AppStore> {
     } catch (err: any) {
       log.warn(`kv scheduledTasks 清理失败: ${err.message}`);
     }
+    // 发布缓存已切 DB（读写 release_cache）：DB 有任一项目缓存行时删除 kv 遗留键。
+    try {
+      const anyRelease = shared.projects
+        .list()
+        .some((p) => {
+          try {
+            return Boolean(shared.releaseCache.get(p.name));
+          } catch {
+            return false;
+          }
+        });
+      if (anyRelease && kv.get("githubSyncCache") !== undefined) {
+        kv.delete("githubSyncCache");
+        log.info("appilot: kv githubSyncCache 已退役（release_cache 为发布缓存源）");
+      }
+    } catch (err: any) {
+      log.warn(`kv githubSyncCache 清理失败: ${err.message}`);
+    }
     store = {
       get: (key) => {
         if (key === "scheduledTasks" && process.env.APPILOT_TASKS_DB_READ !== "0") {
