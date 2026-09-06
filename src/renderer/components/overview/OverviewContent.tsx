@@ -340,14 +340,14 @@ export function OverviewContent(props: OverviewContentProps) {
             {languages.length > 0 && (
               <span
                 className="flex items-center gap-1 min-w-0"
-                title={languages.map((l) => l.name).join(" · ")}
+                title={languages.map((l) => languageLabel(l.code)).join(" · ")}
               >
                 {languages.slice(0, 3).map((l) => (
                   <span
                     key={l.code}
                     className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-600 dark:text-zinc-300"
                   >
-                    {l.name}
+                    {languageLabel(l.code)}
                   </span>
                 ))}
                 {languages.length > 3 && <span className="shrink-0">+{languages.length - 3}</span>}
