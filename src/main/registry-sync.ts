@@ -11,6 +11,7 @@
  * node 单测覆盖）；本文件只做 electron 绑定（userData 路径、租约门、轮询）。
  */
 import { app } from 'electron';
+import fs from 'node:fs';
 import { join } from 'node:path';
 import {
   openStore,
@@ -32,11 +33,20 @@ export function sharedStore(): AppilotStore {
   if (!store) {
     const path = join(app.getPath('userData'), 'appilot.db');
     store = openStore(path);
-    // 旧版 registry.json 一次性迁移（幂等）。
+    // 旧版 registry.json 一次性迁移（幂等）：DB 已有项目时不再重复导入。
     const legacy = join(app.getPath('userData'), 'registry.json');
     try {
       const n = importLegacyRegistry(store, legacy);
       if (n > 0) log.info(`appilot: migrated ${n} legacy registry records to SQLite`);
+      // 注册表已收口到 SQLite（本次导入或既有数据），删除遗留文件，不再每次启动空读。
+      try {
+        if (fs.existsSync(legacy) && store.projects.list().length > 0) {
+          fs.unlinkSync(legacy);
+          log.info('appilot: removed legacy registry.json (已并入 SQLite 注册表)');
+        }
+      } catch (err: any) {
+        log.warn(`appilot: registry.json 清理失败（忽略）: ${err.message}`);
+      }
     } catch (err: any) {
       log.warn(`appilot: legacy registry migration failed: ${err.message}`);
     }

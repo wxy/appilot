@@ -45,3 +45,22 @@
 阶段一不可逆点仅在导入成功后的改名归档；如需回退：把 `config.json.migrated-*` 改回
 `config.json`，并在 `app_kv` 删除 `__kvMigratedFromConfigJson` 标记后，由旧版应用代码
 （仍用 electron-store）继续读取。新代码不再包含 electron-store 读取路径。
+
+## 阶段二设计（草稿：项目富数据结构化）
+
+现状：`kv['projects']` 是 UI 项目列表的唯一事实源（含 storeProducts 的
+trackedKeywords/rankSnapshots/草稿/竞品关联等），DB 侧已有 product_records /
+project_meta / rank_snapshots / tasks 镜像。
+
+目标形态（分步，每步可独立合并）：
+1. **读侧切换**：`projects:list` 改为由 DB 组装项目视图 = projects 注册表 ∪
+   product_records ∪ rank_snapshots(各产品) ∪ project_meta；electron `kv['projects']`
+   降级为写缓存（双写期）。
+2. **写侧切换**：`projects:add/updateSettings/saveTrackedKeywords/…` 直接写 DB
+   结构化表（注册表 + product_records + snapshots），不再整对象写回 kv。
+3. **逐产品收敛**：drafts（submissionKeywords/草稿）独立表或并入 product_records JSON 列；
+   竞品表；rankExecutions 表。
+4. **清理**：删除 `kv['projects']`，读/写路径全走 DB，移除 electron-store 残留。
+
+回归矩阵（每步后）：tsc、headless 测试、projects:list 形状等价、调度不回归、
+`npm run dev` 实测（项目/排名/发布/评论/趋势/设置页正常，删除项目不复活）。
