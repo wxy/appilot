@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -140,6 +140,14 @@ CREATE TABLE IF NOT EXISTS rank_executions (
 );
 CREATE INDEX IF NOT EXISTS idx_rank_executions_ts ON rank_executions(ts);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rank_executions_uniq ON rank_executions(ts, taskId);
+
+CREATE TABLE IF NOT EXISTS project_blobs (
+  domain TEXT NOT NULL,
+  projectKey TEXT NOT NULL,
+  json TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  PRIMARY KEY (domain, projectKey)
+);
 
 CREATE TABLE IF NOT EXISTS projects (
   name TEXT PRIMARY KEY,
@@ -341,5 +349,16 @@ export function migrate(db: {
     }
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_rank_executions_uniq ON rank_executions(ts, taskId)');
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '10') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 11) {
+    // v10→v11：通用 per-key JSON 表（竞品/ascCache/trafficSnapshots/opsStatus 等
+    // kv 的 Record<项目id, 数据> 结构化落点；双写期读仍走 kv）。
+    db.exec(`CREATE TABLE IF NOT EXISTS project_blobs (
+      domain TEXT NOT NULL,
+      projectKey TEXT NOT NULL,
+      json TEXT NOT NULL,
+      updatedAt TEXT NOT NULL,
+      PRIMARY KEY (domain, projectKey));`);
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '11') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }

@@ -4,6 +4,7 @@ import { log } from "@appilot-labs/appilot-core/logger";
 import { sharedStore } from "./registry-sync";
 import { migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
+import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
 export interface AppStore {
@@ -77,6 +78,14 @@ export async function getStore(): Promise<AppStore> {
       set: (key, value) => {
         kv.set(key, JSON.stringify(value));
         if (key === "projects") scheduleProjectsToDb(value);
+        const domain = KV_BLOB_DOMAINS[key];
+        if (domain) {
+          try {
+            syncKvBlobMap(shared, domain, (value ?? {}) as Record<string, unknown>);
+          } catch (err: any) {
+            log.warn(`kv 域 ${key} → project_blobs 镜像失败: ${err.message}`);
+          }
+        }
       },
     };
   }

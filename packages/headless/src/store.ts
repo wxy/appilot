@@ -34,6 +34,14 @@ export interface AppilotStore {
     set(key: string, value: string): void;
     delete(key: string): boolean;
   };
+  /** 通用 per-key JSON（v11）：kv 里 Record<项目/产品 id, 数据> 类域的结构化落点。 */
+  blobs: {
+    put(domain: string, projectKey: string, value: unknown): void;
+    get(domain: string, projectKey: string): unknown | undefined;
+    all(domain: string): Record<string, unknown>;
+    /** 删除某 domain 下不在 keepKeys 中的行（镜像时清理陈旧 key）。 */
+    pruneKeys(domain: string, keepKeys: string[]): number;
+  };
   /** rank 执行记录（v9）：electron kv rankExecutions 的结构化落点（双写期读仍走 kv）。 */
   executions: {
     /** 追加一条执行记录（entryJson 原样保留，ts/taskId/status/durationMs 提列索引）。 */
@@ -258,6 +266,38 @@ export function openStore(dbPath: string): AppilotStore {
       delete(key) {
         const res = db.prepare('DELETE FROM app_kv WHERE key = ?').run(key);
         return Number(res.changes) > 0;
+      },
+    },
+
+    blobs: {
+      put(domain, projectKey, value) {
+        tx(() => {
+          db.prepare(
+            `INSERT INTO project_blobs (domain, projectKey, json, updatedAt) VALUES (?, ?, ?, ?)
+             ON CONFLICT(domain, projectKey) DO UPDATE SET json = excluded.json, updatedAt = excluded.updatedAt`,
+          ).run(domain, projectKey, JSON.stringify(value), new Date().toISOString());
+        });
+      },
+      get(domain, projectKey) {
+        const r = db.prepare('SELECT json FROM project_blobs WHERE domain = ? AND projectKey = ?').get(domain, projectKey) as { json?: string } | undefined;
+        return r ? JSON.parse(r.json as string) : undefined;
+      },
+      all(domain) {
+        const rows = db.prepare('SELECT projectKey, json FROM project_blobs WHERE domain = ? ORDER BY projectKey').all(domain) as Array<{ projectKey: string; json: string }>;
+        const out: Record<string, unknown> = {};
+        for (const r of rows) out[r.projectKey] = JSON.parse(r.json);
+        return out;
+      },
+      pruneKeys(domain, keepKeys) {
+        const keep = keepKeys || [];
+        const res = db
+          .prepare(
+            keep.length === 0
+              ? 'DELETE FROM project_blobs WHERE domain = ?'
+              : `DELETE FROM project_blobs WHERE domain = ? AND projectKey NOT IN (${keep.map(() => '?').join(',')})`,
+          )
+          .run(domain, ...(keep.length === 0 ? [] : keep));
+        return Number(res.changes);
       },
     },
 
