@@ -123,18 +123,12 @@ let accelHandledTaskIds = new Set<string>();
 // 执行记录的写入链：调度 tick 与手动触发并发写时保证串行，避免互相覆盖
 // 导致统计（流量/入榜率）忽清忽恢复。
 let executionsWriteChain: Promise<void> = Promise.resolve();
-function appendExecution(store: AppStore, entry: Record<string, any>): Promise<void> {
+function appendExecution(_store: AppStore, entry: Record<string, any>): Promise<void> {
   executionsWriteChain = executionsWriteChain
     .catch(() => undefined)
     .then(async () => {
-      const executions: any[] = Array.isArray(store.get("rankExecutions"))
-        ? store.get("rankExecutions")
-        : [];
-      executions.push(entry);
-      // 加速会话可能一次写上千条；5000 上限会截断近 24h 数据导致
-      // 流量/入榜率统计波动（"清零又恢复"）。上限放宽并保留足够窗口。
-      store.set("rankExecutions", executions.slice(-20000));
-      // 双写共享 DB rank_executions（v9 结构化落点；读侧仍走 kv，后续再切）。
+      // rank 执行记录直写共享 DB rank_executions（读已切 DB）；不再写 kv（遗留键
+      // 由启动清理删除）。
       try {
         sharedStore().executions.add(entry);
       } catch (err: any) {
