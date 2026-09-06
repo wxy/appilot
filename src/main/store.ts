@@ -6,6 +6,7 @@ import { migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
 import { mirrorTasksToDb, electronTaskFromRow } from "./task-db-sync";
+import { buildLightProjects } from "./projects-db-light";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
 export interface AppStore {
@@ -116,6 +117,15 @@ export async function getStore(): Promise<AppStore> {
     }
     store = {
       get: (key) => {
+        if (key === "projects" && process.env.APPILOT_PROJECTS_DB_ON === "1") {
+          // 写切(2c/2d) 启用态：读侧 = DB 轻量视图（kv 兜底），写侧 DB-only。
+          try {
+            const light = buildLightProjects(shared);
+            if (light.length > 0) return light;
+          } catch (err: any) {
+            log.warn(`projects DB 读取失败，回退 kv: ${err.message}`);
+          }
+        }
         if (key === "scheduledTasks" && process.env.APPILOT_TASKS_DB_READ !== "0") {
           // 引擎读侧切 DB：从共享 DB tasks（source=electron、无损 electronJson）
           // 重建任务；DB 为空/出错回退 kv。写侧每次落 kv 已同步 DB（#220），
@@ -149,6 +159,11 @@ export async function getStore(): Promise<AppStore> {
         // 直写 DB（同步无损镜像），不再写 kv（遗留键由启动清理删除）。
         if (key === "scheduledTasks") {
           syncTasksToDb(value);
+          return;
+        }
+        // projects：APPILOT_PROJECTS_DB_ON=1 启用态 → 写直连 DB（不再写 kv）。
+        if (key === "projects" && process.env.APPILOT_PROJECTS_DB_ON === "1") {
+          syncProjectsToDb(value);
           return;
         }
         kv.set(key, JSON.stringify(value));
