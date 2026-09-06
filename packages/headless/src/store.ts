@@ -40,6 +40,8 @@ export interface AppilotStore {
     add(entry: Record<string, unknown>): void;
     /** 返回 ts >= sinceIso 的记录（按 ts/id 升序），limit 上限默认 20000。 */
     since(sinceIso: string, limit?: number): Record<string, unknown>[];
+    /** 最近 limit 条（按 ts/id 升序返回；镜像 kv slice(-20000) 语义）。 */
+    latest(limit?: number): Record<string, unknown>[];
     /** 清理早于 beforeIso 的记录，返回删除行数。 */
     pruneBefore(beforeIso: string): number;
   };
@@ -267,7 +269,7 @@ export function openStore(dbPath: string): AppilotStore {
         const durationMs = typeof entry?.durationMs === 'number' ? entry.durationMs : null;
         tx(() => {
           db.prepare(
-            `INSERT INTO rank_executions (ts, taskId, status, durationMs, entryJson)
+            `INSERT OR IGNORE INTO rank_executions (ts, taskId, status, durationMs, entryJson)
              VALUES (?, ?, ?, ?, ?)`,
           ).run(ts, taskId, status, durationMs, JSON.stringify(entry));
         });
@@ -280,6 +282,15 @@ export function openStore(dbPath: string): AppilotStore {
           )
           .all(sinceIso, n) as any[];
         return rows.map((r) => JSON.parse(r.entryJson) as Record<string, unknown>);
+      },
+      latest(limit = 20000) {
+        const n = Math.min(Math.max(limit, 1), 200000);
+        const rows = db
+          .prepare(
+            `SELECT * FROM rank_executions ORDER BY ts DESC, id DESC LIMIT ?`,
+          )
+          .all(n) as any[];
+        return rows.reverse().map((r) => JSON.parse(r.entryJson) as Record<string, unknown>);
       },
       pruneBefore(beforeIso) {
         const res = db.prepare('DELETE FROM rank_executions WHERE ts < ?').run(beforeIso);

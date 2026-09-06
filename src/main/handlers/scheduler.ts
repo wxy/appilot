@@ -130,7 +130,13 @@ export function registerSchedulerHandlers(): void {
     const s = await getStore();
     const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
     const now = Date.now();
-    const executions: any[] = s.get("rankExecutions") || [];
+    const executions: any[] = (() => {
+      try {
+        return sharedStore().executions.latest(20000);
+      } catch {
+        return s.get("rankExecutions") || [];
+      }
+    })();
     const dayMs = 24 * 60 * 60 * 1000;
     const recent = executions.filter(
       (entry) => new Date(entry.ts).getTime() >= now - dayMs,
@@ -196,7 +202,13 @@ export function registerSchedulerHandlers(): void {
   ipcMain.handle("scheduler:timeline", async () => {
     const s = await getStore();
     const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
-    const executions: any[] = s.get("rankExecutions") || [];
+    const executions: any[] = (() => {
+      try {
+        return sharedStore().executions.latest(20000);
+      } catch {
+        return s.get("rankExecutions") || [];
+      }
+    })();
     return computeTimeline(tasks, executions, Date.now());
   });
 
@@ -208,7 +220,13 @@ export function registerSchedulerHandlers(): void {
     const dbTasks = taskCenterTasksFromDb(dbStore);
     const dbOverview = taskCenterOverviewFromDb(dbStore);
     const now = Date.now();
-    const executions: any[] = s.get("rankExecutions") || [];
+    const executions: any[] = (() => {
+      try {
+        return sharedStore().executions.latest(20000);
+      } catch {
+        return s.get("rankExecutions") || [];
+      }
+    })();
     const dayMs = 24 * 60 * 60 * 1000;
     const recent = executions.filter(
       (entry) => new Date(entry.ts).getTime() >= now - dayMs,
