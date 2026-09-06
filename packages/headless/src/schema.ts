@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -117,6 +117,12 @@ export const DDL = `
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS app_kv (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -264,5 +270,15 @@ export function migrate(db: {
       cacheJson TEXT NOT NULL,
       syncedAt TEXT NOT NULL);`);
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '6') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 7) {
+    // v6→v7：新增 app_kv 通用键值表（electron-store config.json 整体迁入 SQLite
+    // 的落地表；键名保持原 getStore() 键名，值为 JSON 文本）。迁移期向后兼容，
+    // 由 Electron 主进程在启动时一次性导入旧 config.json 后退役该文件。
+    db.exec(`CREATE TABLE IF NOT EXISTS app_kv (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updatedAt TEXT NOT NULL);`);
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '7') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }

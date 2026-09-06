@@ -28,6 +28,12 @@ export interface AppilotStore {
      */
     removeDeep(name: string): boolean;
   };
+  /** 通用键值（v7）：electron-store 全量迁入 SQLite 的落地表；值为原始字符串（JSON 文本）。 */
+  kv: {
+    get(key: string): string | undefined;
+    set(key: string, value: string): void;
+    delete(key: string): boolean;
+  };
   snapshots: {
     /** 批量追加快照（保留历史）。 */
     add(rows: RankSnapshotRow[]): void;
@@ -206,6 +212,27 @@ export function openStore(dbPath: string): AppilotStore {
           const res = db.prepare('DELETE FROM projects WHERE name = ?').run(name);
           return Number(res.changes) > 0;
         });
+      },
+    },
+
+    kv: {
+      get(key) {
+        const r = db.prepare('SELECT value FROM app_kv WHERE key = ?').get(key) as
+          | { value?: string }
+          | undefined;
+        return r ? r.value : undefined;
+      },
+      set(key, value) {
+        tx(() => {
+          db.prepare(
+            `INSERT INTO app_kv (key, value, updatedAt) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+          ).run(key, value, new Date().toISOString());
+        });
+      },
+      delete(key) {
+        const res = db.prepare('DELETE FROM app_kv WHERE key = ?').run(key);
+        return Number(res.changes) > 0;
       },
     },
 
