@@ -1,8 +1,9 @@
 import { app } from "electron";
 import path from "path";
 import { log } from "@appilot-labs/appilot-core/logger";
-import { syncRegistryToDb, sharedStore } from "./registry-sync";
+import { sharedStore } from "./registry-sync";
 import { migrateConfigJsonIntoKv } from "./kv-migrate";
+import { syncProjectToDb } from "./project-write-sync";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
 export interface AppStore {
@@ -20,12 +21,27 @@ const DEFAULTS: Record<string, unknown> = {
 
 let store: AppStore | null = null;
 
-// 共享注册表同步（方案 A）：projects 变更后防抖写回共享注册表（后写者赢）。
+// 共享 DB 镜像（方案 A→写侧接线）：projects 变更后防抖 300ms 全量镜像到共享 DB——
+// 注册表(含 id) + project_meta + product_records(含扩展列)。此前仅同步注册表且靠
+// 10s 轮询补富数据，读侧（DB 组装）会有可见滞后；现在任何写 handler 经
+// s.set('projects', …) 落盘后 ≤300ms DB 即最新。删除项目的 DB 清理仍在删除处理器。
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleRegistrySync(projects: unknown): void {
+function scheduleProjectsToDb(projects: unknown): void {
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
-    void syncRegistryToDb((projects as any[]) || []);
+    const list = (projects as any[]) || [];
+    try {
+      const shared = sharedStore();
+      for (const project of list) {
+        try {
+          syncProjectToDb(shared, project);
+        } catch (err: any) {
+          log.warn(`projects → DB 镜像失败（${project?.name ?? "?"}）: ${err.message}`);
+        }
+      }
+    } catch (err: any) {
+      log.warn(`projects → DB 镜像失败: ${err.message}`);
+    }
   }, 300);
 }
 
@@ -60,7 +76,7 @@ export async function getStore(): Promise<AppStore> {
       },
       set: (key, value) => {
         kv.set(key, JSON.stringify(value));
-        if (key === "projects") scheduleRegistrySync(value);
+        if (key === "projects") scheduleProjectsToDb(value);
       },
     };
   }
