@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import { openStore } from '@appilot-labs/appilot-headless';
-import { mirrorTasksToDb, toTaskRow, clearElectronFailures } from '../src/main/task-db-sync';
+import { mirrorTasksToDb, toTaskRow, clearElectronFailures, purgeOrphanProjectTasks } from '../src/main/task-db-sync';
 
 async function main(): Promise<void> {
   const dbPath = join(mkdtempSync(join(tmpdir(), 'task-db-sync-test-')), 'appilot.db');
@@ -114,6 +114,36 @@ async function main(): Promise<void> {
   const dbRow = toTaskRow(cleared.tasks[0]);
   assert.equal(dbRow?.lastStatus, 'never', '清除后 mirror 映射为 never');
   console.log('✓ clearElectronFailures（clear/reschedule/镜像映射）');
+
+  // 9. 孤儿任务清理：引用已删除项目/产品的行删除；活项目行与无引用静态行保留
+  const purgeStore = openStore(join(mkdtempSync(join(tmpdir(), 'task-purge-')), 'appilot.db'));
+  purgeStore.projects.save({ name: 'GloWalk', id: 'p1', path: '/x/glowalk', githubUrl: null, platform: null, languages: [], lastResolvedAt: '2026-09-01T00:00:00Z', artworkUrl: null, updatedAt: '2026-09-01T00:00:00Z' });
+  purgeStore.products.upsert({
+    projectName: 'GloWalk', productId: 'p1:ios', platform: 'ios', trackId: 1, bundleId: 'com.g', trackName: 'Glow', artworkUrl: null,
+    supportedLanguages: ['en'], trackedKeywords: [], storeLinks: [], updatedAt: '2026-09-01T00:00:00Z',
+  });
+  purgeStore.tasks.upsert({ id: 'github-sync:demo', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: '2026-09-04T05:27:17.421Z', nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 18, source: 'dsh', kind: 'github-sync', instance: { projectName: 'demo', path: '/path/to/git-repo' } });
+  purgeStore.tasks.upsert({ id: 'github-sync:GloWalk', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: '2026-09-04T05:27:17.421Z', nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 18, source: 'dsh', kind: 'github-sync', instance: { projectId: 'p1', projectName: 'GloWalk', path: '/x/glowalk' } });
+  purgeStore.tasks.upsert({ id: 'ops-sync:p1', title: '运营同步', intervalMinutes: 1440, lastRunAt: '2026-09-06T10:35:09.238Z', nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 11, source: 'electron', electronJson: JSON.stringify({ id: 'ops-sync:p1', kind: 'ops-sync', projectId: 'p1', intervalMinutes: 1440, executionCount: 11, lastStatus: 'success', enabled: true }) });
+  purgeStore.tasks.upsert({ id: 'reviews-sync:ghost:ios', title: '评价同步', intervalMinutes: 1440, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron', electronJson: JSON.stringify({ id: 'reviews-sync:ghost:ios', kind: 'reviews-sync', productId: 'ghost:ios', intervalMinutes: 1440, executionCount: 0, enabled: true }) });
+  purgeStore.tasks.upsert({ id: 'static-1', title: '静态任务', intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'cli' });
+  // 注册表为空 → 不删（首启保护）
+  const emptyStore = openStore(join(mkdtempSync(join(tmpdir(), 'task-purge-empty-')), 'appilot.db'));
+  emptyStore.tasks.upsert({ id: 'github-sync:demo', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'dsh', kind: 'github-sync', instance: { projectName: 'demo', path: '/path/to/git-repo' } });
+  assert.deepEqual(purgeOrphanProjectTasks(emptyStore), [], '注册表为空时跳过清理');
+  emptyStore.close();
+
+  const removed = purgeOrphanProjectTasks(purgeStore);
+  assert.equal(removed.length, 2, `应清理 2 个孤儿任务（demo + ghost 产品），实际 ${JSON.stringify(removed)}`);
+  assert.ok(removed.includes('github-sync:demo'), 'demo 项目残留任务应被清理');
+  assert.ok(removed.includes('reviews-sync:ghost:ios'), '已删产品/项目的镜像任务应被清理');
+  assert.ok(purgeStore.tasks.get('github-sync:GloWalk'), '活项目 github-sync 行保留');
+  assert.ok(purgeStore.tasks.get('ops-sync:p1'), '活项目 ops-sync 镜像行保留');
+  assert.ok(purgeStore.tasks.get('static-1'), '无项目引用的静态行保留');
+  // 幂等：再次执行不再删
+  assert.deepEqual(purgeOrphanProjectTasks(purgeStore), [], '二次清理应为空（幂等）');
+  purgeStore.close();
+  console.log('✓ purgeOrphanProjectTasks（孤儿清理/注册表保护/幂等）');
 
   store.close();
   console.log('task-db-sync 单测全部通过 ✓');

@@ -62,6 +62,44 @@ async function main(): Promise<void> {
   assert.equal(ov.byKind['ops-sync'], 1);
   assert.ok(ov.nextDueAt, '最近到期时间');
 
+  // —— 镜像行（instance 为空）归项目 + firstRunAt 兜底 ——
+  // 注册表补 id：ops-sync 镜像行只有 electronJson.projectId（= 注册表 id）可归属。
+  store.projects.save({ name: 'GloWalk', id: 'msszspx4', path: '/x/glowalk', githubUrl: null, platform: null, languages: [], lastResolvedAt: d(0), artworkUrl: null, updatedAt: d(0) });
+  // ops 历史执行：最早 08-10，用于 firstRunAt 兜底（electronJson.firstRunAt 为 null）。
+  store.executions.add({ taskId: 'ops-sync:msszspx4', ts: '2026-08-10T08:00:00.000Z', status: 'success', durationMs: 120 });
+  store.executions.add({ taskId: 'ops-sync:msszspx4', ts: '2026-08-11T08:00:00.000Z', status: 'success', durationMs: 90 });
+  // 产品级镜像行：reviews-sync 带 productId（`projId:platform` 惯例）但从未执行。
+  store.tasks.upsert({
+    id: 'reviews-sync:msszspx4:ios', title: '评价同步', intervalMinutes: 1440, lastRunAt: null, nextRunAt: d(1), lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron',
+    electronJson: JSON.stringify({ id: 'reviews-sync:msszspx4:ios', kind: 'reviews-sync', productId: 'msszspx4:ios', intervalMinutes: 1440, executionCount: 0, enabled: true }),
+  });
+  // 覆盖已有 ops-sync:msszspx4 行（补 electronJson 供归属/首次时间解析）。
+  store.tasks.upsert({
+    id: 'ops-sync:msszspx4', title: '运营同步', intervalMinutes: 1440, lastRunAt: d(-2), nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 2, source: 'electron',
+    electronJson: JSON.stringify({ id: 'ops-sync:msszspx4', kind: 'ops-sync', projectId: 'msszspx4', intervalMinutes: 1440, lastRunAt: '2026-09-01T08:00:00.000Z', firstRunAt: null, executionCount: 2, lastStatus: 'success', enabled: true }),
+  });
+
+  const tasks3 = taskCenterTasksFromDb(store);
+  const ops3 = tasks3.find((t) => t.id === 'ops-sync:msszspx4');
+  assert.equal(ops3?.kind, 'ops-sync');
+  assert.equal(ops3?.projectName, 'GloWalk', 'instance 为空的镜像行按 electronJson.projectId 归项目（不再显示已删除项目）');
+  assert.equal(ops3?.productId, null, 'ops 为项目级任务（无 productId）');
+  assert.equal(ops3?.firstRunAt, '2026-08-10T08:00:00.000Z', 'electronJson/instance 无 firstRunAt → 用最早执行时间兜底');
+  const rev3 = tasks3.find((t) => t.id === 'reviews-sync:msszspx4:ios');
+  assert.equal(rev3?.projectName, 'GloWalk', 'reviews-sync 按 productId 前缀归项目');
+  assert.equal(rev3?.productId, 'msszspx4:ios');
+  assert.equal(rev3?.platform, 'ios', 'productId 后缀推导平台（无 instance 时）');
+  assert.equal(rev3?.firstRunAt, null, '从未执行的产品任务无首次时间');
+  // 已执行任务仍优先 electronJson.firstRunAt（真实首次 > 执行记录兜底）
+  store.tasks.upsert({
+    id: 'build-status:msszspx4:ios', title: '构建状态', intervalMinutes: 60, lastRunAt: '2026-09-06T11:58:24.757Z', nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 1, source: 'electron',
+    electronJson: JSON.stringify({ id: 'build-status:msszspx4:ios', kind: 'build-status', productId: 'msszspx4:ios', intervalMinutes: 60, lastRunAt: '2026-09-06T11:58:24.757Z', firstRunAt: '2026-09-06T11:58:24.757Z', executionCount: 1, lastStatus: 'success', enabled: true }),
+  });
+  const tasks4 = taskCenterTasksFromDb(store);
+  const build4 = tasks4.find((t) => t.id === 'build-status:msszspx4:ios');
+  assert.equal(build4?.firstRunAt, '2026-09-06T11:58:24.757Z', 'electronJson.firstRunAt 优先');
+  assert.equal(build4?.projectName, 'GloWalk');
+
   store.close();
   console.log('task-center-db 单测全部通过 ✓');
 }

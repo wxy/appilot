@@ -229,3 +229,63 @@ export function backfillTaskHistoryFromExecutions(
   }
   return patched;
 }
+
+/** 孤儿任务引用判定所需的最小 store 形状。 */
+export interface OrphanPurgeStore {
+  projects: { list(): { name: string; id?: string | null; path: string }[] };
+  products: { listByProject(projectName: string): { productId: string }[] };
+  tasks: { all(): any[]; remove(id: string): boolean };
+}
+
+/**
+ * 启动兜底清理：删除引用「已删除项目/产品」的孤儿任务行（历史遗留补删）。
+ *
+ * 删除项目时的级联清理只覆盖删除之后的动作；此前已残留的行（如 demo 项目的
+ * github-sync 实例行、已删产品的 Electron 镜像行）由这里一次性清理。
+ * - 仅当注册表已有项目时执行（防首启/迁移前注册表为空导致误删全表）；
+ * - 判定：instance / electronJson 里出现的 projectName、path、projectId、
+ *   productId（productId 按 `${projId}:${platform}` 取前缀）只要有一个指向
+ *   注册表外的项目即视为孤儿；完全没有任何项目引用的行（静态任务）一律保留；
+ * - 活项目但产品已下架的行不在此删（由引擎 reconcile / mirror 清理，避免竞态）。
+ * 返回被删除的任务 id 列表（幂等）。
+ */
+export function purgeOrphanProjectTasks(store: OrphanPurgeStore): string[] {
+  const projs = store.projects.list();
+  if (projs.length === 0) return [];
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  const paths = new Set<string>();
+  const productIds = new Set<string>();
+  for (const p of projs) {
+    names.add(p.name);
+    if (p.id) ids.add(p.id);
+    if (p.path) paths.add(p.path);
+    for (const rec of store.products.listByProject(p.name)) productIds.add(rec.productId);
+  }
+  const removed: string[] = [];
+  for (const row of store.tasks.all()) {
+    const inst = (row?.instance ?? null) as any;
+    let electron: any = null;
+    if (row?.electronJson) {
+      try {
+        const parsed = JSON.parse(row.electronJson);
+        if (parsed && typeof parsed === 'object') electron = parsed;
+      } catch {
+        electron = null;
+      }
+    }
+    const refNames = [inst?.projectName, electron?.projectName].filter((x) => typeof x === 'string' && x);
+    const refPaths = [inst?.path, electron?.path].filter((x) => typeof x === 'string' && x);
+    const refIds = [inst?.projectId, electron?.projectId].filter((x) => typeof x === 'string' && x);
+    const refProducts = [inst?.productId, electron?.productId].filter((x) => typeof x === 'string' && x);
+    if (refNames.length + refPaths.length + refIds.length + refProducts.length === 0) continue; // 无引用：保留
+    const orphan =
+      refNames.some((n) => !names.has(n)) ||
+      refPaths.some((p) => !paths.has(p)) ||
+      refIds.some((id) => !ids.has(id) && !names.has(id)) ||
+      (refProducts.some((pid) => !productIds.has(pid)) &&
+        refProducts.every((pid) => !ids.has(pid.split(':')[0]) && !names.has(pid.split(':')[0])));
+    if (orphan && store.tasks.remove(row.id)) removed.push(row.id);
+  }
+  return removed;
+}
