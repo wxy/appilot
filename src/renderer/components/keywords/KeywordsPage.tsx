@@ -4,8 +4,8 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ComposedChart,
   Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -28,9 +28,34 @@ import { EmptyState } from "../ui/EmptyState";
 import { btnPrimary, btnSecondary } from "../ui/styles";
 import { CurationDialog } from "./CurationDialog";
 import type { KeywordGeneration, KeywordSuggestion } from "./keywordTypes";
-import { ChartTick, MatrixCellView, RankTooltip } from "./matrix";
+import { MatrixCellView, RankTooltip } from "./matrix";
 import { CompetitorPanel } from "./CompetitorPanel";
 import { KeywordRuby } from "../ui/KeywordRuby";
+
+/** 组包络带（P25–P75）的参与关键词数下限：某商店某天在榜词数低于此值即视为“无组数据日”
+ *（由前后真实日连接）。取 2 而非更高，避免稀疏商店（每天仅 1–2 个词在榜）整条带不显示。 */
+const GROUP_BAND_MIN_N = 2;
+/** 某商店要画整组带，至少需要有这么多“真实带日”（当天在榜词 ≥ GROUP_BAND_MIN_N）。
+ * 避免整组几乎不进前 200 的商店，因孤立的 1–2 天数据被“连接/延展”成贯穿全图的假带。 */
+const GROUP_BAND_MIN_DAYS = 3;
+
+/** 升序数组的线性插值分位（p ∈ [0,1]）。 */
+function percentileOf(sorted: number[], p: number): number {
+  if (sorted.length === 1) return sorted[0];
+  const h = (sorted.length - 1) * p;
+  const lo = Math.floor(h);
+  const hi = Math.ceil(h);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (h - lo);
+}
+
+/** 本地日历日键（与趋势图按本地小时分桶保持同一时区口径）。 */
+function localDayKey(iso: string): string {
+  const d = new Date(iso);
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${dd}`;
+}
 
 export function KeywordsPage() {
   const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, resumePausedKeyword, clearRemovedKeywords } = useProject();
@@ -362,27 +387,154 @@ export function KeywordsPage() {
   const chartSeriesMeta = Array.from(
     new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys(),
   ).map((storefront) => ({ storefront, label: storefrontDisplayName(storefront) }));
-  // Merge all storefronts onto a shared timeline bucketed by hour: each row
-  // holds the latest rank per storefront within that hour, so lines connect
-  // and the tooltip can list several storefronts collected in the same hour.
+  // 组关键词 = 当前语言视图矩阵里全部可见的激活关键词 = 该语言的关键词 + 全局(en)关键词。
+  // 带按 (语言 × 商店) 分别绘制：某语言视图（如中文）下的每个商店（如 中国大陆/新加坡）各自一条带，
+  // 只统计该语言与全局 en 的词在该商店的快照；其他语言的关键词与本视图的带无关。
+  const groupBandKeywords = Array.from(new Set(matrixRows.map((row) => row.keyword)));
+  // 时间轴 = 按天（与组快照粒度一致）：行覆盖「组数据活动日 ∪ 选中词采样日」的连续日期。
+  // 带挂在固定日期轴上，与选中哪个词无关：切换关键词只改变曲线取值，带的形状保持不变。
+  // 带 = 该商店整组关键词当天的 P25–P75：每词每天取最后一次在榜快照；未进榜（>200 / null）
+  // 与当天未检查的词不参与；当天在榜词 < GROUP_BAND_MIN_N 视为无组数据，用前后真实日连接。
   const chartData = (() => {
-    const byTime = new Map<string, Record<string, any>>();
-    const hourKey = (iso: string) => {
-      const date = new Date(iso);
-      date.setMinutes(0, 0, 0);
-      return date.toISOString();
-    };
-    for (const snapshot of chartSnapshots) {
-      if (snapshot.rank == null) continue;
-      const time = hourKey(snapshot.checkedAt);
-      const row = byTime.get(time) || { time };
-      row[snapshot.storefront] = snapshot.rank;
-      byTime.set(time, row);
+    const groupSet = new Set(groupBandKeywords);
+    const storefrontSet = new Set(storefronts);
+
+    // (商店 × 天 × 词) → 当天最后一次快照名次（null = 未进榜）
+    const latestRank = new Map<string, number | null>();
+    const latestMs = new Map<string, number>();
+    for (const snapshot of rankSnapshots) {
+      if (!groupSet.has(snapshot.keyword)) continue;
+      if (!queryLanguages.includes(snapshot.language)) continue;
+      if (!storefrontSet.has(snapshot.storefront)) continue;
+      const key = `${snapshot.storefront}\u0000${localDayKey(snapshot.checkedAt)}\u0000${snapshot.keyword}`;
+      const ms = new Date(snapshot.checkedAt).getTime();
+      if ((latestMs.get(key) ?? -1) < ms) {
+        latestMs.set(key, ms);
+        latestRank.set(key, snapshot.rank ?? null);
+      }
     }
-    return [...byTime.values()].sort(
-      (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime(),
-    );
+    // (商店 × 天) → 在榜名次集合 + 覆盖统计（当天被检查的词数 / 其中在榜词数；
+    // 未进榜（rank 为 null / >200）计入 checked 但不参与名次集合）
+    const dayRanks = new Map<string, Map<string, number[]>>();
+    const covBySfDay = new Map<string, Map<string, { checked: number; ranked: number }>>();
+    for (const [key, rank] of latestRank) {
+      const [sf, day] = key.split("\u0000");
+      let cm = covBySfDay.get(sf);
+      if (!cm) {
+        cm = new Map();
+        covBySfDay.set(sf, cm);
+      }
+      let cov = cm.get(day);
+      if (!cov) {
+        cov = { checked: 0, ranked: 0 };
+        cm.set(day, cov);
+      }
+      cov.checked += 1;
+      if (rank == null || rank > 200) continue;
+      cov.ranked += 1;
+      let m = dayRanks.get(sf);
+      if (!m) {
+        m = new Map();
+        dayRanks.set(sf, m);
+      }
+      let arr = m.get(day);
+      if (!arr) {
+        arr = [];
+        m.set(day, arr);
+      }
+      arr.push(rank);
+    }
+    for (const m of dayRanks.values()) for (const arr of m.values()) arr.sort((a, b) => a - b);
+    // 各商店“真实带日”（在榜词数达标）及当天 P25–P75；真实带日不足 GROUP_BAND_MIN_DAYS 的
+    // 商店视为“整组基本未进榜”，不画带（realBySf 不收录）
+    const realBySf = new Map<string, { day: string; p25: number; p75: number }[]>();
+    for (const [sf, m] of dayRanks) {
+      const list: { day: string; p25: number; p75: number }[] = [];
+      for (const [day, arr] of m) {
+        if (arr.length >= GROUP_BAND_MIN_N) {
+          list.push({ day, p25: percentileOf(arr, 0.25), p75: percentileOf(arr, 0.75) });
+        }
+      }
+      if (list.length >= GROUP_BAND_MIN_DAYS) {
+        list.sort((a, b) => (a.day < b.day ? -1 : 1));
+        realBySf.set(sf, list);
+      }
+    }
+    // 选中关键词：每 (商店 × 天) 取当天最后一次在榜名次（chartSnapshots 已按时间升序）
+    const kwLatest = new Map<string, number>();
+    for (const s of chartSnapshots) {
+      if (s.rank == null) continue;
+      kwLatest.set(`${s.storefront}\u0000${localDayKey(s.checkedAt)}`, s.rank);
+    }
+    // 日期范围：出现该关键词的商店的“组活动日（≥1 在榜词）”与选中词采样日并集，取最小~最大
+    const daySet = new Set<string>();
+    for (const [sf, m] of dayRanks) {
+      if (!chartSeriesMeta.some((meta) => meta.storefront === sf)) continue;
+      for (const day of m.keys()) daySet.add(day);
+    }
+    for (const key of kwLatest.keys()) daySet.add(key.split("\u0000")[1]);
+    if (daySet.size === 0) return [];
+    const sortedDays = [...daySet].sort();
+    // 生成最小~最大之间的连续日（本地日历日，逐日 +1 避免时区/夏令时误差）
+    const rows: Record<string, any>[] = [];
+    {
+      const cur = new Date(`${sortedDays[0]}T00:00:00`);
+      const last = sortedDays[sortedDays.length - 1];
+      for (;;) {
+        const iso = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()).toISOString();
+        rows.push({ time: iso });
+        if (localDayKey(iso) >= last) break;
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+    // 逐商店逐天铺数据：曲线值 + 带值（真实 / 覆盖范围内内插；范围外不画）
+    for (const meta of chartSeriesMeta) {
+      const sf = meta.storefront;
+      const real = realBySf.get(sf);
+      const dayRanksSf = dayRanks.get(sf);
+      for (const row of rows) {
+        const day = localDayKey(row.time);
+        const kwRank = kwLatest.get(`${sf}\u0000${day}`);
+        if (kwRank != null) row[sf] = kwRank; // 选中词该天最后一条在榜名次
+        // 覆盖统计：当天整组被检查 X 词、其中在榜 Y 词（明示带只覆盖在榜部分）
+        const cov = covBySfDay.get(sf)?.get(day);
+        if (cov) {
+          row[`${sf}:nRanked`] = cov.ranked;
+          row[`${sf}:nChecked`] = cov.checked;
+        }
+        if (!real) continue; // 该商店整组从未达标：该商店不画带
+        const arr = dayRanksSf?.get(day);
+        if (arr && arr.length >= GROUP_BAND_MIN_N) {
+          row[`${sf}:p25`] = percentileOf(arr, 0.25);
+          row[`${sf}:p75`] = percentileOf(arr, 0.75);
+          continue;
+        }
+        // 无组数据：仅在首个~末个真实带日之间用前后真实日线性内插；
+        // 超出真实带覆盖范围的天不画带（避免把孤立的 1–2 天数据延展成贯穿全图的假带）
+        if (day < real[0].day || day > real[real.length - 1].day) continue;
+        let left: { day: string; p25: number; p75: number } | undefined;
+        let right: { day: string; p25: number; p75: number } | undefined;
+        for (const rd of real) {
+          if (rd.day < day) left = rd;
+          else {
+            right = rd;
+            break;
+          }
+        }
+        if (!left || !right) continue;
+        const t0 = new Date(`${left.day}T00:00:00`).getTime();
+        const total = new Date(`${right.day}T00:00:00`).getTime() - t0;
+        const f = total > 0 ? (new Date(`${day}T00:00:00`).getTime() - t0) / total : 0;
+        row[`${sf}:p25`] = left.p25 + (right.p25 - left.p25) * f;
+        row[`${sf}:p75`] = left.p75 + (right.p75 - left.p75) * f;
+      }
+    }
+    return rows;
   })();
+  // 覆盖提示：该商店最终没有绘制整组带（整组极少同日有多词进前 200）→ 图例处提示
+  const noBandStorefronts = chartSeriesMeta.filter(
+    (meta) => !chartData.some((row) => row[`${meta.storefront}:p25`] != null),
+  );
   const CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#ef4444", "#06b6d4"];
   const chartMaxRank = chartData.reduce((max, row) => {
     for (const [key, value] of Object.entries(row)) {
@@ -1531,19 +1683,23 @@ export function KeywordsPage() {
                   <div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData} margin={{ top: 12, right: 16, bottom: 4, left: 0 }}>
+                        <ComposedChart data={chartData} margin={{ top: 12, right: 16, bottom: 4, left: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
                           <XAxis
                             dataKey="time"
-                            tick={<ChartTick />}
+                            tickFormatter={(iso: string) => {
+                              const dt = new Date(iso);
+                              return `${dt.getMonth() + 1}/${dt.getDate()}`;
+                            }}
+                            tick={{ fontSize: 10 }}
                             tickLine={false}
                             axisLine={false}
-                            minTickGap={28}
-                            height={52}
+                            minTickGap={40}
+                            height={26}
                           />
                           <YAxis
                             reversed
-                            domain={[1, "dataMax"]}
+                            domain={[1, chartMaxRank]}
                             allowDecimals={false}
                             ticks={chartTicks}
                             tick={{ fontSize: 11 }}
@@ -1552,7 +1708,26 @@ export function KeywordsPage() {
                             axisLine={false}
                             width={34}
                           />
-                          <Tooltip content={<RankTooltip />} />
+                          <Tooltip
+                            content={<RankTooltip minN={GROUP_BAND_MIN_N} />}
+                          />
+                          {chartSeriesMeta.map((series, index) => (
+                            <Area
+                              key={`band:${series.storefront}`}
+                              name={`${series.label}整组带`}
+                              dataKey={(row: any) => {
+                                const p25 = row?.[`${series.storefront}:p25`];
+                                const p75 = row?.[`${series.storefront}:p75`];
+                                return p25 != null && p75 != null ? [p25, p75] : null;
+                              }}
+                              type="monotone"
+                              connectNulls
+                              stroke="none"
+                              fill={CHART_COLORS[index % CHART_COLORS.length]}
+                              fillOpacity={0.2}
+                              isAnimationActive={false}
+                            />
+                          ))}
                           {chartSeriesMeta.map((series, index) => (
                             <Line
                               key={series.storefront}
@@ -1566,7 +1741,7 @@ export function KeywordsPage() {
                               activeDot={{ r: 5 }}
                             />
                           ))}
-                        </LineChart>
+                        </ComposedChart>
                       </ResponsiveContainer>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -1595,6 +1770,17 @@ export function KeywordsPage() {
                           {series.label}
                         </span>
                       ))}
+                      <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                        同色半透明带 = 该商店整组在榜词的 P25–P75（未进榜 / 未检查的词不参与；当天在榜词不足{" "}
+                        {GROUP_BAND_MIN_N} 时用邻近日连接）
+                      </span>
+                      {noBandStorefronts.length > 0 && (
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                          「{noBandStorefronts.map((m) => m.label).join("、")}」整组词极少同日有
+                          {GROUP_BAND_MIN_N} 个以上进前 200（不足 {GROUP_BAND_MIN_DAYS} 天），无整组带可绘
+                          （只显示该词曲线；悬停可见当日在榜/未进榜词数）
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}
