@@ -1035,8 +1035,8 @@ export function registerProjectsHandlers(): void {
       const projects: any[] = s.get("projects") || [];
       const context = findProductContext(projects, productId);
       if (!context) throw new Error("Store product not found");
-      const project = context.project;
-      const item = (project.trackedKeywords || []).find(
+      const { product } = context;
+      const item = (product.trackedKeywords || []).find(
         (k: any) => k.language === language && k.keyword === keywordText,
       );
       if (!item) throw new Error("Keyword not found");
@@ -1077,12 +1077,23 @@ export function registerProjectsHandlers(): void {
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
     const provider = await createAiProvider(s);
-    const pending = (project.trackedKeywords || []).filter(
-      (k: any) =>
-        k.language !== "zh-Hans" &&
-        k.language !== "zh-Hant" &&
-        !(k.translation && String(k.translation).trim()),
-    );
+    // 缺译文的关键词以“产品真实数组”里的对象为准（改动直接落 DB 镜像）。
+    const pending: any[] = [];
+    for (const product of project.storeProducts || []) {
+      for (const k of product.trackedKeywords || []) {
+        if (
+          k &&
+          typeof k === "object" &&
+          k.keyword &&
+          k.language !== "zh-Hans" &&
+          k.language !== "zh-Hant" &&
+          !(k.translation && String(k.translation).trim()) &&
+          !pending.some((x) => x.keyword === k.keyword && x.language === k.language)
+        ) {
+          pending.push(k);
+        }
+      }
+    }
     const total = pending.length;
     let done = 0;
     let translated = 0;

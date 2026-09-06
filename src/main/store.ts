@@ -5,7 +5,7 @@ import { sharedStore } from "./registry-sync";
 import { migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
-import { mirrorTasksToDb, electronTaskFromRow } from "./task-db-sync";
+import { mirrorTasksToDb, electronTaskFromRow, backfillTaskHistoryFromExecutions } from "./task-db-sync";
 import { buildLightProjects } from "./projects-db-light";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
@@ -96,6 +96,14 @@ export async function getStore(): Promise<AppStore> {
       }
     } catch (err: any) {
       log.warn(`kv rankExecutions 清理失败: ${err.message}`);
+    }
+    // 任务历史回填：kv scheduledTasks 退役前未迁移历史；用 executions 一次性补
+    // 无 lastRunAt 的 electron 任务行（幂等，之后真实执行会覆盖）。
+    try {
+      const n = backfillTaskHistoryFromExecutions(shared);
+      if (n > 0) log.info(`appilot: backfilled task history for ${n} tasks from executions`);
+    } catch (err: any) {
+      log.warn(`task history backfill failed: ${err.message}`);
     }
     // 引擎任务源已切 DB：DB tasks 存在 electron 行时，删除 kv 遗留 scheduledTasks 键。
     try {
