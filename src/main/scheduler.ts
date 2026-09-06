@@ -201,7 +201,17 @@ export function githubSyncCacheEntry(
   } | null;
 } | null {
   const all = s.get("githubSyncCache") || {};
-  const entry = all?.[project?.id];
+  // 读切 DB：release_cache（写侧已双写）优先，kv 兜底（迁移前存量）。
+  const entry =
+    (() => {
+      try {
+        const row = sharedStore().releaseCache.get(project?.name || "");
+        if (row && row.cache && typeof row.cache === "object") return row.cache;
+      } catch {
+        // 回退 kv
+      }
+      return all?.[project?.id] ?? null;
+    })();
   if (!entry) return null;
   if (new Date(entry.syncedAt).getTime() < Date.now() - 60 * 60_000) return null;
   if ((entry.lastSeenSha || null) !== (project?.lastReleaseSha || null)) return null;
