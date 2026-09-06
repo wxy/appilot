@@ -7,6 +7,7 @@ import { evaluatePause, normalizeTrackedKeyword } from "@appilot-labs/appilot-co
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { createAiProvider } from "../ai-service";
 import { sharedStore } from "../registry-sync";
+import { blobGet } from "../db-blob-read";
 import { importAscKeyFileTo } from "../asc-key-file";
 import { notifyDataChanged } from "../data-sync";
 import { withAiOperation } from "../ai-cancel";
@@ -186,7 +187,11 @@ export function registerProjectsHandlers(): void {
             : creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath
               ? "global"
               : null,
-        trafficError: (s.get("opsStatus") || {})[project.id]?.trafficError ?? null,
+        trafficError: (() => {
+          const dbOp = blobGet(sharedStore(), "opsStatus", project.id) as { trafficError?: unknown } | undefined;
+          if (dbOp && typeof dbOp === "object") return dbOp.trafficError ?? null;
+          return (s.get("opsStatus") || {})[project.id]?.trafficError ?? null;
+        })(),
       };
     });
   });
@@ -1737,7 +1742,7 @@ export function registerProjectsHandlers(): void {
         : null,
       submissionDraft,
       submissionKeywords: project.submissionKeywords || [],
-      feedbackThemes: ((s.get("feedback") || {})[projectId]?.themes || []).map((theme: any) => ({
+      feedbackThemes: (((blobGet(sharedStore(), "feedback", projectId) as { themes?: unknown[] } | undefined)?.themes ?? (s.get("feedback") || {})[projectId]?.themes) || []).map((theme: any) => ({
         title: theme.title,
         evidenceCount: theme.evidenceCount,
         topQuotes: (theme.sampleQuotes || []).slice(0, 2),

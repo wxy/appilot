@@ -90,6 +90,31 @@ function computeTimeline(
   return { recent: recentTimeline, upcoming: upcomingTimeline };
 }
 
+/** 任务中心统计用任务集：优先共享 DB tasks（taskCenter 视图），DB 为空回退 kv。 */
+async function statsTasksFromDb(s: {
+  get<T = any>(key: string): T;
+}): Promise<ScheduledTask[]> {
+  try {
+    const dbTasks = taskCenterTasksFromDb(sharedStore());
+    if (dbTasks.length > 0) {
+      return dbTasks.map((t) => ({
+        id: t.id,
+        kind: t.kind,
+        title: t.title ?? null,
+        intervalMinutes: t.intervalMinutes,
+        nextRunAt: t.nextRunAt,
+        lastRunAt: t.lastRunAt,
+        lastStatus: t.lastStatus,
+        executionCount: t.executionCount || 0,
+        enabled: !String(t.title ?? "").includes("已停用") && Boolean(t.nextRunAt),
+      })) as unknown as ScheduledTask[];
+    }
+  } catch {
+    // 回退 kv
+  }
+  return (s.get("scheduledTasks") || []) as ScheduledTask[];
+}
+
 export function registerSchedulerHandlers(): void {
   ipcMain.handle("scheduler:status", async () => {
     const s = await getStore();
@@ -129,7 +154,7 @@ export function registerSchedulerHandlers(): void {
   // 轻量统计：单独刷新顶部面板，避免被 1000+ 任务的完整列表计算拖慢。
   ipcMain.handle("scheduler:overview", async () => {
     const s = await getStore();
-    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
+    const tasks: ScheduledTask[] = await statsTasksFromDb(s);
     const now = Date.now();
     const executions: any[] = (() => {
       try {
@@ -202,7 +227,7 @@ export function registerSchedulerHandlers(): void {
   // 执行时间线独立接口：柱形图单独刷新，不拖慢任务列表。
   ipcMain.handle("scheduler:timeline", async () => {
     const s = await getStore();
-    const tasks: ScheduledTask[] = s.get("scheduledTasks") || [];
+    const tasks: ScheduledTask[] = await statsTasksFromDb(s);
     const executions: any[] = (() => {
       try {
         return sharedStore().executions.latest(20000);
