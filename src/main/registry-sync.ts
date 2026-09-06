@@ -20,8 +20,6 @@ import {
 } from '@appilot-labs/appilot-headless';
 import { log } from '@appilot-labs/appilot-core/logger';
 import { importRankHistoryToDb } from './rank-db-sync';
-import { mirrorTasksToDb } from './task-db-sync';
-import { syncReleaseCachesToDb } from './release-cache-sync';
 import { backfillRankSnapshotsToElectron } from './rank-backfill';
 import { syncRichDataToDb } from './rich-data-sync';
 import { hydrateFromDbCore, syncRegistryCore } from './registry-sync-core';
@@ -154,13 +152,6 @@ export function startRegistrySync(
       } catch (err: any) {
         log.warn(`rank history import failed: ${err.message}`);
       }
-      // Phase 4b：Electron 调度任务状态镜像进共享 DB tasks 表（DSH/CLI/MCP
-      // 可读同一任务状态；镜像行不会被 headless dueJobs 误触发执行）。
-      try {
-        mirrorTasksToDb(sharedStore(), (s.get('scheduledTasks') || []) as any[]);
-      } catch (err: any) {
-        log.warn(`task mirror to shared db failed: ${err.message}`);
-      }
       // 阶段三：kv rankExecutions 一次性导入共享 DB（此后 scheduler 双写增量；
       // add 用 (ts,taskId) INSERT OR IGNORE，重复启动幂等）。
       try {
@@ -195,14 +186,6 @@ export function startRegistrySync(
         syncRichDataToDb(sharedStore(), projects as any[]);
       } catch (err: any) {
         log.warn(`rich data sync failed: ${err.message}`);
-      }
-      // Phase M4-A：发布页缓存（githubSyncCache）双写共享 DB（UI 迁出前提）。
-      try {
-        const cache = (s.get('githubSyncCache') || {}) as Record<string, Record<string, unknown>>;
-        syncReleaseCachesToDb(sharedStore(), projects as any[], cache);
-        // P1 反向同步：共享 DB release_cache（任何执行者写入）→ electron-store
-      } catch (err: any) {
-        log.warn(`release cache sync failed: ${err.message}`);
       }
       // P2b：rank 快照反向同步（DB → electron-store 排名页）——DSH/daemon
       // 持主执行的 rank 结果同步回 Electron UI；仅 DB 新于本地才写。
