@@ -126,7 +126,7 @@ let executionsWriteChain: Promise<void> = Promise.resolve();
 function appendExecution(store: AppStore, entry: Record<string, any>): Promise<void> {
   executionsWriteChain = executionsWriteChain
     .catch(() => undefined)
-    .then(() => {
+    .then(async () => {
       const executions: any[] = Array.isArray(store.get("rankExecutions"))
         ? store.get("rankExecutions")
         : [];
@@ -134,6 +134,13 @@ function appendExecution(store: AppStore, entry: Record<string, any>): Promise<v
       // 加速会话可能一次写上千条；5000 上限会截断近 24h 数据导致
       // 流量/入榜率统计波动（"清零又恢复"）。上限放宽并保留足够窗口。
       store.set("rankExecutions", executions.slice(-20000));
+      // 双写共享 DB rank_executions（v9 结构化落点；读侧仍走 kv，后续再切）。
+      try {
+        const { sharedStore } = await import("./registry-sync");
+        sharedStore().executions.add(entry);
+      } catch (err: any) {
+        log.warn(`rank execution → shared db 写失败: ${err.message}`);
+      }
     });
   return executionsWriteChain;
 }
