@@ -31,6 +31,14 @@ export interface MergeOutcome {
 const PROJECT_FALLBACK_KEYS = ['createdAt', 'repo', 'artworkUrl'] as const;
 /** 产品级兜底键。 */
 const PRODUCT_FALLBACK_KEYS = ['createdAt'] as const;
+/** 产品级"rich 字段"：DB 为空/缺失时以 kv 为准（文案/关键词/移除/语言/链接）。 */
+const PRODUCT_RICH_KEYS = [
+  'trackedKeywords',
+  'submissionKeywords',
+  'removedKeywords',
+  'storeLinks',
+  'supportedLanguages',
+] as const;
 
 function pick<K extends string>(obj: Record<string, unknown>, keys: readonly K[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -67,17 +75,30 @@ export function buildUiProjects(
       const kp = kvProducts.find((p: any) => p && p.id === dp.id);
       if (!kp) return dp;
       const extra = pick(kp, PRODUCT_FALLBACK_KEYS);
+      const rich: Record<string, unknown> = {};
+      for (const key of PRODUCT_RICH_KEYS) {
+        const dbVal = (dp as Record<string, unknown>)[key];
+        const kvVal = (kp as Record<string, unknown>)[key];
+        // DB 侧为空/缺列而 kv 有值时，以 kv 为准（保文案/关键词不丢、语言名不退化）
+        const dbEmpty = dbVal == null || (Array.isArray(dbVal) && dbVal.length === 0);
+        if (dbEmpty && Array.isArray(kvVal) && kvVal.length > 0) rich[key] = kvVal;
+      }
       const rankSnapshots =
         Array.isArray(dp.rankSnapshots) && dp.rankSnapshots.length > 0
           ? dp.rankSnapshots
           : Array.isArray(kp.rankSnapshots)
             ? kp.rankSnapshots
             : [];
-      return { ...dp, ...extra, rankSnapshots };
+      return { ...dp, ...extra, ...rich, rankSnapshots };
     });
 
     const fallback = pick(kv, PROJECT_FALLBACK_KEYS);
-    projects.push({ ...db, ...fallback, storeProducts } as MergedUiProject);
+    // 项目级语言对象以 kv 为准（带真实展示名）；DB 只存 code 清单
+    const langs =
+      Array.isArray(kv.supportedLanguages) && kv.supportedLanguages.length > 0
+        ? kv.supportedLanguages
+        : db.supportedLanguages;
+    projects.push({ ...db, ...fallback, supportedLanguages: langs, storeProducts } as MergedUiProject);
   }
 
   // DB 里有、kv 里没有（如 DSH/hydrate 新增但 kv 尚未补回）的项目也展示

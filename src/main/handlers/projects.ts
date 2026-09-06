@@ -121,10 +121,14 @@ export function registerProjectsHandlers(): void {
     const projects = dedupeProjects(raw);
     const migrated = projects.map(migrateLegacyStoreProducts);
     const cleaned = migrated.map(sanitizeRankSnapshots);
+    // DB 源模式下不回写整表：kv['projects'] 仍是若干富字段（文案/关键词/语言名等）
+    // 的权威副本，任何 DB 派生差异（如扩展列暂时为空）都不应覆盖它。
+    const dbSourced = raw !== kvProjects;
     if (
-      projects.length !== raw.length ||
-      migrated.some((project, index) => project !== projects[index]) ||
-      cleaned.some((project, index) => project !== migrated[index])
+      !dbSourced &&
+      (projects.length !== raw.length ||
+        migrated.some((project, index) => project !== projects[index]) ||
+        cleaned.some((project, index) => project !== migrated[index]))
     ) {
       s.set("projects", cleaned);
     }
@@ -146,7 +150,22 @@ export function registerProjectsHandlers(): void {
         log.warn(`Repo info refresh failed for ${project.localPath}: ${err.message}`);
       }
     }
-    if (repoChanged) s.set("projects", cleaned);
+    if (repoChanged) {
+      if (!dbSourced) {
+        s.set("projects", cleaned);
+      } else {
+        // DB 源：repo 刷新结果只按对象回写到 kv（不动其它字段）。
+        const byId = new Map(cleaned.map((p: any) => [p.id, p]));
+        const updated = kvProjects.map((p: any) => {
+          const c = byId.get(p?.id);
+          if (c?.repo && JSON.stringify(c.repo) !== JSON.stringify(p.repo)) {
+            return { ...p, repo: c.repo };
+          }
+          return p;
+        });
+        s.set("projects", updated);
+      }
+    }
     return cleaned.map((project) => {
       const creds = resolveEffectiveCredentials(s, project.id);
       const override = (s.get("projectCredentials") || {})[project.id] || {};
