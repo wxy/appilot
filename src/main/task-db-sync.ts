@@ -74,6 +74,33 @@ export function toTaskRow(t: ElectronTaskLike): TaskRow | null {
     lastSummary: null,
     runCount: typeof t.executionCount === 'number' ? t.executionCount : 0,
     source: 'electron',
+    enabled: !disabled,
+    electronJson: JSON.stringify(t), // 无损：引擎任务重建用
+  };
+}
+
+/** 由 DB 行无损重建 electron 任务（优先 electronJson，缺省按行字段推导）。 */
+export function electronTaskFromRow(row: any): any | null {
+  if (!row || typeof row !== 'object') return null;
+  if (typeof row.electronJson === 'string' && row.electronJson) {
+    try {
+      const parsed = JSON.parse(row.electronJson);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      // 落回推导
+    }
+  }
+  const title = String(row.title || '').replace(/（已停用）$/, '');
+  return {
+    id: row.id,
+    title,
+    intervalMinutes: row.intervalMinutes,
+    lastRunAt: row.lastRunAt,
+    nextRunAt: row.nextRunAt,
+    executionCount: row.runCount || 0,
+    enabled: row.enabled !== false && !String(row.title || '').includes('已停用'),
+    lastStatus:
+      row.lastStatus === 'error' ? 'failed' : row.lastStatus === 'ok' ? 'success' : row.lastStatus ?? 'never',
   };
 }
 

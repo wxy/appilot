@@ -468,8 +468,8 @@ export function openStore(dbPath: string): AppilotStore {
         tx(() => {
           const setIdentity = opts.setIdentity === true;
           db.prepare(
-            `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount, source, kind, instance)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount, source, kind, instance, enabled, electronJson)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                title = excluded.title,
                intervalMinutes = excluded.intervalMinutes,
@@ -477,7 +477,9 @@ export function openStore(dbPath: string): AppilotStore {
                nextRunAt = excluded.nextRunAt,
                lastStatus = excluded.lastStatus,
                lastSummary = excluded.lastSummary,
-               runCount = excluded.runCount
+               runCount = excluded.runCount,
+               enabled = excluded.enabled,
+               electronJson = excluded.electronJson
                ${setIdentity ? ", source = excluded.source, kind = excluded.kind, instance = excluded.instance" : ""}`,
           ).run(
             row.id,
@@ -491,6 +493,8 @@ export function openStore(dbPath: string): AppilotStore {
             row.source ?? 'dsh',
             row.kind ?? null,
             row.instance ? JSON.stringify(row.instance) : null,
+            row.enabled === false ? 0 : 1,
+            row.electronJson ?? null,
           );
         });
       },
@@ -735,5 +739,7 @@ function parseTaskRow(r: any): TaskRow {
     source: r.source ?? 'dsh',
     kind: r.kind || null,
     instance,
+    enabled: r.enabled === undefined ? undefined : Number(r.enabled) === 1,
+    electronJson: typeof r.electronJson === 'string' ? r.electronJson : null,
   };
 }

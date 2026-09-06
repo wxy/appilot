@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -59,6 +59,10 @@ export interface TaskRow {
   kind?: string | null;
   /** v4：实例参数（JSON 列；静态任务无）。 */
   instance?: Record<string, unknown> | null;
+  /** v12：electron 镜像是否启用（false = 标题带“已停用”）。 */
+  enabled?: boolean;
+  /** v12：electron 原始任务 JSON（无损重建引擎任务用；非 electron 行为空）。 */
+  electronJson?: string | null;
 }
 
 /** 调度租约行（Phase 3：多壳同时打开时仅主进程调度）。 */
@@ -214,7 +218,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   runCount INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL DEFAULT 'dsh',
   kind TEXT,
-  instance TEXT
+  instance TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  electronJson TEXT
 );
 
 CREATE TABLE IF NOT EXISTS lease (
@@ -360,5 +366,16 @@ export function migrate(db: {
       updatedAt TEXT NOT NULL,
       PRIMARY KEY (domain, projectKey));`);
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '11') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 12) {
+    // v11→v12：tasks 增加 electron 无损镜像列（enabled / electronJson）。
+    const tcols = (db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>) || [];
+    if (!tcols.some((c) => c.name === 'enabled')) {
+      db.exec("ALTER TABLE tasks ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1");
+    }
+    if (!tcols.some((c) => c.name === 'electronJson')) {
+      db.exec('ALTER TABLE tasks ADD COLUMN electronJson TEXT');
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '12') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }
