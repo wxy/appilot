@@ -119,3 +119,17 @@ config.json 已退役（config.json 归档为 `config.json.migrated-*`，electro
 - app_kv 内少量引擎内部态（schedulerRounds/accel 等）与配置/凭据
 
 A/B：APPILOT_TASKS_DB_READ=0 可回退任务读 kv（过渡期）。
+
+## 写切完成（2026-09-06，目标收尾）
+
+读/写均已切共享 DB 结构化表，kv(app_kv) 仅保留兜底/配置类键：
+- 调度任务 tasks（无损 electronJson/enabled；读写 DB，kv 键已退役）
+- githubSyncCache→release_cache（读写 DB，kv 键已退役）
+- rankExecutions→rank_executions（写 DB，kv 键已退役）
+- projects：默认 DB 源（读=DB 轻量/组装视图含 v13 repo 字段与草稿 blob；写=DB
+  直写，kv 键启动清理退役）；`APPILOT_PROJECTS_DB_ON=0` 可回退 kv（过渡）
+- blob 域（竞品/流量/ASC/状态/反馈/评论/readiness）读写 DB 镜像
+- 三类 kv→结构化轮询镜像与反向回填已移除
+- 保留（有意，同库 app_kv）：设置/凭据(safeStorage)/schedulerRounds 等引擎内部态
+
+回退：tasks 读 `APPILOT_TASKS_DB_READ=0`；projects `APPILOT_PROJECTS_DB_ON=0`。
