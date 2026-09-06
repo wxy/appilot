@@ -156,7 +156,11 @@ export function registerOpsHandlers(): void {
   ipcMain.handle("traffic:snapshots", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
-    return (s.get("trafficSnapshots") || {})[projectId] || [];
+    const kvTraffic = (s.get("trafficSnapshots") || {})[projectId];
+    const { sharedStore } = await import("../registry-sync");
+    const { blobGet } = await import("../db-blob-read");
+    const dbTraffic = blobGet(sharedStore(), "trafficSnapshots", projectId);
+    return (Array.isArray(dbTraffic) ? dbTraffic : kvTraffic) || [];
   });
 
   ipcMain.handle("traffic:sync", async (_event, projectId: string) => {
@@ -182,7 +186,10 @@ export function registerOpsHandlers(): void {
   ipcMain.handle("asc:status", async (_event, productId: string) => {
     productId = assertNonEmptyString(productId, "productId");
     const s = await getStore();
-    return (s.get("ascCache") || {})[productId] || null;
+    const kvAsc = (s.get("ascCache") || {})[productId];
+    const { sharedStore } = await import("../registry-sync");
+    const { blobGet } = await import("../db-blob-read");
+    return (blobGet(sharedStore(), "ascCache", productId) as any) ?? kvAsc ?? null;
   });
 
   // Public iTunes lookup — the no-ASC fallback: only confirms the current
@@ -221,7 +228,12 @@ export function registerOpsHandlers(): void {
     const draft = findStoreSubmissionDraft(project, releaseTag);
     if (!draft) throw new Error("Draft not found");
     const product = (project.storeProducts || []).find((item: any) => item.id === productId);
-    const asc = (s.get("ascCache") || {})[productId] || null;
+    const { sharedStore } = await import("../registry-sync");
+    const { blobGet } = await import("../db-blob-read");
+    const asc =
+      (blobGet(sharedStore(), "ascCache", productId) as any) ??
+      (s.get("ascCache") || {})[productId] ??
+      null;
     // No ASC data (no credentials / not synced): fall back to per-language
     // public storefront copy so the live version's description/what's-new can
     // still be aligned after release. Only applies when the storefront's

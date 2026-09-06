@@ -177,14 +177,22 @@ export function registerCompetitorsHandlers(): void {
     projectId = assertNonEmptyString(projectId, "projectId");
     competitorId = assertNonEmptyString(competitorId, "competitorId");
     const s = await getStore();
-    return (s.get("competitorSnapshots") || {})[projectId]?.[competitorId] || [];
+    const kvInner = (s.get("competitorSnapshots") || {})[projectId];
+    const { sharedStore } = await import("../registry-sync");
+    const { blobGet } = await import("../db-blob-read");
+    const dbInner = blobGet(sharedStore(), "competitorSnapshots", projectId) as Record<string, unknown> | undefined;
+    return (dbInner?.[competitorId] ?? kvInner?.[competitorId]) || [];
   });
 
   ipcMain.handle("competitors:rankSnapshots", async (_event, projectId: string, competitorId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     competitorId = assertNonEmptyString(competitorId, "competitorId");
     const s = await getStore();
-    return (s.get("competitorRankSnapshots") || {})[projectId]?.[competitorId] || [];
+    const kvInnerR = (s.get("competitorRankSnapshots") || {})[projectId];
+    const { sharedStore } = await import("../registry-sync");
+    const { blobGet } = await import("../db-blob-read");
+    const dbInnerR = blobGet(sharedStore(), "competitorRankSnapshots", projectId) as Record<string, unknown> | undefined;
+    return (dbInnerR?.[competitorId] ?? kvInnerR?.[competitorId]) || [];
   });
 
   // 立即为所有竞品的关联关键词补采排名（无需等待下次定时关键词抓取）。

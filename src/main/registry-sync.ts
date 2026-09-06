@@ -29,6 +29,11 @@ import {
   syncRankExecutionsToDb,
   RANK_EXEC_IMPORT_MARK,
 } from './sync-rank-executions';
+import {
+  KV_BLOB_DOMAINS,
+  KV_BLOB_IMPORT_MARK,
+  syncKvBlobMap,
+} from './kv-blob-mirror';
 export { registryRecordOf } from './registry-sync-core';
 
 let store: AppilotStore | null = null;
@@ -171,6 +176,21 @@ export function startRegistrySync(
         }
       } catch (err: any) {
         log.warn(`rank executions import failed: ${err.message}`);
+      }
+      // 阶段三：kv 的 Record<id,数据> 域一次性导入 project_blobs（此后写由适配器镜像）。
+      try {
+        const sharedDb = sharedStore();
+        if (!sharedDb.kv.get(KV_BLOB_IMPORT_MARK)) {
+          let n = 0;
+          for (const [key, domain] of Object.entries(KV_BLOB_DOMAINS)) {
+            const val = (s.get(key) || {}) as Record<string, unknown>;
+            n += syncKvBlobMap(sharedDb, domain, val);
+          }
+          sharedDb.kv.set(KV_BLOB_IMPORT_MARK, new Date().toISOString());
+          if (n > 0) log.info(`appilot: imported ${n} kv blob entries to shared db`);
+        }
+      } catch (err: any) {
+        log.warn(`kv blob import failed: ${err.message}`);
       }
       // Phase M3：Electron 富数据（storeProducts / repo 状态）双写共享 DB——
       // product_records / project_meta（rank 等富数据任务实例化与跨壳读的前提）。
