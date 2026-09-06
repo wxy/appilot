@@ -99,3 +99,23 @@ config.json 已退役（config.json 归档为 `config.json.migrated-*`，electro
 - [ ] projects 各写 handler 直写 product_records/project_meta
 - [ ] githubSyncCache 直写 release_cache（发布页读 DB）
 - [ ] 移除三条镜像动作与轮询、清理 kv 对应键
+
+## 写切完成态（持续收口中）
+
+读侧已全 DB；写侧直连/同步 DB 的域：
+- 调度任务 scheduledTasks→tasks：读 DB（electronJson 无损重建）+ 写 DB（同步，
+  不再写 kv）；kv 遗留键已清理
+- githubSyncCache→release_cache：读写 DB（执行器直写，无 kv 写/回填/镜像）；
+  kv 遗留键已清理
+- rankExecutions→rank_executions：写直连 DB；kv 遗留键已清理
+- 三组 kv→结构化 轮询镜像已移除（tasks / release cache / 反向回填）
+- projects 富数据：写 handler 落 kv 时**同步**镜像 DB（注册表含 id + product_records
+  扩展列 + project_meta），读侧 DB 组装零窗口；kv 保留为单库内(app_kv)的富数据
+  写入口与草稿(storeSubmissionDrafts)/语言名兜底
+
+保留/边界（如要"彻底移除 kv projects 写"，需把引擎与草稿对 kv 富字段的依赖迁 DB，
+改动大且需真实运行回归，已列为可选后续）：
+- kv projects 仍承载引擎产品池读取、storeSubmissionDrafts 草稿、语言展示名兜底
+- app_kv 内少量引擎内部态（schedulerRounds/accel 等）与配置/凭据
+
+A/B：APPILOT_TASKS_DB_READ=0 可回退任务读 kv（过渡期）。
