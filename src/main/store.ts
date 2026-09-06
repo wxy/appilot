@@ -49,16 +49,15 @@ function scheduleProjectsToDb(projects: unknown): void {
 
 // scheduledTasks / githubSyncCache：kv 写入后立即镜像 DB（≤300ms 防抖），
 // 替代对 10s 轮询的依赖，为后续引擎源切 DB 与移除轮询铺路。
-let taskMirrorTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleTasksToDb(tasks: unknown): void {
-  if (taskMirrorTimer) clearTimeout(taskMirrorTimer);
-  taskMirrorTimer = setTimeout(() => {
-    try {
-      mirrorTasksToDb(sharedStore(), (tasks as any[]) || []);
-    } catch (err: any) {
-      log.warn(`scheduledTasks → DB 镜像失败: ${err.message}`);
-    }
-  }, 300);
+// 引擎任务写直连 DB：scheduledTasks 每次落 kv 时同步镜像到 DB tasks（无损，
+// #219 electronJson/enabled），引擎读仍走 kv 不产生滞后；后续引擎读切 DB 后
+// 可去掉 kv 写。轮询 reconcile 仍保留作跨壳兜底。
+function syncTasksToDb(tasks: unknown): void {
+  try {
+    mirrorTasksToDb(sharedStore(), (tasks as any[]) || []);
+  } catch (err: any) {
+    log.warn(`scheduledTasks → DB 镜像失败: ${err.message}`);
+  }
 }
 
 /**
@@ -93,7 +92,7 @@ export async function getStore(): Promise<AppStore> {
       set: (key, value) => {
         kv.set(key, JSON.stringify(value));
         if (key === "projects") scheduleProjectsToDb(value);
-        else if (key === "scheduledTasks") scheduleTasksToDb(value);
+        else if (key === "scheduledTasks") syncTasksToDb(value);
         const domain = KV_BLOB_DOMAINS[key];
         if (domain) {
           try {
