@@ -6,6 +6,8 @@ import {
   searchCompetitorCandidatesAcross,
 } from "@appilot-labs/appilot-core/competitor-radar";
 import { runOpsSyncNow } from "../scheduler";
+import { sharedStore } from "../registry-sync";
+import { blobGet } from "../db-blob-read";
 import { getStore } from "../store";
 import { assertNonEmptyString } from "../util";
 import { notifyDataChanged } from "../data-sync";
@@ -178,8 +180,6 @@ export function registerCompetitorsHandlers(): void {
     competitorId = assertNonEmptyString(competitorId, "competitorId");
     const s = await getStore();
     const kvInner = (s.get("competitorSnapshots") || {})[projectId];
-    const { sharedStore } = await import("../registry-sync");
-    const { blobGet } = await import("../db-blob-read");
     const dbInner = blobGet(sharedStore(), "competitorSnapshots", projectId) as Record<string, unknown> | undefined;
     return (dbInner?.[competitorId] ?? kvInner?.[competitorId]) || [];
   });
@@ -189,8 +189,6 @@ export function registerCompetitorsHandlers(): void {
     competitorId = assertNonEmptyString(competitorId, "competitorId");
     const s = await getStore();
     const kvInnerR = (s.get("competitorRankSnapshots") || {})[projectId];
-    const { sharedStore } = await import("../registry-sync");
-    const { blobGet } = await import("../db-blob-read");
     const dbInnerR = blobGet(sharedStore(), "competitorRankSnapshots", projectId) as Record<string, unknown> | undefined;
     return (dbInnerR?.[competitorId] ?? kvInnerR?.[competitorId]) || [];
   });

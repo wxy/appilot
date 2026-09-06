@@ -136,7 +136,6 @@ function appendExecution(store: AppStore, entry: Record<string, any>): Promise<v
       store.set("rankExecutions", executions.slice(-20000));
       // 双写共享 DB rank_executions（v9 结构化落点；读侧仍走 kv，后续再切）。
       try {
-        const { sharedStore } = await import("./registry-sync");
         sharedStore().executions.add(entry);
       } catch (err: any) {
         log.warn(`rank execution → shared db 写失败: ${err.message}`);
@@ -397,7 +396,7 @@ function syncRankInstancesToDb(store: AppStore, tasks: ScheduledTask[]): void {
       return;
     }
     const res = reconcileTaskInstances(sharedStore(), specs, "electron");
-    log.info(`appilot: synced rank instances to shared db (seeded ${res.seeded}, pruned ${res.pruned}, of ${specs.length})`);
+    log.debug(`appilot: synced rank instances to shared db (seeded ${res.seeded}, pruned ${res.pruned}, of ${specs.length})`);
   } catch (err: any) {
     log.warn(`rank instances sync to shared db failed: ${err?.message || String(err)}`);
   }

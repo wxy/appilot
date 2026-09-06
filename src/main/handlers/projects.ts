@@ -6,6 +6,7 @@ import { appendRankSnapshots } from "@appilot-labs/appilot-core/rank-snapshots";
 import { evaluatePause, normalizeTrackedKeyword } from "@appilot-labs/appilot-core/rank-keywords";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { createAiProvider } from "../ai-service";
+import { sharedStore } from "../registry-sync";
 import { importAscKeyFileTo } from "../asc-key-file";
 import { notifyDataChanged } from "../data-sync";
 import { withAiOperation } from "../ai-cancel";
@@ -106,7 +107,6 @@ export function registerProjectsHandlers(): void {
     let raw: any[] = kvProjects;
     if (process.env.APPILOT_PROJECT_LIST_SOURCE !== "kv") {
       try {
-        const { sharedStore } = await import("../registry-sync");
         const { assembleProjectViews } = await import("../project-db-view");
         const { buildUiProjects } = await import("../project-list-merge");
         const merged = buildUiProjects(
@@ -664,7 +664,6 @@ export function registerProjectsHandlers(): void {
       );
       const projectName = removed?.name;
       if (projectName) {
-        const { sharedStore } = await import("../registry-sync");
         const { taskReferencesProject } = await import("../task-project-ref");
         const shared = sharedStore();
         shared.projects.removeDeep(projectName);
@@ -1024,7 +1023,6 @@ export function registerProjectsHandlers(): void {
       if (item.translation && item.translation.trim()) {
         return { translation: item.translation };
       }
-      const { createAiProvider } = await import("../ai-service");
       const provider = await createAiProvider(s);
       const translated = (
         await provider.chat(
@@ -1058,7 +1056,6 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
-    const { createAiProvider } = await import("../ai-service");
     const provider = await createAiProvider(s);
     const pending = (project.trackedKeywords || []).filter(
       (k: any) =>
@@ -1156,7 +1153,6 @@ export function registerProjectsHandlers(): void {
       });
       if (inputs.length === 0) return [];
 
-      const { createAiProvider } = await import("../ai-service");
       const { parseJsonObject } = await import("@appilot-labs/appilot-core/ai/ai-request");
       const provider = await createAiProvider(s);
       const prompt = [

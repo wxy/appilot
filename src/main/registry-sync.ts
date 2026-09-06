@@ -200,7 +200,7 @@ export function startRegistrySync(
         const sig = `${meta}/${products}`;
         if (sig !== lastRichSig) {
           lastRichSig = sig;
-          log.info(`appilot: synced rich data to shared db (${meta} meta, ${products} products)`);
+          log.debug(`appilot: synced rich data to shared db (${meta} meta, ${products} products)`);
         }
       } catch (err: any) {
         log.warn(`rich data sync failed: ${err.message}`);
@@ -211,7 +211,7 @@ export function startRegistrySync(
         const n = syncReleaseCachesToDb(sharedStore(), projects as any[], cache);
         if (n !== lastReleaseCacheCount) {
           lastReleaseCacheCount = n;
-          log.info(`appilot: synced release caches to shared db (${n} projects)`);
+          log.debug(`appilot: synced release caches to shared db (${n} projects)`);
         }
         // P1 反向同步：共享 DB release_cache（任何执行者写入）→ electron-store
         // githubSyncCache——Electron 从者（DSH/daemon 持主执行）时发布页仍新鲜。
