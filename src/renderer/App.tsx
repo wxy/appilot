@@ -16,22 +16,195 @@ import { SettingsPage } from "./components/settings/SettingsPage";
 import { ProjectSettingsPage } from "./components/settings/ProjectSettingsPage";
 import { DataSyncLayer } from "./components/ui/DataSyncLayer";
 
-/* ── Layout ── */
+/* ── 项目页面导航（放左侧边栏，属于“项目”维度） ── */
 
-const NAV_ITEMS = [
-  { to: "/overview", label: "总览", title: "总览" },
+const PROJECT_NAV_ITEMS = [
+  { to: "/overview", label: "总览", title: "项目总览" },
   { to: "/release", label: "发布", title: "发布工作台" },
   { to: "/keywords", label: "排名", title: "关键词排名" },
   { to: "/reviews", label: "评论", title: "评论" },
   { to: "/trend", label: "趋势", title: "长期效果" },
 ];
 
+/* ── 左侧边栏：项目切换 + 项目页面导航 ── */
+
+function ProjectSidebar() {
+  const { projects, currentProjectId, currentProductId, select, selectProduct, addByFolder } =
+    useProject();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  const handleAdd = async () => {
+    setMenuOpen(false);
+    const folder = await (window as any).appilot?.dialog?.selectFolder();
+    if (folder) await addByFolder(folder);
+  };
+
+  const choose = (projectId: string, productId?: string) => {
+    setMenuOpen(false);
+    select(projectId);
+    if (productId) selectProduct(productId);
+    if (location.pathname === "/") navigate("/overview");
+  };
+
+  const currentProject = projects.find((p) => p.id === currentProjectId) || null;
+  const currentProduct =
+    currentProject?.storeProducts?.find((product) => product.id === currentProductId) ||
+    currentProject?.storeProducts?.[0] ||
+    null;
+  const label = currentProject
+    ? currentProject.storeProducts.length > 1 && currentProduct
+      ? `${currentProject.name} · ${platformLabel(currentProduct.platform)}`
+      : currentProject.name
+    : "选择项目";
+
+  return (
+    <aside className="shrink-0 w-32 border-r border-zinc-200/70 dark:border-zinc-800/70 bg-white/60 dark:bg-zinc-900/40 p-2">
+      {/* 单一区块：先选项目（下拉），其下即是该项目的页面 */}
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-visible shadow-sm">
+        <div ref={menuRef} className="relative">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            title={currentProject ? `当前项目：${label}（点击切换项目）` : "还没有项目，点击添加"}
+            className="w-full flex items-center justify-between gap-1 pl-2 pr-1.5 h-9 text-[12.5px] text-zinc-700 dark:text-zinc-200"
+          >
+            <span className="truncate">{label}</span>
+            <span
+              className={cn(
+                "text-[10px] text-zinc-400 transition-transform shrink-0",
+                menuOpen && "rotate-180",
+              )}
+            >
+              ▾
+            </span>
+          </button>
+
+          {menuOpen && (
+            <div className="absolute left-0 top-full mt-1 z-40 w-60 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 max-h-[70vh] overflow-auto">
+              {projects.length === 0 && (
+                <div className="px-3 py-2 text-xs text-zinc-400 dark:text-zinc-500">
+                  还没有项目，先添加一个。
+                </div>
+              )}
+              {projects.map((p) => {
+                const products = p.storeProducts || [];
+                if (products.length > 1) {
+                  return (
+                    <div key={p.id} className="py-1">
+                      <div className="w-full flex items-center gap-2 px-3 py-1 text-sm text-zinc-600 dark:text-zinc-400">
+                        <span className="text-xs text-transparent">✓</span>
+                        <span className="truncate">{p.name}</span>
+                      </div>
+                      {products.map((product) => (
+                        <button
+                          key={product.id}
+                          onClick={() => choose(p.id, product.id)}
+                          className={cn(
+                            "w-full flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs text-left",
+                            product.id === currentProductId
+                              ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                              : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "text-xs",
+                              product.id === currentProductId ? "text-amber-500" : "text-transparent",
+                            )}
+                          >
+                            ✓
+                          </span>
+                          <span className="truncate">{platformLabel(product.platform)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                }
+                const product = products[0];
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => choose(p.id, product?.id)}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-2 text-sm text-left",
+                      p.id === currentProjectId
+                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                        : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "text-xs",
+                        p.id === currentProjectId ? "text-amber-500" : "text-transparent",
+                      )}
+                    >
+                      ✓
+                    </span>
+                    <span className="truncate">{p.name}</span>
+                  </button>
+                );
+              })}
+              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+              <button
+                onClick={handleAdd}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+              >
+                <span className="text-amber-500">＋</span> 添加项目
+              </button>
+              <Link
+                to="/projects"
+                onClick={() => setMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+              >
+                <span className="text-zinc-400">⚙</span> 管理项目
+              </Link>
+            </div>
+          )}
+        </div>
+
+        {/* 项目页面：与项目下拉在同一区块内 */}
+        <nav className="border-t border-zinc-100 dark:border-zinc-800 p-1 space-y-0.5">
+          {PROJECT_NAV_ITEMS.map((item) => {
+            const active = location.pathname === item.to;
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                title={item.title}
+                className={cn(
+                  "flex items-center px-2 py-1.5 text-[12.5px] rounded-lg transition-colors",
+                  active
+                    ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                    : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                )}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+    </aside>
+  );
+}
+
+/* ── 顶部全局栏 + 内容区 ── */
+
 function Layout({ children }: { children: React.ReactNode }) {
-  const { projects, currentProjectId, currentProductId, loading, load, select, selectProduct, addByFolder } = useProject();
+  const { projects, currentProjectId, currentProductId, loading, load } = useProject();
   const location = useLocation();
   const [aiUsage, setAiUsage] = useState<{ totalTokens: number; cachedTokens: number } | null>(null);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
@@ -40,7 +213,9 @@ function Layout({ children }: { children: React.ReactNode }) {
     return () => mql.removeEventListener("change", onChange);
   }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   useEffect(() => {
     const refresh = () => {
@@ -66,152 +241,48 @@ function Layout({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Close dropdowns when clicking outside.
-  useEffect(() => {
-    const onDocClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setProjectMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, []);
-
-  const handleAddProject = async () => {
-    setProjectMenuOpen(false);
-    const folder = await (window as any).appilot?.dialog?.selectFolder();
-    if (folder) await addByFolder(folder);
-  };
-
   const currentProject = projects.find((p) => p.id === currentProjectId) || null;
-  const currentProduct = currentProject?.storeProducts?.find((product) => product.id === currentProductId)
-    || currentProject?.storeProducts?.[0]
-    || null;
+  const currentProduct =
+    currentProject?.storeProducts?.find((product) => product.id === currentProductId) ||
+    currentProject?.storeProducts?.[0] ||
+    null;
   const currentProjectLabel = currentProject
     ? currentProject.storeProducts.length > 1 && currentProduct
       ? `${currentProject.name} · ${platformLabel(currentProduct.platform)}`
       : currentProject.name
-    : "选择项目";
+    : null;
 
   return (
     <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950">
       <DataSyncLayer />
-      {/* Top bar */}
-      <header className="shrink-0 z-30 flex items-center gap-2.5 px-4 h-14 border-b border-zinc-200/60 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
-        {/* Brand */}
-        <Link to="/" className="flex items-center gap-2 shrink-0 pr-1" title="返回首页">
-          <img src="./icon.png" alt="Appilot" className="w-8 h-8 rounded-lg object-cover" />
+
+      {/* 顶部横栏：全局菜单（不再混入项目导航） */}
+      <header className="shrink-0 z-30 flex items-center gap-2.5 px-3 h-14 border-b border-zinc-200/60 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
+        <button
+          onClick={() => setSidebarOpen((v) => !v)}
+          title={sidebarOpen ? "收起左侧栏" : "展开左侧栏"}
+          className="flex items-center justify-center w-8 h-8 rounded-lg text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+        >
+          <span className="text-sm leading-none">{sidebarOpen ? "«" : "»"}</span>
+        </button>
+
+        <Link to="/" className="flex items-center gap-2 shrink-0 pr-2" title="返回首页">
+          <img src="./icon.png" alt="Appilot" className="w-7 h-7 rounded-lg object-cover" />
           <span className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Appilot</span>
         </Link>
 
-        {/* Project switcher */}
-        <div ref={menuRef} className="relative">
-          <button
-            onClick={() => setProjectMenuOpen((v) => !v)}
-            className="flex items-center gap-2 pl-3 pr-2.5 h-9 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 text-zinc-700 dark:text-zinc-200 hover:border-amber-500/50 transition-colors max-w-64"
+        {/* 全局信息（当前处于的项目也可在此展示；其余空闲留给全局状态） */}
+        {currentProjectLabel && (
+          <span
+            className="hidden md:inline-flex items-center gap-1.5 px-2.5 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400 truncate max-w-56"
+            title="当前项目（项目切换在左侧栏）"
           >
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
             <span className="truncate">{currentProjectLabel}</span>
-            <span className={cn("text-zinc-400 text-xs transition-transform", projectMenuOpen && "rotate-180")}>▾</span>
-          </button>
+          </span>
+        )}
 
-          {projectMenuOpen && (
-            <div className="absolute left-0 top-full mt-1.5 z-40 w-72 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 overflow-hidden">
-              {projects.map((p) => {
-                const products = p.storeProducts || [];
-                if (products.length > 1) {
-                  return (
-                    <div key={p.id} className="py-1">
-                      <div className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400">
-                        <span className="text-xs text-transparent">✓</span>
-                        <span className="truncate">{p.name}</span>
-                      </div>
-                      {products.map((product) => (
-                        <button
-                          key={product.id}
-                          onClick={() => {
-                            select(p.id);
-                            selectProduct(product.id);
-                            setProjectMenuOpen(false);
-                          }}
-                          className={cn(
-                            "w-full flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs text-left",
-                            product.id === currentProductId
-                              ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                              : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                          )}
-                        >
-                          <span className={cn("text-xs", product.id === currentProductId ? "text-amber-500" : "text-transparent")}>✓</span>
-                          <span className="truncate">{platformLabel(product.platform)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  );
-                }
-
-                const product = products[0];
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      select(p.id);
-                      if (product) selectProduct(product.id);
-                      setProjectMenuOpen(false);
-                    }}
-                    className={cn(
-                      "w-full flex items-center gap-2 px-3 py-2 text-sm text-left",
-                      p.id === currentProjectId
-                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                        : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                    )}
-                  >
-                    <span className={cn("text-xs", p.id === currentProjectId ? "text-amber-500" : "text-transparent")}>✓</span>
-                    <span className="truncate">{p.name}</span>
-                  </button>
-                );
-              })}
-              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
-              <button
-                onClick={handleAddProject}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-              >
-                <span className="text-amber-500">＋</span> 添加项目
-              </button>
-              <Link
-                to="/projects"
-                onClick={() => setProjectMenuOpen(false)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-              >
-                <span className="text-zinc-400">⚙</span> 管理项目
-              </Link>
-            </div>
-          )}
-        </div>
-
-        <div className="w-px h-6 bg-zinc-200/70 dark:bg-zinc-800/70 mx-1" />
-
-        {/* Page nav (persistent) */}
-        <nav className="flex items-center gap-1">
-          {NAV_ITEMS.map((item) => {
-            const active = location.pathname === item.to;
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                title={item.title}
-                className={cn(
-                  "px-3 py-1.5 text-sm rounded-lg transition-colors",
-                  active
-                    ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                    : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                )}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* Right: AI usage + task center + settings */}
+        {/* 右侧：全局操作与全局入口 */}
         <div className="ml-auto flex items-center gap-2">
           <div
             className="flex items-center gap-1.5 px-2.5 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400"
@@ -254,9 +325,10 @@ function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      {/* Content */}
-      <main className="flex-1 overflow-auto">
-        <div className="h-full">
+      {/* 左侧栏 + 内容 */}
+      <div className="flex flex-1 min-h-0">
+        {sidebarOpen && <ProjectSidebar />}
+        <main className="flex-1 overflow-auto min-w-0">
           {loading && projects.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
               <span className="w-5 h-5 rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-transparent animate-spin" />
@@ -265,8 +337,8 @@ function Layout({ children }: { children: React.ReactNode }) {
           ) : (
             children
           )}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

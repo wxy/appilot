@@ -21,6 +21,12 @@ export interface AppilotStore {
     list(): ProjectRow[];
     get(name: string): ProjectRow | undefined;
     remove(name: string): boolean;
+    /**
+     * 级联删除某项目在共享 DB 的全部痕迹（注册表 + 产品注册 / repo 元数据 /
+     * 排名快照 / 发布缓存）。供「删除项目」使用——否则下一轮 hydration 会
+     * 把共享 DB 里残留的注册表行重新水合回 electron-store（项目“复活”）。
+     */
+    removeDeep(name: string): boolean;
   };
   snapshots: {
     /** 批量追加快照（保留历史）。 */
@@ -190,6 +196,16 @@ export function openStore(dbPath: string): AppilotStore {
       remove(name) {
         const res = db.prepare('DELETE FROM projects WHERE name = ?').run(name);
         return Number(res.changes) > 0;
+      },
+      removeDeep(name) {
+        return tx(() => {
+          db.prepare('DELETE FROM product_records WHERE projectName = ?').run(name);
+          db.prepare('DELETE FROM project_meta WHERE projectName = ?').run(name);
+          db.prepare('DELETE FROM rank_snapshots WHERE projectName = ?').run(name);
+          db.prepare('DELETE FROM project_release_cache WHERE projectName = ?').run(name);
+          const res = db.prepare('DELETE FROM projects WHERE name = ?').run(name);
+          return Number(res.changes) > 0;
+        });
       },
     },
 

@@ -618,6 +618,17 @@ export function registerProjectsHandlers(): void {
     void schedulerTick();
     notifyDataChanged("projects");
     emitProjectsChanged();
+    // 共享 DB 级联删除：清掉注册表 / 产品注册 / repo 元数据 / 快照 / 发布缓存，
+    // 否则下一轮 registry hydration 会把残留注册表行重新水合回来（项目“复活”）。
+    try {
+      const projectName = removed?.name;
+      if (projectName) {
+        const { sharedStore } = await import("../registry-sync");
+        sharedStore().projects.removeDeep(projectName);
+      }
+    } catch (err: any) {
+      log.warn(`projects:remove: shared db cleanup failed for ${id}: ${err.message}`);
+    }
     return true;
   });
 

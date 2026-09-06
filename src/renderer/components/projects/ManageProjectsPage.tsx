@@ -13,7 +13,7 @@ export function ManageProjectsPage() {
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-8">移除项目是不可撤销的操作，需输入项目名确认。</p>
 
       {projects.length === 0 && (
-        <EmptyState title="还没有项目" desc="在侧栏「选择项目」里添加一个项目。" />
+        <EmptyState title="还没有项目" desc="点左侧栏底部的「添加项目」接入一个应用仓库。" />
       )}
 
       <div className="space-y-3">

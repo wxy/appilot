@@ -20,10 +20,10 @@ if (process.platform === "win32") {
 function createWindow() {
   const iconPath = path.join(__dirname, "../../resources/icon_1024.png");
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 750,
-    minWidth: 800,
-    minHeight: 600,
+    width: 1280,
+    height: 800,
+    minWidth: 960,
+    minHeight: 620,
     title: "Appilot",
     autoHideMenuBar: true,
     icon: process.platform === "darwin" ? iconPath : path.join(__dirname, "../../resources/icon_512.png"),
