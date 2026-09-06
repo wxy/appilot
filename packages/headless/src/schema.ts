@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -83,6 +83,11 @@ export interface ProjectMetaRow {
   headDate: string | null;
   /** github-sync 的 lastSeenSha 边界（checkForRelease 用）。 */
   lastReleaseSha: string | null;
+  /** v13：repo 展示字段（branch/HEAD message/dirty/description，写切(2) 后 UI 依赖）。 */
+  branch?: string | null;
+  headMessage?: string | null;
+  dirty?: boolean | null;
+  description?: string | null;
   updatedAt: string;
 }
 
@@ -171,6 +176,10 @@ CREATE TABLE IF NOT EXISTS project_meta (
   headSha TEXT,
   headDate TEXT,
   lastReleaseSha TEXT,
+  branch TEXT,
+  headMessage TEXT,
+  dirty INTEGER,
+  description TEXT,
   updatedAt TEXT NOT NULL
 );
 
@@ -377,5 +386,13 @@ export function migrate(db: {
       db.exec('ALTER TABLE tasks ADD COLUMN electronJson TEXT');
     }
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '12') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 13) {
+    // v12→v13：project_meta 增加 repo 展示字段（branch/headMessage/dirty/description）。
+    const mcols = (db.prepare('PRAGMA table_info(project_meta)').all() as Array<{ name: string }>) || [];
+    for (const [col, decl] of [['branch','TEXT'],['headMessage','TEXT'],['dirty','INTEGER'],['description','TEXT']]) {
+      if (!mcols.some((c) => c.name === col)) db.exec(`ALTER TABLE project_meta ADD COLUMN ${col} ${decl}`);
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '13') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }
