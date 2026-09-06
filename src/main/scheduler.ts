@@ -1402,12 +1402,14 @@ export function isTaskCenterStopped(): boolean {
 export function stopTaskScheduler(): void {
   taskCenterStopped = true;
   pauseTaskScheduler();
+  log.info('appilot: 任务中心已停止（用户暂停，本壳调度循环退出）');
 }
 
 /** 启动任务中心：清除停止标记并恢复调度循环（daemon 拉起由调用方 ensure）。 */
 export function enableTaskScheduler(): void {
   taskCenterStopped = false;
   startSchedulerLoop();
+  log.info('appilot: 任务中心已启动（调度循环恢复）');
 }
 
 /** Stop the scheduler timer so sleep is not disturbed while the system suspends. */

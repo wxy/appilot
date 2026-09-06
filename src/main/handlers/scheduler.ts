@@ -363,13 +363,17 @@ export function registerSchedulerHandlers(): void {
 
   ipcMain.handle("scheduler:daemonStop", async () => {
     const leader = currentLeader();
+    // 无条件尝试关闭 daemon 进程：即使 daemon 当前非主（leader=electron）也可能
+    // 挂在后台，启动时会复用来接管（表现为“原来的调度器没退出”）。
     let daemonStopped = false;
-    if (leader === "scheduler") {
-      // daemon 主：发 shutdown → daemon 优雅让位退出
-      daemonStopped = await sendToDaemon("shutdown", {});
+    try {
+      daemonStopped = (await sendToDaemon("shutdown", {})) === true;
+    } catch (err: any) {
+      log.warn(`daemon shutdown 发送失败: ${err.message}`);
     }
     // 本壳 fallback 一并暂停——避免 daemon 让位后壳循环在下一 tick 接管（等于没停）
     stopTaskScheduler();
+    log.info(`appilot: 任务中心停止完成（daemonStopped=${daemonStopped} leader=${leader}）`);
     return {
       ok: daemonStopped || leader !== "scheduler",
       stoppedDaemon: daemonStopped,
