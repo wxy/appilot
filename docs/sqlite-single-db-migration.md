@@ -88,3 +88,14 @@ config.json 已退役（config.json 归档为 `config.json.migrated-*`，electro
   用于 Electron ↔ DSH/daemon 一致性；日志仅在规模变化时打印。
 
 可选后续（超出本目标，未实施）：调度引擎执行源彻底切 DB tasks、凭据/设置表化、app_kv 全量清空退役。
+
+## 后续：彻底写切 DB（新工作流，逐步推进）
+
+读已切 DB；写仍有多域先进 kv(app_kv) 再镜像。本步骤目标：写也直连结构化表，
+移除 kv 写与镜像动作。
+- [x] 地基：scheduledTasks / githubSyncCache 写后立即镜像 DB（≤300ms 防抖，
+      不再依赖 10s 轮询）
+- [ ] 调度引擎执行源切 DB tasks（engine 读写 tasks 表，退出 kv scheduledTasks）
+- [ ] projects 各写 handler 直写 product_records/project_meta
+- [ ] githubSyncCache 直写 release_cache（发布页读 DB）
+- [ ] 移除三条镜像动作与轮询、清理 kv 对应键

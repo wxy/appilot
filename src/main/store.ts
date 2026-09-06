@@ -5,6 +5,8 @@ import { sharedStore } from "./registry-sync";
 import { migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
+import { mirrorTasksToDb } from "./task-db-sync";
+import { syncReleaseCachesToDb } from "./release-cache-sync";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
 export interface AppStore {
@@ -46,6 +48,37 @@ function scheduleProjectsToDb(projects: unknown): void {
   }, 300);
 }
 
+// scheduledTasks / githubSyncCache：kv 写入后立即镜像 DB（≤300ms 防抖），
+// 替代对 10s 轮询的依赖，为后续引擎源切 DB 与移除轮询铺路。
+let taskMirrorTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleTasksToDb(tasks: unknown): void {
+  if (taskMirrorTimer) clearTimeout(taskMirrorTimer);
+  taskMirrorTimer = setTimeout(() => {
+    try {
+      mirrorTasksToDb(sharedStore(), (tasks as any[]) || []);
+    } catch (err: any) {
+      log.warn(`scheduledTasks → DB 镜像失败: ${err.message}`);
+    }
+  }, 300);
+}
+let releaseMirrorTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleReleaseCacheToDb(cache: unknown): void {
+  if (releaseMirrorTimer) clearTimeout(releaseMirrorTimer);
+  releaseMirrorTimer = setTimeout(async () => {
+    try {
+      const s2 = await getStore();
+      const projects = (s2.get("projects") || []) as any[];
+      syncReleaseCachesToDb(
+        sharedStore(),
+        projects,
+        (cache || {}) as Record<string, Record<string, unknown>>,
+      );
+    } catch (err: any) {
+      log.warn(`githubSyncCache → DB 镜像失败: ${err.message}`);
+    }
+  }, 300);
+}
+
 /**
  * 应用持久化存储：全部业务数据落地到共享 SQLite（appilot.db 的 app_kv 表），
  * 不再使用 electron-store / config.json。所有消费方仍走 get(key)/set(key, value)，
@@ -78,6 +111,8 @@ export async function getStore(): Promise<AppStore> {
       set: (key, value) => {
         kv.set(key, JSON.stringify(value));
         if (key === "projects") scheduleProjectsToDb(value);
+        else if (key === "scheduledTasks") scheduleTasksToDb(value);
+        else if (key === "githubSyncCache") scheduleReleaseCacheToDb(value);
         const domain = KV_BLOB_DOMAINS[key];
         if (domain) {
           try {
