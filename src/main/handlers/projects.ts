@@ -99,7 +99,25 @@ function sanitizeRankSnapshots(project: any): any {
 export function registerProjectsHandlers(): void {
   ipcMain.handle("projects:list", async () => {
     const s = await getStore();
-    const raw: any[] = s.get("projects") || [];
+    const kvProjects: any[] = s.get("projects") || [];
+    // 阶段二读侧切换：优先由共享 DB 组装项目视图（注册表∪产品∪快照∪meta），
+    // kv['projects'] 仅作兜底补齐（DB 尚无/滞后字段与新鲜项目）。任一步失败回退 kv；
+    // 环境变量 APPILOT_PROJECT_LIST_SOURCE=kv 可临时关掉 DB 源做 A/B。
+    let raw: any[] = kvProjects;
+    if (process.env.APPILOT_PROJECT_LIST_SOURCE !== "kv") {
+      try {
+        const { sharedStore } = await import("../registry-sync");
+        const { assembleProjectViews } = await import("../project-db-view");
+        const { buildUiProjects } = await import("../project-list-merge");
+        const merged = buildUiProjects(
+          assembleProjectViews(sharedStore(), { includeSnapshots: true }),
+          kvProjects,
+        );
+        raw = merged.projects;
+      } catch (err: any) {
+        log.warn(`projects:list: DB 组装失败，已回退 electron kv: ${err.message}`);
+      }
+    }
     const projects = dedupeProjects(raw);
     const migrated = projects.map(migrateLegacyStoreProducts);
     const cleaned = migrated.map(sanitizeRankSnapshots);
