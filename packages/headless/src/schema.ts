@@ -8,11 +8,13 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
   name: string;
+  /** electron project id（v8 起同步；DSH 侧可为 null）。 */
+  id?: string | null;
   path: string;
   githubUrl: string | null;
   platform: string | null;
@@ -98,6 +100,9 @@ export interface ProductRecordRow {
   trackedKeywords: unknown[];
   /** Electron storeLinks（平台链接 JSON 保留）。 */
   storeLinks: unknown[];
+  /** Electron 富数据扩展（v8）：submissionKeywords / removedKeywords（对象数组 JSON 保留）。 */
+  submissionKeywords?: unknown[];
+  removedKeywords?: unknown[];
   updatedAt: string;
 }
 
@@ -127,6 +132,7 @@ CREATE TABLE IF NOT EXISTS app_kv (
 
 CREATE TABLE IF NOT EXISTS projects (
   name TEXT PRIMARY KEY,
+  id TEXT,
   path TEXT NOT NULL,
   githubUrl TEXT,
   platform TEXT,
@@ -156,6 +162,8 @@ CREATE TABLE IF NOT EXISTS product_records (
   supportedLanguages TEXT NOT NULL DEFAULT '[]',
   trackedKeywords TEXT NOT NULL DEFAULT '[]',
   storeLinks TEXT NOT NULL DEFAULT '[]',
+  submissionKeywords TEXT NOT NULL DEFAULT '[]',
+  removedKeywords TEXT NOT NULL DEFAULT '[]',
   updatedAt TEXT NOT NULL,
   PRIMARY KEY (projectName, productId)
 );
@@ -280,5 +288,21 @@ export function migrate(db: {
       value TEXT NOT NULL,
       updatedAt TEXT NOT NULL);`);
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '7') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 8) {
+    // v7→v8：阶段二双写补齐——注册表 projects 加 electron id 列；
+    // product_records 加 submissionKeywords/removedKeywords（electron 富数据扩展，DSH 忽略）。
+    const cols8 = (db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>) || [];
+    if (!cols8.some((c) => c.name === 'id')) {
+      db.exec('ALTER TABLE projects ADD COLUMN id TEXT');
+    }
+    const pcols = (db.prepare('PRAGMA table_info(product_records)').all() as Array<{ name: string }>) || [];
+    if (!pcols.some((c) => c.name === 'submissionKeywords')) {
+      db.exec("ALTER TABLE product_records ADD COLUMN submissionKeywords TEXT NOT NULL DEFAULT '[]'");
+    }
+    if (!pcols.some((c) => c.name === 'removedKeywords')) {
+      db.exec("ALTER TABLE product_records ADD COLUMN removedKeywords TEXT NOT NULL DEFAULT '[]'");
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '8') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }

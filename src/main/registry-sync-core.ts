@@ -14,6 +14,7 @@ export function registryRecordOf(project: any): ProjectRow {
   const resolved = project?.repo?.capturedAt ?? project?.createdAt ?? new Date().toISOString();
   return {
     name: project.name,
+    id: project?.id ?? null,
     path: project.localPath,
     githubUrl: project?.repo?.githubUrl ?? null,
     platform: project?.productType ?? null,
@@ -54,7 +55,7 @@ export function isNewer(updatedAt: string, project: any): boolean {
 export function minimalProjectFromRecord(rec: ProjectRow): any {
   const resolved = rec.lastResolvedAt ?? rec.updatedAt ?? new Date().toISOString();
   return {
-    id: `shared-${Buffer.from(rec.path).toString('base64url').slice(0, 16)}`,
+    id: rec.id ?? `shared-${Buffer.from(rec.path).toString('base64url').slice(0, 16)}`,
     name: rec.name,
     localPath: rec.path,
     productType: rec.platform === 'ios' || rec.platform === 'macos' ? rec.platform : null,
@@ -107,6 +108,7 @@ export function hydrateFromDbCore(
     } else if (rec.updatedAt && isNewer(rec.updatedAt, existing)) {
       const before = JSON.stringify(existing);
       if (rec.name) existing.name = rec.name;
+      if (rec.id && existing.id !== rec.id) existing.id = rec.id;
       if (rec.platform === 'ios' || rec.platform === 'macos') existing.productType = rec.platform;
       if (Array.isArray(rec.languages) && rec.languages.length) {
         existing.supportedLanguages = rec.languages.map((code) => ({ code, name: code }));

@@ -148,9 +148,10 @@ export function openStore(dbPath: string): AppilotStore {
       save(row) {
         tx(() => {
           db.prepare(
-            `INSERT INTO projects (name, path, githubUrl, platform, languages, lastResolvedAt, artworkUrl, updatedAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO projects (name, id, path, githubUrl, platform, languages, lastResolvedAt, artworkUrl, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(name) DO UPDATE SET
+               id = excluded.id,
                path = excluded.path,
                githubUrl = excluded.githubUrl,
                platform = excluded.platform,
@@ -160,6 +161,7 @@ export function openStore(dbPath: string): AppilotStore {
                updatedAt = excluded.updatedAt`,
           ).run(
             row.name,
+            row.id ?? null,
             row.path,
             row.githubUrl,
             row.platform,
@@ -176,6 +178,7 @@ export function openStore(dbPath: string): AppilotStore {
           .all() as any[];
         return rows.map((r) => ({
           name: r.name,
+          id: r.id ?? null,
           path: r.path,
           githubUrl: r.githubUrl,
           platform: r.platform,
@@ -190,6 +193,7 @@ export function openStore(dbPath: string): AppilotStore {
         if (!r) return undefined;
         return {
           name: r.name,
+          id: r.id ?? null,
           path: r.path,
           githubUrl: r.githubUrl,
           platform: r.platform,
@@ -466,8 +470,8 @@ export function openStore(dbPath: string): AppilotStore {
       upsert(row) {
         tx(() => {
           db.prepare(
-            `INSERT INTO product_records (projectName, productId, platform, trackId, bundleId, trackName, artworkUrl, supportedLanguages, trackedKeywords, storeLinks, updatedAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO product_records (projectName, productId, platform, trackId, bundleId, trackName, artworkUrl, supportedLanguages, trackedKeywords, storeLinks, submissionKeywords, removedKeywords, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(projectName, productId) DO UPDATE SET
                platform = excluded.platform,
                trackId = excluded.trackId,
@@ -477,6 +481,8 @@ export function openStore(dbPath: string): AppilotStore {
                supportedLanguages = excluded.supportedLanguages,
                trackedKeywords = excluded.trackedKeywords,
                storeLinks = excluded.storeLinks,
+               submissionKeywords = excluded.submissionKeywords,
+               removedKeywords = excluded.removedKeywords,
                updatedAt = excluded.updatedAt`,
           ).run(
             row.projectName,
@@ -489,6 +495,8 @@ export function openStore(dbPath: string): AppilotStore {
             JSON.stringify(row.supportedLanguages),
             JSON.stringify(row.trackedKeywords),
             JSON.stringify(row.storeLinks),
+            JSON.stringify(row.submissionKeywords ?? []),
+            JSON.stringify(row.removedKeywords ?? []),
             row.updatedAt,
           );
         });
@@ -508,6 +516,8 @@ export function openStore(dbPath: string): AppilotStore {
           supportedLanguages: parseJsonArray(r.supportedLanguages),
           trackedKeywords: parseJsonArray(r.trackedKeywords),
           storeLinks: parseJsonArray(r.storeLinks),
+          submissionKeywords: parseJsonArray(r.submissionKeywords),
+          removedKeywords: parseJsonArray(r.removedKeywords),
           updatedAt: r.updatedAt,
         }));
       },

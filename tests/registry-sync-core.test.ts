@@ -128,8 +128,8 @@ async function main(): Promise<void> {
   const back = minimalProjectFromRecord(rec);
   assert.equal(back.name, 'proj-a');
   assert.equal(back.localPath, PATH_A);
-  assert.ok(back.id.startsWith('shared-'));
-  console.log('✓ record 往返映射');
+  assert.equal(back.id, 'local-1', 'schema v8 起注册表保留 electron id');
+  console.log('✓ record 往返映射（id 保留）');
 
   store.close();
   console.log('registry-sync-core 单测全部通过 ✓');
