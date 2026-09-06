@@ -36,5 +36,18 @@ export function syncProjectToDb(
   }
   const rows = toProductRows(project);
   for (const row of rows) store.products.upsert(row);
+  // 草稿(storeSubmissionDrafts) 镜像进 project_blobs（写切(2) 前置：kv projects
+  // 退役后草稿仍可读）。仅当字段存在时更新（含清空），无关写不覆盖 DB 草稿。
+  if (Object.prototype.hasOwnProperty.call(project, "storeSubmissionDrafts")) {
+    try {
+      store.blobs.put(
+        "storeSubmissionDrafts",
+        String(project.name),
+        Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [],
+      );
+    } catch (err: any) {
+      // 草稿镜像失败不阻断项目同步
+    }
+  }
   return { registry: true, meta, products: rows.length };
 }

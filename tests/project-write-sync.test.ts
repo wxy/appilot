@@ -99,6 +99,29 @@ async function main() {
     console.log('✅ 无效项目跳过');
   }
 
+  // 4. 草稿镜像：字段存在时写入 project_blobs（含清空），无关写不覆盖
+  {
+    const store = tempDb();
+    const p = electronProject();
+    p.storeSubmissionDrafts = [{ id: 'd1', updatedAt: '2026-09-01T00:00:00Z', localizations: [] }];
+    syncProjectToDb(store, p);
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 1);
+
+    // 无关写（无该字段）不覆盖 DB 草稿
+    const q = electronProject();
+    delete q.storeSubmissionDrafts;
+    syncProjectToDb(store, q);
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 1, '无字段写不覆盖草稿');
+
+    // 显式清空：字段存在且为空 → DB 清空
+    const r = electronProject();
+    r.storeSubmissionDrafts = [];
+    syncProjectToDb(store, r);
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 0, '显式空数组清空草稿');
+    store.close();
+    console.log('✅ 草稿镜像（有字段才写/清空/不覆盖）');
+  }
+
   console.log('project-write-sync 单测全部通过 ✓');
 }
 
