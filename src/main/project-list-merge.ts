@@ -28,7 +28,7 @@ export interface MergeOutcome {
 }
 
 /** 兜底补齐时从 kv 侧继承的顶层键（DB 视图缺、但 UI 仍消费的字段）。 */
-const PROJECT_FALLBACK_KEYS = ['createdAt', 'repo', 'artworkUrl'] as const;
+const PROJECT_FALLBACK_KEYS = ['createdAt', 'repo', 'artworkUrl', 'storeSubmissionDrafts'] as const;
 /** 产品级兜底键。 */
 const PRODUCT_FALLBACK_KEYS = ['createdAt'] as const;
 /** 产品级"rich 字段"：DB 为空/缺失时以 kv 为准（文案/关键词/移除/语言/链接）。 */
