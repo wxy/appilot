@@ -3,6 +3,8 @@ import { runReadinessChecks, type ReadinessCheckItem } from "@appilot-labs/appil
 import { runBuildStatusNow, runOpsSyncNow, runReviewsSyncNow } from "../scheduler";
 import { findStoreSubmissionDraft, upsertStoreSubmissionDraft } from "../project-state";
 import { getStore } from "../store";
+import { sharedStore } from "../registry-sync";
+import { blobGet } from "../db-blob-read";
 import { assertNonEmptyString } from "../util";
 import { notifyDataChanged } from "../data-sync";
 import { resolveEffectiveCredentials } from "../credentials";
@@ -157,8 +159,6 @@ export function registerOpsHandlers(): void {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
     const kvTraffic = (s.get("trafficSnapshots") || {})[projectId];
-    const { sharedStore } = await import("../registry-sync");
-    const { blobGet } = await import("../db-blob-read");
     const dbTraffic = blobGet(sharedStore(), "trafficSnapshots", projectId);
     return (Array.isArray(dbTraffic) ? dbTraffic : kvTraffic) || [];
   });
@@ -187,8 +187,6 @@ export function registerOpsHandlers(): void {
     productId = assertNonEmptyString(productId, "productId");
     const s = await getStore();
     const kvAsc = (s.get("ascCache") || {})[productId];
-    const { sharedStore } = await import("../registry-sync");
-    const { blobGet } = await import("../db-blob-read");
     return (blobGet(sharedStore(), "ascCache", productId) as any) ?? kvAsc ?? null;
   });
 
@@ -228,8 +226,6 @@ export function registerOpsHandlers(): void {
     const draft = findStoreSubmissionDraft(project, releaseTag);
     if (!draft) throw new Error("Draft not found");
     const product = (project.storeProducts || []).find((item: any) => item.id === productId);
-    const { sharedStore } = await import("../registry-sync");
-    const { blobGet } = await import("../db-blob-read");
     const asc =
       (blobGet(sharedStore(), "ascCache", productId) as any) ??
       (s.get("ascCache") || {})[productId] ??

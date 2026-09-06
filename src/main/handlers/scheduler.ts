@@ -13,6 +13,7 @@ import {
 import { computeRankSchedulerStatus } from "../scheduler-status";
 import { getStore } from "../store";
 import { sharedStore } from "../registry-sync";
+import { runTaskNow } from "../scheduler";
 import { taskCenterTasksFromDb, taskCenterOverviewFromDb } from "../task-center-db";
 import { clearElectronFailures, mirrorTasksToDb } from "../task-db-sync";
 import { buildRankCoverageMatrix } from "../rank-matrix";
@@ -298,7 +299,6 @@ export function registerSchedulerHandlers(): void {
     // P5-2a：本进程主 → 壳内立即运行；daemon 主 → daemon runNow；其他主 → false。
     const leader = currentLeader();
     if (leader === "electron") {
-      const { runTaskNow } = await import("../scheduler");
       return runTaskNow(taskId);
     }
     if (leader === "scheduler") {
