@@ -4,17 +4,17 @@
  * `language: "en"` is treated as GLOBAL keywords: they are tracked in every
  * storefront and shown in every language view with a "全局" badge.
  */
+import { languageLabel } from "./format";
 
 export function trackingLanguageOptions(
   supported: { code: string; name: string }[],
 ): { code: string; label: string }[] {
-  const options = supported.map((language) =>
-    language.code === "en"
-      ? { code: "en", label: "英文" }
-      : { code: language.code, label: language.name },
-  );
+  const options = supported.map((language) => ({
+    code: language.code,
+    label: languageLabel(language.code),
+  }));
   if (!supported.some((language) => language.code === "en")) {
-    options.push({ code: "en", label: "英文" });
+    options.push({ code: "en", label: languageLabel("en") });
   }
   return [
     ...options.filter((option) => option.code === "en"),
