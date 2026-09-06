@@ -78,6 +78,16 @@ export async function getStore(): Promise<AppStore> {
       log.error(`config.json → SQLite app_kv 迁移失败（下次启动重试）: ${err.message}`);
     }
     const kv = shared.kv;
+    // projects 已切 DB 源（默认开启）：注册表有项目行时删除 kv 遗留 projects 键。
+    try {
+      const hasProjects = shared.projects.list().length > 0;
+      if (process.env.APPILOT_PROJECTS_DB_ON !== "0" && hasProjects && kv.get("projects") !== undefined) {
+        kv.delete("projects");
+        log.info("appilot: kv projects 已退役（DB 结构化表为项目源）");
+      }
+    } catch (err: any) {
+      log.warn(`kv projects 清理失败: ${err.message}`);
+    }
     // rank 执行记录已切 DB（直写 rank_executions）：DB 有记录时删除 kv 遗留键。
     try {
       if (shared.executions.latest(1).length > 0 && kv.get("rankExecutions") !== undefined) {
@@ -117,8 +127,8 @@ export async function getStore(): Promise<AppStore> {
     }
     store = {
       get: (key) => {
-        if (key === "projects" && process.env.APPILOT_PROJECTS_DB_ON === "1") {
-          // 写切(2c/2d) 启用态：读侧 = DB 轻量视图（kv 兜底），写侧 DB-only。
+        if (key === "projects" && process.env.APPILOT_PROJECTS_DB_ON !== "0") {
+          // 写切(2c/2d)：读侧 = DB 轻量视图（kv 兜底），写侧 DB-only（默认开启）。
           try {
             const light = buildLightProjects(shared);
             if (light.length > 0) return light;
@@ -162,7 +172,7 @@ export async function getStore(): Promise<AppStore> {
           return;
         }
         // projects：APPILOT_PROJECTS_DB_ON=1 启用态 → 写直连 DB（不再写 kv）。
-        if (key === "projects" && process.env.APPILOT_PROJECTS_DB_ON === "1") {
+        if (key === "projects" && process.env.APPILOT_PROJECTS_DB_ON !== "0") {
           syncProjectsToDb(value);
           return;
         }
