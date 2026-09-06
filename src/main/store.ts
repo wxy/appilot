@@ -5,7 +5,7 @@ import { sharedStore } from "./registry-sync";
 import { migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
-import { mirrorTasksToDb } from "./task-db-sync";
+import { mirrorTasksToDb, electronTaskFromRow } from "./task-db-sync";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
 export interface AppStore {
@@ -80,6 +80,25 @@ export async function getStore(): Promise<AppStore> {
     const kv = shared.kv;
     store = {
       get: (key) => {
+        if (key === "scheduledTasks" && process.env.APPILOT_TASKS_DB_READ !== "0") {
+          // 引擎读侧切 DB：从共享 DB tasks（source=electron、无损 electronJson）
+          // 重建任务；DB 为空/出错回退 kv。写侧每次落 kv 已同步 DB（#220），
+          // 因此两源一致；全部引擎与状态读取点经此单点生效。
+          try {
+            const rows = shared.tasks.all();
+            const electron = rows.filter(
+              (r) => r.source === "electron" && typeof r.electronJson === "string" && r.electronJson,
+            );
+            if (electron.length > 0) {
+              const rebuilt = electron
+                .map((r) => electronTaskFromRow(r))
+                .filter((t) => t && typeof t.id === "string");
+              if (rebuilt.length > 0) return rebuilt;
+            }
+          } catch (err: any) {
+            log.warn(`scheduledTasks DB 读取失败，回退 kv: ${err.message}`);
+          }
+        }
         const raw = kv.get(key);
         if (raw === undefined) return DEFAULTS[key]; // 无默认值时即 undefined
         try {

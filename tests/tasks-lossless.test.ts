@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtempSync } from 'node:fs';
 import { openStore } from '@appilot-labs/appilot-headless';
-import { toTaskRow, electronTaskFromRow } from '../src/main/task-db-sync';
+import { toTaskRow, electronTaskFromRow, mirrorTasksToDb } from '../src/main/task-db-sync';
 
 function tempDb() {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'taskloss-'));
@@ -61,6 +61,26 @@ async function main() {
     assert.equal(derived.intervalMinutes, 60);
     store.close();
     console.log('✅ 旧行按列推导');
+  }
+
+  // 3. 引擎装载等价：镜像任务列表 → DB 行 → 重建 = 原列表（DB-first 读取语义）
+  {
+    const store = tempDb();
+    const tasks = [
+      { id: 'a', kind: 'rank', keyword: 'k1', queryLanguage: 'en', storefront: 'us', intervalMinutes: 1440, nextRunAt: '2026-09-07T00:00:00Z', executionCount: 1, lastStatus: 'success', enabled: true },
+      { id: 'b', intervalMinutes: 60, nextRunAt: '2026-09-08T00:00:00Z', executionCount: 2, lastStatus: 'success', enabled: false },
+      { id: 'c', intervalMinutes: 300, lastRunAt: '2026-09-06T00:00:00Z', executionCount: 0, lastStatus: 'never', enabled: true },
+    ];
+    mirrorTasksToDb(store, tasks as any[]);
+    const electron = store.tasks
+      .all()
+      .filter((r) => r.source === 'electron' && typeof r.electronJson === 'string' && r.electronJson)
+      .map((r) => electronTaskFromRow(r))
+      .filter((t) => t && typeof t.id === 'string');
+    assert.equal(electron.length, tasks.length);
+    assert.deepEqual(electron, tasks, 'DB 重建列表与引擎原列表一致（顺序按 id）');
+    store.close();
+    console.log('✅ 引擎装载等价（DB 重建 = 原列表）');
   }
 
   console.log('tasks-lossless 单测全部通过 ✓');
