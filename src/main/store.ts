@@ -78,6 +78,16 @@ export async function getStore(): Promise<AppStore> {
       log.error(`config.json → SQLite app_kv 迁移失败（下次启动重试）: ${err.message}`);
     }
     const kv = shared.kv;
+    // 引擎任务源已切 DB：DB tasks 存在 electron 行时，删除 kv 遗留 scheduledTasks 键。
+    try {
+      const hasElectronTasks = shared.tasks.all().some((r) => r.source === "electron");
+      if (hasElectronTasks && kv.get("scheduledTasks") !== undefined) {
+        kv.delete("scheduledTasks");
+        log.info("appilot: kv scheduledTasks 已退役（DB tasks 为引擎任务源）");
+      }
+    } catch (err: any) {
+      log.warn(`kv scheduledTasks 清理失败: ${err.message}`);
+    }
     store = {
       get: (key) => {
         if (key === "scheduledTasks" && process.env.APPILOT_TASKS_DB_READ !== "0") {
@@ -109,9 +119,14 @@ export async function getStore(): Promise<AppStore> {
         }
       },
       set: (key, value) => {
+        // scheduledTasks：引擎任务源已切 DB tasks（读 #221 / 写 #220），
+        // 直写 DB（同步无损镜像），不再写 kv（遗留键由启动清理删除）。
+        if (key === "scheduledTasks") {
+          syncTasksToDb(value);
+          return;
+        }
         kv.set(key, JSON.stringify(value));
         if (key === "projects") scheduleProjectsToDb(value);
-        else if (key === "scheduledTasks") syncTasksToDb(value);
         const domain = KV_BLOB_DOMAINS[key];
         if (domain) {
           try {
