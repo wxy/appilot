@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtempSync } from 'node:fs';
 import { openStore } from '@appilot-labs/appilot-headless';
-import { toTaskRow, electronTaskFromRow, mirrorTasksToDb } from '../src/main/task-db-sync';
+import { toTaskRow, electronTaskFromRow, mirrorTasksToDb, backfillTaskHistoryFromExecutions } from '../src/main/task-db-sync';
 
 function tempDb() {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'taskloss-'));
@@ -81,6 +81,29 @@ async function main() {
     assert.deepEqual(electron, tasks, 'DB 重建列表与引擎原列表一致（顺序按 id）');
     store.close();
     console.log('✅ 引擎装载等价（DB 重建 = 原列表）');
+  }
+
+  // 4. 历史回填：executions → 无 lastRunAt 的 electron 任务行补历史（幂等/跳过已有）
+  {
+    const store = tempDb();
+    const t1 = { id: 'rank:r1', intervalMinutes: 1440, nextRunAt: '2026-09-08T00:00:00Z' };
+    const t2 = { id: 'rank:r2', intervalMinutes: 1440, nextRunAt: '2026-09-08T00:00:00Z' };
+    mirrorTasksToDb(store, [t1, t2] as any[]);
+    store.executions.add({ ts: '2026-09-06T10:00:00Z', taskId: 'rank:r1', status: 'success', durationMs: 100 });
+    store.executions.add({ ts: '2026-09-06T11:00:00Z', taskId: 'rank:r1', status: 'success', durationMs: 90 });
+    store.executions.add({ ts: '2026-09-06T12:00:00Z', taskId: 'rank:r2', status: 'failed', durationMs: 5 });
+    const n = backfillTaskHistoryFromExecutions(store);
+    assert.equal(n, 2, '两条无历史任务被回填');
+    const g1 = store.tasks.get('rank:r1')!;
+    assert.equal(g1.lastRunAt, '2026-09-06T11:00:00Z');
+    assert.equal(g1.runCount, 2);
+    assert.equal(g1.lastStatus, 'ok');
+    const g2 = store.tasks.get('rank:r2')!;
+    assert.equal(g2.lastStatus, 'error');
+    // 幂等：再跑一次，无新补
+    assert.equal(backfillTaskHistoryFromExecutions(store), 0, '已有历史的行不再补');
+    store.close();
+    console.log('✅ 历史回填（executions→任务行，幂等）');
   }
 
   console.log('tasks-lossless 单测全部通过 ✓');

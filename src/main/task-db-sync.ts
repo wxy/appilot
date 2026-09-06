@@ -177,3 +177,55 @@ export function clearElectronFailures(
   });
   return { tasks: next, cleared };
 }
+
+/**
+ * 用 rank_executions 回填 electron 任务行的历史执行字段（一次性/幂等）：
+ * kv scheduledTasks 退役后，历史 lastRunAt/runCount/status 仅存在于 executions；
+ * 仅补 lastRunAt 为 null 的行，避免覆盖后续真实更新。
+ */
+export function backfillTaskHistoryFromExecutions(
+  store: { tasks: { all(): any[]; upsert(row: any): void }; executions: { since(iso: string, limit?: number): Record<string, unknown>[] } },
+): number {
+  const rows = store.executions.since('2000-01-01T00:00:00Z', 200000);
+  const stat = new Map<string, { count: number; last: string; lastStatus: string }>();
+  for (const e of rows) {
+    const id = String(e?.taskId ?? '');
+    if (!id) continue;
+    const s = stat.get(id) || { count: 0, last: '', lastStatus: '' };
+    s.count += 1;
+    const ts = String(e?.ts ?? '');
+    if (ts > s.last) {
+      s.last = ts;
+      s.lastStatus = String(e?.status ?? '');
+    }
+    stat.set(id, s);
+  }
+  if (stat.size === 0) return 0;
+  let patched = 0;
+  for (const row of store.tasks.all()) {
+    if (row?.source !== 'electron') continue;
+    if (row.lastRunAt) continue; // 已有历史，跳过
+    const s = stat.get(row.id);
+    if (!s) continue;
+    const electron = (() => {
+      try {
+        const t = row.electronJson ? JSON.parse(row.electronJson) : null;
+        return t && typeof t === 'object' ? t : null;
+      } catch {
+        return null;
+      }
+    })();
+    const lastStatus =
+      s.lastStatus === 'success' ? 'ok' : s.lastStatus === 'failed' ? 'error' : 'never';
+    const next = { ...row, lastRunAt: s.last, runCount: s.count, lastStatus };
+    if (electron) {
+      electron.lastRunAt = s.last;
+      electron.executionCount = s.count;
+      electron.lastStatus = s.lastStatus;
+      next.electronJson = JSON.stringify(electron);
+    }
+    store.tasks.upsert(next);
+    patched += 1;
+  }
+  return patched;
+}
