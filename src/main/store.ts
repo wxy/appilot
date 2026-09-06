@@ -27,24 +27,23 @@ let store: AppStore | null = null;
 // 注册表(含 id) + project_meta + product_records(含扩展列)。此前仅同步注册表且靠
 // 10s 轮询补富数据，读侧（DB 组装）会有可见滞后；现在任何写 handler 经
 // s.set('projects', …) 落盘后 ≤300ms DB 即最新。删除项目的 DB 清理仍在删除处理器。
-let syncTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleProjectsToDb(projects: unknown): void {
-  if (syncTimer) clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => {
-    const list = (projects as any[]) || [];
-    try {
-      const shared = sharedStore();
-      for (const project of list) {
-        try {
-          syncProjectToDb(shared, project);
-        } catch (err: any) {
-          log.warn(`projects → DB 镜像失败（${project?.name ?? "?"}）: ${err.message}`);
-        }
+// projects 写直连 DB：每次落 kv 同步镜像到 product_records/project_meta/注册表
+// （读侧 DB 组装由此即时一致）；kv 仍作为渲染兜底与草稿(storeSubmissionDrafts)
+// 的存储，属单库内设计，见 docs。
+function syncProjectsToDb(projects: unknown): void {
+  const list = (projects as any[]) || [];
+  try {
+    const shared = sharedStore();
+    for (const project of list) {
+      try {
+        syncProjectToDb(shared, project);
+      } catch (err: any) {
+        log.warn(`projects → DB 镜像失败（${project?.name ?? "?"}）: ${err.message}`);
       }
-    } catch (err: any) {
-      log.warn(`projects → DB 镜像失败: ${err.message}`);
     }
-  }, 300);
+  } catch (err: any) {
+    log.warn(`projects → DB 镜像失败: ${err.message}`);
+  }
 }
 
 // scheduledTasks / githubSyncCache：kv 写入后立即镜像 DB（≤300ms 防抖），
@@ -144,7 +143,7 @@ export async function getStore(): Promise<AppStore> {
           return;
         }
         kv.set(key, JSON.stringify(value));
-        if (key === "projects") scheduleProjectsToDb(value);
+        if (key === "projects") syncProjectsToDb(value);
         const domain = KV_BLOB_DOMAINS[key];
         if (domain) {
           try {
