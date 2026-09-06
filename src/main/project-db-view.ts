@@ -40,6 +40,8 @@ export interface DbProjectView {
     supportedLanguages: { code: string; name: string }[];
     trackedKeywords: unknown[];
     storeLinks: unknown[];
+    submissionKeywords?: unknown[];
+    removedKeywords?: unknown[];
     rankSnapshots: unknown[];
   }[];
 }
@@ -85,13 +87,15 @@ export function assembleProjectViews(
         supportedLanguages: (p.supportedLanguages || []).map((code) => ({ code, name: code })),
         trackedKeywords: p.trackedKeywords ?? [],
         storeLinks: p.storeLinks ?? [],
+        submissionKeywords: p.submissionKeywords ?? [],
+        removedKeywords: p.removedKeywords ?? [],
         rankSnapshots,
       };
     });
 
     return {
       name: rec.name,
-      id: rec.name, // 注册表未存 electron project id；当前 id 与 name 一致，以此兜底
+      id: rec.id ?? rec.name, // 注册表 v8 起同步 electron id；旧行/DSH 行无 id 时以 name 兜底
       localPath: rec.path,
       productType:
         rec.platform === 'ios' || rec.platform === 'macos' ? rec.platform : null,

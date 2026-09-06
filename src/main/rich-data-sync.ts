@@ -31,6 +31,8 @@ export interface ElectronProjectRich {
     supportedLanguages?: Array<{ code?: string } | string>;
     trackedKeywords?: unknown[];
     storeLinks?: unknown[];
+    submissionKeywords?: unknown[];
+    removedKeywords?: unknown[];
   }>;
 }
 
@@ -70,6 +72,8 @@ export function toProductRows(p: ElectronProjectRich): ProductRecordRow[] {
       supportedLanguages: langCodes(sp.supportedLanguages),
       trackedKeywords: Array.isArray(sp.trackedKeywords) ? sp.trackedKeywords : [],
       storeLinks: Array.isArray(sp.storeLinks) ? sp.storeLinks : [],
+      submissionKeywords: Array.isArray(sp.submissionKeywords) ? sp.submissionKeywords : [],
+      removedKeywords: Array.isArray(sp.removedKeywords) ? sp.removedKeywords : [],
       updatedAt: now,
     }));
 }
