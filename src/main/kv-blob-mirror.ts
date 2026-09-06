@@ -9,6 +9,8 @@
 import type { AppilotStore } from '@appilot-labs/appilot-headless';
 
 /** 需镜像的 kv 顶层 key → project_blobs domain。 */
+export const KV_BLOB_IMPORT_MARK = '__kvBlobsImported';
+
 export const KV_BLOB_DOMAINS: Record<string, string> = {
   opsStatus: 'opsStatus',
   trafficSnapshots: 'trafficSnapshots',
