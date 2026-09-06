@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -129,6 +129,16 @@ CREATE TABLE IF NOT EXISTS app_kv (
   value TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS rank_executions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  taskId TEXT,
+  status TEXT,
+  durationMs INTEGER,
+  entryJson TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rank_executions_ts ON rank_executions(ts);
 
 CREATE TABLE IF NOT EXISTS projects (
   name TEXT PRIMARY KEY,
@@ -304,5 +314,18 @@ export function migrate(db: {
       db.exec("ALTER TABLE product_records ADD COLUMN removedKeywords TEXT NOT NULL DEFAULT '[]'");
     }
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '8') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 9) {
+    // v8→v9：rank 执行记录入表（electron kv rankExecutions 的结构化落点，双写期
+    // 读仍走 kv；schema 便于按 ts 窗口查询统计）。
+    db.exec(`CREATE TABLE IF NOT EXISTS rank_executions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      taskId TEXT,
+      status TEXT,
+      durationMs INTEGER,
+      entryJson TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_rank_executions_ts ON rank_executions(ts);`);
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '9') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }

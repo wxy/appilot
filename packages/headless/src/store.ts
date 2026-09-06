@@ -34,6 +34,15 @@ export interface AppilotStore {
     set(key: string, value: string): void;
     delete(key: string): boolean;
   };
+  /** rank 执行记录（v9）：electron kv rankExecutions 的结构化落点（双写期读仍走 kv）。 */
+  executions: {
+    /** 追加一条执行记录（entryJson 原样保留，ts/taskId/status/durationMs 提列索引）。 */
+    add(entry: Record<string, unknown>): void;
+    /** 返回 ts >= sinceIso 的记录（按 ts/id 升序），limit 上限默认 20000。 */
+    since(sinceIso: string, limit?: number): Record<string, unknown>[];
+    /** 清理早于 beforeIso 的记录，返回删除行数。 */
+    pruneBefore(beforeIso: string): number;
+  };
   snapshots: {
     /** 批量追加快照（保留历史）。 */
     add(rows: RankSnapshotRow[]): void;
@@ -247,6 +256,34 @@ export function openStore(dbPath: string): AppilotStore {
       delete(key) {
         const res = db.prepare('DELETE FROM app_kv WHERE key = ?').run(key);
         return Number(res.changes) > 0;
+      },
+    },
+
+    executions: {
+      add(entry) {
+        const ts = typeof entry?.ts === 'string' ? entry.ts : new Date().toISOString();
+        const taskId = typeof entry?.taskId === 'string' ? entry.taskId : null;
+        const status = typeof entry?.status === 'string' ? entry.status : null;
+        const durationMs = typeof entry?.durationMs === 'number' ? entry.durationMs : null;
+        tx(() => {
+          db.prepare(
+            `INSERT INTO rank_executions (ts, taskId, status, durationMs, entryJson)
+             VALUES (?, ?, ?, ?, ?)`,
+          ).run(ts, taskId, status, durationMs, JSON.stringify(entry));
+        });
+      },
+      since(sinceIso, limit = 20000) {
+        const n = Math.min(Math.max(limit, 1), 200000);
+        const rows = db
+          .prepare(
+            `SELECT * FROM rank_executions WHERE ts >= ? ORDER BY ts ASC, id ASC LIMIT ?`,
+          )
+          .all(sinceIso, n) as any[];
+        return rows.map((r) => JSON.parse(r.entryJson) as Record<string, unknown>);
+      },
+      pruneBefore(beforeIso) {
+        const res = db.prepare('DELETE FROM rank_executions WHERE ts < ?').run(beforeIso);
+        return Number(res.changes);
       },
     },
 
