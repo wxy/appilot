@@ -8,7 +8,7 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS rank_executions (
   entryJson TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rank_executions_ts ON rank_executions(ts);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rank_executions_uniq ON rank_executions(ts, taskId);
 
 CREATE TABLE IF NOT EXISTS projects (
   name TEXT PRIMARY KEY,
@@ -327,5 +328,18 @@ export function migrate(db: {
       entryJson TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_rank_executions_ts ON rank_executions(ts);`);
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '9') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 10) {
+    // v9→v10：rank_executions 增加 (ts, taskId) 唯一约束（一次性导入幂等用）。
+    // 若历史已存在重复键，先清理再建索引（正常路径无重复）。
+    const dup = (db.prepare(
+      'SELECT ts, taskId, COUNT(*) c FROM rank_executions GROUP BY ts, taskId HAVING c > 1 LIMIT 1',
+    ).get() as { c?: number } | undefined);
+    if (dup) {
+      db.exec(`DELETE FROM rank_executions WHERE id NOT IN (
+        SELECT MIN(id) FROM rank_executions GROUP BY ts, taskId)`);
+    }
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_rank_executions_uniq ON rank_executions(ts, taskId)');
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '10') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 }

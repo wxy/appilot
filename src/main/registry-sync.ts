@@ -25,6 +25,10 @@ import { syncReleaseCachesToDb } from './release-cache-sync';
 import { backfillRankSnapshotsToElectron } from './rank-backfill';
 import { syncRichDataToDb } from './rich-data-sync';
 import { hydrateFromDbCore, syncRegistryCore } from './registry-sync-core';
+import {
+  syncRankExecutionsToDb,
+  RANK_EXEC_IMPORT_MARK,
+} from './sync-rank-executions';
 export { registryRecordOf } from './registry-sync-core';
 
 let store: AppilotStore | null = null;
@@ -154,6 +158,19 @@ export function startRegistrySync(
         mirrorTasksToDb(sharedStore(), (s.get('scheduledTasks') || []) as any[]);
       } catch (err: any) {
         log.warn(`task mirror to shared db failed: ${err.message}`);
+      }
+      // 阶段三：kv rankExecutions 一次性导入共享 DB（此后 scheduler 双写增量；
+      // add 用 (ts,taskId) INSERT OR IGNORE，重复启动幂等）。
+      try {
+        const shared = sharedStore();
+        if (!shared.kv.get(RANK_EXEC_IMPORT_MARK)) {
+          const list = (s.get('rankExecutions') || []) as any[];
+          const n = syncRankExecutionsToDb(shared, list);
+          shared.kv.set(RANK_EXEC_IMPORT_MARK, new Date().toISOString());
+          if (n > 0) log.info(`appilot: imported ${n} rank executions to shared db`);
+        }
+      } catch (err: any) {
+        log.warn(`rank executions import failed: ${err.message}`);
       }
       // Phase M3：Electron 富数据（storeProducts / repo 状态）双写共享 DB——
       // product_records / project_meta（rank 等富数据任务实例化与跨壳读的前提）。
