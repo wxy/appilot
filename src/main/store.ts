@@ -77,6 +77,15 @@ export async function getStore(): Promise<AppStore> {
       log.error(`config.json → SQLite app_kv 迁移失败（下次启动重试）: ${err.message}`);
     }
     const kv = shared.kv;
+    // rank 执行记录已切 DB（直写 rank_executions）：DB 有记录时删除 kv 遗留键。
+    try {
+      if (shared.executions.latest(1).length > 0 && kv.get("rankExecutions") !== undefined) {
+        kv.delete("rankExecutions");
+        log.info("appilot: kv rankExecutions 已退役（rank_executions 为执行记录源）");
+      }
+    } catch (err: any) {
+      log.warn(`kv rankExecutions 清理失败: ${err.message}`);
+    }
     // 引擎任务源已切 DB：DB tasks 存在 electron 行时，删除 kv 遗留 scheduledTasks 键。
     try {
       const hasElectronTasks = shared.tasks.all().some((r) => r.source === "electron");
