@@ -330,34 +330,39 @@ export function competitorFaceEvents(opts: {
 }): CompetitorFaceEvent[] {
   const now = opts.now ?? Date.now();
   const cutoff = now - (opts.days ?? 14) * 86_400_000;
-  // face → 日桶 → 当天最好（≤200）名次。
-  const byFace = new Map<string, { language: string; keyword: string; dayBest: Map<string, number> }>();
+  // face → 日桶 → {checked(该日有采集), best(该日最好 ≤200 名次)}。
+  const byFace = new Map<string, { language: string; keyword: string; byDay: Map<string, { checked: boolean; best: number | null }> }>();
   for (const e of opts.rankEntries || []) {
     if (e.platform != null && e.platform !== opts.platform) continue;
     const ts = String(e?.checkedAt ?? "");
     if (!ts || new Date(ts).getTime() < cutoff) continue;
-    const rank = typeof e.rank === "number" && Number.isFinite(e.rank) && e.rank > 0 && e.rank <= 200 ? e.rank : null;
-    if (rank == null) continue;
     const language = String(e.language ?? "en");
     const key = `${language}\u0000${e.keyword}`;
     let face = byFace.get(key);
     if (!face) {
-      face = { language, keyword: e.keyword, dayBest: new Map() };
+      face = { language, keyword: e.keyword, byDay: new Map() };
       byFace.set(key, face);
     }
     const day = ts.slice(0, 10);
-    const cur = face.dayBest.get(day);
-    if (cur == null || rank < cur) face.dayBest.set(day, rank);
+    let bucket = face.byDay.get(day);
+    if (!bucket) {
+      bucket = { checked: false, best: null };
+      face.byDay.set(day, bucket);
+    }
+    bucket.checked = true; // 该日有采集（含未上榜 / 200 外）
+    const rank =
+      typeof e.rank === "number" && Number.isFinite(e.rank) && e.rank > 0 && e.rank <= 200 ? e.rank : null;
+    if (rank != null && (bucket.best == null || rank < bucket.best)) bucket.best = rank;
   }
   const events: CompetitorFaceEvent[] = [];
   for (const face of byFace.values()) {
-    const days = [...face.dayBest.keys()].sort();
+    const days = [...face.byDay.keys()].sort();
     if (days.length < 2) continue;
-    const last = days[days.length - 1];
-    const prev = days[days.length - 2];
-    if (face.dayBest.has(last) && !face.dayBest.has(prev)) {
+    const last = face.byDay.get(days[days.length - 1])!;
+    const prev = face.byDay.get(days[days.length - 2])!;
+    if (last.checked && last.best != null && prev.best == null) {
       events.push({ language: face.language, keyword: face.keyword, kind: "gained" });
-    } else if (face.dayBest.has(prev) && !face.dayBest.has(last)) {
+    } else if (prev.checked && prev.best != null && last.checked && last.best == null) {
       events.push({ language: face.language, keyword: face.keyword, kind: "dropped" });
     }
   }

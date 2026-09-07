@@ -3,7 +3,7 @@
  * 纯 node（不 import electron）。
  */
 import assert from 'node:assert';
-import { buildCompetitorIntel } from '../src/main/competitor-intel';
+import { buildCompetitorIntel, competitorFaceEvents } from '../src/main/competitor-intel';
 
 const day = 86_400_000;
 const now = Date.now();
@@ -96,6 +96,41 @@ function main(): void {
 
   console.log('✓ 竞争面聚合（窗口/多平台隔离/长尾）');
   console.log('✓ 竞争指数（决策 1 权重 / 决策 3 分平台 / 决策 4 降权）');
+
+  // —— 词级事件（上新/跌出）：对比最近两次有采集的日桶 ——
+  const events = competitorFaceEvents({
+    platform: 'ios',
+    rankEntries: [
+      // kwX：昨天未进榜（300），今天 #150 → 上新
+      { keyword: 'kwX', language: 'en', storefront: 'us', platform: 'ios', rank: 300, checkedAt: d(2) },
+      { keyword: 'kwX', language: 'en', storefront: 'us', platform: 'ios', rank: 150, checkedAt: d(0) },
+      // kwY：昨天 #80，今天 #320 → 跌出
+      { keyword: 'kwY', language: 'en', storefront: 'us', platform: 'ios', rank: 80, checkedAt: d(2) },
+      { keyword: 'kwY', language: 'en', storefront: 'us', platform: 'ios', rank: 320, checkedAt: d(0) },
+      // kwZ：只有一天数据 → 无事件
+      { keyword: 'kwZ', language: 'en', storefront: 'us', platform: 'ios', rank: 30, checkedAt: d(0) },
+      // macos 平台记录：多平台分开，不参与 ios 事件
+      { keyword: 'kwX', language: 'en', storefront: 'us', platform: 'macos', rank: 5, checkedAt: d(0) },
+    ],
+    now,
+  });
+  assert.deepEqual(
+    events
+      .filter((ev) => ev.kind === 'gained')
+      .map((ev) => ev.keyword)
+      .sort(),
+    ['kwX'],
+    '上新 = 最近两次日桶中该词新进入 ≤200',
+  );
+  assert.deepEqual(
+    events
+      .filter((ev) => ev.kind === 'dropped')
+      .map((ev) => ev.keyword)
+      .sort(),
+    ['kwY'],
+    '跌出 = 最近两次日桶中该词离开 ≤200',
+  );
+  console.log('✓ 词级事件（上新/跌出/分平台隔离）');
   console.log('competitor-intel 单测全部通过 ✓');
 }
 
