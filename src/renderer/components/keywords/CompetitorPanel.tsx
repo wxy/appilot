@@ -51,6 +51,8 @@ export function CompetitorPanel({
   const [profiles, setProfiles] = useState<any[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [profilesTick, setProfilesTick] = useState(0);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanMsg, setScanMsg] = useState<string | null>(null);
 
   const load = useCallback(() => {
     (window as any).appilot?.competitors?.list(projectId)
@@ -77,6 +79,29 @@ export function CompetitorPanel({
   }, [projectId, product?.id]);
   useEffect(() => { loadOverview(); }, [loadOverview, profilesTick]);
   useEffect(() => { load(); }, [load]);
+  // 在榜词自动发现扫描（P3：只扫我方在榜词；每日限流，界面提示结果）。
+  const handleScanOnChart = async () => {
+    if (scanBusy || !product?.id) return;
+    setScanBusy(true);
+    setScanMsg(null);
+    try {
+      const res = await (window as any).appilot?.competitors?.scanOnChart(projectId, product.id);
+      if (res?.ok) {
+        setScanMsg(
+          `扫描 ${res.checked} 个在榜词：${res.updatedCompetitors} 个竞品新增交集 ${res.foundKeywords} 处，发现 ${res.newCandidates} 个新候选。`,
+        );
+      } else if (res?.throttled) {
+        setScanMsg("今日已扫描过（每日限流一次），明天再来或需要强制重扫告诉我。");
+      } else {
+        setScanMsg(res?.error || "扫描失败");
+      }
+      setProfilesTick((v) => v + 1);
+    } catch (err: any) {
+      setScanMsg(err?.message || "扫描失败");
+    } finally {
+      setScanBusy(false);
+    }
+  };
   // 主进程数据变更推送：竞品数据更新时自动刷新。
   useEffect(() => {
     const handler = (e: Event) => {
@@ -579,10 +604,24 @@ export function CompetitorPanel({
                 按竞争指数排序（权重只看我方名次段 · 分平台 · 长尾词降权） · 点击行展开竞争面
               </span>
             </h3>
-            <span className="text-[11px] text-zinc-400">
+            <span className="flex items-center gap-2 text-[11px] text-zinc-400">
               当前平台 {platformLabel(viewPlatform)} · 7 天窗口
+              <button
+                type="button"
+                onClick={() => void handleScanOnChart()}
+                disabled={scanBusy}
+                className={btnSmSecondary}
+                title="只扫我方在榜词，发现已跟踪竞品的新交集并回填排名；未跟踪 App 记入候选（每日限流一次）"
+              >
+                {scanBusy ? "扫描在榜词…" : "扫描在榜词"}
+              </button>
             </span>
           </div>
+          {scanMsg && (
+            <p className="px-4 py-2 text-[11px] text-amber-600 dark:text-amber-400 border-b border-zinc-100 dark:border-zinc-800">
+              {scanMsg}
+            </p>
+          )}
           <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
             {profiles.map(({ competitor, intel }: any) => {
               const expanded = expandedId === competitor.id;
