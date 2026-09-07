@@ -170,6 +170,21 @@ const TONE_MY = "bg-emerald-500/15 dark:bg-emerald-500/20 text-emerald-700 dark:
 const TONE_THEIR = "bg-red-500/15 dark:bg-red-500/20 text-red-700 dark:text-red-300";
 const TONE_TIED = "bg-amber-400/20 dark:bg-amber-400/25 text-amber-700 dark:text-amber-300";
 const TONE_FLAT = "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400";
+// —— 竞品矩阵冻结（表头 / 首列）+ 展开行底色 ——
+// 冻结单元格必须用不透明底色：半透明会把滚动到其下方的格子内容“透”出来。
+// 表头底：浅色 ≈ 原 zinc-50/70、深色 ≈ zinc-800/40 叠 zinc-900 的合成色（#1e1e21）。
+const MATRIX_HDR_BG = "bg-zinc-50 dark:bg-[#1e1e21]";
+// 竞品行（未展开）默认底 = 卡片底；hover / 展开态 = zinc-50/50、zinc-800/30 叠卡片底的
+// 合成色（浅色近乎白、深色 #1d1d20），冻结首列用同款不透明色，滚动内容不外透。
+const MATRIX_ROW_BG = "bg-white dark:bg-zinc-900";
+const MATRIX_ROW_OPEN = "bg-zinc-50 dark:bg-[#1d1d20]";
+// 展开的“商店行”底色（浅青 ↔ dark 深青），与上方竞品行明显区分。
+const STORE_ROW_BG = "bg-cyan-50 dark:bg-cyan-950";
+// 行底分隔线：border-separate 下 tr 边框不绘制，改由每个单元格各自画（sticky 格随滚动移动）。
+const CELL_BORDER_B = "border-b border-zinc-100 dark:border-zinc-800";
+const HDR_BORDER_B2 = "border-b-2 border-zinc-300 dark:border-zinc-600";
+// 竞品行第一列 th 的标题文案（悬停行内任意空隙也能提示）。
+const ROW_TOGGLE_TITLE = "点击行展开/收起该竞品的商店级对比（行 = 商店 × 列 = 词）";
 // 格/段芯片配色：myLead > theirLead 绿（我方占优）· theirLead > myLead 红（竞品占优）
 // · 并列且 >0 琥珀（胶着）· 无数据灰 · 0:0 中性。
 function leadTone(myLead: number, theirLead: number, hasData: boolean): { cls: string; text: string } {
@@ -485,19 +500,26 @@ export function CompetitorPanel({
     const hasData = agg.myBest != null || agg.theirBest != null;
     if (!hasData) {
       // 该竞品在该 (词 × 组) 没有排名快照：显示空白格（悬停给原因），不刷屏。
+      // td 与内层铺满 span 都带同款 title，保证格内任何可见区域都能触发。
+      const blankTitle = `「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`;
       return (
-        <td key={col.key} className="p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50">
-          <span
-            title={`「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`}
-            className="block min-h-6 rounded-md"
-          />
+        <td
+          key={col.key}
+          className={cn("p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50", CELL_BORDER_B)}
+          title={blankTitle}
+        >
+          <span title={blankTitle} className="block min-h-6 rounded-md" />
         </td>
       );
     }
     const tone = leadTone(agg.myLead, agg.theirLead, true);
     const title = segDetailTitle(col.keyword, col.group.label, agg);
     return (
-      <td key={col.key} className="p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50">
+      <td
+        key={col.key}
+        className={cn("p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50", CELL_BORDER_B)}
+        title={title}
+      >
         <span
           title={title}
           className={cn(
@@ -546,8 +568,10 @@ export function CompetitorPanel({
     const rows: any[] = [];
     if (storeRows.length === 0) {
       rows.push(
-        <tr key="detail-empty">
-          <td colSpan={totalCols + 1} className="px-3 py-2 text-xs text-zinc-400 dark:text-zinc-500">
+        <tr key="detail-empty" className={STORE_ROW_BG}>
+          {/* 占住冻结首列位置，避免横向滚动时该行首列区域露出空洞 */}
+          <td className={cn("sticky left-0 z-20 px-3 py-1", STORE_ROW_BG, CELL_BORDER_B)} />
+          <td colSpan={totalCols} className={cn("px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400", CELL_BORDER_B)}>
             暂无商店级在榜数据（先采集或刷新排名）。
           </td>
         </tr>,
@@ -564,21 +588,47 @@ export function CompetitorPanel({
       return `${t}:${o}`;
     };
     for (const sf of storeRows) {
+      const storeTitle = `${storefrontDisplayName(sf)}（${sf}）：商店级对比行 —— 词格为「它 #名次:我 #名次」，红=它压我 / 琥珀=重叠 / 绿=我方占优，无数据留白`;
       rows.push(
-        <tr key={`detail-${sf}`} className="border-b border-zinc-100 dark:border-zinc-800">
-          <th scope="row" className="px-3 py-1 text-left align-top whitespace-nowrap font-normal">
-            <span className="text-[11px] text-zinc-600 dark:text-zinc-300">{storefrontDisplayName(sf)}</span>
-            <span className="ml-1.5 font-mono text-[9px] text-zinc-400 dark:text-zinc-500">{sf}</span>
+        <tr key={`detail-${sf}`} className={STORE_ROW_BG}>
+          <th
+            scope="row"
+            className={cn(
+              "sticky left-0 z-20 px-3 py-1 text-right align-top whitespace-nowrap font-normal",
+              STORE_ROW_BG,
+              CELL_BORDER_B,
+            )}
+          >
+            {/* 右对齐让商店名更贴近词列；两个内联 span 都带 title，避免文字吃悬停 */}
+            <span
+              title={storeTitle}
+              className="text-[11px] text-zinc-700 dark:text-zinc-200"
+            >
+              {storefrontDisplayName(sf)}
+            </span>
+            <span
+              title={storeTitle}
+              className="ml-1.5 font-mono text-[9px] text-zinc-400 dark:text-zinc-500"
+            >
+              {sf}
+            </span>
           </th>
           {matrixCols.map((col) => {
             const face = faceMap.get(`${col.lang}\u0000${col.keyword}`);
             const cell = (face?.cells || []).find((c: any) => c?.storefront === sf);
             const state = storeCellTone(cell?.own, cell?.theirs);
+            const cellTitle = state
+              ? `${storefrontDisplayName(sf)} · 「${col.keyword}」：它 #${cell?.theirs ?? "—"} / 我 #${cell?.own ?? "—"}`
+              : `${storefrontDisplayName(sf)} · 「${col.keyword}」：双方都无在榜数据（未采集或名次 >200）`;
             return (
-              <td key={col.key} className="p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50">
+              <td
+                key={col.key}
+                className={cn("p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50", CELL_BORDER_B)}
+                title={cellTitle}
+              >
                 {state ? (
                   <span
-                    title={`${storefrontDisplayName(sf)} · 「${col.keyword}」：它 #${cell?.theirs ?? "—"} / 我 #${cell?.own ?? "—"}`}
+                    title={cellTitle}
                     className={cn(
                       "block rounded-md px-1 py-1 text-center text-[10px] font-medium tabular-nums whitespace-nowrap",
                       state.cls,
@@ -587,10 +637,7 @@ export function CompetitorPanel({
                     {cellText(cell)}
                   </span>
                 ) : (
-                  <span
-                    title={`${storefrontDisplayName(sf)} · 「${col.keyword}」：双方都无在榜数据（未采集或名次 >200）`}
-                    className="block min-h-6 rounded-md"
-                  />
+                  <span title={cellTitle} className="block min-h-6 rounded-md" />
                 )}
               </td>
             );
@@ -846,13 +893,18 @@ export function CompetitorPanel({
                 : "尚无采集到排名的关键词列 —— 点击“扫描在榜词”或“刷新排名”采集。"}
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse">
+            <div className="overflow-auto max-h-[min(72vh,42rem)]">
+              {/* border-separate + border-spacing-0：border-collapse 下 sticky 单元格在
+                  Chromium 中表现不稳（边框/背景不随滚动移动），逐格画线保持原视觉。 */}
+              <table className="w-full text-xs border-separate border-spacing-0">
                 <thead>
                   <tr>
                     <th
                       rowSpan={2}
-                      className="px-3 py-1.5 text-left align-top whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400"
+                      className={cn(
+                        "sticky top-0 left-0 z-40 px-3 py-1.5 text-left align-top whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400",
+                        MATRIX_HDR_BG,
+                      )}
                       title="行 = 竞品（按竞争指数降序）；点击行展开商店级对比（行 = 商店 × 列 = 词）"
                     >
                       竞品 / 指数 ↓
@@ -861,26 +913,41 @@ export function CompetitorPanel({
                       <th
                         key={run.group.id}
                         colSpan={run.cols.length}
-                        className="px-2 py-1 text-center text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-50/70 dark:bg-zinc-800/40 border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
+                        className={cn(
+                          "sticky top-0 z-30 h-7 px-2 py-1 text-center text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap",
+                          MATRIX_HDR_BG,
+                        )}
                         title={run.group.title}
                       >
                         {run.group.label}
                       </th>
                     ))}
                   </tr>
-                  <tr className="border-b-2 border-zinc-300 dark:border-zinc-600">
-                    {matrixCols.map((col) => (
-                      <th
-                        key={col.key}
-                        className="px-1 py-1.5 align-top text-center border-l border-zinc-100 dark:border-zinc-800"
-                        style={{ width: "10ch", maxWidth: "10ch", minWidth: "10ch" }}
-                        title={`${col.group.label} · 「${col.keyword}」（组内 ${col.hit} 个竞品命中）`}
-                      >
-                        <span className="block break-words leading-tight font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
-                          {col.keyword}
-                        </span>
-                      </th>
-                    ))}
+                  <tr>
+                    {matrixCols.map((col) => {
+                      const hdrTitle = `${col.group.label} · 「${col.keyword}」（组内 ${col.hit} 个竞品命中）`;
+                      return (
+                        <th
+                          key={col.key}
+                          className={cn(
+                            "sticky z-30 px-1 py-1.5 align-top text-center border-l border-zinc-100 dark:border-zinc-800",
+                            MATRIX_HDR_BG,
+                            HDR_BORDER_B2,
+                          )}
+                          style={{ width: "10ch", maxWidth: "10ch", minWidth: "10ch", top: "1.75rem" /* 与组头行 h-7 等高，锁定第二行贴顶偏移 */ }}
+                          title={hdrTitle}
+                        >
+                          {/* 内层铺满词头的 span 必须带同款 title：否则原生 title 只在悬停
+                              到 th 自身（padding 空隙）时触发，悬停词文本时反而消失。 */}
+                          <span
+                            title={hdrTitle}
+                            className="block break-words leading-tight font-mono text-[11px] text-zinc-600 dark:text-zinc-300"
+                          >
+                            {col.keyword}
+                          </span>
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -896,7 +963,7 @@ export function CompetitorPanel({
                         key={`${competitor.id}-row`}
                         onClick={() => toggleRow(competitor.id)}
                         className={cn(
-                          "cursor-pointer border-b border-zinc-100 dark:border-zinc-800",
+                          "group cursor-pointer",
                           expanded
                             ? "bg-zinc-50/70 dark:bg-zinc-800/30"
                             : "hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30",
@@ -904,10 +971,16 @@ export function CompetitorPanel({
                       >
                         <th
                           scope="row"
-                          className="px-2 py-1.5 text-left align-top"
-                          title="点击行展开/收起该竞品的商店级对比（行 = 商店 × 列 = 词）"
+                          className={cn(
+                            "sticky left-0 z-20 px-2 py-1.5 text-left align-top",
+                            CELL_BORDER_B,
+                            expanded
+                              ? MATRIX_ROW_OPEN
+                              : cn(MATRIX_ROW_BG, "group-hover:bg-zinc-50 dark:group-hover:bg-[#1d1d20]"),
+                          )}
+                          title={ROW_TOGGLE_TITLE}
                         >
-                          <div className="flex items-start gap-1">
+                          <div className="flex items-start gap-1" title={ROW_TOGGLE_TITLE}>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
                                 <span
@@ -942,16 +1015,16 @@ export function CompetitorPanel({
                               </div>
                               <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-zinc-400 dark:text-zinc-500">
                                 <span title="竞争指数：Σ 权重(我方名次段) × 威胁 × 长尾降权（近 7 天窗口）">
-                                  指数 <b className="font-semibold text-amber-600 dark:text-amber-400">{intel.index}</b>
+                                  指数 <b title="竞争指数：Σ 权重(我方名次段) × 威胁 × 长尾降权（近 7 天窗口）" className="font-semibold text-amber-600 dark:text-amber-400">{intel.index}</b>
                                 </span>
                                 <span title="压我 = 该竞品名次更靠前、或它上榜我未上榜的词数">
-                                  压我 <b className="font-semibold text-red-500 dark:text-red-400">{intel.pressuredCount}</b> 词
+                                  压我 <b title="压我 = 该竞品名次更靠前、或它上榜我未上榜的词数" className="font-semibold text-red-500 dark:text-red-400">{intel.pressuredCount}</b> 词
                                 </span>
                                 <span title="重叠 = 双方都跟踪的词数">
-                                  重叠 <b className="font-semibold text-zinc-700 dark:text-zinc-200">{intel.faceCount}</b> 词
+                                  重叠 <b title="重叠 = 双方都跟踪的词数" className="font-semibold text-zinc-700 dark:text-zinc-200">{intel.faceCount}</b> 词
                                 </span>
                                 <span title="在榜 = 它进前 200 的词数">
-                                  在榜 <b className="font-semibold text-zinc-700 dark:text-zinc-200">{intel.theirOnChart}</b> 词
+                                  在榜 <b title="在榜 = 它进前 200 的词数" className="font-semibold text-zinc-700 dark:text-zinc-200">{intel.theirOnChart}</b> 词
                                 </span>
                               </div>
                             </div>
