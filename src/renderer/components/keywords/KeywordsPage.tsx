@@ -2023,6 +2023,7 @@ export function KeywordsPage() {
           projectId={project.id}
           projectKeywords={project.trackedKeywords || []}
           product={{
+            id: product.id,
             platform: product.platform,
             supportedLanguages: product.supportedLanguages,
             trackId: product.trackId,
