@@ -22,6 +22,79 @@ function saveCompetitors(store: any, projectId: string, list: any[]): void {
   store.set("competitors", all);
 }
 
+// 新增/合并一条竞品记录的纯列表逻辑（competitors:save 与 competitors:addDiscovered 共用）：
+// 同名竞品（同一品牌另一平台的列表）自动合并、trackIds 按平台字段并入；返回新列表与
+// 是否发生同名合并（savedId 用于排名回填）。
+function mergeCompetitorInto(list: any[], competitor: any): { next: any[]; merged: boolean; savedId: string | null } {
+  const platform: "ios" | "macos" | "unknown" =
+    competitor.platform === "macos"
+      ? "macos"
+      : competitor.platform === "ios"
+        ? "ios"
+        : "unknown";
+  // 同时接受新模型 trackIds 和旧模型 trackId+platform，统一写入按平台字段。
+  const trackIds = {
+    ...(competitor.trackIds || {}),
+    ...(platform !== "unknown" && competitor.trackId
+      ? { [platform]: String(competitor.trackId) }
+      : {}),
+  };
+  let merged = false;
+  let savedId: string | null = null;
+  let next: any[];
+  if (competitor.id) {
+    // 更新既有竞品。
+    const index = list.findIndex((item: any) => item.id === competitor.id);
+    const previous = index >= 0 ? list[index] : competitor;
+    const normalized = {
+      ...previous,
+      ...competitor,
+      trackId: previous.trackId ?? competitor.trackId ?? null,
+      platform: previous.platform ?? platform,
+      trackIds: { ...(previous.trackIds || {}), ...trackIds },
+    };
+    next = index >= 0
+      ? [...list.slice(0, index), normalized, ...list.slice(index + 1)]
+      : [...list, normalized];
+    savedId = normalized.id;
+  } else {
+    // 新增：同名竞品（同一品牌另一平台的列表）自动合并，不新建重复条目。
+    const sameName = findCompetitorByName(list, competitor.name);
+    if (sameName) {
+      const index = list.findIndex((item: any) => item.id === sameName.id);
+      const normalized = {
+        ...sameName,
+        trackIds: { ...(sameName.trackIds || {}), ...trackIds },
+        linkedKeywords: Array.isArray(competitor.linkedKeywords)
+          ? [...new Map(
+              [...(sameName.linkedKeywords || []), ...competitor.linkedKeywords].map(
+                (link: any) => [`${link.keyword}\u0000${link.language}`, link],
+              ),
+            ).values()]
+          : sameName.linkedKeywords,
+      };
+      next = [...list.slice(0, index), normalized, ...list.slice(index + 1)];
+      merged = true;
+      savedId = sameName.id;
+    } else {
+      const normalized = createCompetitor({
+        name: String(competitor.name).trim(),
+        trackId: (Object.values(trackIds)[0] as string | undefined) ?? null,
+        platform,
+        trackIds,
+        githubUrl: competitor.githubUrl || null,
+        notes: competitor.notes || "",
+        linkedKeywords: Array.isArray(competitor.linkedKeywords)
+          ? competitor.linkedKeywords
+          : undefined,
+      });
+      next = [...list, normalized];
+      savedId = normalized.id;
+    }
+  }
+  return { next, merged, savedId };
+}
+
 export function registerCompetitorsHandlers(): void {
   ipcMain.handle("competitors:list", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
@@ -29,77 +102,80 @@ export function registerCompetitorsHandlers(): void {
     return competitorsFor(s, projectId).map(migrateCompetitor);
   });
 
+  // 发现候选（P3「扫描在榜词」发现但未跟踪的 App，kv competitorDiscoveries[projectId]）。
+  ipcMain.handle("competitors:discoveries", async (_event, projectId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const s = await getStore();
+    return (s.get("competitorDiscoveries") || {})[projectId] || [];
+  });
+
+  // 把发现候选加入竞品列表：与 competitors:save 同语义（同名竞品合并、trackIds 按平台
+  // 并入），但先按 trackId 查重——列表里已跟踪该 trackId（任意平台）的不重复建条目；
+  // 无论结果，该候选一律从 competitorDiscoveries[projectId] 移除。
+  ipcMain.handle("competitors:addDiscovered", async (_event, projectId: string, input: { trackId?: string; trackName?: string; platform?: string }) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    const trackId = assertNonEmptyString(input?.trackId, "trackId");
+    const platform: "ios" | "macos" | "unknown" =
+      input?.platform === "macos" ? "macos" : input?.platform === "ios" ? "ios" : "unknown";
+    if (platform === "unknown") throw new Error("platform 必须是 ios 或 macos");
+    const s = await getStore();
+    // 1) 先移除候选（无论结果，候选都不再需要展示）。
+    const discoveriesAll: Record<string, any[]> = s.get("competitorDiscoveries") || {};
+    const perProject = Array.isArray(discoveriesAll[projectId]) ? discoveriesAll[projectId] : [];
+    const discovery = perProject.find((d: any) => String(d?.trackId) === String(trackId));
+    const rest = perProject.filter((d: any) => String(d?.trackId) !== String(trackId));
+    if (rest.length !== perProject.length) {
+      discoveriesAll[projectId] = rest;
+      s.set("competitorDiscoveries", discoveriesAll);
+    }
+    // 2) 竞品列表按 trackId 查重（save 只按名字去重，这里补一层 trackId 去重）。
+    const list = competitorsFor(s, projectId);
+    const already = list.find((item: any) =>
+      [item?.trackId, ...Object.values(item?.trackIds || {})]
+        .filter(Boolean)
+        .map(String)
+        .includes(String(trackId)),
+    );
+    if (already) {
+      notifyDataChanged("competitors");
+      return { ok: true, existed: true, competitorId: already.id };
+    }
+    // 3) 走与 save 相同的新增/同名合并逻辑（linkedKeywords 留空，不预关联当前词）。
+    const { next, savedId } = mergeCompetitorInto(list, {
+      name: String(input?.trackName || discovery?.trackName || "未知应用").trim(),
+      trackId: String(trackId),
+      platform,
+      trackIds: { [platform]: String(trackId) },
+      githubUrl: null,
+      notes: "",
+      linkedKeywords: [],
+    });
+    saveCompetitors(s, projectId, next);
+    notifyDataChanged("competitors");
+    return { ok: true, existed: false, competitorId: savedId };
+  });
+
+  // 忽略发现候选：仅从 competitorDiscoveries[projectId] 移除，不加入竞品列表。
+  ipcMain.handle("competitors:removeDiscovery", async (_event, projectId: string, trackId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    trackId = assertNonEmptyString(trackId, "trackId");
+    const s = await getStore();
+    const discoveriesAll: Record<string, any[]> = s.get("competitorDiscoveries") || {};
+    const perProject = Array.isArray(discoveriesAll[projectId]) ? discoveriesAll[projectId] : [];
+    const rest = perProject.filter((d: any) => String(d?.trackId) !== String(trackId));
+    if (rest.length !== perProject.length) {
+      discoveriesAll[projectId] = rest;
+      s.set("competitorDiscoveries", discoveriesAll);
+    }
+    return true;
+  });
+
   ipcMain.handle("competitors:save", async (_event, projectId: string, competitor: any) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     if (!competitor?.name) throw new Error("竞品名称不能为空");
     const s = await getStore();
     const list = competitorsFor(s, projectId);
-    const platform: "ios" | "macos" | "unknown" =
-      competitor.platform === "macos"
-        ? "macos"
-        : competitor.platform === "ios"
-          ? "ios"
-          : "unknown";
-    // 同时接受新模型 trackIds 和旧模型 trackId+platform，统一写入按平台字段。
-    const trackIds = {
-      ...(competitor.trackIds || {}),
-      ...(platform !== "unknown" && competitor.trackId
-        ? { [platform]: String(competitor.trackId) }
-        : {}),
-    };
-    let merged = false;
-    let savedId: string | null = null;
-    let next: any[];
-    if (competitor.id) {
-      // 更新既有竞品。
-      const index = list.findIndex((item: any) => item.id === competitor.id);
-      const previous = index >= 0 ? list[index] : competitor;
-      const normalized = {
-        ...previous,
-        ...competitor,
-        trackId: previous.trackId ?? competitor.trackId ?? null,
-        platform: previous.platform ?? platform,
-        trackIds: { ...(previous.trackIds || {}), ...trackIds },
-      };
-      next = index >= 0
-        ? [...list.slice(0, index), normalized, ...list.slice(index + 1)]
-        : [...list, normalized];
-      savedId = normalized.id;
-    } else {
-      // 新增：同名竞品（同一品牌另一平台的列表）自动合并，不新建重复条目。
-      const sameName = findCompetitorByName(list, competitor.name);
-      if (sameName) {
-        const index = list.findIndex((item: any) => item.id === sameName.id);
-        const normalized = {
-          ...sameName,
-          trackIds: { ...(sameName.trackIds || {}), ...trackIds },
-          linkedKeywords: Array.isArray(competitor.linkedKeywords)
-            ? [...new Map(
-                [...(sameName.linkedKeywords || []), ...competitor.linkedKeywords].map(
-                  (link: any) => [`${link.keyword}\u0000${link.language}`, link],
-                ),
-              ).values()]
-            : sameName.linkedKeywords,
-        };
-        next = [...list.slice(0, index), normalized, ...list.slice(index + 1)];
-        merged = true;
-        savedId = sameName.id;
-      } else {
-        const normalized = createCompetitor({
-          name: String(competitor.name).trim(),
-          trackId: (Object.values(trackIds)[0] as string | undefined) ?? null,
-          platform,
-          trackIds,
-          githubUrl: competitor.githubUrl || null,
-          notes: competitor.notes || "",
-          linkedKeywords: Array.isArray(competitor.linkedKeywords)
-            ? competitor.linkedKeywords
-            : undefined,
-        });
-        next = [...list, normalized];
-        savedId = normalized.id;
-      }
-    }
+    const { next, merged, savedId } = mergeCompetitorInto(list, competitor);
     saveCompetitors(s, projectId, next);
     // 用搜索结果里已带出的各商店排名立即回填，不用等下一次调度抓取。
     const seedRanks = Array.isArray(competitor.seedRanks)
@@ -138,6 +214,38 @@ export function registerCompetitorsHandlers(): void {
     }
     notifyDataChanged("competitors");
     return { list: next, merged };
+  });
+
+  // 竞品「关联更多关键词」：items 按 (keyword + language) 去重后合并进该竞品
+  // linkedKeywords（保留原有），保存后返回更新后的竞品对象。
+  ipcMain.handle("competitors:linkKeywords", async (_event, projectId: string, competitorId: string, items: Array<{ keyword?: string; language?: string }>) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    competitorId = assertNonEmptyString(competitorId, "competitorId");
+    if (!Array.isArray(items)) throw new Error("items 必须是数组");
+    const s = await getStore();
+    const list = competitorsFor(s, projectId);
+    const index = list.findIndex((item: any) => item.id === competitorId);
+    if (index < 0) throw new Error("竞品不存在或已被移除");
+    const keyOf = (link: any) => `${link?.keyword ?? ""}\u0000${link?.language ?? ""}`;
+    const seen = new Map<string, any>(
+      (Array.isArray(list[index]?.linkedKeywords) ? list[index].linkedKeywords : []).map(
+        (link: any) => [keyOf(link), link],
+      ),
+    );
+    for (const item of items || []) {
+      const keyword = item && typeof item.keyword === "string" ? item.keyword.trim() : "";
+      if (!keyword) continue;
+      const language =
+        item && typeof item.language === "string" && item.language.trim()
+          ? item.language.trim()
+          : "en";
+      const link = { keyword, language };
+      if (!seen.has(keyOf(link))) seen.set(keyOf(link), link);
+    }
+    const updated = { ...list[index], linkedKeywords: [...seen.values()] };
+    saveCompetitors(s, projectId, [...list.slice(0, index), updated, ...list.slice(index + 1)]);
+    notifyDataChanged("competitors");
+    return updated;
   });
 
   ipcMain.handle("competitors:remove", async (_event, projectId: string, competitorId: string) => {
