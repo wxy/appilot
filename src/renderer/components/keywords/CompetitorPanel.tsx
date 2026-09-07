@@ -1,18 +1,178 @@
 import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
-import { formatHumanTime, platformLabel } from "../../lib/format";
+import { platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { ValueFlash } from "../ui/ValueFlash";
-import { KeywordRuby } from "../ui/KeywordRuby";
+
+// —— 竞品矩阵（纯计算辅助，模块级）——
+// 语言标签：矩阵列头分组 + 行展开分组标题。
+const FACE_LANG_LABEL: Record<string, string> = {
+  en: "英语",
+  "zh-Hans": "简体中文",
+  "zh-Hant": "繁体中文",
+  ja: "日语",
+  ko: "韩语",
+  de: "德语",
+  fr: "法语",
+  es: "西班牙语",
+  pt: "葡萄牙语",
+  ru: "俄语",
+};
+const LANG_PRIORITY = ["en", "zh-Hans", "zh-Hant", "ja", "ko", "de", "fr", "es", "it", "nl", "pt", "pt-BR", "ru"];
+function langRank(code: string): number {
+  const i = LANG_PRIORITY.indexOf(code);
+  return i === -1 ? LANG_PRIORITY.length : i;
+}
+// 交集状态（词行“状态”列）。
+const FACE_STATUS_LABEL: Record<string, string> = {
+  both: "正面竞争",
+  competitorOnly: "它上榜我未上榜",
+  selfOnly: "我上榜它未上榜",
+  offChart: "双方 200 外",
+  unknown: "未采集",
+};
+const SEG_EN_LOCAL_TIP = "英 = 英语地区商店 us/gb/au/ca/nz/ie 的跨店综合";
+const SEG_EN_GLOBAL_TIP = "全 = 该英语词在其它语言商店（如 kr/jp/de）的跨店综合";
+
+interface SegDef {
+  segId: "local" | "global";
+  label: string; // 列头/段芯片短标（英 / 全 / 本地）
+  title: string;
+  stores: string[]; // 该段覆盖的商店集合（与 face.cells 求交聚合）
+}
+interface MatrixCol {
+  key: string; // `${language}\u0000${keyword}`
+  lang: string;
+  keyword: string;
+  hit: number; // 命中该词的竞品数（排序用）
+  segs: SegDef[];
+}
+
+// 列内分段：英语词 local 段 = storefrontsForLanguage("en")（us/gb/au/ca/nz/ie），
+// 其余商店归 global（“全”，如 kr/jp/de）；非英语词只有单一“本地”子列。
+function segsForColumn(lang: string, stores: string[]): SegDef[] {
+  const localList = storefrontsForLanguage(lang);
+  const local = stores.filter((s) => localList.includes(s));
+  const global = stores.filter((s) => !localList.includes(s));
+  if (lang !== "en") {
+    return [
+      {
+        segId: "local",
+        label: "本地",
+        title: `该词在${FACE_LANG_LABEL[lang] || lang}商店（${localList.join("/")}）的跨店综合`,
+        stores: [...stores],
+      },
+    ];
+  }
+  const segs: SegDef[] = [];
+  if (local.length > 0) segs.push({ segId: "local", label: "英", title: SEG_EN_LOCAL_TIP, stores: local });
+  if (global.length > 0) segs.push({ segId: "global", label: "全", title: SEG_EN_GLOBAL_TIP, stores: global });
+  if (segs.length === 0) segs.push({ segId: "local", label: "英", title: SEG_EN_LOCAL_TIP, stores: [] });
+  return segs;
+}
+
+function compareCols(a: MatrixCol, b: MatrixCol): number {
+  return b.hit - a.hit || langRank(a.lang) - langRank(b.lang) || a.keyword.localeCompare(b.keyword);
+}
+
+// 从 profiles（competitors:overview → {competitor, intel, indexHistory}）收集矩阵列：
+// 只保留采集到 cell 的词；聚焦词时只保留该词的列，否则最多 40 列、按命中竞品数优先。
+function computeMatrixCols(profiles: any[], focusWord: string, focusLang: string): MatrixCol[] {
+  const byKey = new Map<string, { lang: string; keyword: string; stores: Set<string>; hit: number }>();
+  for (const p of profiles || []) {
+    for (const f of p?.intel?.faces || []) {
+      if (!Array.isArray(f?.cells) || f.cells.length === 0) continue;
+      const key = `${f.language}\u0000${f.keyword}`;
+      let agg = byKey.get(key);
+      if (!agg) {
+        agg = { lang: f.language, keyword: f.keyword, stores: new Set<string>(), hit: 0 };
+        byKey.set(key, agg);
+      }
+      agg.hit += 1;
+      for (const cell of f.cells) if (cell?.storefront) agg.stores.add(cell.storefront);
+    }
+  }
+  const all: MatrixCol[] = [...byKey.entries()].map(([key, agg]) => ({
+    key,
+    lang: agg.lang,
+    keyword: agg.keyword,
+    hit: agg.hit,
+    segs: segsForColumn(agg.lang, [...agg.stores]),
+  }));
+  if (focusWord) {
+    const exact = all.filter((c) => c.keyword === focusWord && c.lang === focusLang);
+    const loose = all.filter((c) => c.keyword === focusWord);
+    return (exact.length > 0 ? exact : loose).sort(compareCols);
+  }
+  return all.sort(compareCols).slice(0, 40);
+}
+
+interface CellAgg {
+  myLead: number; // 我方领先商店数（它未上榜我在榜 / 双方在榜且我名次更好）
+  theirLead: number;
+  myBest: number | null;
+  theirBest: number | null;
+  myStores: string[];
+  theirStores: string[];
+}
+// 对 (竞品 × 词 × 段) 的商店集做跨店综合：cells = [{storefront, own, theirs}]，
+// own/theirs 为各自最好名次；own < theirs → 我领先，反之它领先，名次并列不计。
+function aggregateCells(cells: any[], stores?: string[]): CellAgg {
+  const agg: CellAgg = { myLead: 0, theirLead: 0, myBest: null, theirBest: null, myStores: [], theirStores: [] };
+  for (const c of cells || []) {
+    if (stores && !stores.includes(c?.storefront)) continue;
+    const own = typeof c?.own === "number" ? (c.own as number) : null;
+    const theirs = typeof c?.theirs === "number" ? (c.theirs as number) : null;
+    if (own != null && (agg.myBest == null || own < agg.myBest)) agg.myBest = own;
+    if (theirs != null && (agg.theirBest == null || theirs < agg.theirBest)) agg.theirBest = theirs;
+    if (own != null && theirs == null) {
+      agg.myLead += 1;
+      agg.myStores.push(c.storefront);
+    } else if (theirs != null && own == null) {
+      agg.theirLead += 1;
+      agg.theirStores.push(c.storefront);
+    } else if (own != null && theirs != null) {
+      if (own < theirs) {
+        agg.myLead += 1;
+        agg.myStores.push(c.storefront);
+      } else if (theirs < own) {
+        agg.theirLead += 1;
+        agg.theirStores.push(c.storefront);
+      }
+    }
+  }
+  return agg;
+}
+
+const TONE_GREY = "bg-zinc-100/70 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-500";
+const TONE_MY = "bg-emerald-500/15 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300";
+const TONE_THEIR = "bg-red-500/15 dark:bg-red-500/20 text-red-700 dark:text-red-300";
+const TONE_TIED = "bg-amber-400/20 dark:bg-amber-400/25 text-amber-700 dark:text-amber-300";
+const TONE_FLAT = "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400";
+// 格/段芯片配色：myLead > theirLead 绿（我方占优）· theirLead > myLead 红（竞品占优）
+// · 并列且 >0 琥珀（胶着）· 无数据灰 · 0:0 中性。
+function leadTone(myLead: number, theirLead: number, hasData: boolean): { cls: string; text: string } {
+  if (!hasData) return { cls: TONE_GREY, text: "—" };
+  if (myLead > theirLead) return { cls: TONE_MY, text: `${myLead} : ${theirLead}` };
+  if (theirLead > myLead) return { cls: TONE_THEIR, text: `${myLead} : ${theirLead}` };
+  if (myLead + theirLead > 0) return { cls: TONE_TIED, text: `${myLead} : ${theirLead}` };
+  return { cls: TONE_FLAT, text: "0 : 0" };
+}
+// 格 title 明细：我最好 #x / 它最好 #y · 我领先商店 a,b / 它领先 c,d（商店中文名）。
+function segDetailTitle(keyword: string, segLabel: string, agg: CellAgg): string {
+  const parts: string[] = [`我最好 #${agg.myBest ?? "—"}`, `它最好 #${agg.theirBest ?? "—"}`];
+  if (agg.myStores.length > 0) parts.push(`我领先：${agg.myStores.map(storefrontDisplayName).join("、")}`);
+  if (agg.theirStores.length > 0) parts.push(`它领先：${agg.theirStores.map(storefrontDisplayName).join("、")}`);
+  if (agg.myStores.length === 0 && agg.theirStores.length === 0) parts.push("名次并列或未上榜，无一方领先");
+  return `「${keyword}」${segLabel} 段：${parts.join(" · ")}`;
+}
 
 export function CompetitorPanel({
   projectId,
   product,
   defaultTerm,
   viewLang,
-  rankSnapshots,
-  projectKeywords,
   focusKeyword,
 }: {
   projectId: string;
@@ -26,22 +186,14 @@ export function CompetitorPanel({
   };
   defaultTerm: string;
   viewLang: string;
-  /** 自己的关键词排名（product.rankSnapshots），用于与竞品对比。 */
+  /** 旧“竞品跟踪”视图的入参（排名明细现来自 overview 的 intel.faces），保留以兼容调用方。 */
   rankSnapshots: any[];
-  /** 项目关键词池（用于查找译文标注）。 */
+  /** 旧版译文标注入参（已不再使用），保留以兼容调用方。 */
   projectKeywords?: any[];
-  /** 从关键词矩阵钻取进来的词：进入即聚焦“该词 × 全部竞品”对比（可关闭回总览）。 */
+  /** 从关键词矩阵钻取进来的词：进入即聚焦“该词 × 全部竞品”对比（可关闭回完整矩阵）。 */
   focusKeyword?: string;
 }) {
-  const translationByKey = new Map(
-    (projectKeywords || []).map((k: any) => [
-      `${k.language}\u0000${k.keyword}`,
-      k.translation || "",
-    ]),
-  );
   const [competitors, setCompetitors] = useState<any[]>([]);
-  const [competitorRanks, setCompetitorRanks] = useState<Record<string, any[]>>({});
-  const [trackedKeyword, setTrackedKeyword] = useState("");
   const [term, setTerm] = useState(defaultTerm);
   const [candidates, setCandidates] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
@@ -50,18 +202,19 @@ export function CompetitorPanel({
   const [refreshingRanks, setRefreshingRanks] = useState(false);
   const [page, setPage] = useState(0);
   const [searchError, setSearchError] = useState("");
-  // 竞品总览（P1/P2：App 为中心的竞争面聚合）。
+  // 竞品总览（competitors:overview → [{competitor, intel, indexHistory}]，intel.faces 即矩阵数据）。
   const [profiles, setProfiles] = useState<any[]>([]);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 矩阵行展开 + (词 × 段) 商店明细下钻。
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+  const [storeDrillKey, setStoreDrillKey] = useState<string | null>(null);
   const [profilesTick, setProfilesTick] = useState(0);
   const [scanBusy, setScanBusy] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
-  // 词钻取聚焦：进入竞品标签时若带词，聚焦该词的横表对比（可关闭回总览）。
+  // 词钻取聚焦：进入竞品标签时若带词，矩阵只保留该词的列（可关闭回完整矩阵）。
   const [focusCleared, setFocusCleared] = useState(false);
   const wordDrill = focusKeyword && !focusCleared ? focusKeyword : "";
   useEffect(() => {
     if (focusKeyword) {
-      setTrackedKeyword(`${focusKeyword}\u0000${viewLang || "en"}`);
       setTerm(focusKeyword);
       setFocusCleared(false);
     }
@@ -70,15 +223,7 @@ export function CompetitorPanel({
 
   const load = useCallback(() => {
     (window as any).appilot?.competitors?.list(projectId)
-      .then(async (list: any[]) => {
-        setCompetitors(list);
-        const ranks: Record<string, any[]> = {};
-        for (const competitor of list) {
-          ranks[competitor.id] =
-            (await (window as any).appilot?.competitors?.rankSnapshots(projectId, competitor.id)) || [];
-        }
-        setCompetitorRanks(ranks);
-      })
+      .then((list: any[]) => setCompetitors(list || []))
       .catch(() => setCompetitors([]));
   }, [projectId]);
   // 竞品总览：按当前产品（平台）聚合每个竞品的竞争面与竞争指数。
@@ -137,11 +282,6 @@ export function CompetitorPanel({
     setSearchError("");
     setPage(0);
   }, [viewLang, defaultTerm]);
-
-  // 切换语言后，跟踪表默认回到该语言下第一个关联关键词。
-  useEffect(() => {
-    setTrackedKeyword("");
-  }, [viewLang]);
 
   // 按语言搜索：该语言对应的全部商店。
   const countryOptions = viewLang ? storefrontsForLanguage(viewLang) : ["us"];
@@ -207,8 +347,6 @@ export function CompetitorPanel({
       );
       await load();
       setProfilesTick((v) => v + 1);
-      // 定位到当前关键词，让新竞品行出现在跟踪表里。
-      if (keyword) setTrackedKeyword(`${keyword}\u0000${language}`);
     } finally {
       setAdding(null);
     }
@@ -233,7 +371,7 @@ export function CompetitorPanel({
     await (window as any).appilot?.competitors?.remove(projectId, competitorId);
     load();
     setProfilesTick((v) => v + 1);
-    if (expandedId === competitorId) setExpandedId(null);
+    if (expandedRowId === competitorId) setExpandedRowId(null);
   };
 
   const handleRefreshRanks = async () => {
@@ -248,52 +386,6 @@ export function CompetitorPanel({
     }
   };
 
-  // 竞品跟踪：按 (平台, 当前语言) 下的关联关键词查看自己与竞品的排名对比。
-  const linkedKeywords = Array.from(
-    new Map(
-      competitors
-        // 只统计当前平台已上架竞品关联的关键词：仅在另一平台关联的关键词
-        // 不进入本平台的列表，避免出现“没有竞品”的空关键词。
-        .filter((c: any) => Boolean(competitorTrackId(c, viewPlatform)))
-        .flatMap((c: any) => c.linkedKeywords || [])
-        // 只看当前查看语言的关联关键词：切换语言标签后列表随之变化，
-        // 因此竞品关键词前面无需再标语言。
-        .filter((l: any) => l.language === viewLang)
-        .map((l: any) => [`${l.keyword}\u0000${l.language}`, l]),
-    ).values(),
-  );
-  const activeLink =
-    linkedKeywords.find(
-      (l: any) => `${l.keyword}\u0000${l.language}` === trackedKeyword,
-    ) ||
-    linkedKeywords[0] ||
-    null;
-  const ownRankByStore = new Map<string, number | null>();
-  if (activeLink) {
-    for (const s of rankSnapshots || []) {
-      // 按 (关键词, 语言) 匹配，避免同文本关键词（如 zh-Hans/zh-Hant）
-      // 跨语言串数据；旧数据无语言字段时按关键词文本兜底。
-      if (
-        s.keyword === activeLink.keyword &&
-        (s.language == null || s.language === activeLink.language)
-      ) {
-        ownRankByStore.set(s.storefront, s.rank);
-      }
-    }
-  }
-  const competitorRankAt = (competitor: any, storefront: string): number | null => {
-    if (!activeLink) return null;
-    const item = (competitorRanks[competitor.id] || []).find(
-      (r: any) =>
-        r.keyword === activeLink.keyword &&
-        r.storefront === storefront &&
-        // 兼容旧数据：无 platform 字段的条目按竞品原平台判定。
-        (r.platform == null
-          ? competitor.platform === viewPlatform
-          : r.platform === viewPlatform),
-    );
-    return item?.rank ?? null;
-  };
   // 每个关键词最多关联 10 个竞品。
   const MAX_COMPETITORS_PER_KEYWORD = 10;
   const defaultKeyword = term.trim();
@@ -338,192 +430,243 @@ export function CompetitorPanel({
     safePage * PAGE_SIZE + PAGE_SIZE,
   );
 
-  // —— 竞品总览（P2：App 为中心的竞争面）渲染辅助 ——
-  const OVERLAP_LABEL: Record<string, string> = {
-    both: "正面竞争",
-    competitorOnly: "它上榜我未上榜",
-    selfOnly: "我上榜它未上榜",
-    offChart: "双方 200 外",
-    unknown: "未采集",
+  // —— 竞品矩阵：行列推导 ——
+  const matrixRows: any[] = [...profiles].sort(
+    (a: any, b: any) =>
+      (b.intel?.index ?? 0) - (a.intel?.index ?? 0) ||
+      String(a.competitor?.name ?? "").localeCompare(String(b.competitor?.name ?? "")),
+  );
+  const matrixCols = computeMatrixCols(matrixRows, wordDrill, viewLang || "en");
+  const segTotal = matrixCols.reduce((n: number, c: MatrixCol) => n + c.segs.length, 0);
+  const needsSegRow = matrixCols.some((c: MatrixCol) => c.segs.length > 1);
+  const headerRows = needsSegRow ? 3 : 2;
+  const colRuns: Array<{ lang: string; span: number }> = [];
+  for (const col of matrixCols) {
+    const span = col.segs.length;
+    const last = colRuns[colRuns.length - 1];
+    if (last && last.lang === col.lang) last.span += span;
+    else colRuns.push({ lang: col.lang, span });
+  }
+  const toggleRow = (competitorId: string) => {
+    setExpandedRowId((prev) => (prev === competitorId ? null : competitorId));
+    setStoreDrillKey(null);
   };
-  const FACE_LANG_LABEL: Record<string, string> = {
-    en: "英语", "zh-Hans": "简体中文", "zh-Hant": "繁体中文", ja: "日语", ko: "韩语",
-    de: "德语", fr: "法语", es: "西班牙语", pt: "葡萄牙语", ru: "俄语",
-  };
-  const cellVisual = (own: number | null, theirs: number | null) => {
-    if (theirs != null && own != null) {
-      if (theirs < own) return { cls: "bg-red-500/15 dark:bg-red-500/20 text-red-700 dark:text-red-300", lead: -1 };
-      if (theirs > own) return { cls: "bg-emerald-500/15 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300", lead: 1 };
-      return { cls: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300", lead: 0 };
-    }
-    if (theirs != null) return { cls: "bg-red-50 dark:bg-red-500/5 text-red-600/70 dark:text-red-300/70", lead: -1 };
-    if (own != null) return { cls: "bg-emerald-50 dark:bg-emerald-500/5 text-emerald-600/70 dark:text-emerald-300/70", lead: 1 };
-    return { cls: "bg-zinc-50 dark:bg-zinc-800/40 text-zinc-400 dark:text-zinc-500", lead: 0 };
-  };
-  // 指数趋势 sparkline（近 14 天，取有数据的天）。
-  const Sparkline = ({ history }: { history?: any[] }) => {
-    const pts = (history || []).filter((h: any) => h && (h.faceCount > 0 || h.index > 0)).map((h: any) => h.index);
-    if (pts.length < 2) return <span className="text-[10px] text-zinc-300 dark:text-zinc-600">—</span>;
-    const w = 48;
-    const h = 14;
-    const min = Math.min(...pts);
-    const max = Math.max(...pts);
-    const range = max - min || 1;
-    const coords = pts.map((v, i) => [
-      (i / (pts.length - 1)) * w,
-      h - 2 - ((v - min) / range) * (h - 4),
-    ]);
+
+  // —— 竞品矩阵渲染辅助 ——
+  // (竞品 × 词 × 段) 的跨店综合格。
+  const renderSegCell = (col: MatrixCol, seg: SegDef, face: any) => {
+    const agg = aggregateCells(face?.cells || [], seg.stores);
+    const hasData = agg.myBest != null || agg.theirBest != null;
+    const tone = leadTone(agg.myLead, agg.theirLead, hasData);
+    const title = hasData
+      ? segDetailTitle(col.keyword, seg.label, agg)
+      : `「${col.keyword}」${seg.label} 段：无该竞品排名数据（未采集 / 该段无商店）`;
     return (
-      <svg width={w} height={h} className="shrink-0 text-amber-500 dark:text-amber-400" aria-hidden>
-        <polyline
-          points={coords.map((p) => p.map((n) => n.toFixed(1)).join(",")).join(" ")}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-      </svg>
+      <td key={`${col.key}:${seg.segId}`} className="p-0.5">
+        <span
+          title={title}
+          className={cn(
+            "block min-w-[3.2rem] px-1.5 py-1 rounded-md text-center text-[11px] font-semibold tabular-nums",
+            tone.cls,
+          )}
+        >
+          {tone.text}
+        </span>
+      </td>
     );
   };
-  // 竞争热力（竞品 × 词 相对优势，最近 7 天窗口；列取重叠最多的词，横向可滚动）。
-  const renderHeatmapCard = () => {
-    const rows = profiles.slice(0, 20);
-    if (rows.length === 0) return null;
-    const colFreq = new Map<string, number>();
-    for (const p of rows) {
-      for (const f of p.intel?.faces || []) colFreq.set(f.keyword, (colFreq.get(f.keyword) || 0) + 1);
+  // 商店级下钻表：行 = 商店，列 = 我方 / 竞品名次。
+  const renderStoreDrill = (face: any, cells: any[], segLabel: string) => (
+    <div className="overflow-hidden rounded-lg border border-zinc-200/80 dark:border-zinc-700/60">
+      <div className="flex items-center justify-between px-2 py-1 bg-zinc-100/70 dark:bg-zinc-800/40">
+        <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+          「{face.keyword}」× {segLabel} 段 · 商店级明细（近 7 天窗口）
+        </p>
+        <p className="text-[10px] text-zinc-400 dark:text-zinc-500">名次越小越好 · 未上榜 = 该店无名次数据</p>
+      </div>
+      <table className="w-full text-[11px] border-collapse">
+        <thead>
+          <tr className="text-left">
+            <th className="py-1 px-2 font-medium text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700/60 whitespace-nowrap">商店</th>
+            <th className="py-1 px-2 font-medium text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700/60 text-center">我方</th>
+            <th className="py-1 px-2 font-medium text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700/60 text-center">竞品</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cells.map((cell: any) => {
+            const ownRank: number | null = typeof cell?.own === "number" ? (cell.own as number) : null;
+            const theirRank: number | null =
+              typeof cell?.theirs === "number" ? (cell.theirs as number) : null;
+            return (
+              <tr key={cell.storefront} className="border-b border-zinc-100 dark:border-zinc-800 last:border-0">
+                <td className="py-1 px-2 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
+                  {storefrontDisplayName(cell.storefront)}
+                  <span className="ml-1 font-mono text-[9px] text-zinc-400 dark:text-zinc-500">{cell.storefront}</span>
+                </td>
+                <td className={cn("py-1 px-2 text-center whitespace-nowrap font-medium", rankCellClass(ownRank))}>
+                  <ValueFlash value={ownRank}>{ownRank != null ? `#${ownRank}` : "未上榜"}</ValueFlash>
+                </td>
+                <td className={cn("py-1 px-2 text-center whitespace-nowrap font-medium", rankCellClass(theirRank))}>
+                  <ValueFlash value={theirRank}>{theirRank != null ? `#${theirRank}` : "未上榜"}</ValueFlash>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+  // 单个 face → (英 / 全 / 本地) 段切片，供词行段芯片与商店下钻复用。
+  const faceParts = (face: any): Array<{ label: string; title: string; cells: any[]; agg: CellAgg }> => {
+    const cells: any[] = face?.cells || [];
+    if (cells.length === 0) return [];
+    if (face.language === "en") {
+      const enList = storefrontsForLanguage("en");
+      const parts: Array<{ label: string; title: string; cells: any[]; agg: CellAgg }> = [];
+      const localCells = cells.filter((c: any) => enList.includes(c.storefront));
+      const globalCells = cells.filter((c: any) => !enList.includes(c.storefront));
+      if (localCells.length > 0)
+        parts.push({ label: "英", title: SEG_EN_LOCAL_TIP, cells: localCells, agg: aggregateCells(localCells) });
+      if (globalCells.length > 0)
+        parts.push({ label: "全", title: SEG_EN_GLOBAL_TIP, cells: globalCells, agg: aggregateCells(globalCells) });
+      return parts;
     }
-    const cols = [...colFreq.keys()]
-      .sort((a, b) => (colFreq.get(b)! - colFreq.get(a)!) || a.localeCompare(b))
-      .slice(0, 40);
-    if (cols.length === 0) return null;
-    const heatClass = (f: any) => {
-      if (!f) return "bg-zinc-50 dark:bg-zinc-800/40";
-      switch (f.overlap) {
-        case "both":
-          return f.delta != null && f.delta < 0 ? "bg-red-500" : "bg-emerald-500";
-        case "competitorOnly":
-          return "bg-rose-400/80 dark:bg-rose-400/60";
-        case "selfOnly":
-          return "bg-emerald-300 dark:bg-emerald-400/60";
-        case "offChart":
-          return "bg-zinc-300 dark:bg-zinc-600";
-        default:
-          return "bg-zinc-100 dark:bg-zinc-800/70";
-      }
-    };
-    const heatTip = (f: any) =>
-      f
-        ? `${f.keyword}：我 ${f.ownBest ?? "—"} / 它 ${f.theirBest ?? "—"} · ${OVERLAP_LABEL[f.overlap] || ""}`
-        : "无交集";
+    return [
+      {
+        label: "本地",
+        title: `该词在${FACE_LANG_LABEL[face.language] || face.language}商店（${storefrontsForLanguage(face.language).join("/")}）的跨店综合`,
+        cells,
+        agg: aggregateCells(cells),
+      },
+    ];
+  };
+  // 行展开词列表中的一行：关键词 + 段芯片（英 2:1 / 全 0:3，同矩阵配色）+ 状态。
+  // 点击段芯片展开该 (词 × 段) 的商店级明细表。
+  const renderWordItem = (face: any) => {
+    const parts = faceParts(face);
+    const wordKey = `${face.language}\u0000${face.keyword}`;
+    const status = FACE_STATUS_LABEL[face.overlap] || face.overlap || "未知";
     return (
-      <div className="px-4 py-3 border-t border-zinc-100 dark:border-zinc-800">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">竞争热力（竞品 × 词）</h4>
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">最近 7 天 · 绿=我领先 / 红=它压我 / 浅=单向在榜 / 灰=200外或未采集</span>
+      <div key={wordKey} className="py-1">
+        <div className="flex items-center gap-2">
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-800 dark:text-zinc-200"
+            title={`${face.keyword}（${FACE_LANG_LABEL[face.language] || face.language}）${face.longTail ? " · 双方最新都在 200 名后（长尾降权）" : ""}`}
+          >
+            {face.keyword}
+            {face.longTail && (
+              <span className="ml-1.5 px-1 py-px rounded text-[9px] bg-zinc-100 dark:bg-zinc-800 text-zinc-400 align-middle">
+                长尾
+              </span>
+            )}
+          </span>
+          {parts.map((part) => {
+            const drillKey = `${wordKey}\u0000${part.label}`;
+            const open = storeDrillKey === drillKey;
+            const tone = leadTone(
+              part.agg.myLead,
+              part.agg.theirLead,
+              part.agg.myBest != null || part.agg.theirBest != null,
+            );
+            return (
+              <button
+                type="button"
+                key={part.label}
+                onClick={() => setStoreDrillKey(open ? null : drillKey)}
+                title={`${part.title}｜${segDetailTitle(face.keyword, part.label, part.agg)}（点击${open ? "收起" : "展开"}商店明细）`}
+                className={cn(
+                  "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-shadow",
+                  tone.cls,
+                  open && "ring-2 ring-amber-500/60",
+                )}
+              >
+                {part.label} {tone.text}
+              </button>
+            );
+          })}
+          <span
+            className="shrink-0 w-28 text-right text-[10px] text-zinc-400 dark:text-zinc-500"
+            title={`交集状态（近 7 天窗口）＝ ${status}${face.contribution > 0 ? `；指数贡献 +${face.contribution}` : ""}`}
+          >
+            {status}
+            {face.contribution > 0 && <span className="ml-0.5 text-amber-600 dark:text-amber-400">+{face.contribution}</span>}
+          </span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="border-separate" style={{ borderSpacing: 2 }}>
-            <tbody>
-              {rows.map(({ competitor, intel }: any) => {
-                const faceByKw = new Map((intel?.faces || []).map((f: any) => [f.keyword, f]));
-                return (
-                  <tr key={competitor.id}>
-                    <td className="text-[11px] text-zinc-600 dark:text-zinc-300 whitespace-nowrap pr-2 max-w-40 truncate">
-                      {competitor.name}
-                    </td>
-                    {cols.map((kw) => {
-                      const f = faceByKw.get(kw);
-                      return (
-                        <td key={kw} title={heatTip(f)}>
-                          <span className={cn("block w-3.5 h-3.5 rounded-[3px]", heatClass(f))} />
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        {parts
+          .filter((part) => storeDrillKey === `${wordKey}\u0000${part.label}`)
+          .map((part) => (
+            <div key={`drill-${part.label}`} className="mt-1.5">
+              {renderStoreDrill(face, part.cells, part.label)}
+            </div>
+          ))}
       </div>
     );
   };
-  // 竞争面详情：按语言分组，行 = 关键词，列 = 该语言涉及商店；格 = 我/它名次。
-  const renderFacesTable = (intel: any) => {
-    const byLang = new Map<string, any[]>();
-    for (const face of intel.faces || []) {
-      const list = byLang.get(face.language) || [];
-      list.push(face);
-      byLang.set(face.language, list);
+  // 行展开 = 词级汇总：按语言分组；英语语言内部再拆“英语地区 / 全局”两组。
+  const renderRowDetail = (profile: any) => {
+    const intel = profile.intel || {};
+    const faces: any[] = intel.faces || [];
+    if (faces.length === 0) {
+      return (
+        <p className="text-xs text-zinc-400 dark:text-zinc-500">
+          尚无采集数据（手动关联的关键词会出现在列表里，等待采集）。
+        </p>
+      );
     }
-    const langs = [...byLang.keys()].sort((a, b) =>
-      (FACE_LANG_LABEL[a] || a).localeCompare(FACE_LANG_LABEL[b] || b, "zh-Hans-CN"),
-    );
+    const byLang = new Map<string, any[]>();
+    for (const f of faces) {
+      const lang = String(f.language ?? "en");
+      const list = byLang.get(lang) || [];
+      list.push(f);
+      byLang.set(lang, list);
+    }
+    const langs = [...byLang.keys()].sort((a, b) => langRank(a) - langRank(b));
     return (
-      <div className="px-4 py-3 space-y-4 border-t border-zinc-100 dark:border-zinc-800">
-        {langs.length === 0 && (
-          <p className="text-xs text-zinc-400 dark:text-zinc-500">尚无采集数据（有手动关联的关键词会出现在列表里）。</p>
-        )}
+      <div className="space-y-3">
         {langs.map((lang) => {
-          const faces = byLang.get(lang)!;
-          const storefronts = Array.from(
-            new Set(faces.flatMap((f) => f.cells.map((c: any) => c.storefront))),
-          );
+          const list = byLang.get(lang)!;
+          if (lang === "en") {
+            const enList = storefrontsForLanguage("en");
+            const enLocal: any[] = [];
+            const enGlobalOnly: any[] = [];
+            for (const f of list) {
+              const cells: any[] = f.cells || [];
+              const hasLocal = cells.some((c: any) => enList.includes(c.storefront));
+              if (cells.length === 0 || hasLocal) enLocal.push(f);
+              else enGlobalOnly.push(f);
+            }
+            return (
+              <div key={lang}>
+                <p className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                  英语
+                  <span className="font-normal text-zinc-400 dark:text-zinc-500"> · {list.length} 个词</span>
+                </p>
+                {enLocal.length > 0 && (
+                  <div className="mt-1 ml-2 border-l-2 border-zinc-100 dark:border-zinc-800 pl-2">
+                    <p className="mb-0.5 text-[10px] text-zinc-400 dark:text-zinc-500" title={SEG_EN_LOCAL_TIP}>
+                      英语地区
+                    </p>
+                    {enLocal.map(renderWordItem)}
+                  </div>
+                )}
+                {enGlobalOnly.length > 0 && (
+                  <div className="mt-1 ml-2 border-l-2 border-zinc-100 dark:border-zinc-800 pl-2">
+                    <p className="mb-0.5 text-[10px] text-zinc-400 dark:text-zinc-500" title={SEG_EN_GLOBAL_TIP}>
+                      全局
+                    </p>
+                    {enGlobalOnly.map(renderWordItem)}
+                  </div>
+                )}
+              </div>
+            );
+          }
           return (
             <div key={lang}>
-              <p className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 mb-1.5">
+              <p className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
                 {FACE_LANG_LABEL[lang] || lang}
-                <span className="font-normal text-zinc-400 dark:text-zinc-500"> · {faces.length} 个词</span>
+                <span className="font-normal text-zinc-400 dark:text-zinc-500"> · {list.length} 个词</span>
               </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="text-left">
-                      <th className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400">关键词</th>
-                      {storefronts.map((sf) => (
-                        <th key={sf} className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
-                          {storefrontDisplayName(sf)}
-                        </th>
-                      ))}
-                      <th className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400 whitespace-nowrap">状态</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {faces.map((face: any) => {
-                      const cellBySf = new Map<string, any>();
-                      for (const c of face.cells || []) cellBySf.set(c.storefront, c);
-                      return (
-                        <tr key={`${face.language}:${face.keyword}`}>
-                          <td className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 whitespace-nowrap">
-                            <span className="font-mono text-zinc-700 dark:text-zinc-200">{face.keyword}</span>
-                            {face.longTail && (
-                              <span className="ml-1.5 px-1 py-px rounded text-[9px] bg-zinc-100 dark:bg-zinc-800 text-zinc-400">长尾</span>
-                            )}
-                          </td>
-                          {storefronts.map((sf) => {
-                            const cell = cellBySf.get(sf);
-                            const v = cellVisual(cell?.own ?? null, cell?.theirs ?? null);
-                            return (
-                              <td key={sf} className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 text-center whitespace-nowrap">
-                                <span className={cn("inline-block min-w-[3.5rem] px-1 py-0.5 rounded", v.cls)}>
-                                  {cell?.theirs != null ? cell.theirs : "—"} / {cell?.own != null ? cell.own : "—"}
-                                </span>
-                              </td>
-                            );
-                          })}
-                          <td className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-400">
-                            {OVERLAP_LABEL[face.overlap] || face.overlap}
-                            {face.contribution > 0 && (
-                              <span className="ml-1 text-amber-600 dark:text-amber-400">+{face.contribution}</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <div className="mt-1 ml-2 border-l-2 border-zinc-100 dark:border-zinc-800 pl-2">{list.map(renderWordItem)}</div>
             </div>
           );
         })}
@@ -698,333 +841,244 @@ export function CompetitorPanel({
         </>
       )}
 
-      {profiles.length > 0 && (
+      {competitors.length > 0 || profiles.length > 0 ? (
         <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              竞品总览
-              <span className="ml-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                按竞争指数排序（权重只看我方名次段 · 分平台 · 长尾词降权） · 点击行展开竞争面
-              </span>
-            </h3>
-            <span className="flex items-center gap-2 text-[11px] text-zinc-400">
-              {wordDrill && (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/40">
-                  <span className="font-mono max-w-40 truncate">{wordDrill}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFocusCleared(true);
-                      setTrackedKeyword("");
-                    }}
-                    className="hover:underline"
-                    title="关闭该词的聚焦对比，回到总览"
+          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  竞品矩阵
+                  <span className="ml-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                    行 = 竞品（指数降序）· 列 = 关键词（按命中竞品数排序，≤40 列）· 点击行展开词级与商店明细
+                  </span>
+                </h3>
+                <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+                  <span title="跨商店综合：每个格子统计该 (词 × 段) 商店集里“我领先 : 它领先”的商店数">格 = “我领先 : 它领先” 的商店数（跨商店综合）</span>
+                  <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/70" />绿 = 我方占优</span>
+                  <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-red-500/70" />红 = 竞品占优</span>
+                  <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-amber-400/80" />琥珀 = 胶着</span>
+                  <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-zinc-300 dark:bg-zinc-600" />灰 = 无数据/未采集</span>
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                {wordDrill && (
+                  <span
+                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-[11px] text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/40"
+                    title={`聚焦「${wordDrill}」× 全部竞品的对比（矩阵只保留该词列）；关闭后回到完整矩阵`}
                   >
-                    ✕
-                  </button>
+                    <span className="font-mono max-w-36 truncate">{wordDrill}</span>
+                    <button
+                      type="button"
+                      onClick={() => setFocusCleared(true)}
+                      className="hover:underline"
+                      title="关闭聚焦，回到完整矩阵"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                )}
+                <span className="text-[11px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+                  当前平台 {platformLabel(viewPlatform)} · 近 7 天窗口
                 </span>
-              )}
-              当前平台 {platformLabel(viewPlatform)} · 7 天窗口
-              <button
-                type="button"
-                onClick={() => void handleScanOnChart()}
-                disabled={scanBusy}
-                className={btnSmSecondary}
-                title="只扫我方在榜词，发现已跟踪竞品的新交集并回填排名；未跟踪 App 记入候选（每日限流一次）"
-              >
-                {scanBusy ? "扫描在榜词…" : "扫描在榜词"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleRefreshRanks()}
-                disabled={refreshingRanks}
-                className={btnSmSecondary}
-                title="为所有竞品的关联关键词补采一次最新排名"
-              >
-                {refreshingRanks ? "采集中…" : "刷新排名"}
-              </button>
-            </span>
+                <button
+                  type="button"
+                  onClick={() => void handleScanOnChart()}
+                  disabled={scanBusy}
+                  className={btnSmSecondary}
+                  title="只扫我方在榜词，发现已跟踪竞品的新交集并回填排名；未跟踪 App 记入候选（每日限流一次）"
+                >
+                  {scanBusy ? "扫描在榜词…" : "扫描在榜词"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRefreshRanks()}
+                  disabled={refreshingRanks}
+                  className={btnSmSecondary}
+                  title="为所有竞品的关联关键词补采一次最新排名"
+                >
+                  {refreshingRanks ? "采集中…" : "刷新排名"}
+                </button>
+              </div>
+            </div>
           </div>
           {scanMsg && (
             <p className="px-4 py-2 text-[11px] text-amber-600 dark:text-amber-400 border-b border-zinc-100 dark:border-zinc-800">
               {scanMsg}
             </p>
           )}
-          <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {profiles.map(({ competitor, intel, indexHistory }: any) => {
-              const expanded = expandedId === competitor.id;
-              return (
-                <div key={competitor.id}>
-                  <button
-                    type="button"
-                    onClick={() => setExpandedId(expanded ? null : competitor.id)}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors"
-                  >
-                    <span className="flex-1 min-w-0 flex items-center gap-2">
-                      <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate hover:underline">
-                        {competitor.name}
-                      </span>
-                      <span className="flex gap-0.5 shrink-0">
-                        {(["ios", "macos"] as const).map((p) => (
-                          <span
-                            key={p}
-                            className={cn(
-                              "px-1 py-px rounded text-[9px] font-medium leading-none",
-                              competitorTrackId(competitor, p)
-                                ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600",
-                            )}
-                          >
-                            {p === "macos" ? "macOS" : "iOS"}
-                          </span>
-                        ))}
-                      </span>
-                    </span>
-                    <span className="shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400 w-16 text-right">
-                      重叠 <b className="text-zinc-700 dark:text-zinc-200">{intel.faceCount}</b>
-                    </span>
-                    <span className="shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400 w-14 text-right">
-                      压我 <b className="text-red-600 dark:text-red-400">{intel.pressuredCount}</b>
-                    </span>
-                    <span className="shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400 w-14 text-right">
-                      在榜 <b className="text-zinc-700 dark:text-zinc-200">{intel.theirOnChart}</b>
-                    </span>
-                    <span className="shrink-0 flex items-center justify-end w-14" title="竞争指数近 14 天趋势">
-                      <Sparkline history={indexHistory} />
-                    </span>
-                    <span
-                      className={cn(
-                        "shrink-0 w-14 text-right text-sm font-bold",
-                        intel.index > 0
-                          ? "text-amber-600 dark:text-amber-400"
-                          : "text-zinc-400 dark:text-zinc-500",
-                      )}
-                    >
-                      {intel.index}
-                    </span>
-                    <span className="shrink-0 text-zinc-400 dark:text-zinc-500 text-xs w-4 text-center">
-                      {expanded ? "▲" : "▼"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleRemove(competitor.id);
-                      }}
-                      className="shrink-0 text-zinc-300 dark:text-zinc-600 hover:text-red-500 text-xs w-4"
-                      title="移除竞品"
-                    >
-                      ✕
-                    </button>
-                  </button>
-                  {expanded && renderFacesTable(intel)}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {renderHeatmapCard()}
-
-      {wordDrill && competitors.length > 0 && (
-        <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              竞品跟踪
-              <span className="ml-2 font-mono text-xs text-amber-600 dark:text-amber-400">{wordDrill}</span>
-            </h3>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-zinc-400">按关联关键词对比自己与竞品排名</span>
-              <button
-                type="button"
-                onClick={() => void handleRefreshRanks()}
-                disabled={refreshingRanks}
-                className={btnSmSecondary}
-              >
-                {refreshingRanks ? "采集中…" : "刷新排名"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setFocusCleared(true);
-                  setTrackedKeyword("");
-                }}
-                className={btnSmSecondary}
-              >
-                关闭聚焦
-              </button>
-            </div>
-          </div>
-          {linkedKeywords.length === 0 ? (
-            <p className="px-4 py-4 text-xs text-zinc-400 dark:text-zinc-500">
-              当前平台没有已上架竞品关联的关键词。添加竞品时使用搜索关键词关联，排名随关键词抓取采集。
+          {profiles.length === 0 ? (
+            <p className="px-4 py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">
+              暂无竞争面数据 —— 点击“扫描在榜词”或“刷新排名”开始采集（按 (竞品 × 词 × 商店) 回填后这里出现矩阵）。
             </p>
-          ) : activeLink ? (
-          (() => {
-            const stores = storefrontsForLanguage(activeLink.language);
-            const linkedCompetitors = competitors.filter((c: any) =>
-              (c.linkedKeywords || []).some(
-                (l: any) =>
-                  l.keyword === activeLink.keyword && l.language === activeLink.language,
-              ),
-            );
-            // 未在当前平台（iOS/macOS）上架的竞品不进入该平台的跟踪表，
-            // 多平台应用两边的视图都会显示。
-            const trackedCompetitors = linkedCompetitors.filter((c: any) =>
-              Boolean(competitorTrackId(c, viewPlatform)),
-            );
-            return (
-            <div className="p-4">
-              <div className="flex flex-wrap gap-1.5 mb-3">
-              {linkedKeywords.map((link: any) => (
-                <button
-                  key={`${link.keyword}\u0000${link.language}`}
-                  type="button"
-                  onClick={() => {
-                    setTrackedKeyword(`${link.keyword}\u0000${link.language}`);
-                    // 同步搜索框关键词，方便立即在竞品雷达中搜索该关键词。
-                    setTerm(link.keyword);
-                  }}
-                  className={cn(
-                    "px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors",
-                    activeLink.keyword === link.keyword && activeLink.language === link.language
-                      ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50",
-                  )}
-                >
-                  <KeywordRuby
-                    keyword={link.keyword}
-                    translation={translationByKey.get(
-                      `${link.language}\u0000${link.keyword}`,
-                    )}
-                    annotate={
-                      link.language !== "zh-Hans" && link.language !== "zh-Hant"
-                    }
-                    chip={false}
-                  />
-                </button>
-              ))}
-            </div>
+          ) : matrixCols.length === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-zinc-400 dark:text-zinc-500">
+              {wordDrill
+                ? `「${wordDrill}」暂未采集到任何竞品的排名 —— 关闭聚焦可查看完整矩阵；点“刷新排名”可为已关联词补采。`
+                : "尚无采集到排名的关键词列 —— 点击“扫描在榜词”或“刷新排名”采集。"}
+            </p>
+          ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="text-left">
-                    <th className="py-2 px-3 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400 text-left">竞品</th>
-                    {stores.map((store) => (
-                      <th key={store} className="py-2 px-3 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
-                        {storefrontDisplayName(store)}
+                  <tr>
+                    <th
+                      rowSpan={headerRows}
+                      className="px-3 py-1.5 text-left align-top whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400"
+                      title="行 = 竞品（按竞争指数降序）；点击行查看词级与商店明细"
+                    >
+                      竞品 / 指数 ↓
+                    </th>
+                    {colRuns.map((run) => (
+                      <th
+                        key={run.lang}
+                        colSpan={run.span}
+                        className="px-2 py-1 text-center text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-50/70 dark:bg-zinc-800/40 border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
+                        title={FACE_LANG_LABEL[run.lang] ? `${FACE_LANG_LABEL[run.lang]} 语言组` : run.lang}
+                      >
+                        {FACE_LANG_LABEL[run.lang] || run.lang}
                       </th>
                     ))}
                   </tr>
-                </thead>
-                <tbody>
                   <tr>
-                    <td className="py-2 px-3 border border-zinc-200 dark:border-zinc-700 font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
-                      我
-                    </td>
-                    {stores.map((store) => (
-                      <td
-                        key={store}
-                        className={cn(
-                          "py-2 px-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap font-medium",
-                          rankCellClass(ownRankByStore.get(store) ?? null),
-                        )}
+                    {matrixCols.map((col) => (
+                      <th
+                        key={col.key}
+                        colSpan={col.segs.length}
+                        rowSpan={needsSegRow ? 1 : 2}
+                        className="px-1.5 py-1 align-bottom text-center border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
                       >
-                        <ValueFlash value={ownRankByStore.get(store) ?? null}>
-                          {ownRankByStore.get(store) ?? "未上榜"}
-                        </ValueFlash>
-                      </td>
+                        <span
+                          className={cn(
+                            "inline-block max-w-[11rem] truncate align-bottom font-mono text-zinc-600 dark:text-zinc-300",
+                            needsSegRow ? "text-[10px] leading-none" : "text-[11px]",
+                          )}
+                          title={`${FACE_LANG_LABEL[col.lang] || col.lang} · 「${col.keyword}」（命中 ${col.hit} 个竞品）`}
+                        >
+                          {col.keyword}
+                        </span>
+                      </th>
                     ))}
                   </tr>
-                  {trackedCompetitors.map((c) => (
-                    <tr key={c.id}>
-                      <td className="py-2 px-3 border border-zinc-200 dark:border-zinc-700 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (c.trackId) {
-                                (window as any).appilot?.openAppPage(
-                                  `https://apps.apple.com/us/app/id${c.trackId}`,
-                                );
-                              }
-                            }}
-                            className="text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
+                  {needsSegRow && (
+                    <tr>
+                      {matrixCols.flatMap((col) =>
+                        col.segs.map((seg) => (
+                          <th
+                            key={`${col.key}:${seg.segId}`}
+                            title={seg.title}
+                            className="px-1.5 py-1 text-center text-[10px] font-medium text-zinc-400 dark:text-zinc-500 border-t border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
                           >
-                            {c.name}
-                          </button>
-                          <span className="flex gap-0.5">
-                            {(["ios", "macos"] as const).map((p) => (
-                              <span
-                                key={p}
-                                className={cn(
-                                  "px-1 py-px rounded text-[9px] font-medium leading-none",
-                                  competitorTrackId(c, p)
-                                    ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600",
-                                )}
-                              >
-                                {p === "macos" ? "macOS" : "iOS"}
-                              </span>
-                            ))}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemove(c.id)}
-                            className="text-zinc-300 dark:text-zinc-600 hover:text-red-500 transition-colors"
-                            title="移除竞品"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                        <div className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
-                          {c.addedAt ? `加入 ${formatHumanTime(c.addedAt)}` : "加入时间未知"}
-                          {(() => {
-                            const latestRankAt = (competitorRanks[c.id] || []).reduce(
-                              (latest: string | null, r: any) =>
-                                r.platform != null && r.platform !== viewPlatform
-                                  ? latest
-                                  : !latest ||
-                                      new Date(r.checkedAt).getTime() >
-                                        new Date(latest).getTime()
-                                    ? r.checkedAt
-                                    : latest,
-                              null,
-                            );
-                            return latestRankAt
-                              ? ` · 排名 ${formatHumanTime(latestRankAt)}`
-                              : " · 排名尚未查询";
-                          })()}
-                        </div>
-                      </td>
-                      {stores.map((store) => {
-                        const rank = competitorRankAt(c, store);
-                        return (
-                          <td
-                            key={store}
-                            className={cn(
-                              "py-2 px-3 text-center border border-zinc-200 dark:border-zinc-700 whitespace-nowrap",
-                              rankCellClass(rank),
-                            )}
-                          >
-                            <ValueFlash value={rank}>
-                              {rank ?? "未上榜"}
-                            </ValueFlash>
-                          </td>
-                        );
-                      })}
+                            {seg.label}
+                          </th>
+                        )),
+                      )}
                     </tr>
-                  ))}
+                  )}
+                </thead>
+                <tbody>
+                  {matrixRows.map((profile: any) => {
+                    const competitor = profile.competitor || {};
+                    const intel = profile.intel || {};
+                    const expanded = expandedRowId === competitor.id;
+                    const faceMap = new Map<string, any>(
+                      (intel.faces || []).map((f: any) => [`${f.language}\u0000${f.keyword}`, f]),
+                    );
+                    return [
+                      <tr
+                        key={`${competitor.id}-row`}
+                        onClick={() => toggleRow(competitor.id)}
+                        className={cn(
+                          "cursor-pointer border-b border-zinc-100 dark:border-zinc-800",
+                          expanded
+                            ? "bg-zinc-50/70 dark:bg-zinc-800/30"
+                            : "hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30",
+                        )}
+                      >
+                        <th
+                          scope="row"
+                          className="px-2 py-1.5 text-left align-top"
+                          title="点击行展开/收起该竞品的词级与商店明细"
+                        >
+                          <div className="flex items-start gap-1">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className="max-w-[11rem] truncate text-xs font-semibold text-zinc-800 dark:text-zinc-200"
+                                  title={competitor.name}
+                                >
+                                  {competitor.name}
+                                </span>
+                                <span className="flex gap-0.5 shrink-0">
+                                  {(["ios", "macos"] as const).map((p) => (
+                                    <span
+                                      key={p}
+                                      className={cn(
+                                        "px-1 py-px rounded text-[9px] font-medium leading-none",
+                                        competitorTrackId(competitor, p)
+                                          ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                          : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600",
+                                      )}
+                                      title={
+                                        competitorTrackId(competitor, p)
+                                          ? `已关联 ${p === "macos" ? "macOS" : "iOS"} 版本`
+                                          : `未关联 ${p === "macos" ? "macOS" : "iOS"} 版本`
+                                      }
+                                    >
+                                      {p === "macos" ? "macOS" : "iOS"}
+                                    </span>
+                                  ))}
+                                </span>
+                                <span className="ml-auto shrink-0 text-[9px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+                                  {expanded ? "▲ 收起" : "▼ 展开"}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                                <span title="竞争指数：Σ 权重(我方名次段) × 威胁 × 长尾降权（近 7 天窗口）">
+                                  指数 <b className="font-semibold text-amber-600 dark:text-amber-400">{intel.index}</b>
+                                </span>
+                                <span title="压我 = 该竞品名次更靠前、或它上榜我未上榜的词数">
+                                  压我 <b className="font-semibold text-red-500 dark:text-red-400">{intel.pressuredCount}</b> 词
+                                </span>
+                                <span title="重叠 = 双方都跟踪的词数">
+                                  重叠 <b className="font-semibold text-zinc-700 dark:text-zinc-200">{intel.faceCount}</b> 词
+                                </span>
+                                <span title="在榜 = 它进前 200 的词数">
+                                  在榜 <b className="font-semibold text-zinc-700 dark:text-zinc-200">{intel.theirOnChart}</b> 词
+                                </span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleRemove(competitor.id);
+                              }}
+                              className="shrink-0 mt-0.5 w-4 text-zinc-300 dark:text-zinc-600 hover:text-red-500 text-xs"
+                              title="移除竞品"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </th>
+                        {matrixCols.flatMap((col) =>
+                          col.segs.map((seg) => renderSegCell(col, seg, faceMap.get(col.key))),
+                        )}
+                      </tr>,
+                      expanded && (
+                        <tr key={`${competitor.id}-detail`} className="border-b border-zinc-200/70 dark:border-zinc-800">
+                          <td colSpan={segTotal + 1} className="px-4 py-3 bg-zinc-50/60 dark:bg-zinc-900/50">
+                            {renderRowDetail(profile)}
+                          </td>
+                        </tr>
+                      ),
+                    ];
+                  })}
                 </tbody>
               </table>
             </div>
-          </div>
-            );
-          })()
-          ) : null}
+          )}
         </div>
-      )}
+      ) : null}
 
       {competitors.length === 0 ? (
         <p className="text-sm text-zinc-400 dark:text-zinc-500">尚未添加竞品。</p>
