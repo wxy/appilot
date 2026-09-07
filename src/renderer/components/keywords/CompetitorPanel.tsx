@@ -239,7 +239,6 @@ export function CompetitorPanel({
   const [profiles, setProfiles] = useState<any[]>([]);
   // 矩阵行展开 + (词 × 段) 商店明细下钻。
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
-  const [storeDrillKey, setStoreDrillKey] = useState<string | null>(null);
   const [profilesTick, setProfilesTick] = useState(0);
   const [scanBusy, setScanBusy] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
@@ -480,7 +479,6 @@ export function CompetitorPanel({
   const totalCols = matrixCols.length;
   const toggleRow = (competitorId: string) => {
     setExpandedRowId((prev) => (prev === competitorId ? null : competitorId));
-    setStoreDrillKey(null);
   };
 
   // —— 竞品矩阵渲染辅助 ——
@@ -489,20 +487,29 @@ export function CompetitorPanel({
     const cells = (face?.cells || []).filter((c: any) => col.group.inGroup(c?.storefront));
     const agg = aggregateCells(cells);
     const hasData = agg.myBest != null || agg.theirBest != null;
-    const tone = leadTone(agg.myLead, agg.theirLead, hasData);
-    const title = hasData
-      ? segDetailTitle(col.keyword, col.group.label, agg)
-      : `「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`;
+    if (!hasData) {
+      // 该竞品在该 (词 × 组) 没有排名快照：显示空白格（悬停给原因），不刷屏。
+      return (
+        <td key={col.key} className="p-0.5">
+          <span
+            title={`「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`}
+            className="block min-h-6 rounded-md"
+          />
+        </td>
+      );
+    }
+    const tone = leadTone(agg.myLead, agg.theirLead, true);
+    const title = segDetailTitle(col.keyword, col.group.label, agg);
     return (
       <td key={col.key} className="p-0.5">
         <span
           title={title}
           className={cn(
             "block min-w-[3.2rem] px-1.5 py-1 rounded-md text-center text-[11px] font-semibold tabular-nums",
-            hasData ? tone.cls : TONE_GREY,
+            tone.cls,
           )}
         >
-          {hasData ? tone.text : "未采集"}
+          {tone.text}
         </span>
       </td>
     );
@@ -572,14 +579,13 @@ export function CompetitorPanel({
       },
     ];
   };
-  // 行展开词列表中的一行：关键词 + 段芯片（英 2:1 / 全 0:3，同矩阵配色）+ 状态。
-  // 点击段芯片展开该 (词 × 段) 的商店级明细表。
+  // 行展开词条目：每个词直接展开其 (英/全/本地) 商店级明细表——矩阵格只给跨店综合，
+  // 具体“某语言某商店里我们和它的名次”在这里看（把商店行从矩阵格“折叠”到了展开区）。
   const renderWordItem = (face: any) => {
     const parts = faceParts(face);
-    const wordKey = `${face.language}\u0000${face.keyword}`;
     const status = FACE_STATUS_LABEL[face.overlap] || face.overlap || "未知";
     return (
-      <div key={wordKey} className="py-1">
+      <div key={`${face.language}\u0000${face.keyword}`} className="py-1.5">
         <div className="flex items-center gap-2">
           <span
             className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-800 dark:text-zinc-200"
@@ -592,45 +598,26 @@ export function CompetitorPanel({
               </span>
             )}
           </span>
-          {parts.map((part) => {
-            const drillKey = `${wordKey}\u0000${part.label}`;
-            const open = storeDrillKey === drillKey;
-            const tone = leadTone(
-              part.agg.myLead,
-              part.agg.theirLead,
-              part.agg.myBest != null || part.agg.theirBest != null,
-            );
-            return (
-              <button
-                type="button"
-                key={part.label}
-                onClick={() => setStoreDrillKey(open ? null : drillKey)}
-                title={`${part.title}｜${segDetailTitle(face.keyword, part.label, part.agg)}（点击${open ? "收起" : "展开"}商店明细）`}
-                className={cn(
-                  "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-shadow",
-                  tone.cls,
-                  open && "ring-2 ring-amber-500/60",
-                )}
-              >
-                {part.label} {tone.text}
-              </button>
-            );
-          })}
           <span
-            className="shrink-0 w-28 text-right text-[10px] text-zinc-400 dark:text-zinc-500"
+            className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap"
             title={`交集状态（近 7 天窗口）＝ ${status}${face.contribution > 0 ? `；指数贡献 +${face.contribution}` : ""}`}
           >
             {status}
             {face.contribution > 0 && <span className="ml-0.5 text-amber-600 dark:text-amber-400">+{face.contribution}</span>}
           </span>
         </div>
-        {parts
-          .filter((part) => storeDrillKey === `${wordKey}\u0000${part.label}`)
-          .map((part) => (
-            <div key={`drill-${part.label}`} className="mt-1.5">
+        {parts.length === 0 ? (
+          <p className="ml-2 mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">尚无商店级排名数据。</p>
+        ) : (
+          parts.map((part) => (
+            <div key={part.label} className="mt-1.5 ml-2 border-l-2 border-zinc-100 dark:border-zinc-800 pl-3">
+              <p className="mb-1 text-[10px] text-zinc-400 dark:text-zinc-500" title={part.title}>
+                {part.label === "英" ? "英语地区商店" : part.label === "全" ? "全局（其它语言商店）" : "本地商店"} · 我/它名次
+              </p>
               {renderStoreDrill(face, part.cells, part.label)}
             </div>
-          ))}
+          ))
+        )}
       </div>
     );
   };
@@ -655,6 +642,38 @@ export function CompetitorPanel({
     const langs = [...byLang.keys()].sort((a, b) => langRank(a) - langRank(b));
     return (
       <div className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              ["竞争指数", intel.index, "Σ 权重(我方名次段) × 威胁 × 长尾降权（近 7 天窗口）"],
+              ["重叠", intel.faceCount, "重叠 = 双方都跟踪的词数（含已关联未采集）"],
+              ["在榜", intel.theirOnChart, "在榜 = 它进入前 200 的词数"],
+              ["压我", intel.pressuredCount, "压我 = 它名次更靠前、或它上榜我未上榜的词数"],
+            ] as const
+          ).map(([label, value, tip]) => (
+            <span
+              key={label}
+              title={tip}
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-500 dark:text-zinc-400"
+            >
+              {label}
+              <b
+                className={
+                  label === "压我"
+                    ? "text-red-500 dark:text-red-400"
+                    : label === "竞争指数"
+                      ? "text-amber-600 dark:text-amber-400"
+                      : "text-zinc-700 dark:text-zinc-200"
+                }
+              >
+                {String(value)}
+              </b>
+            </span>
+          ))}
+        </div>
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          商店级明细（近 7 天窗口）——矩阵格显示跨店综合，这里看每个词在各商店里我们与它的名次：
+        </p>
         {langs.map((lang) => {
           const list = byLang.get(lang)!;
           if (lang === "en") {
@@ -978,11 +997,11 @@ export function CompetitorPanel({
                     {matrixCols.map((col) => (
                       <th
                         key={col.key}
-                        className="px-1.5 py-1 align-bottom text-center border-l border-zinc-100 dark:border-zinc-800"
-                        style={{ maxWidth: "9rem" }}
+                        className="px-1 py-1.5 align-top text-center border-l border-zinc-100 dark:border-zinc-800"
+                        style={{ width: "10ch", maxWidth: "10ch", minWidth: "10ch" }}
                         title={`${col.group.label} · 「${col.keyword}」（组内 ${col.hit} 个竞品命中）`}
                       >
-                        <span className="block max-w-[9rem] truncate font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
+                        <span className="block break-words leading-tight font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
                           {col.keyword}
                         </span>
                       </th>
