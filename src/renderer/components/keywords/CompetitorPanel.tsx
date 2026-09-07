@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
-import { formatHumanTime, platformLabel } from "../../lib/format";
+import { platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 
@@ -271,10 +271,6 @@ export function CompetitorPanel({
   const [profilesTick, setProfilesTick] = useState(0);
   const [scanBusy, setScanBusy] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
-  // —— 发现新竞品（“扫描在榜词”记录下的未跟踪候选，kv competitorDiscoveries）——
-  const [discoveries, setDiscoveries] = useState<any[]>([]);
-  const [discoveryBusy, setDiscoveryBusy] = useState<string | null>(null);
-  const [discoveryMsg, setDiscoveryMsg] = useState("");
   // —— 竞品行「+ 关联词」浮层：同一时刻至多开一个（记录打开的竞品 + 锚点坐标）——
   const [linkOpen, setLinkOpen] = useState<{
     competitorId: string;
@@ -313,18 +309,7 @@ export function CompetitorPanel({
   }, [projectId, product?.id]);
   useEffect(() => { loadOverview(); }, [loadOverview, profilesTick]);
   useEffect(() => { load(); }, [load]);
-  // 发现候选：来自「扫描在榜词」写入的 kv competitorDiscoveries。
-  const loadDiscoveries = useCallback(() => {
-    if (!projectId) {
-      setDiscoveries([]);
-      return;
-    }
-    (window as any).appilot?.competitors?.discoveries(projectId)
-      .then((list: any[]) => setDiscoveries(list || []))
-      .catch(() => setDiscoveries([]));
-  }, [projectId]);
-  useEffect(() => { loadDiscoveries(); }, [loadDiscoveries]);
-  // 在榜词自动发现扫描（P3：只扫我方在榜词；每日限流，界面提示结果）。
+  // 在榜词扫描：只扫我方在榜词（每日限流，界面提示结果）。
   const handleScanOnChart = async () => {
     if (scanBusy || !product?.id) return;
     setScanBusy(true);
@@ -333,7 +318,7 @@ export function CompetitorPanel({
       const res = await (window as any).appilot?.competitors?.scanOnChart(projectId, product.id);
       if (res?.ok) {
         setScanMsg(
-          `扫描 ${res.checked} 个在榜词：${res.updatedCompetitors} 个竞品新增交集 ${res.foundKeywords} 处，发现 ${res.newCandidates} 个新候选。`,
+          `扫描 ${res.checked} 个在榜词：${res.updatedCompetitors} 个已跟踪竞品新增交集 ${res.foundKeywords} 处。`,
         );
       } else if (res?.throttled) {
         setScanMsg("今日已扫描过（每日限流一次），明天再来或需要强制重扫告诉我。");
@@ -341,24 +326,22 @@ export function CompetitorPanel({
         setScanMsg(res?.error || "扫描失败");
       }
       setProfilesTick((v) => v + 1);
-      loadDiscoveries(); // 扫描可能写入新候选。
     } catch (err: any) {
       setScanMsg(err?.message || "扫描失败");
     } finally {
       setScanBusy(false);
     }
   };
-  // 主进程数据变更推送：竞品数据更新时自动刷新（列表 + 发现候选）。
+  // 主进程数据变更推送：竞品数据更新时自动刷新列表。
   useEffect(() => {
     const handler = (e: Event) => {
       if ((e as CustomEvent).detail === "competitors") {
         load();
-        loadDiscoveries();
       }
     };
     window.addEventListener("appilot:data-changed", handler);
     return () => window.removeEventListener("appilot:data-changed", handler);
-  }, [load, loadDiscoveries]);
+  }, [load]);
 
   // Keep the search box in sync with the keyword selected in the matrix.
   useEffect(() => {
@@ -464,40 +447,6 @@ export function CompetitorPanel({
     if (expandedRowId === competitorId) setExpandedRowId(null);
     // 若“关联词”浮层正开在该竞品上则一并关闭。
     setLinkOpen((prev) => (prev?.competitorId === competitorId ? null : prev));
-  };
-
-  // —— 发现新竞品：添加 / 忽略 ——
-  const handleAddDiscovered = async (d: any) => {
-    if (discoveryBusy) return;
-    setDiscoveryBusy(String(d.trackId));
-    try {
-      const platform = product?.platform === "macos" ? "macos" : "ios";
-      const res = await (window as any).appilot?.competitors?.addDiscovered(projectId, {
-        trackId: String(d.trackId),
-        trackName: d.trackName,
-        platform,
-      });
-      setDiscoveryMsg(
-        res?.existed
-          ? `「${d.trackName || "该 App"}」已在竞品列表中，已从发现候选移除。`
-          : `「${d.trackName || "该 App"}」已加入竞品列表（已移除该候选）。`,
-      );
-      await load();
-      setProfilesTick((v) => v + 1);
-      loadDiscoveries();
-    } catch (err: any) {
-      setDiscoveryMsg(err?.message || "添加失败，请重试。");
-    } finally {
-      setDiscoveryBusy(null);
-    }
-  };
-  const handleIgnoreDiscovery = async (trackId: string) => {
-    try {
-      await (window as any).appilot?.competitors?.removeDiscovery(projectId, String(trackId));
-      loadDiscoveries();
-    } catch {
-      // 忽略失败不阻塞其它操作。
-    }
   };
 
   // —— 「+ 关联词」浮层：打开（记录竞品 + 按钮锚点），点击浮层外部 / 滚动 / 窗口
@@ -1021,82 +970,6 @@ export function CompetitorPanel({
         </>
       )}
 
-      {/* —— 发现新竞品：在榜词扫描记录下的未跟踪 App（仅候选非空时展示） —— */}
-      {discoveries.length > 0 && projectId && product?.id && (
-        <div className="mb-4 rounded-2xl border border-amber-200/70 dark:border-amber-500/25 bg-white dark:bg-zinc-900 overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-amber-200/60 dark:border-amber-500/20 flex items-center justify-between gap-3">
-            <h3 className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 inline-flex items-center gap-2">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-              发现新竞品（{discoveries.length}）
-              <span className="text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                来自“扫描在榜词”的未跟踪 App · 平台 {platformLabel(product?.platform === "macos" ? "macos" : "ios")}
-              </span>
-            </h3>
-          </div>
-          {discoveryMsg && (
-            <p className="px-4 pt-2 text-[11px] text-amber-600 dark:text-amber-400">{discoveryMsg}</p>
-          )}
-          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {discoveries.map((d: any) => (
-              <li key={String(d.trackId)} className="px-4 py-2 flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    (window as any).appilot?.openAppPage(
-                      `https://apps.apple.com/app/id${String(d.trackId)}`,
-                    );
-                  }}
-                  className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
-                  title="在网页中打开 App Store 页面"
-                >
-                  {d.trackName || "未知应用"}
-                </button>
-                <span className="shrink-0 inline-flex px-1.5 py-px rounded bg-zinc-100 dark:bg-zinc-800 text-[9px] font-medium text-zinc-500 dark:text-zinc-400">
-                  {platformLabel(product?.platform === "macos" ? "macos" : "ios")}
-                </span>
-                <span
-                  className={cn(
-                    "shrink-0 inline-flex px-1.5 py-px rounded text-[10px] tabular-nums",
-                    typeof d.rank === "number" && d.rank > 0
-                      ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500",
-                  )}
-                  title={typeof d.rank === "number" && d.rank > 0 ? "扫描时该 App 的榜单名次" : "扫描时未取到名次"}
-                >
-                  {typeof d.rank === "number" && d.rank > 0 ? `在榜 #${d.rank}` : "在榜未知"}
-                </span>
-                <span
-                  className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap"
-                  title={`发现于 ${d.discoveredAt ? new Date(d.discoveredAt).toLocaleString() : "未知时间"}`}
-                >
-                  {formatHumanTime(d.discoveredAt)}
-                </span>
-                <div className="ml-auto flex shrink-0 items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => void handleAddDiscovered(d)}
-                    disabled={discoveryBusy === String(d.trackId)}
-                    className={btnSmPrimary}
-                    title="加入竞品列表（开始跟踪其排名）"
-                  >
-                    {discoveryBusy === String(d.trackId) ? "添加中…" : "添加"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleIgnoreDiscovery(String(d.trackId))}
-                    disabled={discoveryBusy != null}
-                    className="px-1.5 py-0.5 rounded-md text-[10px] text-zinc-300 dark:text-zinc-600 hover:text-red-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                    title="忽略：从候选移除，不加入竞品列表"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       {competitors.length > 0 || profiles.length > 0 ? (
         <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
@@ -1148,7 +1021,7 @@ export function CompetitorPanel({
                   onClick={() => void handleScanOnChart()}
                   disabled={scanBusy}
                   className={btnSmSecondary}
-                  title="只扫我方在榜词，发现已跟踪竞品的新交集并回填排名；未跟踪 App 记入候选（每日限流一次）"
+                  title="只扫我方在榜词，发现已跟踪竞品的新交集并回填排名（每日限流一次）"
                 >
                   {scanBusy ? "扫描在榜词…" : "扫描在榜词"}
                 </button>

@@ -22,7 +22,7 @@ function saveCompetitors(store: any, projectId: string, list: any[]): void {
   store.set("competitors", all);
 }
 
-// 新增/合并一条竞品记录的纯列表逻辑（competitors:save 与 competitors:addDiscovered 共用）：
+// 新增/合并一条竞品记录的纯列表逻辑（competitors:save 共用）：
 // 同名竞品（同一品牌另一平台的列表）自动合并、trackIds 按平台字段并入；返回新列表与
 // 是否发生同名合并（savedId 用于排名回填）。
 function mergeCompetitorInto(list: any[], competitor: any): { next: any[]; merged: boolean; savedId: string | null } {
@@ -100,74 +100,6 @@ export function registerCompetitorsHandlers(): void {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
     return competitorsFor(s, projectId).map(migrateCompetitor);
-  });
-
-  // 发现候选（P3「扫描在榜词」发现但未跟踪的 App，kv competitorDiscoveries[projectId]）。
-  ipcMain.handle("competitors:discoveries", async (_event, projectId: string) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
-    const s = await getStore();
-    return (s.get("competitorDiscoveries") || {})[projectId] || [];
-  });
-
-  // 把发现候选加入竞品列表：与 competitors:save 同语义（同名竞品合并、trackIds 按平台
-  // 并入），但先按 trackId 查重——列表里已跟踪该 trackId（任意平台）的不重复建条目；
-  // 无论结果，该候选一律从 competitorDiscoveries[projectId] 移除。
-  ipcMain.handle("competitors:addDiscovered", async (_event, projectId: string, input: { trackId?: string; trackName?: string; platform?: string }) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
-    const trackId = assertNonEmptyString(input?.trackId, "trackId");
-    const platform: "ios" | "macos" | "unknown" =
-      input?.platform === "macos" ? "macos" : input?.platform === "ios" ? "ios" : "unknown";
-    if (platform === "unknown") throw new Error("platform 必须是 ios 或 macos");
-    const s = await getStore();
-    // 1) 先移除候选（无论结果，候选都不再需要展示）。
-    const discoveriesAll: Record<string, any[]> = s.get("competitorDiscoveries") || {};
-    const perProject = Array.isArray(discoveriesAll[projectId]) ? discoveriesAll[projectId] : [];
-    const discovery = perProject.find((d: any) => String(d?.trackId) === String(trackId));
-    const rest = perProject.filter((d: any) => String(d?.trackId) !== String(trackId));
-    if (rest.length !== perProject.length) {
-      discoveriesAll[projectId] = rest;
-      s.set("competitorDiscoveries", discoveriesAll);
-    }
-    // 2) 竞品列表按 trackId 查重（save 只按名字去重，这里补一层 trackId 去重）。
-    const list = competitorsFor(s, projectId);
-    const already = list.find((item: any) =>
-      [item?.trackId, ...Object.values(item?.trackIds || {})]
-        .filter(Boolean)
-        .map(String)
-        .includes(String(trackId)),
-    );
-    if (already) {
-      notifyDataChanged("competitors");
-      return { ok: true, existed: true, competitorId: already.id };
-    }
-    // 3) 走与 save 相同的新增/同名合并逻辑（linkedKeywords 留空，不预关联当前词）。
-    const { next, savedId } = mergeCompetitorInto(list, {
-      name: String(input?.trackName || discovery?.trackName || "未知应用").trim(),
-      trackId: String(trackId),
-      platform,
-      trackIds: { [platform]: String(trackId) },
-      githubUrl: null,
-      notes: "",
-      linkedKeywords: [],
-    });
-    saveCompetitors(s, projectId, next);
-    notifyDataChanged("competitors");
-    return { ok: true, existed: false, competitorId: savedId };
-  });
-
-  // 忽略发现候选：仅从 competitorDiscoveries[projectId] 移除，不加入竞品列表。
-  ipcMain.handle("competitors:removeDiscovery", async (_event, projectId: string, trackId: string) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
-    trackId = assertNonEmptyString(trackId, "trackId");
-    const s = await getStore();
-    const discoveriesAll: Record<string, any[]> = s.get("competitorDiscoveries") || {};
-    const perProject = Array.isArray(discoveriesAll[projectId]) ? discoveriesAll[projectId] : [];
-    const rest = perProject.filter((d: any) => String(d?.trackId) !== String(trackId));
-    if (rest.length !== perProject.length) {
-      discoveriesAll[projectId] = rest;
-      s.set("competitorDiscoveries", discoveriesAll);
-    }
-    return true;
   });
 
   ipcMain.handle("competitors:save", async (_event, projectId: string, competitor: any) => {
@@ -387,9 +319,9 @@ export function registerCompetitorsHandlers(): void {
     return runOpsSyncNow(projectId);
   });
 
-  // 自动发现（P3）：只扫我方「在榜词」（决策 2）——每个词取我方名次最好的
-  // 商店做一次前 N 名搜索；命中已跟踪竞品 → 回填该词排名（进入竞争面聚合），
-  // 未跟踪 App 记入候选。每日限流一次，可 force 重扫。
+  // 在榜词扫描：只扫我方「在榜词」（决策 2）——每个词取我方名次最好的
+  // 商店做一次前 N 名搜索；命中已跟踪竞品 → 回填该词排名（进入竞争面聚合）。
+  // 每日限流一次，可 force 重扫。
   ipcMain.handle("competitors:scanOnChart", async (_event, projectId: string, productId: string, opts?: { force?: boolean }) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     productId = assertNonEmptyString(productId, "productId");
@@ -441,8 +373,6 @@ export function registerCompetitorsHandlers(): void {
     const { searchCompetitorCandidatesAcross } = await import("@appilot-labs/appilot-core/competitor-radar");
 
     const foundByCompetitor: Record<string, number> = {};
-    const newCandidates: Array<{ trackId: string; trackName: string; rank: number | null }> = [];
-    const seenNew = new Set<string>();
     let checked = 0;
     for (const t of targets) {
       checked += 1;
@@ -483,13 +413,6 @@ export function registerCompetitorsHandlers(): void {
           });
           rankById[matched.id] = nextRanks.slice(-300);
           foundByCompetitor[matched.id] = (foundByCompetitor[matched.id] ?? 0) + 1;
-        } else if (!seenNew.has(String(c.trackId))) {
-          seenNew.add(String(c.trackId));
-          newCandidates.push({
-            trackId: String(c.trackId),
-            trackName: c.trackName || "未知应用",
-            rank: typeof c.ranks?.[t.storefront] === "number" ? c.ranks[t.storefront] : null,
-          });
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 150)); // 温和节流
@@ -498,11 +421,6 @@ export function registerCompetitorsHandlers(): void {
     if (checked > 0) {
       ranksAll[projectId] = rankById;
       s.set("competitorRankSnapshots", ranksAll);
-      const discoveriesAll: Record<string, any[]> = s.get("competitorDiscoveries") || {};
-      const merged = new Map<string, any>((discoveriesAll[projectId] || []).map((d: any) => [String(d.trackId), d]));
-      for (const n of newCandidates) merged.set(n.trackId, { ...n, discoveredAt: new Date().toISOString() });
-      discoveriesAll[projectId] = [...merged.values()].slice(-100);
-      s.set("competitorDiscoveries", discoveriesAll);
     }
     scanState[productId] = { lastScanAt: new Date().toISOString() };
     s.set("competitorScanState", scanState);
@@ -512,7 +430,6 @@ export function registerCompetitorsHandlers(): void {
       checked,
       updatedCompetitors: Object.keys(foundByCompetitor).length,
       foundKeywords: Object.values(foundByCompetitor).reduce((a: number, b: number) => a + b, 0),
-      newCandidates: newCandidates.length,
     };
   });
 }
