@@ -1248,6 +1248,21 @@ export function CompetitorPanel({
                     const droppedCount = (profile.events || []).filter(
                       (ev: any) => ev?.kind === "dropped",
                     ).length;
+                    // 竞品数据新鲜度：该竞品在本平台最近一次竞品快照时间；≥10 天无更新标记“停滞”。
+                    let latestTheirAt: string | null = null;
+                    for (const f of intel.faces || []) {
+                      if (
+                        f?.theirLatestCheckedAt &&
+                        (!latestTheirAt || f.theirLatestCheckedAt > latestTheirAt)
+                      ) {
+                        latestTheirAt = f.theirLatestCheckedAt;
+                      }
+                    }
+                    const staleDays =
+                      latestTheirAt != null
+                        ? Math.floor((Date.now() - new Date(latestTheirAt).getTime()) / 86_400_000)
+                        : null;
+                    const stale = staleDays != null && staleDays >= 10;
                     const faceMap = new Map<string, any>(
                       (intel.faces || []).map((f: any) => [`${f.language}\u0000${f.keyword}`, f]),
                     );
@@ -1341,6 +1356,14 @@ export function CompetitorPanel({
                                 {droppedCount > 0 && (
                                   <span title="近两次采集日相比，它跌出前 200 的词数" className="text-zinc-500 dark:text-zinc-400">
                                     跌出 <b className="font-semibold">{droppedCount}</b>
+                                  </span>
+                                )}
+                                {stale && (
+                                  <span
+                                    title={`竞品排名数据 ${staleDays} 天未更新（可能下架/暂停采集）`}
+                                    className="text-red-500/80 dark:text-red-400/80"
+                                  >
+                                    停滞 {staleDays}天
                                   </span>
                                 )}
                               </div>
