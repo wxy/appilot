@@ -65,6 +65,10 @@ function main(): void {
   assert.equal(kwA.cells.length, 2, 'kwA cells = us + kr 两商店');
   assert.equal(kwA.cells.find((c) => c.storefront === 'kr')?.theirs, 40, 'kr 店竞品名次');
   assert.equal(kwA.cells.find((c) => c.storefront === 'kr')?.own, 88);
+  const kwAUs = kwA.cells.find((c) => c.storefront === 'us')!;
+  assert.equal(kwAUs?.ownSeen, true, 'us 店我方已采集（seen 标记）');
+  assert.equal(kwAUs?.theirsSeen, true, 'us 店竞品已采集（seen 标记）');
+  assert.equal(kwA.cells.find((c) => c.storefront === 'kr')?.theirsSeen, true, 'kr 店竞品 seen');
 
   const kwB = byKw.get('kwB')!;
   assert.equal(kwB.overlap, 'offChart', '竞品 320 → 200 名外 = offChart');
