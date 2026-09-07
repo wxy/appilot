@@ -193,6 +193,40 @@ export function registerCompetitorsHandlers(): void {
     return (dbInnerR?.[competitorId] ?? kvInnerR?.[competitorId]) || [];
   });
 
+  // 竞品总览（P1 数据层）：按产品(平台)聚合每个竞品的竞争面与竞争指数。
+  // 多平台分开统计：platform 由产品决定，只聚合该平台的快照（决策 3）。
+  ipcMain.handle("competitors:overview", async (_event, projectId: string, productId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) =>
+      (p.storeProducts || []).some((sp: any) => sp?.id === productId),
+    );
+    if (!project) return [];
+    const product = (project.storeProducts || []).find((sp: any) => sp?.id === productId);
+    const platform: "ios" | "macos" = product?.platform === "macos" ? "macos" : "ios";
+    const ownSnapshots: any[] = Array.isArray(product?.rankSnapshots) ? product.rankSnapshots : [];
+    const list = competitorsFor(s, projectId).map(migrateCompetitor);
+    const kvInnerR = (s.get("competitorRankSnapshots") || {})[projectId] || {};
+    const dbInnerR = blobGet(sharedStore(), "competitorRankSnapshots", projectId) as Record<string, unknown> | undefined;
+    const { buildCompetitorIntel } = await import("../competitor-intel");
+    const profiles = list.map((competitor: any) => {
+      const ranks: any[] = dbInnerR?.[competitor.id] ?? kvInnerR?.[competitor.id] ?? [];
+      const intel = buildCompetitorIntel({
+        platform,
+        rankEntries: ranks,
+        ownSnapshots,
+        linkedKeywords: Array.isArray(competitor.linkedKeywords)
+          ? competitor.linkedKeywords
+          : undefined,
+      });
+      return { competitor, intel };
+    });
+    profiles.sort((a, b) => b.intel.index - a.intel.index || b.intel.pressuredCount - a.intel.pressuredCount);
+    return profiles;
+  });
+
   // 立即为所有竞品的关联关键词补采排名（无需等待下次定时关键词抓取）。
   ipcMain.handle("competitors:refreshRanks", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
