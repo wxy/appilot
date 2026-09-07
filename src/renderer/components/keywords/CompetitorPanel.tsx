@@ -492,17 +492,17 @@ export function CompetitorPanel({
     const tone = leadTone(agg.myLead, agg.theirLead, hasData);
     const title = hasData
       ? segDetailTitle(col.keyword, col.group.label, agg)
-      : `「${col.keyword}」${col.group.label}：无该竞品排名数据（未采集 / 该组无商店快照）`;
+      : `「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`;
     return (
       <td key={col.key} className="p-0.5">
         <span
           title={title}
           className={cn(
             "block min-w-[3.2rem] px-1.5 py-1 rounded-md text-center text-[11px] font-semibold tabular-nums",
-            tone.cls,
+            hasData ? tone.cls : TONE_GREY,
           )}
         >
-          {tone.text}
+          {hasData ? tone.text : "未采集"}
         </span>
       </td>
     );
@@ -974,14 +974,15 @@ export function CompetitorPanel({
                       </th>
                     ))}
                   </tr>
-                  <tr>
+                  <tr className="border-b-2 border-zinc-300 dark:border-zinc-600">
                     {matrixCols.map((col) => (
                       <th
                         key={col.key}
-                        className="px-1.5 py-1 align-bottom text-center border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
+                        className="px-1.5 py-1 align-bottom text-center border-l border-zinc-100 dark:border-zinc-800"
+                        style={{ maxWidth: "9rem" }}
                         title={`${col.group.label} · 「${col.keyword}」（组内 ${col.hit} 个竞品命中）`}
                       >
-                        <span className="inline-block max-w-[11rem] truncate align-bottom font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
+                        <span className="block max-w-[9rem] truncate font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
                           {col.keyword}
                         </span>
                       </th>
@@ -1073,7 +1074,9 @@ export function CompetitorPanel({
                             </button>
                           </div>
                         </th>
-                        {matrixCols.map((col) => renderCell(col, faceMap.get(col.key)))}
+                        {matrixCols.map((col) =>
+                          renderCell(col, faceMap.get(`${col.lang}\u0000${col.keyword}`)),
+                        )}
                       </tr>,
                       expanded && (
                         <tr key={`${competitor.id}-detail`} className="border-b border-zinc-200/70 dark:border-zinc-800">
