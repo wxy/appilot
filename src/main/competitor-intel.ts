@@ -36,6 +36,10 @@ export interface FaceCell {
   storefront: string;
   own: number | null;
   theirs: number | null;
+  /** 该店我方是否有采集快照（含 rank=null 的“未上榜”记录）。 */
+  ownSeen?: boolean;
+  /** 该店竞品是否有采集快照（含 rank=null 的“未上榜”记录）。 */
+  theirsSeen?: boolean;
 }
 
 export type FaceOverlap = 'both' | 'selfOnly' | 'competitorOnly' | 'offChart' | 'unknown';
@@ -224,22 +228,26 @@ export function buildCompetitorIntel(opts: {
     }
     face.ownLatest = ownLatest;
     // cells：商店并集 = 我方该词的商店 ∪ 竞品该词的商店（窗口内）。
+    // ownSeen/theirsSeen = 该店该侧是否“采集过”（有快照，含 rank=null 的未上榜记录），
+    // 用于 UI 区分「未采集」与「采集到未上榜」。
     const storefronts = new Set<string>();
     for (const s of ownEntries) storefronts.add(s.storefront);
     for (const e of theirByFace.get(key) || []) storefronts.add(e.storefront);
     face.cells = [...storefronts].sort().map((sf) => {
-      const own = ownEntries
-        .filter((s) => s.storefront === sf)
+      const ownEntriesSf = ownEntries.filter((s) => s.storefront === sf);
+      const theirEntriesSf = (theirByFace.get(key) || []).filter((e) => e.storefront === sf);
+      const own = ownEntriesSf
         .map((s) => (typeof s.rank === 'number' ? s.rank : NaN))
         .filter((r) => Number.isFinite(r) && r > 0);
-      const theirs = (theirByFace.get(key) || [])
-        .filter((e) => e.storefront === sf)
+      const theirs = theirEntriesSf
         .map((e) => (typeof e.rank === 'number' ? e.rank : NaN))
         .filter((r) => Number.isFinite(r) && r > 0);
       return {
         storefront: sf,
         own: bestOf(own),
         theirs: bestOf(theirs),
+        ownSeen: ownEntriesSf.length > 0,
+        theirsSeen: theirEntriesSf.length > 0,
       };
     });
     // 状态判定：进榜 = 窗口内最好名次 ≤ 200。

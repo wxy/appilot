@@ -135,15 +135,20 @@ interface CellAgg {
   theirBest: number | null;
   myStores: string[];
   theirStores: string[];
+  /** 采集到快照（含“未上榜”记录）的商店数：用于区分 未采集/未上榜。 */
+  mySeen: number;
+  theirSeen: number;
 }
 // 对 (竞品 × 词 × 段) 的商店集做跨店综合：cells = [{storefront, own, theirs}]，
 // own/theirs 为各自最好名次；own < theirs → 我领先，反之它领先，名次并列不计。
 // 口径与展开行一致：只有“入榜名次 ≤200”才计（>200 / 缺失视为未在榜），避免汇总与
 // 商店展开对不上（汇总数了长尾店、展开却不显示，或反之）。
 function aggregateCells(cells: any[], stores?: string[]): CellAgg {
-  const agg: CellAgg = { myLead: 0, theirLead: 0, myBest: null, theirBest: null, myStores: [], theirStores: [] };
+  const agg: CellAgg = { myLead: 0, theirLead: 0, myBest: null, theirBest: null, myStores: [], theirStores: [], mySeen: 0, theirSeen: 0 };
   for (const c of cells || []) {
     if (stores && !stores.includes(c?.storefront)) continue;
+    if (c?.ownSeen === true || c?.own != null) agg.mySeen += 1;
+    if (c?.theirsSeen === true || c?.theirs != null) agg.theirSeen += 1;
     const own =
       typeof c?.own === "number" && c.own > 0 && c.own <= 200 ? (c.own as number) : null;
     const theirs =
@@ -503,16 +508,29 @@ export function CompetitorPanel({
     const agg = aggregateCells(cells);
     const hasData = agg.myBest != null || agg.theirBest != null;
     if (!hasData) {
-      // 该竞品在该 (词 × 组) 没有排名快照：显示空白格（悬停给原因），不刷屏。
+      // 区分「采集到但双方都未上榜」与「未采集」：前者浅灰底，后者空白。
       // td 与内层铺满 span 都带同款 title，保证格内任何可见区域都能触发。
-      const blankTitle = `「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`;
+      const bothSeen = agg.mySeen > 0 && agg.theirSeen > 0;
+      const blankTitle = bothSeen
+        ? `「${col.keyword}」${col.group.label}：已采集但双方都未进榜（名次 >200）`
+        : agg.mySeen > 0
+          ? `「${col.keyword}」${col.group.label}：我方已采集，竞品未采集此词`
+          : agg.theirSeen > 0
+            ? `「${col.keyword}」${col.group.label}：竞品已采集，我方无该词数据`
+            : `「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`;
       return (
         <td
           key={col.key}
           className={cn("p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50", CELL_BORDER_B)}
           title={blankTitle}
         >
-          <span title={blankTitle} className="block min-h-6 rounded-md" />
+          <span
+            title={blankTitle}
+            className={cn(
+              "block min-h-6 rounded-md",
+              bothSeen && "bg-zinc-200/70 dark:bg-zinc-700/40",
+            )}
+          />
         </td>
       );
     }
@@ -632,9 +650,14 @@ export function CompetitorPanel({
                 : null;
             const cellTitle = state
               ? `${storefrontDisplayName(sf)} · 「${col.keyword}」：它 #${nTheirs ?? "—"} / 我 #${nOwn ?? "—"}`
-              : col.group.inGroup(sf)
-                ? `${storefrontDisplayName(sf)} · 「${col.keyword}」：双方都无在榜数据（未采集或名次 >200）`
-                : `${storefrontDisplayName(sf)} 不属于「${col.group.label}」组的商店`;
+              : !col.group.inGroup(sf)
+                ? `${storefrontDisplayName(sf)} 不属于「${col.group.label}」组的商店`
+                : cell?.ownSeen && cell?.theirsSeen
+                  ? `${storefrontDisplayName(sf)} · 「${col.keyword}」：已采集但双方都未进榜（名次 >200）`
+                  : cell?.ownSeen
+                    ? `${storefrontDisplayName(sf)} · 「${col.keyword}」：我方已采集，竞品未采集此词`
+                    : `${storefrontDisplayName(sf)} · 「${col.keyword}」：该竞品未采集此词`;
+            const seenBothOff = state == null && col.group.inGroup(sf) && cell?.ownSeen && cell?.theirsSeen;
             return (
               <td
                 key={col.key}
@@ -652,7 +675,10 @@ export function CompetitorPanel({
                     {cellText(cell)}
                   </span>
                 ) : (
-                  <span title={cellTitle} className="block min-h-6 rounded-md" />
+                  <span
+                    title={cellTitle}
+                    className={cn("block min-h-6 rounded-md", seenBothOff && "bg-zinc-200/70 dark:bg-zinc-700/40")}
+                  />
                 )}
               </td>
             );
@@ -848,7 +874,11 @@ export function CompetitorPanel({
                   <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/70" />绿 = 我方占优</span>
                   <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-red-500/70" />红 = 竞品占优</span>
                   <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-amber-400/80" />琥珀 = 胶着</span>
-                  <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-zinc-300 dark:bg-zinc-600" />灰 = 无数据/未采集</span>
+                  <span title="已采集（该词该组商店有快照）但双方都未进前 200"><span className="inline-block w-2 h-2 rounded-sm bg-zinc-300 dark:bg-zinc-600" />灰 = 已采集、双方未上榜</span>
+                  <span title="该竞品还没有这个 (词 × 组) 的采集记录——不等于无竞争，可能是没关联这个词或扫描范围外"><span className="inline-block w-2 h-2 rounded-sm border border-zinc-300 dark:border-zinc-600" />空白 = 未采集</span>
+                </p>
+                <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+                  ※ 采集/扫描范围只覆盖我方在榜词（及其语言商店）；空白只代表“没查”，不代表“没有竞争”。
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
