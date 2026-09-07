@@ -44,6 +44,11 @@ const LANG_PINYIN_SYL: Record<string, string[]> = {
 function comparePinyin(a: string, b: string): number {
   const sa = LANG_PINYIN_SYL[a] ?? [];
   const sb = LANG_PINYIN_SYL[b] ?? [];
+  return compareSyllableLists(sa, sb);
+}
+
+/** 通用音节级拼音比较：前缀音节短者在前（如 fa < fan）。 */
+function compareSyllableLists(sa: string[], sb: string[]): number {
   const n = Math.max(sa.length, sb.length);
   for (let i = 0; i < n; i++) {
     const x = sa[i] ?? "";
@@ -52,6 +57,42 @@ function comparePinyin(a: string, b: string): number {
   }
   return 0;
 }
+
+/** 商店（市场）中文名拼音：storefrontDisplayName 用 STOREFRONT_NAMES 中文名，按此排序。 */
+const STOREFRONT_PINYIN_SYL: Record<string, string[]> = {
+  us: ["mei"],
+  gb: ["ying"],
+  au: ["ao", "da", "li", "ya"],
+  ca: ["jia"],
+  nz: ["xin", "xi", "lan"],
+  ie: ["ai", "er", "lan"],
+  de: ["de"],
+  at: ["ao", "di", "li"],
+  ch: ["rui"],
+  fr: ["fa"],
+  be: ["bi", "li", "shi"],
+  es: ["xi", "ban", "ya"],
+  mx: ["mo", "xi", "ge"],
+  ar: ["a", "gen", "ting"],
+  cl: ["zhi", "li"],
+  it: ["yi", "da", "li"],
+  nl: ["he", "lan"],
+  br: ["ba", "xi"],
+  pt: ["pu", "tao", "ya"],
+  jp: ["ri", "ben"],
+  kr: ["han", "guo"],
+  cn: ["zhong", "guo", "da", "lu"],
+  sg: ["xin", "jia", "po"],
+  tw: ["tai", "wan"],
+  hk: ["xiang", "gang"],
+  mo: ["ao", "men"],
+  ru: ["e", "luo", "si"],
+};
+const compareStorefrontPinyin = (codeA: string, codeB: string) =>
+  compareSyllableLists(
+    STOREFRONT_PINYIN_SYL[String(codeA).toLowerCase()] ?? [String(codeA)],
+    STOREFRONT_PINYIN_SYL[String(codeB).toLowerCase()] ?? [String(codeB)],
+  );
 
 const TONE_CLS: Record<string, string> = {
   cov: "bg-emerald-500",
@@ -114,8 +155,8 @@ export function RankCoverageHeatmap() {
   for (let i = 0; i < columns.length; i++) {
     if (matchMode(columns[i])) colPairs.push({ i, col: columns[i] });
   }
-  // 各语言视图：语言组按拼音排序（组内保持商店原顺序）。
-  let orderedPairs = colPairs;
+  // 排序：先语言（拼音），再商店（拼音）。
+  let orderedPairs: Array<{ i: number; col: any }>;
   if (inLangView) {
     const byGroup = new Map<string, Array<{ i: number; col: any }>>();
     for (const p of colPairs) {
@@ -126,9 +167,17 @@ export function RankCoverageHeatmap() {
     const orderedGroups = [...byGroup.keys()].sort(
       (a, b) => comparePinyin(a.slice(6), b.slice(6)) || a.localeCompare(b),
     );
-    const reordered: Array<{ i: number; col: any }> = [];
-    for (const g of orderedGroups) reordered.push(...byGroup.get(g)!);
-    orderedPairs = reordered;
+    orderedPairs = [];
+    for (const g of orderedGroups) {
+      orderedPairs.push(
+        ...[...byGroup.get(g)!].sort((a, b) => compareStorefrontPinyin(a.col.storefront, b.col.storefront)),
+      );
+    }
+  } else {
+    // 全局：单一语言（en）下的全部商店，按商店拼音排。
+    orderedPairs = [...colPairs].sort((a, b) =>
+      compareStorefrontPinyin(a.col.storefront, b.col.storefront),
+    );
   }
   const visibleColumns = orderedPairs.map((p) => p.col);
   const visibleRows = rows
@@ -195,15 +244,32 @@ export function RankCoverageHeatmap() {
                       className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 text-left px-1.5 align-bottom bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60"
                     >
                       <div className="flex flex-col items-stretch gap-1">
-                        <select
-                          value={mode}
-                          onChange={(e) => setMode(e.target.value as HeatmapMode)}
-                          className="w-full px-1 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-[10px] font-medium text-zinc-700 dark:text-zinc-200"
+                        {/* 药丸形切换：全局 ↔ 各语言 */}
+                        <div
+                          className="flex rounded-full border border-zinc-300 dark:border-zinc-700 p-0.5 gap-0.5"
                           title="切换视图：全局 = 英语（全局）关键词 × 全部商店（含英语与非英语地区）；各语言 = 按关键词语言分组"
                         >
-                          <option value="global">全局</option>
-                          <option value="langs">各语言</option>
-                        </select>
+                          {(
+                            [
+                              ["global", "全局"],
+                              ["langs", "各语言"],
+                            ] as const
+                          ).map(([value, label]) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => setMode(value)}
+                              className={cn(
+                                "flex-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors",
+                                mode === value
+                                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                                  : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200",
+                              )}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
                         <span className="text-[10px] font-semibold text-zinc-400 dark:text-zinc-500">产品</span>
                       </div>
                     </th>
