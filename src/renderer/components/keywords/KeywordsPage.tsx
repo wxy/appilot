@@ -114,6 +114,8 @@ export function KeywordsPage() {
     total: number;
   } | null>(null);
   const [matrixTab, setMatrixTab] = useState<"ranked" | "unranked">("ranked");
+  // 页面二级标签：关键词矩阵 | 竞品（竞品从长页底部移入独立标签，避免页面过长）。
+  const [pageTab, setPageTab] = useState<"keywords" | "competitor">("keywords");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
   const deletedPopoverRef = useRef<HTMLSpanElement>(null);
 
@@ -1155,8 +1157,61 @@ export function KeywordsPage() {
     await clearRemovedKeywords(product.id, queryLanguages);
   };
 
+  const renderPageTabs = () => (
+    <div className="mb-4 inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden shadow-sm">
+      {(
+        [
+          ["keywords", "关键词"],
+          ["competitor", "竞品"],
+        ] as const
+      ).map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => setPageTab(value)}
+          className={cn(
+            "px-4 py-1.5 text-sm font-medium transition-colors",
+            pageTab === value
+              ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+              : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (pageTab === "competitor") {
+    return (
+      <div className="p-8 max-w-6xl mx-auto">
+        {renderPageTabs()}
+        {project && product ? (
+          <CompetitorPanel
+            projectId={project.id}
+            projectKeywords={project.trackedKeywords || []}
+            product={{
+              id: product.id,
+              platform: product.platform,
+              supportedLanguages: product.supportedLanguages,
+              trackId: product.trackId,
+              bundleId: product.bundleId,
+              trackName: product.trackName,
+            }}
+            defaultTerm={selectedKeyword || ""}
+            viewLang={currentLang}
+            rankSnapshots={rankSnapshots}
+          />
+        ) : (
+          <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
+      {renderPageTabs()}
       {error && (
         <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
           {error}
@@ -2017,24 +2072,6 @@ export function KeywordsPage() {
         onSelectAll={(choice) => selectAllCuration(choice)}
         onSetConfirm={setCurationConfirm}
       />
-
-      {project && product && (
-        <CompetitorPanel
-          projectId={project.id}
-          projectKeywords={project.trackedKeywords || []}
-          product={{
-            id: product.id,
-            platform: product.platform,
-            supportedLanguages: product.supportedLanguages,
-            trackId: product.trackId,
-            bundleId: product.bundleId,
-            trackName: product.trackName,
-          }}
-          defaultTerm={selectedKeyword || ""}
-          viewLang={currentLang}
-          rankSnapshots={rankSnapshots}
-        />
-      )}
     </div>
   );
 }
