@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
@@ -192,8 +192,8 @@ const STORE_ROW_BG = "bg-cyan-50 dark:bg-cyan-950";
 // 行底分隔线：border-separate 下 tr 边框不绘制，改由每个单元格各自画（sticky 格随滚动移动）。
 const CELL_BORDER_B = "border-b border-zinc-100 dark:border-zinc-800";
 const HDR_BORDER_B2 = "border-b-2 border-zinc-300 dark:border-zinc-600";
-// 竞品行第一列 th 的标题文案（悬停行内任意空隙也能提示）。
-const ROW_TOGGLE_TITLE = "点击行展开/收起该竞品的商店级对比（行 = 商店 × 列 = 词）";
+// 竞品行第一列 th 的标题文案（展开/收起只由首列触发，悬停首列内任意空隙也能提示）。
+const ROW_TOGGLE_TITLE = "点击竞品名（首列）展开/收起该竞品的商店级对比（行 = 商店 × 列 = 词）";
 // 格/段芯片配色：myLead > theirLead 绿（我方占优）· theirLead > myLead 红（竞品占优）
 // · 并列且 >0 琥珀（胶着）· 无数据灰 · 0:0 中性。
 function leadTone(myLead: number, theirLead: number, hasData: boolean): { cls: string; text: string } {
@@ -235,7 +235,6 @@ export function CompetitorPanel({
   defaultTerm,
   viewLang,
   focusKeyword,
-  projectKeywords,
 }: {
   projectId: string;
   product: {
@@ -250,7 +249,7 @@ export function CompetitorPanel({
   viewLang: string;
   /** 旧“竞品跟踪”视图的入参（排名明细现来自 overview 的 intel.faces），保留以兼容调用方。 */
   rankSnapshots: any[];
-  /** 项目关键词池（“关联更多关键词”浮层的候选词来源）；缺失时回退矩阵词列。 */
+  /** 项目关键词池。保留以兼容调用方；矩阵空白格「+」现直接按列 (keyword × lang) 关联，不再需要候选词池。 */
   projectKeywords?: any[];
   /** 从关键词矩阵钻取进来的词：进入即聚焦“该词 × 全部竞品”对比（可关闭回完整矩阵）。 */
   focusKeyword?: string;
@@ -271,16 +270,10 @@ export function CompetitorPanel({
   const [profilesTick, setProfilesTick] = useState(0);
   const [scanBusy, setScanBusy] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
-  // —— 竞品行「+ 关联词」浮层：同一时刻至多开一个（记录打开的竞品 + 锚点坐标）——
-  const [linkOpen, setLinkOpen] = useState<{
-    competitorId: string;
-    anchor: { top: number; left: number };
-  } | null>(null);
-  // 用户新勾选的词 key = `${language}\u0000${keyword}`（已关联词独立渲染，不入此集）。
-  const [linkPicked, setLinkPicked] = useState<Set<string>>(new Set());
-  const [linkSaving, setLinkSaving] = useState(false);
-  const [linkError, setLinkError] = useState("");
-  const linkPopRef = useRef<HTMLDivElement>(null);
+  // —— 空白格「+」关联：pendingLinkKey = `${competitorId}\0${col.key}` 防同格重复点击 ——
+  const [pendingLinkKey, setPendingLinkKey] = useState<string | null>(null);
+  // 关联结果短提示（矩阵卡片顶部一行，仿 scanMsg / addMessage 风格）。
+  const [linkFlash, setLinkFlash] = useState<{ text: string; tone: "ok" | "err" } | null>(null);
   // 词钻取聚焦：进入竞品标签时若带词，矩阵只保留该词的列（可关闭回完整矩阵）。
   const [focusCleared, setFocusCleared] = useState(false);
   const wordDrill = focusKeyword && !focusCleared ? focusKeyword : "";
@@ -445,50 +438,7 @@ export function CompetitorPanel({
     load();
     setProfilesTick((v) => v + 1);
     if (expandedRowId === competitorId) setExpandedRowId(null);
-    // 若“关联词”浮层正开在该竞品上则一并关闭。
-    setLinkOpen((prev) => (prev?.competitorId === competitorId ? null : prev));
   };
-
-  // —— 「+ 关联词」浮层：打开（记录竞品 + 按钮锚点），点击浮层外部 / 滚动 / 窗口
-  // 尺寸变化时关闭（矩阵外层是 overflow-auto，浮层用 fixed 定位避免被裁剪）。
-  const toggleLinkPopup = (competitorId: string, e: ReactMouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    if (linkOpen?.competitorId === competitorId) {
-      setLinkOpen(null);
-      return;
-    }
-    const rect = e.currentTarget.getBoundingClientRect();
-    const estH = 320;
-    const openUp = rect.bottom + 12 + estH > window.innerHeight && rect.top - estH - 12 > 0;
-    setLinkOpen({
-      competitorId,
-      anchor: {
-        top: openUp ? Math.max(8, rect.top - estH - 6) : rect.bottom + 6,
-        left: Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - 332)),
-      },
-    });
-    setLinkPicked(new Set());
-    setLinkError("");
-  };
-  useEffect(() => {
-    if (!linkOpen) return;
-    const onDown = (event: MouseEvent) => {
-      if (linkPopRef.current?.contains(event.target as Node)) return;
-      // 点在任何「+ 关联词」触发钮上不关闭（由 click 决定切换/开启）。
-      if ((event.target as HTMLElement)?.closest?.("[data-link-trigger]")) return;
-      setLinkOpen(null);
-    };
-    const close = () => setLinkOpen(null);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [linkOpen]);
-
   const handleRefreshRanks = async () => {
     if (refreshingRanks) return;
     setRefreshingRanks(true);
@@ -556,75 +506,40 @@ export function CompetitorPanel({
     setExpandedRowId((prev) => (prev === competitorId ? null : competitorId));
   };
 
-  // —— 「+ 关联词」浮层数据与保存 ——
-  // 候选词池：优先项目关键词池（projectKeywords），缺失时回退矩阵词列（keyword+lang 去重）。
-  const linkCandidates: Array<{ keyword: string; language: string }> = (() => {
-    const seen = new Map<string, { keyword: string; language: string }>();
-    const push = (keyword?: string, language?: string) => {
-      if (!keyword || !language) return;
-      const k = `${language}\u0000${keyword}`;
-      if (!seen.has(k)) seen.set(k, { keyword, language });
-    };
-    if (Array.isArray(projectKeywords) && projectKeywords.length > 0) {
-      for (const item of projectKeywords) push(item?.keyword, item?.language);
-    } else {
-      for (const col of matrixCols) push(col.keyword, col.lang);
-    }
-    return [...seen.values()];
-  })();
-  const linkOpenProfile = linkOpen
-    ? matrixRows.find((p: any) => p.competitor?.id === linkOpen.competitorId)
-    : null;
-  // 该竞品已关联词 key 集合（浮层里标“已关联”并禁用勾选）。
-  const linkOpenLinked = new Map<string, any>(
-    ((linkOpenProfile?.competitor?.linkedKeywords) || []).map((l: any) => [
-      `${l.language}\u0000${l.keyword}`,
-      l,
-    ]),
-  );
-  const linkNewCount = [...linkPicked].filter((k: string) => !linkOpenLinked.has(k)).length;
-  const handleSaveLinked = async () => {
-    if (!linkOpen || linkSaving) return;
-    const items = [...linkPicked]
-      .filter((k: string) => !linkOpenLinked.has(k))
-      .map((k: string) => {
-        const sep = k.indexOf("\u0000");
-        return {
-          language: k.slice(0, sep),
-          keyword: k.slice(sep + 1),
-        };
-      });
-    if (items.length === 0) {
-      setLinkOpen(null);
-      return;
-    }
-    setLinkSaving(true);
-    setLinkError("");
+  // —— 空白格「+」：把 (词 × 语言) 关联到该竞品（去重合并；之后按 (竞品 × 词 × 商店)
+  // 采集排名并进入矩阵）。成功后刷新总览并在矩阵卡片顶部给一行短提示；请求期间锁定
+  // 该格（pendingLinkKey）防重复点击。
+  const handleBlankLink = async (rowCompetitor: any, col: MatrixCol) => {
+    const key = `${rowCompetitor?.id}\u0000${col.key}`;
+    if (!rowCompetitor?.id || pendingLinkKey === key) return;
+    setPendingLinkKey(key);
+    setLinkFlash(null);
     try {
-      await (window as any).appilot?.competitors?.linkKeywords(
-        projectId,
-        linkOpen.competitorId,
-        items,
-      );
-      setLinkOpen(null);
+      await (window as any).appilot?.competitors?.linkKeywords(projectId, rowCompetitor.id, [
+        { keyword: col.keyword, language: col.lang },
+      ]);
+      setLinkFlash({
+        text: `已关联「${col.keyword}」到 ${rowCompetitor?.name || "该竞品"}，排名将随下次采集/刷新更新`,
+        tone: "ok",
+      });
       await load();
       setProfilesTick((v) => v + 1);
     } catch (err: any) {
-      setLinkError(err?.message || "保存失败，请重试。");
+      setLinkFlash({ text: `关联失败：${err?.message || "请稍后重试。"}`, tone: "err" });
     } finally {
-      setLinkSaving(false);
+      setPendingLinkKey(null);
     }
   };
 
   // —— 竞品矩阵渲染辅助 ——
   // (竞品 × 组 × 词) 的跨店综合格：只统计该组覆盖商店集里的领先数。
-  const renderCell = (col: MatrixCol, face: any) => {
+  const renderCell = (col: MatrixCol, face: any, rowCompetitor: any) => {
     const cells = (face?.cells || []).filter((c: any) => col.group.inGroup(c?.storefront));
     const agg = aggregateCells(cells);
     const hasData = agg.myBest != null || agg.theirBest != null;
     if (!hasData) {
       // 区分「采集到但双方都未上榜」与「未采集」：前者浅灰底，后者空白。
-      // td 与内层铺满 span 都带同款 title，保证格内任何可见区域都能触发。
+      // td 与内层 span 都带同款 title，保证格内任何可见区域都能触发。
       const bothSeen = agg.mySeen > 0 && agg.theirSeen > 0;
       const blankTitle = bothSeen
         ? `「${col.keyword}」${col.group.label}：已采集但双方都未进榜（名次 >200）`
@@ -633,19 +548,49 @@ export function CompetitorPanel({
           : agg.theirSeen > 0
             ? `「${col.keyword}」${col.group.label}：竞品已采集，我方无该词数据`
             : `「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`;
+      // 无色空白格（未采集 / 单方已采集，词不在该竞品采集范围）放一个「+」把它关联过去；
+      // 灰格 = 双方都已采集（词已在采集范围，关联无意义）、商店展开行与表头一律不加。
+      const linkable = !bothSeen && rowCompetitor?.id != null;
+      const linkPending = linkable && pendingLinkKey === `${rowCompetitor.id}\u0000${col.key}`;
+      const linkTitle = `关联「${col.keyword}」到 ${rowCompetitor?.name ?? ""}：之后采集/刷新会记录它在这个词的表现`;
       return (
         <td
           key={col.key}
           className={cn("p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50", CELL_BORDER_B)}
           title={blankTitle}
         >
-          <span
-            title={blankTitle}
-            className={cn(
-              "block min-h-6 rounded-md",
-              bothSeen && "bg-zinc-200/70 dark:bg-zinc-700/40",
-            )}
-          />
+          {linkable ? (
+            <span className="flex h-6 items-center justify-center" title={blankTitle}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleBlankLink(rowCompetitor, col);
+                }}
+                disabled={linkPending}
+                title={linkTitle}
+                aria-label={linkTitle}
+                className={cn(
+                  "flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none transition-colors",
+                  "border-zinc-200/80 bg-zinc-100 text-zinc-400",
+                  "dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-500",
+                  "hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600",
+                  "dark:hover:border-amber-500/60 dark:hover:bg-amber-500/15 dark:hover:text-amber-400",
+                  linkPending && "opacity-50",
+                )}
+              >
+                {linkPending ? "…" : "+"}
+              </button>
+            </span>
+          ) : (
+            <span
+              title={blankTitle}
+              className={cn(
+                "block min-h-6 rounded-md",
+                bothSeen && "bg-zinc-200/70 dark:bg-zinc-700/40",
+              )}
+            />
+          )}
         </td>
       );
     }
@@ -981,7 +926,7 @@ export function CompetitorPanel({
                     className="ml-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500"
                     title="列按“语言/区域组”分组并连续排列，组序固定：本地化语言组（简体中文/韩语…，按语言次序）→ 英语组（en 词在英语地区商店 us/gb/au/ca/nz/ie 的跨店综合）→ 全局组（en 词在其它语言商店如 kr/jp/de 的跨店综合）；同一 en 词可在英语与全局两组各占一列（视为不同维度）。组内关键词按“组内被多少竞品命中”降序；该组无数据（无商店快照）的词不生成列。"
                   >
-                    行 = 竞品（指数降序）· 列 = 关键词（按语言/区域组排列，≤40 列）· 点击行展开商店级对比
+                    行 = 竞品（指数降序）· 列 = 关键词（按语言/区域组排列，≤40 列）· 点击竞品名展开/收起商店级对比
                   </span>
                 </h3>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
@@ -1042,6 +987,18 @@ export function CompetitorPanel({
               {scanMsg}
             </p>
           )}
+          {linkFlash && (
+            <p
+              className={cn(
+                "px-4 py-2 text-[11px] border-b border-zinc-100 dark:border-zinc-800",
+                linkFlash.tone === "err"
+                  ? "text-red-500 dark:text-red-400"
+                  : "text-amber-600 dark:text-amber-400",
+              )}
+            >
+              {linkFlash.text}
+            </p>
+          )}
           {profiles.length === 0 ? (
             <p className="px-4 py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">
               暂无竞争面数据 —— 点击“扫描在榜词”或“刷新排名”开始采集（按 (竞品 × 词 × 商店) 回填后这里出现矩阵）。
@@ -1065,7 +1022,7 @@ export function CompetitorPanel({
                         "sticky top-0 left-0 z-40 px-3 py-1.5 text-left align-top whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400",
                         MATRIX_HDR_BG,
                       )}
-                      title="行 = 竞品（按竞争指数降序）；点击行展开商店级对比（行 = 商店 × 列 = 词）"
+                      title="行 = 竞品（按竞争指数降序）；点击竞品名（首列）展开/收起商店级对比（行 = 商店 × 列 = 词）"
                     >
                       竞品 / 指数 ↓
                     </th>
@@ -1142,22 +1099,18 @@ export function CompetitorPanel({
                     return [
                       <tr
                         key={`${competitor.id}-row`}
-                        onClick={() => toggleRow(competitor.id)}
-                        className={cn(
-                          "group cursor-pointer",
-                          expanded
-                            ? "bg-zinc-50/70 dark:bg-zinc-800/30"
-                            : "hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30",
-                        )}
+                        className={cn(expanded && "bg-zinc-50/70 dark:bg-zinc-800/30")}
                       >
+                        {/* 展开/收起只由首列（竞品名 th）触发；行内其它单元格不再接管点击。 */}
                         <th
                           scope="row"
+                          onClick={() => toggleRow(competitor.id)}
                           className={cn(
-                            "sticky left-0 z-20 px-2 py-1.5 text-left align-top",
+                            "sticky left-0 z-20 px-2 py-1.5 text-left align-top cursor-pointer",
                             CELL_BORDER_B,
                             expanded
                               ? MATRIX_ROW_OPEN
-                              : cn(MATRIX_ROW_BG, "group-hover:bg-zinc-50 dark:group-hover:bg-[#1d1d20]"),
+                              : cn(MATRIX_ROW_BG, "hover:bg-zinc-50 dark:hover:bg-[#1d1d20]"),
                           )}
                           title={ROW_TOGGLE_TITLE}
                         >
@@ -1190,20 +1143,6 @@ export function CompetitorPanel({
                                     </span>
                                   ))}
                                 </span>
-                                <button
-                                  type="button"
-                                  data-link-trigger
-                                  onClick={(e) => toggleLinkPopup(competitor.id, e)}
-                                  className={cn(
-                                    "shrink-0 px-1.5 py-px rounded-md text-[10px] font-medium transition-colors",
-                                    linkOpen?.competitorId === competitor.id
-                                      ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
-                                      : "text-zinc-400 dark:text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
-                                  )}
-                                  title="把项目关键词池里的词关联到该竞品（去重合并；之后按 (竞品 × 词 × 商店) 采集排名并进入矩阵）"
-                                >
-                                  + 关联词
-                                </button>
                                 <span className="ml-auto shrink-0 text-[9px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
                                   {expanded ? "▲ 收起" : "▼ 展开"}
                                 </span>
@@ -1255,7 +1194,7 @@ export function CompetitorPanel({
                           </div>
                         </th>
                         {matrixCols.map((col) =>
-                          renderCell(col, faceMap.get(`${col.lang}\u0000${col.keyword}`)),
+                          renderCell(col, faceMap.get(`${col.lang}\u0000${col.keyword}`), competitor),
                         )}
                       </tr>,
                       ...(expanded ? renderRowDetail(profile, faceMap) : []),
@@ -1271,110 +1210,6 @@ export function CompetitorPanel({
       {competitors.length === 0 ? (
         <p className="text-sm text-zinc-400 dark:text-zinc-500">尚未添加竞品。</p>
       ) : null}
-
-      {/* —— 「+ 关联词」浮层（fixed 定位在触发钮下方，避免被矩阵滚动容器裁剪） —— */}
-      {linkOpen && linkOpenProfile && (
-        <div
-          ref={linkPopRef}
-          className="fixed z-[70] w-[21rem] max-h-[min(60vh,20rem)] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3"
-          style={{ top: linkOpen.anchor.top, left: linkOpen.anchor.left }}
-        >
-          <div className="flex items-center justify-between gap-2 mb-1">
-            <p className="min-w-0 truncate text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
-              关联更多关键词
-              <span className="ml-1.5 font-normal text-zinc-400 dark:text-zinc-500">
-                {linkOpenProfile?.competitor?.name}
-              </span>
-            </p>
-            <button
-              type="button"
-              onClick={() => setLinkOpen(null)}
-              className="shrink-0 w-4 text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 text-xs"
-              title="关闭"
-            >
-              ✕
-            </button>
-          </div>
-          <p className="mb-2 text-[10px] leading-4 text-zinc-400 dark:text-zinc-500">
-            勾选后保存 → 该竞品按这些词采集排名并进入矩阵；已有词标「已关联」，不可取消。
-          </p>
-          {linkCandidates.length === 0 ? (
-            <p className="py-4 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
-              暂无可用关键词（项目关键词池为空）。
-            </p>
-          ) : (
-            <ul className="max-h-48 overflow-auto space-y-0.5 pr-1 -mr-1">
-              {linkCandidates.map((c) => {
-                const ck = `${c.language}\u0000${c.keyword}`;
-                const isLinked = linkOpenLinked.has(ck);
-                const picked = linkPicked.has(ck);
-                return (
-                  <li key={ck}>
-                    <label
-                      className={cn(
-                        "flex items-center gap-2 rounded-md px-1.5 py-1",
-                        isLinked
-                          ? "opacity-60 cursor-default"
-                          : "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800",
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        className="accent-amber-500"
-                        checked={isLinked || picked}
-                        disabled={isLinked}
-                        onChange={() => {
-                          if (isLinked) return;
-                          const nextSet = new Set(linkPicked);
-                          if (picked) nextSet.delete(ck);
-                          else nextSet.add(ck);
-                          setLinkPicked(nextSet);
-                        }}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-xs text-zinc-700 dark:text-zinc-200" title={c.keyword}>
-                        {c.keyword}
-                      </span>
-                      <span className="shrink-0 px-1 py-px rounded bg-zinc-100 dark:bg-zinc-800 text-[9px] text-zinc-500 dark:text-zinc-400">
-                        {FACE_LANG_LABEL[c.language] || c.language}
-                      </span>
-                      {isLinked && (
-                        <span className="shrink-0 text-[9px] text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                          已关联
-                        </span>
-                      )}
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          <div className="mt-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
-            <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-              {linkNewCount > 0 ? `将新增 ${linkNewCount} 个词` : "未勾选新词"}
-            </span>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setLinkOpen(null)}
-                className={btnSmSecondary}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveLinked()}
-                disabled={linkSaving || linkNewCount === 0}
-                className={btnSmPrimary}
-              >
-                {linkSaving ? "保存中…" : "保存"}
-              </button>
-            </div>
-          </div>
-          {linkError && (
-            <p className="mt-1.5 text-[10px] text-red-500 dark:text-red-400">{linkError}</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
