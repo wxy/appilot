@@ -101,7 +101,7 @@ async function main(): Promise<void> {
   });
   // 覆盖已有 ops-sync:msszspx4 行（补 electronJson 供归属/首次时间解析）。
   store.tasks.upsert({
-    id: 'ops-sync:msszspx4', title: '运营同步', intervalMinutes: 1440, lastRunAt: d(-2), nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 2, source: 'electron',
+    id: 'ops-sync:msszspx4', title: '数据同步', intervalMinutes: 1440, lastRunAt: d(-2), nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 2, source: 'electron',
     electronJson: JSON.stringify({ id: 'ops-sync:msszspx4', kind: 'ops-sync', projectId: 'msszspx4', intervalMinutes: 1440, lastRunAt: '2026-09-01T08:00:00.000Z', firstRunAt: null, executionCount: 2, lastStatus: 'success', enabled: true }),
   });
 

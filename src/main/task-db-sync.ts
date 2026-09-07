@@ -31,7 +31,7 @@ export interface ElectronTaskLike {
 const KIND_LABELS: Record<string, string> = {
   rank: '排名采集',
   'github-sync': 'GitHub 发布同步',
-  'ops-sync': '运营同步',
+  'ops-sync': '数据同步',
   'reviews-sync': '评价同步',
   'build-status': '构建状态',
 };
