@@ -206,7 +206,16 @@ export function registerCompetitorsHandlers(): void {
     if (!project) return [];
     const product = (project.storeProducts || []).find((sp: any) => sp?.id === productId);
     const platform: "ios" | "macos" = product?.platform === "macos" ? "macos" : "ios";
-    const ownSnapshots: any[] = Array.isArray(product?.rankSnapshots) ? product.rankSnapshots : [];
+    // 我方快照以 DB rank_snapshots 为源（kv projects 已退役）；缺数据时回退产品副本。
+    const ownSnapshots: any[] = (() => {
+      try {
+        const dbRows = sharedStore().snapshots.history(project.name, { productId });
+        if (Array.isArray(dbRows) && dbRows.length > 0) return dbRows;
+      } catch {
+        // 回退
+      }
+      return Array.isArray(product?.rankSnapshots) ? product.rankSnapshots : [];
+    })();
     const list = competitorsFor(s, projectId).map(migrateCompetitor);
     const kvInnerR = (s.get("competitorRankSnapshots") || {})[projectId] || {};
     const dbInnerR = blobGet(sharedStore(), "competitorRankSnapshots", projectId) as Record<string, unknown> | undefined;
@@ -260,5 +269,134 @@ export function registerCompetitorsHandlers(): void {
   ipcMain.handle("competitors:sync", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     return runOpsSyncNow(projectId);
+  });
+
+  // 自动发现（P3）：只扫我方「在榜词」（决策 2）——每个词取我方名次最好的
+  // 商店做一次前 N 名搜索；命中已跟踪竞品 → 回填该词排名（进入竞争面聚合），
+  // 未跟踪 App 记入候选。每日限流一次，可 force 重扫。
+  ipcMain.handle("competitors:scanOnChart", async (_event, projectId: string, productId: string, opts?: { force?: boolean }) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((p: any) =>
+      (p.storeProducts || []).some((sp: any) => sp?.id === productId),
+    );
+    if (!project) return { ok: false, error: "Product not found" };
+    const product = (project.storeProducts || []).find((sp: any) => sp?.id === productId);
+    const platform: "ios" | "macos" = product?.platform === "macos" ? "macos" : "ios";
+    const entity = platform === "macos" ? "macSoftware" : "software";
+
+    // 每日限流（force 跳过）。
+    const scanState: Record<string, { lastScanAt: string }> = s.get("competitorScanState") || {};
+    const last = scanState[productId]?.lastScanAt;
+    if (!opts?.force && last && Date.now() - new Date(last).getTime() < 24 * 3600_000) {
+      return { ok: false, throttled: true, lastScanAt: last };
+    }
+
+    // 我方在榜词（窗口内 ≤200，含语言），每词取我方名次最好的商店作为扫描点。
+    const ownSnapshots: any[] = (() => {
+      try {
+        const dbRows = sharedStore().snapshots.history(project.name, { productId });
+        if (Array.isArray(dbRows) && dbRows.length > 0) return dbRows;
+      } catch {
+        // 回退
+      }
+      return Array.isArray(product?.rankSnapshots) ? product.rankSnapshots : [];
+    })();
+    const windowAgo = Date.now() - 7 * 86_400_000;
+    const perKw = new Map<string, { language: string; keyword: string; storefront: string; rank: number }>();
+    for (const snap of ownSnapshots) {
+      if (!snap?.keyword || !snap?.storefront) continue;
+      if (snap.checkedAt && new Date(snap.checkedAt).getTime() < windowAgo) continue;
+      const rank = typeof snap.rank === "number" && snap.rank > 0 ? snap.rank : null;
+      if (rank == null || rank > 200) continue; // 只扫在榜词
+      const language = String(snap.language ?? "en");
+      const key = `${language}\u0000${snap.keyword}`;
+      const cur = perKw.get(key);
+      if (!cur || rank < cur.rank) perKw.set(key, { language, keyword: snap.keyword, storefront: snap.storefront, rank });
+    }
+    const targets = [...perKw.values()].sort((a, b) => a.rank - b.rank).slice(0, 40);
+
+    const list = competitorsFor(s, projectId).map(migrateCompetitor);
+    const ranksAll: Record<string, Record<string, any[]>> = s.get("competitorRankSnapshots") || {};
+    const rankById: Record<string, any[]> = ranksAll[projectId] || {};
+    const selfTrackId = String(product?.trackId ?? "");
+    const { searchCompetitorCandidatesAcross } = await import("@appilot-labs/appilot-core/competitor-radar");
+
+    const foundByCompetitor: Record<string, number> = {};
+    const newCandidates: Array<{ trackId: string; trackName: string; rank: number | null }> = [];
+    const seenNew = new Set<string>();
+    let checked = 0;
+    for (const t of targets) {
+      checked += 1;
+      let results: any[] = [];
+      try {
+        results = await searchCompetitorCandidatesAcross({ term: t.keyword, countries: [t.storefront], entity });
+      } catch {
+        continue; // 单词失败不阻断
+      }
+      for (const c of results || []) {
+        if (!c || c.trackId == null) continue;
+        if (String(c.trackId) === selfTrackId) continue;
+        const matched = list.find((comp: any) => {
+          const ids = [
+            comp?.trackId,
+            ...Object.values(comp?.trackIds || {}),
+          ].filter(Boolean).map(String);
+          return ids.includes(String(c.trackId));
+        });
+        if (matched) {
+          const rank = typeof c.ranks?.[t.storefront] === "number" ? c.ranks[t.storefront] : null;
+          const prev = rankById[matched.id] || [];
+          const nextRanks = prev.filter(
+            (item: any) =>
+              !(
+                item.keyword === t.keyword &&
+                item.storefront === t.storefront &&
+                (item.platform == null || item.platform === platform)
+              ),
+          );
+          nextRanks.push({
+            keyword: t.keyword,
+            language: t.language,
+            storefront: t.storefront,
+            platform,
+            rank,
+            checkedAt: new Date().toISOString(),
+          });
+          rankById[matched.id] = nextRanks.slice(-300);
+          foundByCompetitor[matched.id] = (foundByCompetitor[matched.id] ?? 0) + 1;
+        } else if (!seenNew.has(String(c.trackId))) {
+          seenNew.add(String(c.trackId));
+          newCandidates.push({
+            trackId: String(c.trackId),
+            trackName: c.trackName || "未知应用",
+            rank: typeof c.ranks?.[t.storefront] === "number" ? c.ranks[t.storefront] : null,
+          });
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150)); // 温和节流
+    }
+
+    if (checked > 0) {
+      ranksAll[projectId] = rankById;
+      s.set("competitorRankSnapshots", ranksAll);
+      const discoveriesAll: Record<string, any[]> = s.get("competitorDiscoveries") || {};
+      const merged = new Map<string, any>((discoveriesAll[projectId] || []).map((d: any) => [String(d.trackId), d]));
+      for (const n of newCandidates) merged.set(n.trackId, { ...n, discoveredAt: new Date().toISOString() });
+      discoveriesAll[projectId] = [...merged.values()].slice(-100);
+      s.set("competitorDiscoveries", discoveriesAll);
+    }
+    scanState[productId] = { lastScanAt: new Date().toISOString() };
+    s.set("competitorScanState", scanState);
+    notifyDataChanged("competitors");
+    return {
+      ok: true,
+      checked,
+      updatedCompetitors: Object.keys(foundByCompetitor).length,
+      foundKeywords: Object.values(foundByCompetitor).reduce((a: number, b: number) => a + b, 0),
+      newCandidates: newCandidates.length,
+    };
   });
 }
