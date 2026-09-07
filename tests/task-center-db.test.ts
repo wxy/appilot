@@ -44,6 +44,32 @@ async function main(): Promise<void> {
   assert.deepEqual(rank.round, { done: 1, total: 2 }, 'round 由 DB rankProgress 计算');
   assert.equal(rank.keyword, 'app');
 
+  // —— kv schedulerRounds（引擎轮次状态）接入：真实本轮进度 + 上轮完成时间 ——
+  store.kv.set('schedulerRounds', JSON.stringify({
+    [gA]: {
+      members: ['projX:macos:en:us:app', 'projX:macos:en:us:kw2', 'projX:macos:en:us:extra'],
+      done: ['projX:macos:en:us:app'],
+      roundStartedAt: '2026-09-01T08:00:00.000Z',
+      lastCompletedAt: '2026-08-30T15:55:17.537Z',
+    },
+  }));
+  const tasksKv = taskCenterTasksFromDb(store);
+  const rankKv = tasksKv.find((t) => t.id === 'projX:macos:en:us:app');
+  assert.deepEqual(
+    rankKv?.round,
+    { done: 1, total: 3, lastCompletedAt: '2026-08-30T15:55:17.537Z', roundStartedAt: '2026-09-01T08:00:00.000Z' },
+    'kv 轮次状态优先于 rankProgress（含上轮完成时间，非累计成功数）',
+  );
+  // 同组其他成员行共享同一 kv 轮次状态。
+  const tasksKv2 = taskCenterTasksFromDb(store);
+  const rankKv2 = tasksKv2.find((t) => t.id === 'projX:macos:en:us:kw2');
+  assert.deepEqual(
+    rankKv2?.round,
+    { done: 1, total: 3, lastCompletedAt: '2026-08-30T15:55:17.537Z', roundStartedAt: '2026-09-01T08:00:00.000Z' },
+    '同组其他成员共享 kv 轮次状态',
+  );
+  store.kv.delete('schedulerRounds');
+
   const err = tasks.find((t) => t.id === 'github-sync:msszspx4');
   assert.equal(err?.lastStatus, 'failed', 'error → failed');
   assert.equal(err?.projectName, 'GloWalk');
