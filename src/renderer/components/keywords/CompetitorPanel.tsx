@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
-import { platformLabel } from "../../lib/format";
+import { formatHumanTime, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 
@@ -235,6 +235,7 @@ export function CompetitorPanel({
   defaultTerm,
   viewLang,
   focusKeyword,
+  projectKeywords,
 }: {
   projectId: string;
   product: {
@@ -249,7 +250,7 @@ export function CompetitorPanel({
   viewLang: string;
   /** 旧“竞品跟踪”视图的入参（排名明细现来自 overview 的 intel.faces），保留以兼容调用方。 */
   rankSnapshots: any[];
-  /** 旧版译文标注入参（已不再使用），保留以兼容调用方。 */
+  /** 项目关键词池（“关联更多关键词”浮层的候选词来源）；缺失时回退矩阵词列。 */
   projectKeywords?: any[];
   /** 从关键词矩阵钻取进来的词：进入即聚焦“该词 × 全部竞品”对比（可关闭回完整矩阵）。 */
   focusKeyword?: string;
@@ -270,6 +271,20 @@ export function CompetitorPanel({
   const [profilesTick, setProfilesTick] = useState(0);
   const [scanBusy, setScanBusy] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
+  // —— 发现新竞品（“扫描在榜词”记录下的未跟踪候选，kv competitorDiscoveries）——
+  const [discoveries, setDiscoveries] = useState<any[]>([]);
+  const [discoveryBusy, setDiscoveryBusy] = useState<string | null>(null);
+  const [discoveryMsg, setDiscoveryMsg] = useState("");
+  // —— 竞品行「+ 关联词」浮层：同一时刻至多开一个（记录打开的竞品 + 锚点坐标）——
+  const [linkOpen, setLinkOpen] = useState<{
+    competitorId: string;
+    anchor: { top: number; left: number };
+  } | null>(null);
+  // 用户新勾选的词 key = `${language}\u0000${keyword}`（已关联词独立渲染，不入此集）。
+  const [linkPicked, setLinkPicked] = useState<Set<string>>(new Set());
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [linkError, setLinkError] = useState("");
+  const linkPopRef = useRef<HTMLDivElement>(null);
   // 词钻取聚焦：进入竞品标签时若带词，矩阵只保留该词的列（可关闭回完整矩阵）。
   const [focusCleared, setFocusCleared] = useState(false);
   const wordDrill = focusKeyword && !focusCleared ? focusKeyword : "";
@@ -298,6 +313,17 @@ export function CompetitorPanel({
   }, [projectId, product?.id]);
   useEffect(() => { loadOverview(); }, [loadOverview, profilesTick]);
   useEffect(() => { load(); }, [load]);
+  // 发现候选：来自「扫描在榜词」写入的 kv competitorDiscoveries。
+  const loadDiscoveries = useCallback(() => {
+    if (!projectId) {
+      setDiscoveries([]);
+      return;
+    }
+    (window as any).appilot?.competitors?.discoveries(projectId)
+      .then((list: any[]) => setDiscoveries(list || []))
+      .catch(() => setDiscoveries([]));
+  }, [projectId]);
+  useEffect(() => { loadDiscoveries(); }, [loadDiscoveries]);
   // 在榜词自动发现扫描（P3：只扫我方在榜词；每日限流，界面提示结果）。
   const handleScanOnChart = async () => {
     if (scanBusy || !product?.id) return;
@@ -315,20 +341,24 @@ export function CompetitorPanel({
         setScanMsg(res?.error || "扫描失败");
       }
       setProfilesTick((v) => v + 1);
+      loadDiscoveries(); // 扫描可能写入新候选。
     } catch (err: any) {
       setScanMsg(err?.message || "扫描失败");
     } finally {
       setScanBusy(false);
     }
   };
-  // 主进程数据变更推送：竞品数据更新时自动刷新。
+  // 主进程数据变更推送：竞品数据更新时自动刷新（列表 + 发现候选）。
   useEffect(() => {
     const handler = (e: Event) => {
-      if ((e as CustomEvent).detail === "competitors") load();
+      if ((e as CustomEvent).detail === "competitors") {
+        load();
+        loadDiscoveries();
+      }
     };
     window.addEventListener("appilot:data-changed", handler);
     return () => window.removeEventListener("appilot:data-changed", handler);
-  }, [load]);
+  }, [load, loadDiscoveries]);
 
   // Keep the search box in sync with the keyword selected in the matrix.
   useEffect(() => {
@@ -432,7 +462,83 @@ export function CompetitorPanel({
     load();
     setProfilesTick((v) => v + 1);
     if (expandedRowId === competitorId) setExpandedRowId(null);
+    // 若“关联词”浮层正开在该竞品上则一并关闭。
+    setLinkOpen((prev) => (prev?.competitorId === competitorId ? null : prev));
   };
+
+  // —— 发现新竞品：添加 / 忽略 ——
+  const handleAddDiscovered = async (d: any) => {
+    if (discoveryBusy) return;
+    setDiscoveryBusy(String(d.trackId));
+    try {
+      const platform = product?.platform === "macos" ? "macos" : "ios";
+      const res = await (window as any).appilot?.competitors?.addDiscovered(projectId, {
+        trackId: String(d.trackId),
+        trackName: d.trackName,
+        platform,
+      });
+      setDiscoveryMsg(
+        res?.existed
+          ? `「${d.trackName || "该 App"}」已在竞品列表中，已从发现候选移除。`
+          : `「${d.trackName || "该 App"}」已加入竞品列表（已移除该候选）。`,
+      );
+      await load();
+      setProfilesTick((v) => v + 1);
+      loadDiscoveries();
+    } catch (err: any) {
+      setDiscoveryMsg(err?.message || "添加失败，请重试。");
+    } finally {
+      setDiscoveryBusy(null);
+    }
+  };
+  const handleIgnoreDiscovery = async (trackId: string) => {
+    try {
+      await (window as any).appilot?.competitors?.removeDiscovery(projectId, String(trackId));
+      loadDiscoveries();
+    } catch {
+      // 忽略失败不阻塞其它操作。
+    }
+  };
+
+  // —— 「+ 关联词」浮层：打开（记录竞品 + 按钮锚点），点击浮层外部 / 滚动 / 窗口
+  // 尺寸变化时关闭（矩阵外层是 overflow-auto，浮层用 fixed 定位避免被裁剪）。
+  const toggleLinkPopup = (competitorId: string, e: ReactMouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (linkOpen?.competitorId === competitorId) {
+      setLinkOpen(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const estH = 320;
+    const openUp = rect.bottom + 12 + estH > window.innerHeight && rect.top - estH - 12 > 0;
+    setLinkOpen({
+      competitorId,
+      anchor: {
+        top: openUp ? Math.max(8, rect.top - estH - 6) : rect.bottom + 6,
+        left: Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - 332)),
+      },
+    });
+    setLinkPicked(new Set());
+    setLinkError("");
+  };
+  useEffect(() => {
+    if (!linkOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (linkPopRef.current?.contains(event.target as Node)) return;
+      // 点在任何「+ 关联词」触发钮上不关闭（由 click 决定切换/开启）。
+      if ((event.target as HTMLElement)?.closest?.("[data-link-trigger]")) return;
+      setLinkOpen(null);
+    };
+    const close = () => setLinkOpen(null);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [linkOpen]);
 
   const handleRefreshRanks = async () => {
     if (refreshingRanks) return;
@@ -499,6 +605,66 @@ export function CompetitorPanel({
   const totalCols = matrixCols.length;
   const toggleRow = (competitorId: string) => {
     setExpandedRowId((prev) => (prev === competitorId ? null : competitorId));
+  };
+
+  // —— 「+ 关联词」浮层数据与保存 ——
+  // 候选词池：优先项目关键词池（projectKeywords），缺失时回退矩阵词列（keyword+lang 去重）。
+  const linkCandidates: Array<{ keyword: string; language: string }> = (() => {
+    const seen = new Map<string, { keyword: string; language: string }>();
+    const push = (keyword?: string, language?: string) => {
+      if (!keyword || !language) return;
+      const k = `${language}\u0000${keyword}`;
+      if (!seen.has(k)) seen.set(k, { keyword, language });
+    };
+    if (Array.isArray(projectKeywords) && projectKeywords.length > 0) {
+      for (const item of projectKeywords) push(item?.keyword, item?.language);
+    } else {
+      for (const col of matrixCols) push(col.keyword, col.lang);
+    }
+    return [...seen.values()];
+  })();
+  const linkOpenProfile = linkOpen
+    ? matrixRows.find((p: any) => p.competitor?.id === linkOpen.competitorId)
+    : null;
+  // 该竞品已关联词 key 集合（浮层里标“已关联”并禁用勾选）。
+  const linkOpenLinked = new Map<string, any>(
+    ((linkOpenProfile?.competitor?.linkedKeywords) || []).map((l: any) => [
+      `${l.language}\u0000${l.keyword}`,
+      l,
+    ]),
+  );
+  const linkNewCount = [...linkPicked].filter((k: string) => !linkOpenLinked.has(k)).length;
+  const handleSaveLinked = async () => {
+    if (!linkOpen || linkSaving) return;
+    const items = [...linkPicked]
+      .filter((k: string) => !linkOpenLinked.has(k))
+      .map((k: string) => {
+        const sep = k.indexOf("\u0000");
+        return {
+          language: k.slice(0, sep),
+          keyword: k.slice(sep + 1),
+        };
+      });
+    if (items.length === 0) {
+      setLinkOpen(null);
+      return;
+    }
+    setLinkSaving(true);
+    setLinkError("");
+    try {
+      await (window as any).appilot?.competitors?.linkKeywords(
+        projectId,
+        linkOpen.competitorId,
+        items,
+      );
+      setLinkOpen(null);
+      await load();
+      setProfilesTick((v) => v + 1);
+    } catch (err: any) {
+      setLinkError(err?.message || "保存失败，请重试。");
+    } finally {
+      setLinkSaving(false);
+    }
   };
 
   // —— 竞品矩阵渲染辅助 ——
@@ -855,6 +1021,82 @@ export function CompetitorPanel({
         </>
       )}
 
+      {/* —— 发现新竞品：在榜词扫描记录下的未跟踪 App（仅候选非空时展示） —— */}
+      {discoveries.length > 0 && projectId && product?.id && (
+        <div className="mb-4 rounded-2xl border border-amber-200/70 dark:border-amber-500/25 bg-white dark:bg-zinc-900 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-amber-200/60 dark:border-amber-500/20 flex items-center justify-between gap-3">
+            <h3 className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 inline-flex items-center gap-2">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+              发现新竞品（{discoveries.length}）
+              <span className="text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                来自“扫描在榜词”的未跟踪 App · 平台 {platformLabel(product?.platform === "macos" ? "macos" : "ios")}
+              </span>
+            </h3>
+          </div>
+          {discoveryMsg && (
+            <p className="px-4 pt-2 text-[11px] text-amber-600 dark:text-amber-400">{discoveryMsg}</p>
+          )}
+          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {discoveries.map((d: any) => (
+              <li key={String(d.trackId)} className="px-4 py-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    (window as any).appilot?.openAppPage(
+                      `https://apps.apple.com/app/id${String(d.trackId)}`,
+                    );
+                  }}
+                  className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 hover:underline"
+                  title="在网页中打开 App Store 页面"
+                >
+                  {d.trackName || "未知应用"}
+                </button>
+                <span className="shrink-0 inline-flex px-1.5 py-px rounded bg-zinc-100 dark:bg-zinc-800 text-[9px] font-medium text-zinc-500 dark:text-zinc-400">
+                  {platformLabel(product?.platform === "macos" ? "macos" : "ios")}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 inline-flex px-1.5 py-px rounded text-[10px] tabular-nums",
+                    typeof d.rank === "number" && d.rank > 0
+                      ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500",
+                  )}
+                  title={typeof d.rank === "number" && d.rank > 0 ? "扫描时该 App 的榜单名次" : "扫描时未取到名次"}
+                >
+                  {typeof d.rank === "number" && d.rank > 0 ? `在榜 #${d.rank}` : "在榜未知"}
+                </span>
+                <span
+                  className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap"
+                  title={`发现于 ${d.discoveredAt ? new Date(d.discoveredAt).toLocaleString() : "未知时间"}`}
+                >
+                  {formatHumanTime(d.discoveredAt)}
+                </span>
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleAddDiscovered(d)}
+                    disabled={discoveryBusy === String(d.trackId)}
+                    className={btnSmPrimary}
+                    title="加入竞品列表（开始跟踪其排名）"
+                  >
+                    {discoveryBusy === String(d.trackId) ? "添加中…" : "添加"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleIgnoreDiscovery(String(d.trackId))}
+                    disabled={discoveryBusy != null}
+                    className="px-1.5 py-0.5 rounded-md text-[10px] text-zinc-300 dark:text-zinc-600 hover:text-red-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                    title="忽略：从候选移除，不加入竞品列表"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {competitors.length > 0 || profiles.length > 0 ? (
         <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
@@ -1054,6 +1296,20 @@ export function CompetitorPanel({
                                     </span>
                                   ))}
                                 </span>
+                                <button
+                                  type="button"
+                                  data-link-trigger
+                                  onClick={(e) => toggleLinkPopup(competitor.id, e)}
+                                  className={cn(
+                                    "shrink-0 px-1.5 py-px rounded-md text-[10px] font-medium transition-colors",
+                                    linkOpen?.competitorId === competitor.id
+                                      ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                                      : "text-zinc-400 dark:text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                                  )}
+                                  title="把项目关键词池里的词关联到该竞品（去重合并；之后按 (竞品 × 词 × 商店) 采集排名并进入矩阵）"
+                                >
+                                  + 关联词
+                                </button>
                                 <span className="ml-auto shrink-0 text-[9px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
                                   {expanded ? "▲ 收起" : "▼ 展开"}
                                 </span>
@@ -1103,6 +1359,110 @@ export function CompetitorPanel({
       {competitors.length === 0 ? (
         <p className="text-sm text-zinc-400 dark:text-zinc-500">尚未添加竞品。</p>
       ) : null}
+
+      {/* —— 「+ 关联词」浮层（fixed 定位在触发钮下方，避免被矩阵滚动容器裁剪） —— */}
+      {linkOpen && linkOpenProfile && (
+        <div
+          ref={linkPopRef}
+          className="fixed z-[70] w-[21rem] max-h-[min(60vh,20rem)] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3"
+          style={{ top: linkOpen.anchor.top, left: linkOpen.anchor.left }}
+        >
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <p className="min-w-0 truncate text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
+              关联更多关键词
+              <span className="ml-1.5 font-normal text-zinc-400 dark:text-zinc-500">
+                {linkOpenProfile?.competitor?.name}
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => setLinkOpen(null)}
+              className="shrink-0 w-4 text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 text-xs"
+              title="关闭"
+            >
+              ✕
+            </button>
+          </div>
+          <p className="mb-2 text-[10px] leading-4 text-zinc-400 dark:text-zinc-500">
+            勾选后保存 → 该竞品按这些词采集排名并进入矩阵；已有词标「已关联」，不可取消。
+          </p>
+          {linkCandidates.length === 0 ? (
+            <p className="py-4 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
+              暂无可用关键词（项目关键词池为空）。
+            </p>
+          ) : (
+            <ul className="max-h-48 overflow-auto space-y-0.5 pr-1 -mr-1">
+              {linkCandidates.map((c) => {
+                const ck = `${c.language}\u0000${c.keyword}`;
+                const isLinked = linkOpenLinked.has(ck);
+                const picked = linkPicked.has(ck);
+                return (
+                  <li key={ck}>
+                    <label
+                      className={cn(
+                        "flex items-center gap-2 rounded-md px-1.5 py-1",
+                        isLinked
+                          ? "opacity-60 cursor-default"
+                          : "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-amber-500"
+                        checked={isLinked || picked}
+                        disabled={isLinked}
+                        onChange={() => {
+                          if (isLinked) return;
+                          const nextSet = new Set(linkPicked);
+                          if (picked) nextSet.delete(ck);
+                          else nextSet.add(ck);
+                          setLinkPicked(nextSet);
+                        }}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-xs text-zinc-700 dark:text-zinc-200" title={c.keyword}>
+                        {c.keyword}
+                      </span>
+                      <span className="shrink-0 px-1 py-px rounded bg-zinc-100 dark:bg-zinc-800 text-[9px] text-zinc-500 dark:text-zinc-400">
+                        {FACE_LANG_LABEL[c.language] || c.language}
+                      </span>
+                      {isLinked && (
+                        <span className="shrink-0 text-[9px] text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                          已关联
+                        </span>
+                      )}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="mt-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
+            <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+              {linkNewCount > 0 ? `将新增 ${linkNewCount} 个词` : "未勾选新词"}
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setLinkOpen(null)}
+                className={btnSmSecondary}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveLinked()}
+                disabled={linkSaving || linkNewCount === 0}
+                className={btnSmPrimary}
+              >
+                {linkSaving ? "保存中…" : "保存"}
+              </button>
+            </div>
+          </div>
+          {linkError && (
+            <p className="mt-1.5 text-[10px] text-red-500 dark:text-red-400">{linkError}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
