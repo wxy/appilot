@@ -3,10 +3,12 @@ import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
 import { cn } from "../../lib/utils";
 
 /**
- * 排名覆盖热力图（卡片式）：产品 × (语言×商店) 矩阵。
- * 每格点阵 = 关键字每 5 词一桶，点随格宽自动换行居中 → 随页宽自适应。
+ * 排名覆盖热力图（卡片式）：产品 × 商店矩阵，左上角两项切换：
+ * - 全局：英语（全局通用检索词）关键词 × 全部商店。首行单一「全局」组头，次行商店。
+ * - 各语言：按关键词语言分组（含英语 × 英语地区商店），首行语言组头（按拼音排序），
+ *   次行商店。
+ * 每格点阵 = 关键字每 4 词一桶，点随格宽自动换行居中 → 随页宽自适应。
  * 桶色：绿=覆盖齐 / 黄=部分 / 红=有失败 / 浅灰=未到期 / 橙=过期未采。
- * 说明与图例收进卡片内（与执行时间线卡片同构）。
  */
 
 const LANG_LABEL: Record<string, string> = {
@@ -24,6 +26,32 @@ const LANG_LABEL: Record<string, string> = {
 };
 const langLabel = (l: string) => LANG_LABEL[l] ?? l;
 const PLATFORM_LABEL: Record<string, string> = { ios: "iOS", macos: "macOS" };
+
+/** 语言组头拼音（按拼音排序；分音节比较，前缀音节短者在前，如 法语 fa < 繁体 fan）。 */
+const LANG_PINYIN_SYL: Record<string, string[]> = {
+  en: ["ying"],
+  "zh-Hans": ["jian", "ti", "zhong", "wen"],
+  "zh-Hant": ["fan", "ti", "zhong", "wen"],
+  ja: ["ri"],
+  ko: ["han"],
+  de: ["de"],
+  fr: ["fa"],
+  es: ["xi", "ban", "ya"],
+  pt: ["pu", "tao", "ya"],
+  ar: ["a", "la", "bo"],
+  ru: ["e"],
+};
+function comparePinyin(a: string, b: string): number {
+  const sa = LANG_PINYIN_SYL[a] ?? [];
+  const sb = LANG_PINYIN_SYL[b] ?? [];
+  const n = Math.max(sa.length, sb.length);
+  for (let i = 0; i < n; i++) {
+    const x = sa[i] ?? "";
+    const y = sb[i] ?? "";
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
 
 const TONE_CLS: Record<string, string> = {
   cov: "bg-emerald-500",
@@ -49,11 +77,13 @@ const LEGEND: Array<{ tone: string; label: string }> = [
   { tone: "stale", label: "过期未采" },
 ];
 
+type HeatmapMode = "global" | "langs";
+
 export function RankCoverageHeatmap() {
   const [matrix, setMatrix] = useState<any>(null);
   const [windowHours, setWindowHours] = useState(24);
-  // 视图：global = 英语关键词 × 全部商店；语言码 = 该语言关键词组（含英语×英语商店）。
-  const [mode, setMode] = useState("global");
+  // 两项切换：global = 英语（全局）关键词 × 全部商店；langs = 各语言分组视图。
+  const [mode, setMode] = useState<HeatmapMode>("global");
 
   const load = (wh: number = windowHours) => {
     (window as any).appilot?.scheduler?.matrix({ windowHours: wh })
@@ -73,43 +103,49 @@ export function RankCoverageHeatmap() {
   }, [windowHours]);
 
   const { columns = [], rows = [], generatedAt } = matrix ?? {};
-  // 视图选项：全局（有任一 en 列）→ 英语 → 其余关键词语言（按常见优先级排序）。
-  const modeOptions = (() => {
-    const langs = new Set<string>();
-    let hasEn = false;
-    for (const c of columns) {
-      if (c.lang === "en") hasEn = true;
-      if (typeof c.group === "string" && c.group.startsWith("local:")) langs.add(c.group.slice(6));
-    }
-    const priority = ["en", "zh-Hans", "zh-Hant", "ja", "ko", "de", "fr", "es", "pt", "ar", "ru"];
-    const ordered = [...langs].sort((a, b) => {
-      const ia = priority.indexOf(a);
-      const ib = priority.indexOf(b);
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
-    });
-    const out: Array<{ value: string; label: string }> = [];
-    if (hasEn) out.push({ value: "global", label: "全局" });
-    for (const l of ordered) out.push({ value: l, label: langLabel(l) });
-    return out;
-  })();
-  // 当前生效视图（数据里没有该选项时回落第一个，如无 en 数据的全局）。
-  const activeMode =
-    mode === "global" || modeOptions.some((o) => o.value === mode) ? mode : modeOptions[0]?.value ?? "global";
-  const isGlobal = activeMode === "global";
-  // 全局 = en 关键词 × 全部商店（英语商店 + 其他语言商店合并）；语言 = 原 local:* 组。
-  const visibleIndexes: number[] = [];
+  const inLangView = mode === "langs";
+  // 列筛选：全局 = en（英语）关键词出现的全部商店列；各语言 = local:* 组列
+  // （en×英语商店的「英语」组 + 各本地化语言组；en×其他语言商店列归全局视图）。
+  const matchMode = (c: any) =>
+    inLangView
+      ? typeof c.group === "string" && c.group.startsWith("local:")
+      : c.lang === "en";
+  const colPairs: Array<{ i: number; col: any }> = [];
   for (let i = 0; i < columns.length; i++) {
-    const c = columns[i];
-    if (isGlobal ? c.lang === "en" : c.group === "local:" + activeMode) visibleIndexes.push(i);
+    if (matchMode(columns[i])) colPairs.push({ i, col: columns[i] });
   }
-  const visibleColumns = visibleIndexes.map((i) => columns[i]);
+  // 各语言视图：语言组按拼音排序（组内保持商店原顺序）。
+  let orderedPairs = colPairs;
+  if (inLangView) {
+    const byGroup = new Map<string, Array<{ i: number; col: any }>>();
+    for (const p of colPairs) {
+      const g = p.col.group;
+      if (!byGroup.has(g)) byGroup.set(g, []);
+      byGroup.get(g)!.push(p);
+    }
+    const orderedGroups = [...byGroup.keys()].sort(
+      (a, b) => comparePinyin(a.slice(6), b.slice(6)) || a.localeCompare(b),
+    );
+    const reordered: Array<{ i: number; col: any }> = [];
+    for (const g of orderedGroups) reordered.push(...byGroup.get(g)!);
+    orderedPairs = reordered;
+  }
+  const visibleColumns = orderedPairs.map((p) => p.col);
   const visibleRows = rows
-    .map((row: any) => ({ ...row, cells: visibleIndexes.map((i) => row.cells[i]) }))
+    .map((row: any) => ({ ...row, cells: orderedPairs.map((p) => row.cells[p.i]) }))
     .filter((row: any) => row.cells.some((c: any) => c && c.total > 0));
-  const modeTitle = isGlobal
-    ? "全局：英语关键词 × 全部商店（含英语地区商店）——跨市场通用检索词的覆盖"
-    : `${langLabel(activeMode)}关键词 × 该语言跟踪的商店`;
-  const modeLabel = isGlobal ? "全局" : langLabel(activeMode);
+  // 各语言视图的语言组头（按拼音排序后的连续段）。
+  const langHeads: Array<{ group: string; label: string; span: number }> = [];
+  if (inLangView) {
+    let i = 0;
+    while (i < orderedPairs.length) {
+      const g = orderedPairs[i].col.group;
+      let j = i;
+      while (j < orderedPairs.length && orderedPairs[j].col.group === g) j++;
+      langHeads.push({ group: g, label: langLabel(g.slice(6)), span: j - i });
+      i = j;
+    }
+  }
 
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
@@ -117,8 +153,8 @@ export function RankCoverageHeatmap() {
         <div>
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名覆盖热力图</h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            产品（仓库 + 平台）× 商店覆盖 · 左上角切换：全局 = 英语关键词 × 全部商店
-            （含英语地区，跨市场通用检索词），其余按关键词语言分组 · 每点 = 4 个关键字
+            产品（仓库 + 平台）× 商店覆盖 · 左上角切换：全局 = 英语（全局）关键词 × 全部商店
+            （含英语与非英语地区）；各语言按关键词语言分组（拼音排序） · 每点 = 4 个关键字
             {generatedAt ? ` · ${new Date(generatedAt).toLocaleTimeString()}` : ""}
           </p>
         </div>
@@ -153,34 +189,47 @@ export function RankCoverageHeatmap() {
                 </colgroup>
                 <thead>
                   <tr>
-                    {/* 左上角：视图切换（全局 ↔ 各语言） */}
+                    {/* 左上角：全局 ↔ 各语言切换 */}
                     <th
                       rowSpan={2}
                       className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 text-left px-1.5 align-bottom bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60"
                     >
                       <div className="flex flex-col items-stretch gap-1">
                         <select
-                          value={activeMode}
-                          onChange={(e) => setMode(e.target.value)}
+                          value={mode}
+                          onChange={(e) => setMode(e.target.value as HeatmapMode)}
                           className="w-full px-1 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-[10px] font-medium text-zinc-700 dark:text-zinc-200"
-                          title="切换视图：全局 = 英语关键词 × 全部商店（含英语地区商店）；其余按关键词语言分组"
+                          title="切换视图：全局 = 英语（全局）关键词 × 全部商店（含英语与非英语地区）；各语言 = 按关键词语言分组"
                         >
-                          {modeOptions.map((o) => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
+                          <option value="global">全局</option>
+                          <option value="langs">各语言</option>
                         </select>
                         <span className="text-[10px] font-semibold text-zinc-400 dark:text-zinc-500">产品</span>
                       </div>
                     </th>
-                    <th
-                      colSpan={visibleColumns.length}
-                      className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 text-center bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60"
-                      title={modeTitle}
-                    >
-                      {modeLabel}
-                      <span className="font-normal text-zinc-400 dark:text-zinc-500"> · {visibleColumns.length} 个商店</span>
-                    </th>
+                    {inLangView ? (
+                      langHeads.map((h) => (
+                        <th
+                          key={"g:" + h.group}
+                          colSpan={h.span}
+                          className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 text-center bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60"
+                          title={`${h.label}关键词 × ${h.span} 个商店`}
+                        >
+                          {h.label}
+                        </th>
+                      ))
+                    ) : (
+                      <th
+                        colSpan={visibleColumns.length}
+                        className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 text-center bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60"
+                        title="全局：英语（全局通用检索词）关键词 × 全部商店（含英语与非英语地区）"
+                      >
+                        全局
+                        <span className="font-normal text-zinc-400 dark:text-zinc-500"> · {visibleColumns.length} 个商店</span>
+                      </th>
+                    )}
                   </tr>
+                  {/* 第二行：商店全称 */}
                   <tr>
                     {visibleColumns.map((col: any) => (
                       <th
