@@ -143,7 +143,7 @@ export function RankCoverageHeatmap() {
     return () => window.removeEventListener("appilot:data-changed", handler);
   }, [windowHours]);
 
-  const { columns = [], rows = [], generatedAt } = matrix ?? {};
+  const { columns = [], rows = [] } = matrix ?? {};
   const inLangView = mode === "langs";
   // 列筛选：全局 = en（英语）关键词出现的全部商店列；各语言 = local:* 组列
   // （en×英语商店的「英语」组 + 各本地化语言组；en×其他语言商店列归全局视图）。
@@ -202,9 +202,8 @@ export function RankCoverageHeatmap() {
         <div>
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名覆盖热力图</h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            产品（仓库 + 平台）× 商店覆盖 · 左上角切换：全局 = 英语（全局）关键词 × 全部商店
-            （含英语与非英语地区）；各语言按关键词语言分组（拼音排序） · 每点 = 4 个关键字
-            {generatedAt ? ` · ${new Date(generatedAt).toLocaleTimeString()}` : ""}
+            产品（仓库 + 平台）× 商店覆盖 · 左上角切换「全局 / 各语言」：全局 = 英语关键词
+            × 全部商店；各语言按关键词语言分组 · 语言与商店均按拼音排序 · 每点 = 4 个关键字
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
