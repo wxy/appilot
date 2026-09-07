@@ -828,8 +828,11 @@ async function githubSyncBody(
 /** P1：DB 实例模式——执行到期 github-sync 实例并写回共享 DB 行状态。 */
 async function runGithubSyncInstanceDb(store: AppStore, row: TaskRow): Promise<void> {
   const inst = (row.instance ?? {}) as any;
+  const projects: any[] = store.get("projects") || [];
   const project =
-    (store.get("projects") || []).find((p: any) => p?.id === inst.projectId) || null;
+    projects.find((p: any) => p?.id === inst.projectId) ||
+    (inst.projectName ? projects.find((p: any) => p?.name === inst.projectName) : null) ||
+    null;
   const startedIso = new Date().toISOString();
   nowRunningTask = {
     kind: "github-sync",
@@ -838,6 +841,7 @@ async function runGithubSyncInstanceDb(store: AppStore, row: TaskRow): Promise<v
     storefront: "",
     startedAt: startedIso,
   };
+  const startedMs = Date.now();
   const s = sharedStore();
   const base: any = {
     id: row.id,
@@ -848,6 +852,20 @@ async function runGithubSyncInstanceDb(store: AppStore, row: TaskRow): Promise<v
     kind: row.kind,
     instance: row.instance,
   };
+  const recordExecution = (status: "success" | "failed") => {
+    // 与任务行同 id 记一条执行（时间线/今日统计/首次执行兜底一致）。
+    void appendExecution(store, {
+      ts: new Date().toISOString(),
+      taskId: row.id,
+      productId: inst?.projectId ?? null,
+      keyword: null,
+      language: null,
+      storefront: null,
+      kind: "github-sync",
+      status,
+      durationMs: Date.now() - startedMs,
+    });
+  };
   try {
     const { summary } = await githubSyncBody(store, project, () => {});
     s.tasks.upsert({
@@ -857,6 +875,7 @@ async function runGithubSyncInstanceDb(store: AppStore, row: TaskRow): Promise<v
       lastStatus: "ok",
       lastSummary: `${inst.projectName ?? project?.name ?? project?.id}: ${summary}`,
     });
+    recordExecution("success");
   } catch (err: any) {
     log.warn(`Github sync instance failed for ${row.id}: ${err?.message || String(err)}`);
     s.tasks.upsert({
@@ -866,6 +885,7 @@ async function runGithubSyncInstanceDb(store: AppStore, row: TaskRow): Promise<v
       lastStatus: "error",
       lastSummary: err?.message || String(err),
     });
+    recordExecution("failed");
   } finally {
     nowRunningTask = null;
   }
@@ -876,12 +896,15 @@ async function runDueGithubSyncInstances(store: AppStore): Promise<void> {
   try {
     const s = sharedStore();
     const now = Date.now();
+    // 只看 kind + 到期：实例行 source 可能是 dsh（reconcile 保留原来源，或由
+    // DSH 壳先建）也可能是 electron——只认 electron 会把 dsh 实例行漏执行，
+    // 导致任务行的 lastRunAt/nextRunAt 永远停留在旧值（发布监听「下次执行」过期）。
     const due = s.tasks
       .all()
       .filter(
         (t) =>
-          t.source === "electron" &&
           t.kind === "github-sync" &&
+          !!t.instance &&
           (!t.nextRunAt || new Date(t.nextRunAt).getTime() <= now),
       )
       .slice(0, 3);
