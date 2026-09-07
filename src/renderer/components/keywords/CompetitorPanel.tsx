@@ -518,12 +518,12 @@ export function CompetitorPanel({
       </td>
     );
   };
-  // 行展开（商店级）：把该竞品这一行在“商店层面”展开——行 = 商店、列 = 该竞品的词
-  // （复用矩阵的关键词/列概念），格 = 该词在该商店 它/我 的最好名次合并一格，三色表示谁压谁。
+  // 行展开（商店级）：继承未展开行的表结构（同款关键词列 / 语言组头），把这一行
+  // 在“商店层面”展开——行 = 商店、列 = 关键词（沿用矩阵的组排序），格 = 该词在该
+  // 商店 它/我 的最好名次（如「它 #2 · 我 #12」），三色表示谁压谁。
   const renderRowDetail = (profile: any) => {
     const intel = profile.intel || {};
-    // 词列：该竞品有商店排名数据的词（cells 非空）；排序与矩阵一致——本地化语言组
-    // （按 LANG_PRIORITY）在前，en 词排最后（矩阵中 en 词落在「英语」「全局」两个尾组）。
+    // 该竞品有商店排名数据的词（沿用矩阵列推导里的 face），列序与矩阵一致。
     const words: any[] = [...(intel.faces || [])]
       .filter((f: any) => Array.isArray(f?.cells) && (f.cells as any[]).length > 0)
       .sort(
@@ -531,6 +531,9 @@ export function CompetitorPanel({
           faceLangRank(a?.language) - faceLangRank(b?.language) ||
           String(a?.keyword ?? "").localeCompare(String(b?.keyword ?? "")),
       );
+    const faceOf = new Map<string, any>(
+      words.map((f) => [`${String(f.language ?? "en")}\u0000${f.keyword}`, f]),
+    );
     // 商店集 = union 该竞品全部词列 cells 的 storefront。
     const storeSet = new Set<string>();
     for (const w of words) {
@@ -538,7 +541,7 @@ export function CompetitorPanel({
         if (typeof c?.storefront === "string" && c.storefront.length > 0) storeSet.add(c.storefront);
       }
     }
-    // 只保留“至少有一个词在该商店入榜（名次 ≤200）”的商店行；完全没有在榜数据的行不显示。
+    // 只保留“至少有一个词在该商店入榜（名次 ≤200）”的商店行。
     const hasOnChartCell = (sf: string) =>
       words.some((w) =>
         (w?.cells || []).some(
@@ -551,7 +554,6 @@ export function CompetitorPanel({
     const storeRows = [...storeSet]
       .filter(hasOnChartCell)
       .sort((a, b) => {
-        // 英语地区商店（矩阵「英语」列组口径：us/gb/au/ca/nz/ie）行在前，其余按代码稳定排。
         const ai = EN_REGION_STORES.indexOf(a);
         const bi = EN_REGION_STORES.indexOf(b);
         if (ai !== -1 && bi !== -1) return ai - bi;
@@ -559,7 +561,6 @@ export function CompetitorPanel({
         if (bi !== -1) return 1;
         return a.localeCompare(b);
       });
-    // 空态：该竞品没有任何“在榜”的商店级数据。
     if (storeRows.length === 0) {
       return (
         <p className="text-xs text-zinc-400 dark:text-zinc-500">
@@ -567,9 +568,17 @@ export function CompetitorPanel({
         </p>
       );
     }
+    // 沿用矩阵的组排序与分组（matrixCols 由 computeMatrixCols 生成、colGroups 连续分组）。
+    const detailCols = matrixCols.filter((col) => faceOf.has(`${col.lang}\u0000${col.keyword}`));
+    const detailGroups: Array<{ group: MatrixGroup; cols: MatrixCol[] }> = [];
+    for (const col of detailCols) {
+      const last = detailGroups[detailGroups.length - 1];
+      if (last && last.group.id === col.group.id) last.cols.push(col);
+      else detailGroups.push({ group: col.group, cols: [col] });
+    }
     return (
       <div className="space-y-1.5">
-        {/* 极简图例：三色小方块与格同色（红 = 压我 · 琥珀 = 重叠(并列在榜) · 绿 = 我方占优）。 */}
+        {/* 极简图例：红 = 它压我 · 琥珀 = 重叠(并列在榜) · 绿 = 我方占优。 */}
         <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
           <span className="inline-flex items-center gap-1">
             <span className="inline-block w-2 h-2 rounded-sm bg-red-500/70" />
@@ -587,28 +596,38 @@ export function CompetitorPanel({
         <div className="overflow-x-auto rounded-lg border border-zinc-200/80 dark:border-zinc-700/60">
           <table className="border-collapse">
             <thead>
-              <tr className="border-b-2 border-zinc-300 dark:border-zinc-600">
+              <tr className="border-b border-zinc-100 dark:border-zinc-800">
                 <th
-                  className="px-2 py-1.5 text-left whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400"
+                  rowSpan={2}
+                  className="px-2 py-1.5 text-left align-bottom whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400"
                   title="行 = 商店（只列有在榜数据的店，名次 ≤200 才算在榜）；格 = 该词在该商店 它/我 的最好名次（近 7 天窗口，名次越小越好）"
                 >
                   商店
                 </th>
-                {words.map((w) => {
-                  const lang = String(w?.language ?? "en");
-                  return (
-                    <th
-                      key={`${lang}\u0000${w.keyword}`}
-                      className="px-1 py-1.5 align-top text-center border-l border-zinc-100 dark:border-zinc-800"
-                      style={{ width: "6.5rem", minWidth: "6.5rem", maxWidth: "6.5rem" }}
-                      title={`「${w.keyword}」· ${FACE_LANG_LABEL[lang] || lang}`}
-                    >
-                      <span className="block break-words leading-tight font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
-                        {w.keyword}
-                      </span>
-                    </th>
-                  );
-                })}
+                {detailGroups.map((run) => (
+                  <th
+                    key={run.group.id}
+                    colSpan={run.cols.length}
+                    className="px-2 py-1 text-center text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-50/70 dark:bg-zinc-800/40 border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
+                    title={run.group.title}
+                  >
+                    {run.group.label}
+                  </th>
+                ))}
+              </tr>
+              <tr className="border-b-2 border-zinc-300 dark:border-zinc-600">
+                {detailCols.map((col) => (
+                  <th
+                    key={col.key}
+                    className="px-1 py-1.5 align-top text-center border-l border-zinc-100 dark:border-zinc-800"
+                    style={{ width: "7.5rem", minWidth: "7.5rem", maxWidth: "7.5rem" }}
+                    title={`${col.group.label} · 「${col.keyword}」（组内 ${col.hit} 个竞品命中）`}
+                  >
+                    <span className="block break-words leading-tight font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
+                      {col.keyword}
+                    </span>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -618,14 +637,15 @@ export function CompetitorPanel({
                     <span className="text-[11px] text-zinc-600 dark:text-zinc-300">{storefrontDisplayName(sf)}</span>
                     <span className="ml-1.5 font-mono text-[9px] text-zinc-400 dark:text-zinc-500">{sf}</span>
                   </th>
-                  {words.map((w) => {
-                    const cell = (w?.cells || []).find((c: any) => c?.storefront === sf);
+                  {detailCols.map((col) => {
+                    const face = faceOf.get(`${col.lang}\u0000${col.keyword}`);
+                    const cell = (face?.cells || []).find((c: any) => c?.storefront === sf);
                     const state = storeCellTone(cell?.own, cell?.theirs);
                     return (
-                      <td key={`${String(w?.language ?? "en")}\u0000${w.keyword}`} className="p-0.5">
+                      <td key={col.key} className="p-0.5">
                         {state ? (
                           <span
-                            title={`${storefrontDisplayName(sf)} · 「${w.keyword}」：${state.text}`}
+                            title={`${storefrontDisplayName(sf)} · 「${col.keyword}」：${state.text}`}
                             className={cn(
                               "block rounded-md px-1 py-1 text-center text-[10px] font-medium tabular-nums whitespace-nowrap",
                               state.cls,
@@ -635,7 +655,7 @@ export function CompetitorPanel({
                           </span>
                         ) : (
                           <span
-                            title="该店该词双方都无在榜数据（未采集或名次 >200）"
+                            title={`${storefrontDisplayName(sf)} · 「${col.keyword}」：双方都无在榜数据（未采集或名次 >200）`}
                             className="block min-h-6 rounded-md"
                           />
                         )}
