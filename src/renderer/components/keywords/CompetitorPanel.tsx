@@ -13,6 +13,7 @@ export function CompetitorPanel({
   viewLang,
   rankSnapshots,
   projectKeywords,
+  focusKeyword,
 }: {
   projectId: string;
   product: {
@@ -29,6 +30,8 @@ export function CompetitorPanel({
   rankSnapshots: any[];
   /** 项目关键词池（用于查找译文标注）。 */
   projectKeywords?: any[];
+  /** 从关键词矩阵钻取进来的词：进入即聚焦“该词 × 全部竞品”对比（可关闭回总览）。 */
+  focusKeyword?: string;
 }) {
   const translationByKey = new Map(
     (projectKeywords || []).map((k: any) => [
@@ -53,6 +56,17 @@ export function CompetitorPanel({
   const [profilesTick, setProfilesTick] = useState(0);
   const [scanBusy, setScanBusy] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
+  // 词钻取聚焦：进入竞品标签时若带词，聚焦该词的横表对比（可关闭回总览）。
+  const [focusCleared, setFocusCleared] = useState(false);
+  const wordDrill = focusKeyword && !focusCleared ? focusKeyword : "";
+  useEffect(() => {
+    if (focusKeyword) {
+      setTrackedKeyword(`${focusKeyword}\u0000${viewLang || "en"}`);
+      setTerm(focusKeyword);
+      setFocusCleared(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKeyword, viewLang]);
 
   const load = useCallback(() => {
     (window as any).appilot?.competitors?.list(projectId)
@@ -346,6 +360,95 @@ export function CompetitorPanel({
     if (own != null) return { cls: "bg-emerald-50 dark:bg-emerald-500/5 text-emerald-600/70 dark:text-emerald-300/70", lead: 1 };
     return { cls: "bg-zinc-50 dark:bg-zinc-800/40 text-zinc-400 dark:text-zinc-500", lead: 0 };
   };
+  // 指数趋势 sparkline（近 14 天，取有数据的天）。
+  const Sparkline = ({ history }: { history?: any[] }) => {
+    const pts = (history || []).filter((h: any) => h && (h.faceCount > 0 || h.index > 0)).map((h: any) => h.index);
+    if (pts.length < 2) return <span className="text-[10px] text-zinc-300 dark:text-zinc-600">—</span>;
+    const w = 48;
+    const h = 14;
+    const min = Math.min(...pts);
+    const max = Math.max(...pts);
+    const range = max - min || 1;
+    const coords = pts.map((v, i) => [
+      (i / (pts.length - 1)) * w,
+      h - 2 - ((v - min) / range) * (h - 4),
+    ]);
+    return (
+      <svg width={w} height={h} className="shrink-0 text-amber-500 dark:text-amber-400" aria-hidden>
+        <polyline
+          points={coords.map((p) => p.map((n) => n.toFixed(1)).join(",")).join(" ")}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  };
+  // 竞争热力（竞品 × 词 相对优势，最近 7 天窗口；列取重叠最多的词，横向可滚动）。
+  const renderHeatmapCard = () => {
+    const rows = profiles.slice(0, 20);
+    if (rows.length === 0) return null;
+    const colFreq = new Map<string, number>();
+    for (const p of rows) {
+      for (const f of p.intel?.faces || []) colFreq.set(f.keyword, (colFreq.get(f.keyword) || 0) + 1);
+    }
+    const cols = [...colFreq.keys()]
+      .sort((a, b) => (colFreq.get(b)! - colFreq.get(a)!) || a.localeCompare(b))
+      .slice(0, 40);
+    if (cols.length === 0) return null;
+    const heatClass = (f: any) => {
+      if (!f) return "bg-zinc-50 dark:bg-zinc-800/40";
+      switch (f.overlap) {
+        case "both":
+          return f.delta != null && f.delta < 0 ? "bg-red-500" : "bg-emerald-500";
+        case "competitorOnly":
+          return "bg-rose-400/80 dark:bg-rose-400/60";
+        case "selfOnly":
+          return "bg-emerald-300 dark:bg-emerald-400/60";
+        case "offChart":
+          return "bg-zinc-300 dark:bg-zinc-600";
+        default:
+          return "bg-zinc-100 dark:bg-zinc-800/70";
+      }
+    };
+    const heatTip = (f: any) =>
+      f
+        ? `${f.keyword}：我 ${f.ownBest ?? "—"} / 它 ${f.theirBest ?? "—"} · ${OVERLAP_LABEL[f.overlap] || ""}`
+        : "无交集";
+    return (
+      <div className="px-4 py-3 border-t border-zinc-100 dark:border-zinc-800">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">竞争热力（竞品 × 词）</h4>
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">最近 7 天 · 绿=我领先 / 红=它压我 / 浅=单向在榜 / 灰=200外或未采集</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="border-separate" style={{ borderSpacing: 2 }}>
+            <tbody>
+              {rows.map(({ competitor, intel }: any) => {
+                const faceByKw = new Map((intel?.faces || []).map((f: any) => [f.keyword, f]));
+                return (
+                  <tr key={competitor.id}>
+                    <td className="text-[11px] text-zinc-600 dark:text-zinc-300 whitespace-nowrap pr-2 max-w-40 truncate">
+                      {competitor.name}
+                    </td>
+                    {cols.map((kw) => {
+                      const f = faceByKw.get(kw);
+                      return (
+                        <td key={kw} title={heatTip(f)}>
+                          <span className={cn("block w-3.5 h-3.5 rounded-[3px]", heatClass(f))} />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
   // 竞争面详情：按语言分组，行 = 关键词，列 = 该语言涉及商店；格 = 我/它名次。
   const renderFacesTable = (intel: any) => {
     const byLang = new Map<string, any[]>();
@@ -605,6 +708,22 @@ export function CompetitorPanel({
               </span>
             </h3>
             <span className="flex items-center gap-2 text-[11px] text-zinc-400">
+              {wordDrill && (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/40">
+                  <span className="font-mono max-w-40 truncate">{wordDrill}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFocusCleared(true);
+                      setTrackedKeyword("");
+                    }}
+                    className="hover:underline"
+                    title="关闭该词的聚焦对比，回到总览"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
               当前平台 {platformLabel(viewPlatform)} · 7 天窗口
               <button
                 type="button"
@@ -615,6 +734,15 @@ export function CompetitorPanel({
               >
                 {scanBusy ? "扫描在榜词…" : "扫描在榜词"}
               </button>
+              <button
+                type="button"
+                onClick={() => void handleRefreshRanks()}
+                disabled={refreshingRanks}
+                className={btnSmSecondary}
+                title="为所有竞品的关联关键词补采一次最新排名"
+              >
+                {refreshingRanks ? "采集中…" : "刷新排名"}
+              </button>
             </span>
           </div>
           {scanMsg && (
@@ -623,7 +751,7 @@ export function CompetitorPanel({
             </p>
           )}
           <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {profiles.map(({ competitor, intel }: any) => {
+            {profiles.map(({ competitor, intel, indexHistory }: any) => {
               const expanded = expandedId === competitor.id;
               return (
                 <div key={competitor.id}>
@@ -661,9 +789,12 @@ export function CompetitorPanel({
                     <span className="shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400 w-14 text-right">
                       在榜 <b className="text-zinc-700 dark:text-zinc-200">{intel.theirOnChart}</b>
                     </span>
+                    <span className="shrink-0 flex items-center justify-end w-14" title="竞争指数近 14 天趋势">
+                      <Sparkline history={indexHistory} />
+                    </span>
                     <span
                       className={cn(
-                        "shrink-0 w-16 text-right text-sm font-bold",
+                        "shrink-0 w-14 text-right text-sm font-bold",
                         intel.index > 0
                           ? "text-amber-600 dark:text-amber-400"
                           : "text-zinc-400 dark:text-zinc-500",
@@ -674,6 +805,17 @@ export function CompetitorPanel({
                     <span className="shrink-0 text-zinc-400 dark:text-zinc-500 text-xs w-4 text-center">
                       {expanded ? "▲" : "▼"}
                     </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRemove(competitor.id);
+                      }}
+                      className="shrink-0 text-zinc-300 dark:text-zinc-600 hover:text-red-500 text-xs w-4"
+                      title="移除竞品"
+                    >
+                      ✕
+                    </button>
                   </button>
                   {expanded && renderFacesTable(intel)}
                 </div>
@@ -683,10 +825,15 @@ export function CompetitorPanel({
         </div>
       )}
 
-      {competitors.length > 0 && (
+      {renderHeatmapCard()}
+
+      {wordDrill && competitors.length > 0 && (
         <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">竞品跟踪</h3>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              竞品跟踪
+              <span className="ml-2 font-mono text-xs text-amber-600 dark:text-amber-400">{wordDrill}</span>
+            </h3>
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-zinc-400">按关联关键词对比自己与竞品排名</span>
               <button
@@ -696,6 +843,16 @@ export function CompetitorPanel({
                 className={btnSmSecondary}
               >
                 {refreshingRanks ? "采集中…" : "刷新排名"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFocusCleared(true);
+                  setTrackedKeyword("");
+                }}
+                className={btnSmSecondary}
+              >
+                关闭聚焦
               </button>
             </div>
           </div>
