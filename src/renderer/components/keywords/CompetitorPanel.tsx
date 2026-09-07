@@ -138,12 +138,16 @@ interface CellAgg {
 }
 // 对 (竞品 × 词 × 段) 的商店集做跨店综合：cells = [{storefront, own, theirs}]，
 // own/theirs 为各自最好名次；own < theirs → 我领先，反之它领先，名次并列不计。
+// 口径与展开行一致：只有“入榜名次 ≤200”才计（>200 / 缺失视为未在榜），避免汇总与
+// 商店展开对不上（汇总数了长尾店、展开却不显示，或反之）。
 function aggregateCells(cells: any[], stores?: string[]): CellAgg {
   const agg: CellAgg = { myLead: 0, theirLead: 0, myBest: null, theirBest: null, myStores: [], theirStores: [] };
   for (const c of cells || []) {
     if (stores && !stores.includes(c?.storefront)) continue;
-    const own = typeof c?.own === "number" ? (c.own as number) : null;
-    const theirs = typeof c?.theirs === "number" ? (c.theirs as number) : null;
+    const own =
+      typeof c?.own === "number" && c.own > 0 && c.own <= 200 ? (c.own as number) : null;
+    const theirs =
+      typeof c?.theirs === "number" && c.theirs > 0 && c.theirs <= 200 ? (c.theirs as number) : null;
     if (own != null && (agg.myBest == null || own < agg.myBest)) agg.myBest = own;
     if (theirs != null && (agg.theirBest == null || theirs < agg.theirBest)) agg.theirBest = theirs;
     if (own != null && theirs == null) {
@@ -614,12 +618,23 @@ export function CompetitorPanel({
             </span>
           </th>
           {matrixCols.map((col) => {
+            // 只统计该词列所属商店区域（col.group.inGroup）里的商店，与汇总格口径一致。
             const face = faceMap.get(`${col.lang}\u0000${col.keyword}`);
-            const cell = (face?.cells || []).find((c: any) => c?.storefront === sf);
+            const cell = col.group.inGroup(sf)
+              ? (face?.cells || []).find((c: any) => c?.storefront === sf)
+              : undefined;
             const state = storeCellTone(cell?.own, cell?.theirs);
+            const nOwn =
+              typeof cell?.own === "number" && cell.own > 0 && cell.own <= 200 ? cell.own : null;
+            const nTheirs =
+              typeof cell?.theirs === "number" && cell.theirs > 0 && cell.theirs <= 200
+                ? cell.theirs
+                : null;
             const cellTitle = state
-              ? `${storefrontDisplayName(sf)} · 「${col.keyword}」：它 #${cell?.theirs ?? "—"} / 我 #${cell?.own ?? "—"}`
-              : `${storefrontDisplayName(sf)} · 「${col.keyword}」：双方都无在榜数据（未采集或名次 >200）`;
+              ? `${storefrontDisplayName(sf)} · 「${col.keyword}」：它 #${nTheirs ?? "—"} / 我 #${nOwn ?? "—"}`
+              : col.group.inGroup(sf)
+                ? `${storefrontDisplayName(sf)} · 「${col.keyword}」：双方都无在榜数据（未采集或名次 >200）`
+                : `${storefrontDisplayName(sf)} 不属于「${col.group.label}」组的商店`;
             return (
               <td
                 key={col.key}
