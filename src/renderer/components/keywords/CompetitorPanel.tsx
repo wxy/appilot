@@ -6,7 +6,7 @@ import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { ValueFlash } from "../ui/ValueFlash";
 
 // —— 竞品矩阵（纯计算辅助，模块级）——
-// 语言标签：矩阵列头分组 + 行展开分组标题。
+// 语言标签：矩阵列组头 + 行展开分组标题。
 const FACE_LANG_LABEL: Record<string, string> = {
   en: "英语",
   "zh-Hans": "简体中文",
@@ -32,80 +32,112 @@ const FACE_STATUS_LABEL: Record<string, string> = {
   offChart: "双方 200 外",
   unknown: "未采集",
 };
-const SEG_EN_LOCAL_TIP = "英 = 英语地区商店 us/gb/au/ca/nz/ie 的跨店综合";
-const SEG_EN_GLOBAL_TIP = "全 = 该英语词在其它语言商店（如 kr/jp/de）的跨店综合";
+// 英语地区（组「英语」）与组「全局」的商店口径。
+const EN_REGION_STORES = storefrontsForLanguage("en"); // us/gb/au/ca/nz/ie
+const GROUP_EN_TITLE = `英语地区商店 ${EN_REGION_STORES.join("/")} 的跨店综合`;
+const GROUP_GLOBAL_TITLE = `该 en 词在其它语言商店（非 ${EN_REGION_STORES.join("/")}，如 kr/jp/de）的跨店综合`;
+// 行展开词芯片（英 / 全 / 本地 段）tooltip 复用同一口径。
+const SEG_EN_LOCAL_TIP = `英 = ${GROUP_EN_TITLE}`;
+const SEG_EN_GLOBAL_TIP = `全 = ${GROUP_GLOBAL_TITLE}`;
 
-interface SegDef {
-  segId: "local" | "global";
-  label: string; // 列头/段芯片短标（英 / 全 / 本地）
-  title: string;
-  stores: string[]; // 该段覆盖的商店集合（与 face.cells 求交聚合）
+// —— 矩阵列组（列 = 关键词，按“语言/区域组”分组）——
+// 分组集合 = 各本地化语言（zh-Hans/ja/ko…）+ 两个特殊大组：组「英语」与组「全局」
+// （全局视为一种“语言”组）。非英语词只在其语言组出现一次；en 词按商店区域拆两组：
+// 组「英语」= 该 en 词在英语地区商店（us/gb/au/ca/nz/ie）的跨店综合，组「全局」=
+// 该 en 词在其它语言商店（kr/jp/de…）的跨店综合 —— 同一 en 词可在两组各占一列
+// （语义上为不同维度）。组序固定：本地化语言（按 LANG_PRIORITY）→ 英语 → 全局；
+// 组内关键词按“组内被多少竞品命中”降序；该组无数据（无商店快照）的词不生成列。
+interface MatrixGroup {
+  id: string; // `lang:${code}` / "en-region" / "en-global"（唯一）
+  lang: string; // 该组底层语言（英语/全局组都是 "en"）
+  label: string; // 组头文本（简体中文 / 英语 / 全局…）
+  title: string; // 组头 tooltip（覆盖的商店口径）
+  rank: number; // 组序：语言组 = langRank；英语/全局组固定排在所有语言组之后
+  inGroup: (storefront: string) => boolean; // 该组覆盖商店的判定（与 face.cells 求交）
 }
 interface MatrixCol {
-  key: string; // `${language}\u0000${keyword}`
-  lang: string;
+  key: string; // `${group.id}\u0000${keyword}`（唯一）
+  group: MatrixGroup;
+  lang: string; // 词的语言（聚焦词按语言精确过滤；en 词为 "en"）
   keyword: string;
-  hit: number; // 命中该词的竞品数（排序用）
-  segs: SegDef[];
+  hit: number; // 该组内命中该词的竞品数（组内排序用）
 }
-
-// 列内分段：英语词 local 段 = storefrontsForLanguage("en")（us/gb/au/ca/nz/ie），
-// 其余商店归 global（“全”，如 kr/jp/de）；非英语词只有单一“本地”子列。
-function segsForColumn(lang: string, stores: string[]): SegDef[] {
-  const localList = storefrontsForLanguage(lang);
-  const local = stores.filter((s) => localList.includes(s));
-  const global = stores.filter((s) => !localList.includes(s));
-  if (lang !== "en") {
-    return [
-      {
-        segId: "local",
-        label: "本地",
-        title: `该词在${FACE_LANG_LABEL[lang] || lang}商店（${localList.join("/")}）的跨店综合`,
-        stores: [...stores],
-      },
-    ];
-  }
-  const segs: SegDef[] = [];
-  if (local.length > 0) segs.push({ segId: "local", label: "英", title: SEG_EN_LOCAL_TIP, stores: local });
-  if (global.length > 0) segs.push({ segId: "global", label: "全", title: SEG_EN_GLOBAL_TIP, stores: global });
-  if (segs.length === 0) segs.push({ segId: "local", label: "英", title: SEG_EN_LOCAL_TIP, stores: [] });
-  return segs;
+const MAX_MATRIX_COLS = 40;
+// 本地化语言组（en 词不进语言组；未知语言 fallback code 并排在已知语言之后）。
+function localLangGroup(code: string): MatrixGroup {
+  const label = FACE_LANG_LABEL[code] || code;
+  const stores = storefrontsForLanguage(code);
+  return {
+    id: `lang:${code}`,
+    lang: code,
+    label,
+    title: `该词在${label}商店（${stores.join("/")}）的跨店综合`,
+    rank: langRank(code),
+    inGroup: (sf: string) => stores.includes(sf),
+  };
 }
-
+const EN_REGION_GROUP: MatrixGroup = {
+  id: "en-region",
+  lang: "en",
+  label: "英语",
+  title: GROUP_EN_TITLE,
+  rank: LANG_PRIORITY.length + 1,
+  inGroup: (sf: string) => EN_REGION_STORES.includes(sf),
+};
+const EN_GLOBAL_GROUP: MatrixGroup = {
+  id: "en-global",
+  lang: "en",
+  label: "全局",
+  title: GROUP_GLOBAL_TITLE,
+  rank: LANG_PRIORITY.length + 2,
+  inGroup: (sf: string) => !EN_REGION_STORES.includes(sf),
+};
+// 组间按 rank（语言组 → 英语 → 全局）；rank 并列（未知语言组）时按组 id 稳定排序，
+// 保证同组关键词连续不交错；组内按命中竞品数降序、词序兜底。
 function compareCols(a: MatrixCol, b: MatrixCol): number {
-  return b.hit - a.hit || langRank(a.lang) - langRank(b.lang) || a.keyword.localeCompare(b.keyword);
+  if (a.group.rank !== b.group.rank) return a.group.rank - b.group.rank;
+  if (a.group.id !== b.group.id) return a.group.id < b.group.id ? -1 : 1;
+  return b.hit - a.hit || a.keyword.localeCompare(b.keyword);
 }
 
 // 从 profiles（competitors:overview → {competitor, intel, indexHistory}）收集矩阵列：
-// 只保留采集到 cell 的词；聚焦词时只保留该词的列，否则最多 40 列、按命中竞品数优先。
+// 词按语言归组；en 词按商店区域拆「英语」「全局」两个候选列，各自有数据（组商店集内
+// 有排名快照）才生成，避免空列。聚焦词时只保留该词所在的组列，否则最多 MAX_MATRIX_COLS 列。
 function computeMatrixCols(profiles: any[], focusWord: string, focusLang: string): MatrixCol[] {
-  const byKey = new Map<string, { lang: string; keyword: string; stores: Set<string>; hit: number }>();
+  const hasRank = (cell: any) => typeof cell?.own === "number" || typeof cell?.theirs === "number";
+  const colsByKey = new Map<string, MatrixCol>();
+  const touch = (group: MatrixGroup, f: any) => {
+    const key = `${group.id}\u0000${f.keyword}`;
+    let col = colsByKey.get(key);
+    if (!col) {
+      col = { key, group, lang: String(f.language ?? "en"), keyword: f.keyword, hit: 0 };
+      colsByKey.set(key, col);
+    }
+    col.hit += 1; // 一个竞品对该 (组 × 词) 至多计一次
+  };
   for (const p of profiles || []) {
     for (const f of p?.intel?.faces || []) {
       if (!Array.isArray(f?.cells) || f.cells.length === 0) continue;
-      const key = `${f.language}\u0000${f.keyword}`;
-      let agg = byKey.get(key);
-      if (!agg) {
-        agg = { lang: f.language, keyword: f.keyword, stores: new Set<string>(), hit: 0 };
-        byKey.set(key, agg);
+      const keyword = f.keyword;
+      if (typeof keyword !== "string" || keyword.length === 0) continue;
+      const cells: any[] = f.cells.filter(hasRank);
+      if (cells.length === 0) continue; // 无排名快照 → 不生成列
+      if (String(f.language ?? "en") === "en") {
+        if (cells.some((c) => EN_REGION_GROUP.inGroup(c.storefront))) touch(EN_REGION_GROUP, f);
+        if (cells.some((c) => EN_GLOBAL_GROUP.inGroup(c.storefront))) touch(EN_GLOBAL_GROUP, f);
+      } else {
+        const group = localLangGroup(String(f.language));
+        if (cells.some((c) => group.inGroup(c.storefront))) touch(group, f);
       }
-      agg.hit += 1;
-      for (const cell of f.cells) if (cell?.storefront) agg.stores.add(cell.storefront);
     }
   }
-  const all: MatrixCol[] = [...byKey.entries()].map(([key, agg]) => ({
-    key,
-    lang: agg.lang,
-    keyword: agg.keyword,
-    hit: agg.hit,
-    segs: segsForColumn(agg.lang, [...agg.stores]),
-  }));
+  const all = [...colsByKey.values()];
   if (focusWord) {
     const exact = all.filter((c) => c.keyword === focusWord && c.lang === focusLang);
     const loose = all.filter((c) => c.keyword === focusWord);
     return (exact.length > 0 ? exact : loose).sort(compareCols);
   }
-  return all.sort(compareCols).slice(0, 40);
+  return all.sort(compareCols).slice(0, MAX_MATRIX_COLS);
 }
 
 interface CellAgg {
@@ -159,13 +191,14 @@ function leadTone(myLead: number, theirLead: number, hasData: boolean): { cls: s
   if (myLead + theirLead > 0) return { cls: TONE_TIED, text: `${myLead} : ${theirLead}` };
   return { cls: TONE_FLAT, text: "0 : 0" };
 }
-// 格 title 明细：我最好 #x / 它最好 #y · 我领先商店 a,b / 它领先 c,d（商店中文名）。
-function segDetailTitle(keyword: string, segLabel: string, agg: CellAgg): string {
+// 明细 title（矩阵格 / 词段芯片共用）：我最好 #x / 它最好 #y · 我领先商店 a,b / 它领先 c,d。
+// label 传入列组名（简体中文 / 英语 / 全局）或行展开段短标（英 / 全 / 本地）。
+function segDetailTitle(keyword: string, label: string, agg: CellAgg): string {
   const parts: string[] = [`我最好 #${agg.myBest ?? "—"}`, `它最好 #${agg.theirBest ?? "—"}`];
   if (agg.myStores.length > 0) parts.push(`我领先：${agg.myStores.map(storefrontDisplayName).join("、")}`);
   if (agg.theirStores.length > 0) parts.push(`它领先：${agg.theirStores.map(storefrontDisplayName).join("、")}`);
   if (agg.myStores.length === 0 && agg.theirStores.length === 0) parts.push("名次并列或未上榜，无一方领先");
-  return `「${keyword}」${segLabel} 段：${parts.join(" · ")}`;
+  return `「${keyword}」${label}：${parts.join(" · ")}`;
 }
 
 export function CompetitorPanel({
@@ -430,39 +463,38 @@ export function CompetitorPanel({
     safePage * PAGE_SIZE + PAGE_SIZE,
   );
 
-  // —— 竞品矩阵：行列推导 ——
+  // —— 竞品矩阵：行列推导（列按“语言/区域组”分组）——
   const matrixRows: any[] = [...profiles].sort(
     (a: any, b: any) =>
       (b.intel?.index ?? 0) - (a.intel?.index ?? 0) ||
       String(a.competitor?.name ?? "").localeCompare(String(b.competitor?.name ?? "")),
   );
   const matrixCols = computeMatrixCols(matrixRows, wordDrill, viewLang || "en");
-  const segTotal = matrixCols.reduce((n: number, c: MatrixCol) => n + c.segs.length, 0);
-  const needsSegRow = matrixCols.some((c: MatrixCol) => c.segs.length > 1);
-  const headerRows = needsSegRow ? 3 : 2;
-  const colRuns: Array<{ lang: string; span: number }> = [];
+  // matrixCols 已按组排序，同组连续：连续同组的列聚成一个组头（colSpan = 组内列数）。
+  const colGroups: Array<{ group: MatrixGroup; cols: MatrixCol[] }> = [];
   for (const col of matrixCols) {
-    const span = col.segs.length;
-    const last = colRuns[colRuns.length - 1];
-    if (last && last.lang === col.lang) last.span += span;
-    else colRuns.push({ lang: col.lang, span });
+    const last = colGroups[colGroups.length - 1];
+    if (last && last.group.id === col.group.id) last.cols.push(col);
+    else colGroups.push({ group: col.group, cols: [col] });
   }
+  const totalCols = matrixCols.length;
   const toggleRow = (competitorId: string) => {
     setExpandedRowId((prev) => (prev === competitorId ? null : competitorId));
     setStoreDrillKey(null);
   };
 
   // —— 竞品矩阵渲染辅助 ——
-  // (竞品 × 词 × 段) 的跨店综合格。
-  const renderSegCell = (col: MatrixCol, seg: SegDef, face: any) => {
-    const agg = aggregateCells(face?.cells || [], seg.stores);
+  // (竞品 × 组 × 词) 的跨店综合格：只统计该组覆盖商店集里的领先数。
+  const renderCell = (col: MatrixCol, face: any) => {
+    const cells = (face?.cells || []).filter((c: any) => col.group.inGroup(c?.storefront));
+    const agg = aggregateCells(cells);
     const hasData = agg.myBest != null || agg.theirBest != null;
     const tone = leadTone(agg.myLead, agg.theirLead, hasData);
     const title = hasData
-      ? segDetailTitle(col.keyword, seg.label, agg)
-      : `「${col.keyword}」${seg.label} 段：无该竞品排名数据（未采集 / 该段无商店）`;
+      ? segDetailTitle(col.keyword, col.group.label, agg)
+      : `「${col.keyword}」${col.group.label}：无该竞品排名数据（未采集 / 该组无商店快照）`;
     return (
-      <td key={`${col.key}:${seg.segId}`} className="p-0.5">
+      <td key={col.key} className="p-0.5">
         <span
           title={title}
           className={cn(
@@ -848,12 +880,15 @@ export function CompetitorPanel({
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   竞品矩阵
-                  <span className="ml-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
-                    行 = 竞品（指数降序）· 列 = 关键词（按命中竞品数排序，≤40 列）· 点击行展开词级与商店明细
+                  <span
+                    className="ml-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500"
+                    title="列按“语言/区域组”分组并连续排列，组序固定：本地化语言组（简体中文/韩语…，按语言次序）→ 英语组（en 词在英语地区商店 us/gb/au/ca/nz/ie 的跨店综合）→ 全局组（en 词在其它语言商店如 kr/jp/de 的跨店综合）；同一 en 词可在英语与全局两组各占一列（视为不同维度）。组内关键词按“组内被多少竞品命中”降序；该组无数据（无商店快照）的词不生成列。"
+                  >
+                    行 = 竞品（指数降序）· 列 = 关键词（按语言/区域组排列，≤40 列）· 点击行展开词级与商店明细
                   </span>
                 </h3>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
-                  <span title="跨商店综合：每个格子统计该 (词 × 段) 商店集里“我领先 : 它领先”的商店数">格 = “我领先 : 它领先” 的商店数（跨商店综合）</span>
+                  <span title="跨商店综合：每个格子统计该 (词 × 组) 覆盖商店集里“我领先 : 它领先”的商店数">格 = “我领先 : 它领先” 的商店数（跨商店综合）</span>
                   <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/70" />绿 = 我方占优</span>
                   <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-red-500/70" />红 = 竞品占优</span>
                   <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-amber-400/80" />琥珀 = 胶着</span>
@@ -922,20 +957,20 @@ export function CompetitorPanel({
                 <thead>
                   <tr>
                     <th
-                      rowSpan={headerRows}
+                      rowSpan={2}
                       className="px-3 py-1.5 text-left align-top whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400"
                       title="行 = 竞品（按竞争指数降序）；点击行查看词级与商店明细"
                     >
                       竞品 / 指数 ↓
                     </th>
-                    {colRuns.map((run) => (
+                    {colGroups.map((run) => (
                       <th
-                        key={run.lang}
-                        colSpan={run.span}
+                        key={run.group.id}
+                        colSpan={run.cols.length}
                         className="px-2 py-1 text-center text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-50/70 dark:bg-zinc-800/40 border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
-                        title={FACE_LANG_LABEL[run.lang] ? `${FACE_LANG_LABEL[run.lang]} 语言组` : run.lang}
+                        title={run.group.title}
                       >
-                        {FACE_LANG_LABEL[run.lang] || run.lang}
+                        {run.group.label}
                       </th>
                     ))}
                   </tr>
@@ -943,37 +978,15 @@ export function CompetitorPanel({
                     {matrixCols.map((col) => (
                       <th
                         key={col.key}
-                        colSpan={col.segs.length}
-                        rowSpan={needsSegRow ? 1 : 2}
                         className="px-1.5 py-1 align-bottom text-center border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
+                        title={`${col.group.label} · 「${col.keyword}」（组内 ${col.hit} 个竞品命中）`}
                       >
-                        <span
-                          className={cn(
-                            "inline-block max-w-[11rem] truncate align-bottom font-mono text-zinc-600 dark:text-zinc-300",
-                            needsSegRow ? "text-[10px] leading-none" : "text-[11px]",
-                          )}
-                          title={`${FACE_LANG_LABEL[col.lang] || col.lang} · 「${col.keyword}」（命中 ${col.hit} 个竞品）`}
-                        >
+                        <span className="inline-block max-w-[11rem] truncate align-bottom font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
                           {col.keyword}
                         </span>
                       </th>
                     ))}
                   </tr>
-                  {needsSegRow && (
-                    <tr>
-                      {matrixCols.flatMap((col) =>
-                        col.segs.map((seg) => (
-                          <th
-                            key={`${col.key}:${seg.segId}`}
-                            title={seg.title}
-                            className="px-1.5 py-1 text-center text-[10px] font-medium text-zinc-400 dark:text-zinc-500 border-t border-l border-zinc-100 dark:border-zinc-800 whitespace-nowrap"
-                          >
-                            {seg.label}
-                          </th>
-                        )),
-                      )}
-                    </tr>
-                  )}
                 </thead>
                 <tbody>
                   {matrixRows.map((profile: any) => {
@@ -1060,13 +1073,11 @@ export function CompetitorPanel({
                             </button>
                           </div>
                         </th>
-                        {matrixCols.flatMap((col) =>
-                          col.segs.map((seg) => renderSegCell(col, seg, faceMap.get(col.key))),
-                        )}
+                        {matrixCols.map((col) => renderCell(col, faceMap.get(col.key)))}
                       </tr>,
                       expanded && (
                         <tr key={`${competitor.id}-detail`} className="border-b border-zinc-200/70 dark:border-zinc-800">
-                          <td colSpan={segTotal + 1} className="px-4 py-3 bg-zinc-50/60 dark:bg-zinc-900/50">
+                          <td colSpan={totalCols + 1} className="px-4 py-3 bg-zinc-50/60 dark:bg-zinc-900/50">
                             {renderRowDetail(profile)}
                           </td>
                         </tr>
