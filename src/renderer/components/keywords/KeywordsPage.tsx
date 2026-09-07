@@ -57,8 +57,11 @@ function localDayKey(iso: string): string {
   return `${d.getFullYear()}-${m}-${dd}`;
 }
 
+/** 未在榜批量删除的勾选 key。 */
+const selKey = (language: string, keyword: string) => `${language}\u0000${keyword}`;
+
 export function KeywordsPage() {
-  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, restoreTrackedKeyword, resumePausedKeyword, clearRemovedKeywords } = useProject();
+  const { projects, currentProjectId, currentProductId, updateTrackedKeywords, removeTrackedKeyword, removeTrackedKeywords, restoreTrackedKeyword, resumePausedKeyword, clearRemovedKeywords } = useProject();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [litLangs, setLitLangs] = useState<string[]>(() => {
@@ -131,8 +134,8 @@ export function KeywordsPage() {
   }, []);
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
-  // 行内删除的二次确认状态：key = language:keyword，置空表示未武装。
-  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+  // 未在榜批量删除的勾选状态：key = language:keyword。
+  const [unrankedSelected, setUnrankedSelected] = useState<Set<string>>(new Set());
   const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null>(null);
   const [runningDue, setRunningDue] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -364,6 +367,12 @@ export function KeywordsPage() {
         (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
     );
   const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
+  // 未在榜批量删除：当前可见未在榜行的勾选集/全选态（跨语言视图自然隔离）。
+  const selectedUnranked = unranked.filter((k: any) =>
+    unrankedSelected.has(selKey(k.language, k.keyword)),
+  );
+  const allUnrankedSelected =
+    unranked.length > 0 && selectedUnranked.length === unranked.length;
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
   const showUnrankedRows =
@@ -585,7 +594,6 @@ export function KeywordsPage() {
       : "尚未查询";
 
   const handleSelectKeyword = (keyword: (typeof matrixRows)[number]) => {
-    setConfirmDeleteKey(null);
     setSelectedKeyword(keyword.keyword);
     const next = new URLSearchParams(searchParams);
     next.set("keyword", keyword.keyword);
@@ -610,6 +618,19 @@ export function KeywordsPage() {
         keyword.keyword === chartKeyword && "bg-amber-50/40 dark:bg-amber-500/5",
       )}
     >
+      {showUnrankedRows && (
+        <input
+          type="checkbox"
+          checked={unrankedSelected.has(selKey(keyword.language, keyword.keyword))}
+          onChange={(e) => {
+            e.stopPropagation();
+            toggleUnranked(keyword.language, keyword.keyword);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 accent-amber-500"
+          title="勾选后可在顶部批量删除"
+        />
+      )}
       <span
         className={cn(
           "font-mono text-sm truncate whitespace-nowrap min-w-0",
@@ -655,43 +676,6 @@ export function KeywordsPage() {
             已删除
           </span>
         )}
-      </span>
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          e.stopPropagation();
-          const key = `${keyword.language}:${keyword.keyword}`;
-          if (confirmDeleteKey === key) {
-            setConfirmDeleteKey(null);
-            void removeTracked(keyword.keyword, keyword.language);
-          } else {
-            setConfirmDeleteKey(key);
-            // 3 秒内未再次点击则自动复位，避免误触。
-            window.setTimeout(() => {
-              setConfirmDeleteKey((current) => (current === key ? null : current));
-            }, 3000);
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.stopPropagation();
-            (e.currentTarget as HTMLElement).click();
-          }
-        }}
-        className={cn(
-          "ml-1.5 shrink-0 text-xs cursor-pointer select-none transition-colors",
-          confirmDeleteKey === `${keyword.language}:${keyword.keyword}`
-            ? "text-red-600 dark:text-red-400 font-medium"
-            : "text-zinc-300 hover:text-red-500 dark:text-zinc-600 dark:hover:text-red-400",
-        )}
-        title={
-          confirmDeleteKey === `${keyword.language}:${keyword.keyword}`
-            ? "再次点击确认删除"
-            : "删除关键词（需再次确认）"
-        }
-      >
-        {confirmDeleteKey === `${keyword.language}:${keyword.keyword}` ? "确认删除？" : "✕"}
       </span>
     </div>
   );
@@ -758,6 +742,33 @@ export function KeywordsPage() {
     matrixRows.length === 0
       ? "暂无关键词，点击「为所选语言生成」。"
       : "该筛选范围内暂无关键词。";
+
+  // —— 未在榜批量删除（在榜不提供删除；未在榜用勾选 + 批量删除） ——
+  const toggleUnranked = (language: string, keyword: string) => {
+    const key = selKey(language, keyword);
+    setUnrankedSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const toggleAllUnranked = () =>
+    setUnrankedSelected(
+      allUnrankedSelected
+        ? new Set()
+        : new Set(unranked.map((k: any) => selKey(k.language, k.keyword))),
+    );
+  const handleBatchRemove = async () => {
+    const items = selectedUnranked.map((k: any) => ({
+      language: k.language,
+      keyword: k.keyword,
+    }));
+    if (items.length === 0) return;
+    if (!window.confirm(`删除 ${items.length} 个未在榜关键词？删除后可在「已删除」中恢复。`)) return;
+    await removeTrackedKeywords(product.id, items);
+    setUnrankedSelected(new Set());
+  };
 
   const generateOne = async (lang: string): Promise<{ lang: string; gen: KeywordGeneration | null }> => {
     try {
@@ -1465,6 +1476,32 @@ export function KeywordsPage() {
                   )}
                   {(pendingForCurrent.length > 0 || pausedForCurrent.length > 0 || removedForCurrent.length > 0 || unranked.length > 0) && (
                     <span className="flex items-center gap-1.5">
+                      {showUnrankedRows && unranked.length > 0 && (
+                        <>
+                          <label
+                            className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400 cursor-pointer select-none"
+                            title="全选 / 取消全选（未在榜）"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={allUnrankedSelected}
+                              onChange={toggleAllUnranked}
+                              className="accent-amber-500"
+                            />
+                            全选
+                          </label>
+                          {selectedUnranked.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => void handleBatchRemove()}
+                              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors bg-red-500/10 dark:bg-red-500/15 text-red-600 dark:text-red-400 ring-1 ring-red-500/40 hover:bg-red-500/20"
+                              title="批量删除勾选的未在榜关键词（可到「已删除」中恢复）"
+                            >
+                              批量删除 {selectedUnranked.length}
+                            </button>
+                          )}
+                        </>
+                      )}
                       {(missingTranslationCount > 0 || translatingAll) && (
                         <button
                           type="button"

@@ -58,6 +58,27 @@ function updateProjectInProjects(projects: any[], projectId: string, updater: (p
   );
 }
 
+/**
+ * 项目级关键词池（top-level trackedKeywords/removedKeywords）变更后，把池镜像进
+ * 每个产品的副本（storeProducts[].trackedKeywords/removedKeywords）。
+ *
+ * DB product_records 以产品副本为源（toProductRows），而 UI 刷新（DB 源 projects:list）
+ * 在顶层池缺失时从产品副本重新合并出池——若删除/恢复只改顶层池，DB 产品副本不更新，
+ * 刷新后关键词会“复活”（删除不生效）。所有池变更必须同时落两层。
+ */
+function syncPoolToProducts(project: any): any {
+  const pool = Array.isArray(project.trackedKeywords) ? project.trackedKeywords : [];
+  const removed = Array.isArray(project.removedKeywords) ? project.removedKeywords : [];
+  return {
+    ...project,
+    storeProducts: (project.storeProducts || []).map((sp: any) => ({
+      ...sp,
+      trackedKeywords: pool,
+      removedKeywords: removed,
+    })),
+  };
+}
+
 function submissionReferenceFor(product: any, project: any, language: string) {
   ensureProjectKeywordPool(project);
   // The copy is bound to the software: take the latest draft in the project.
@@ -881,7 +902,7 @@ export function registerProjectsHandlers(): void {
           removedAt: new Date().toISOString(),
         });
       }
-      return { trackedKeywords: normalized, removedKeywords };
+      return syncPoolToProducts({ ...project, trackedKeywords: normalized, removedKeywords });
     });
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -925,7 +946,41 @@ export function registerProjectsHandlers(): void {
           removedAt: new Date().toISOString(),
         });
       }
-      return { trackedKeywords, removedKeywords };
+      return syncPoolToProducts({ ...project, trackedKeywords, removedKeywords });
+    });
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    notifyDataChanged("projects");
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+  });
+
+  ipcMain.handle("projects:removeTrackedKeywords", async (_event, productId: string, items: Array<{ language: string; keyword: string }>) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const batch = Array.isArray(items) ? items.filter((it) => it && typeof it?.language === "string" && typeof it?.keyword === "string") : [];
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
+      let trackedKeywords = project.trackedKeywords || [];
+      const removedKeywords = Array.isArray(project.removedKeywords) ? [...project.removedKeywords] : [];
+      for (const it of batch) {
+        const removedKeyword = trackedKeywords.find(
+          (item: any) => item.language === it.language && item.keyword === it.keyword,
+        );
+        trackedKeywords = trackedKeywords.filter(
+          (item: any) => !(item.language === it.language && item.keyword === it.keyword),
+        );
+        if (!removedKeywords.some((item: any) => item.language === it.language && item.keyword === it.keyword)) {
+          removedKeywords.push({
+            language: it.language,
+            keyword: it.keyword,
+            rationale: removedKeyword?.rationale || "",
+            translation: removedKeyword?.translation || "",
+            removedAt: new Date().toISOString(),
+          });
+        }
+      }
+      return syncPoolToProducts({ ...project, trackedKeywords, removedKeywords });
     });
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -1667,7 +1722,7 @@ export function registerProjectsHandlers(): void {
       const removedKeywords = (project.removedKeywords || []).filter(
         (item: any) => !(item.language === language && item.keyword === keyword),
       );
-      return { trackedKeywords, removedKeywords };
+      return syncPoolToProducts({ ...project, trackedKeywords, removedKeywords });
     });
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -1690,7 +1745,8 @@ export function registerProjectsHandlers(): void {
         ? paused.pausedPlatforms.filter((item: string) => item !== platformKey)
         : [];
       const manualPause = paused.status === "paused";
-      return {
+      return syncPoolToProducts({
+        ...project,
         trackedKeywords: (project.trackedKeywords || []).map((item: any) =>
           item.language === language && item.keyword === keyword
             ? {
@@ -1702,7 +1758,7 @@ export function registerProjectsHandlers(): void {
               }
             : item,
         ),
-      };
+      });
     });
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -1716,11 +1772,14 @@ export function registerProjectsHandlers(): void {
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
     const languageSet = new Set(Array.isArray(languages) ? languages : []);
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => ({
-      removedKeywords: (project.removedKeywords || []).filter(
-        (item: any) => !languageSet.has(item.language),
-      ),
-    }));
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) =>
+      syncPoolToProducts({
+        ...project,
+        removedKeywords: (project.removedKeywords || []).filter(
+          (item: any) => !languageSet.has(item.language),
+        ),
+      }),
+    );
     s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
