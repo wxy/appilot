@@ -1242,6 +1242,12 @@ export function CompetitorPanel({
                     const competitor = profile.competitor || {};
                     const intel = profile.intel || {};
                     const expanded = expandedRowId === competitor.id;
+                    const gainedCount = (profile.events || []).filter(
+                      (ev: any) => ev?.kind === "gained",
+                    ).length;
+                    const droppedCount = (profile.events || []).filter(
+                      (ev: any) => ev?.kind === "dropped",
+                    ).length;
                     const faceMap = new Map<string, any>(
                       (intel.faces || []).map((f: any) => [`${f.language}\u0000${f.keyword}`, f]),
                     );
@@ -1327,6 +1333,16 @@ export function CompetitorPanel({
                                 <span title="在榜 = 它进前 200 的词数">
                                   在榜 <b title="在榜 = 它进前 200 的词数" className="font-semibold text-zinc-700 dark:text-zinc-200">{intel.theirOnChart}</b> 词
                                 </span>
+                                {gainedCount > 0 && (
+                                  <span title="近两次采集日相比，它新进入前 200 的词数（新出现）" className="text-emerald-600 dark:text-emerald-400">
+                                    上新 <b className="font-semibold">{gainedCount}</b>
+                                  </span>
+                                )}
+                                {droppedCount > 0 && (
+                                  <span title="近两次采集日相比，它跌出前 200 的词数" className="text-zinc-500 dark:text-zinc-400">
+                                    跌出 <b className="font-semibold">{droppedCount}</b>
+                                  </span>
+                                )}
                               </div>
                             </div>
                             <button

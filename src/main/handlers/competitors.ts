@@ -327,7 +327,7 @@ export function registerCompetitorsHandlers(): void {
     const list = competitorsFor(s, projectId).map(migrateCompetitor);
     const kvInnerR = (s.get("competitorRankSnapshots") || {})[projectId] || {};
     const dbInnerR = blobGet(sharedStore(), "competitorRankSnapshots", projectId) as Record<string, unknown> | undefined;
-    const { buildCompetitorIntel, competitorIndexHistory } = await import("../competitor-intel");
+    const { buildCompetitorIntel, competitorIndexHistory, competitorFaceEvents } = await import("../competitor-intel");
     const profiles = list.map((competitor: any) => {
       const ranks: any[] = dbInnerR?.[competitor.id] ?? kvInnerR?.[competitor.id] ?? [];
       const linked = Array.isArray(competitor.linkedKeywords)
@@ -345,7 +345,8 @@ export function registerCompetitorsHandlers(): void {
         ownSnapshots,
         linkedKeywords: linked,
       });
-      return { competitor, intel, indexHistory };
+      const events = competitorFaceEvents({ platform, rankEntries: ranks });
+      return { competitor, intel, indexHistory, events };
     });
     profiles.sort((a, b) => b.intel.index - a.intel.index || b.intel.pressuredCount - a.intel.pressuredCount);
     return profiles;

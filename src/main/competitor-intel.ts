@@ -316,6 +316,54 @@ function startOfUtcDay(ms: number): number {
   return d.getTime();
 }
 
+/** 词级事件（P1-7）：对比该词最近两次“有采集的日桶”，竞品名次 ≤200 的进/出。 */
+export interface CompetitorFaceEvent {
+  language: string;
+  keyword: string;
+  kind: "gained" | "dropped";
+}
+export function competitorFaceEvents(opts: {
+  platform: string;
+  rankEntries: CompetitorRankEntry[];
+  now?: number;
+  days?: number;
+}): CompetitorFaceEvent[] {
+  const now = opts.now ?? Date.now();
+  const cutoff = now - (opts.days ?? 14) * 86_400_000;
+  // face → 日桶 → 当天最好（≤200）名次。
+  const byFace = new Map<string, { language: string; keyword: string; dayBest: Map<string, number> }>();
+  for (const e of opts.rankEntries || []) {
+    if (e.platform != null && e.platform !== opts.platform) continue;
+    const ts = String(e?.checkedAt ?? "");
+    if (!ts || new Date(ts).getTime() < cutoff) continue;
+    const rank = typeof e.rank === "number" && Number.isFinite(e.rank) && e.rank > 0 && e.rank <= 200 ? e.rank : null;
+    if (rank == null) continue;
+    const language = String(e.language ?? "en");
+    const key = `${language}\u0000${e.keyword}`;
+    let face = byFace.get(key);
+    if (!face) {
+      face = { language, keyword: e.keyword, dayBest: new Map() };
+      byFace.set(key, face);
+    }
+    const day = ts.slice(0, 10);
+    const cur = face.dayBest.get(day);
+    if (cur == null || rank < cur) face.dayBest.set(day, rank);
+  }
+  const events: CompetitorFaceEvent[] = [];
+  for (const face of byFace.values()) {
+    const days = [...face.dayBest.keys()].sort();
+    if (days.length < 2) continue;
+    const last = days[days.length - 1];
+    const prev = days[days.length - 2];
+    if (face.dayBest.has(last) && !face.dayBest.has(prev)) {
+      events.push({ language: face.language, keyword: face.keyword, kind: "gained" });
+    } else if (face.dayBest.has(prev) && !face.dayBest.has(last)) {
+      events.push({ language: face.language, keyword: face.keyword, kind: "dropped" });
+    }
+  }
+  return events;
+}
+
 /**
  * 竞争指数随时间的日历史（每天用“截至当天”的 7 天滑动窗口重算，buildCompetitorIntel
  * 内部按窗口过滤）：供竞品行内 sparkline / 趋势。
