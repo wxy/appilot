@@ -34,7 +34,14 @@ export interface TaskCenterTaskView {
   queryLanguage?: string;
   storefront?: string;
   groupKey?: string;
-  round?: { done: number; total: number } | null;
+  round?: {
+    done: number;
+    total: number;
+    /** 上轮完成时间（引擎 schedulerRounds 状态；无 = 尚无完整轮次）。 */
+    lastCompletedAt?: string | null;
+    /** 本轮开始时间（引擎 schedulerRounds 状态）。 */
+    roundStartedAt?: string | null;
+  } | null;
 }
 
 function electronStatus(s: TaskRow['lastStatus']): 'success' | 'failed' | undefined {
@@ -88,6 +95,7 @@ export function taskRowToView(
   products?: Map<string, { projectName: string; trackName: string | null; platform: string | null }>,
   projNames?: Map<string, string>,
   execFirst?: Map<string, string>,
+  roundsByGroup?: Map<string, { done: number; total: number; lastCompletedAt: string | null; roundStartedAt: string | null }>,
 ): TaskCenterTaskView {
   const inst = (row.instance ?? {}) as any;
   const electron = parseElectron(row);
@@ -146,8 +154,20 @@ export function taskRowToView(
     if (!view.platform && ctx?.platform) view.platform = ctx.platform;
     view.productName = ctx ? ctx.trackName ?? ctx.projectName : instName ?? '未知产品';
     if (groupKey) {
-      const g = rankGroups.get(String(groupKey));
-      if (g) view.round = { done: g.ok, total: g.total };
+      // 引擎轮次状态优先（真实本轮进度 + 上轮完成时间）；无该组状态时回退
+      // rankProgress（DB 执行聚合：ok = 成功执行过的实例数，无轮次语义）。
+      const kv = roundsByGroup?.get(String(groupKey));
+      if (kv && kv.total > 0) {
+        view.round = {
+          done: kv.done,
+          total: kv.total,
+          lastCompletedAt: kv.lastCompletedAt,
+          roundStartedAt: kv.roundStartedAt,
+        };
+      } else {
+        const g = rankGroups.get(String(groupKey));
+        if (g) view.round = { done: g.ok, total: g.total };
+      }
     }
   } else {
     view.productName = ctx ? ctx.trackName ?? ctx.projectName : instName ?? '';
@@ -184,8 +204,30 @@ export function taskCenterTasksFromDb(store: AppilotStore): TaskCenterTaskView[]
   } catch {
     // 执行表不可用时忽略首次兜底（仅影响展示）。
   }
+  // 引擎轮次状态（kv schedulerRounds，app_kv 落地，迁移前历史已保留）：本轮
+  // done/members + 上轮完成时间。只在任务中心展示——调度仍由引擎自己维护。
+  const roundsByGroup = new Map<string, { done: number; total: number; lastCompletedAt: string | null; roundStartedAt: string | null }>();
+  try {
+    const raw = store.kv.get('schedulerRounds');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        for (const [gk, st] of Object.entries(parsed as Record<string, any>)) {
+          if (!st || !Array.isArray(st.members)) continue;
+          roundsByGroup.set(gk, {
+            done: Array.isArray(st.done) ? st.done.length : 0,
+            total: st.members.length,
+            lastCompletedAt: typeof st.lastCompletedAt === 'string' ? st.lastCompletedAt : null,
+            roundStartedAt: typeof st.roundStartedAt === 'string' ? st.roundStartedAt : null,
+          });
+        }
+      }
+    }
+  } catch {
+    // kv 状态缺失/损坏时忽略（各列回退 rankProgress/—）。
+  }
   return rows
-    .map((r) => taskRowToView(r, rankGroups, products, projNames, execFirst))
+    .map((r) => taskRowToView(r, rankGroups, products, projNames, execFirst, roundsByGroup))
     .sort((a, b) => (a.kind ?? '').localeCompare(b.kind ?? '') || a.id.localeCompare(b.id));
 }
 
