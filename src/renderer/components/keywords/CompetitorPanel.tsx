@@ -16,6 +16,7 @@ export function CompetitorPanel({
 }: {
   projectId: string;
   product: {
+    id?: string;
     platform?: string;
     supportedLanguages?: { code: string }[];
     trackId?: string | null;
@@ -46,6 +47,10 @@ export function CompetitorPanel({
   const [refreshingRanks, setRefreshingRanks] = useState(false);
   const [page, setPage] = useState(0);
   const [searchError, setSearchError] = useState("");
+  // 竞品总览（P1/P2：App 为中心的竞争面聚合）。
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [profilesTick, setProfilesTick] = useState(0);
 
   const load = useCallback(() => {
     (window as any).appilot?.competitors?.list(projectId)
@@ -60,6 +65,17 @@ export function CompetitorPanel({
       })
       .catch(() => setCompetitors([]));
   }, [projectId]);
+  // 竞品总览：按当前产品（平台）聚合每个竞品的竞争面与竞争指数。
+  const loadOverview = useCallback(() => {
+    if (!projectId || !product?.id) {
+      setProfiles([]);
+      return;
+    }
+    (window as any).appilot?.competitors?.overview(projectId, product.id)
+      .then((list: any[]) => setProfiles(list || []))
+      .catch(() => setProfiles([]));
+  }, [projectId, product?.id]);
+  useEffect(() => { loadOverview(); }, [loadOverview, profilesTick]);
   useEffect(() => { load(); }, [load]);
   // 主进程数据变更推送：竞品数据更新时自动刷新。
   useEffect(() => {
@@ -151,6 +167,7 @@ export function CompetitorPanel({
           : "已添加，排名已按搜索结果回填。",
       );
       await load();
+      setProfilesTick((v) => v + 1);
       // 定位到当前关键词，让新竞品行出现在跟踪表里。
       if (keyword) setTrackedKeyword(`${keyword}\u0000${language}`);
     } finally {
@@ -176,6 +193,8 @@ export function CompetitorPanel({
   const handleRemove = async (competitorId: string) => {
     await (window as any).appilot?.competitors?.remove(projectId, competitorId);
     load();
+    setProfilesTick((v) => v + 1);
+    if (expandedId === competitorId) setExpandedId(null);
   };
 
   const handleRefreshRanks = async () => {
@@ -184,6 +203,7 @@ export function CompetitorPanel({
     try {
       await (window as any).appilot?.competitors?.refreshRanks(projectId);
       await load();
+      setProfilesTick((v) => v + 1);
     } finally {
       setRefreshingRanks(false);
     }
@@ -278,6 +298,110 @@ export function CompetitorPanel({
     safePage * PAGE_SIZE,
     safePage * PAGE_SIZE + PAGE_SIZE,
   );
+
+  // —— 竞品总览（P2：App 为中心的竞争面）渲染辅助 ——
+  const OVERLAP_LABEL: Record<string, string> = {
+    both: "正面竞争",
+    competitorOnly: "它上榜我未上榜",
+    selfOnly: "我上榜它未上榜",
+    offChart: "双方 200 外",
+    unknown: "未采集",
+  };
+  const FACE_LANG_LABEL: Record<string, string> = {
+    en: "英语", "zh-Hans": "简体中文", "zh-Hant": "繁体中文", ja: "日语", ko: "韩语",
+    de: "德语", fr: "法语", es: "西班牙语", pt: "葡萄牙语", ru: "俄语",
+  };
+  const cellVisual = (own: number | null, theirs: number | null) => {
+    if (theirs != null && own != null) {
+      if (theirs < own) return { cls: "bg-red-500/15 dark:bg-red-500/20 text-red-700 dark:text-red-300", lead: -1 };
+      if (theirs > own) return { cls: "bg-emerald-500/15 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300", lead: 1 };
+      return { cls: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300", lead: 0 };
+    }
+    if (theirs != null) return { cls: "bg-red-50 dark:bg-red-500/5 text-red-600/70 dark:text-red-300/70", lead: -1 };
+    if (own != null) return { cls: "bg-emerald-50 dark:bg-emerald-500/5 text-emerald-600/70 dark:text-emerald-300/70", lead: 1 };
+    return { cls: "bg-zinc-50 dark:bg-zinc-800/40 text-zinc-400 dark:text-zinc-500", lead: 0 };
+  };
+  // 竞争面详情：按语言分组，行 = 关键词，列 = 该语言涉及商店；格 = 我/它名次。
+  const renderFacesTable = (intel: any) => {
+    const byLang = new Map<string, any[]>();
+    for (const face of intel.faces || []) {
+      const list = byLang.get(face.language) || [];
+      list.push(face);
+      byLang.set(face.language, list);
+    }
+    const langs = [...byLang.keys()].sort((a, b) =>
+      (FACE_LANG_LABEL[a] || a).localeCompare(FACE_LANG_LABEL[b] || b, "zh-Hans-CN"),
+    );
+    return (
+      <div className="px-4 py-3 space-y-4 border-t border-zinc-100 dark:border-zinc-800">
+        {langs.length === 0 && (
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">尚无采集数据（有手动关联的关键词会出现在列表里）。</p>
+        )}
+        {langs.map((lang) => {
+          const faces = byLang.get(lang)!;
+          const storefronts = Array.from(
+            new Set(faces.flatMap((f) => f.cells.map((c: any) => c.storefront))),
+          );
+          return (
+            <div key={lang}>
+              <p className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 mb-1.5">
+                {FACE_LANG_LABEL[lang] || lang}
+                <span className="font-normal text-zinc-400 dark:text-zinc-500"> · {faces.length} 个词</span>
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="text-left">
+                      <th className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400">关键词</th>
+                      {storefronts.map((sf) => (
+                        <th key={sf} className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                          {storefrontDisplayName(sf)}
+                        </th>
+                      ))}
+                      <th className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-400 whitespace-nowrap">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {faces.map((face: any) => {
+                      const cellBySf = new Map<string, any>();
+                      for (const c of face.cells || []) cellBySf.set(c.storefront, c);
+                      return (
+                        <tr key={`${face.language}:${face.keyword}`}>
+                          <td className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 whitespace-nowrap">
+                            <span className="font-mono text-zinc-700 dark:text-zinc-200">{face.keyword}</span>
+                            {face.longTail && (
+                              <span className="ml-1.5 px-1 py-px rounded text-[9px] bg-zinc-100 dark:bg-zinc-800 text-zinc-400">长尾</span>
+                            )}
+                          </td>
+                          {storefronts.map((sf) => {
+                            const cell = cellBySf.get(sf);
+                            const v = cellVisual(cell?.own ?? null, cell?.theirs ?? null);
+                            return (
+                              <td key={sf} className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 text-center whitespace-nowrap">
+                                <span className={cn("inline-block min-w-[3.5rem] px-1 py-0.5 rounded", v.cls)}>
+                                  {cell?.theirs != null ? cell.theirs : "—"} / {cell?.own != null ? cell.own : "—"}
+                                </span>
+                              </td>
+                            );
+                          })}
+                          <td className="py-1.5 px-2 border border-zinc-200 dark:border-zinc-700 whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-400">
+                            {OVERLAP_LABEL[face.overlap] || face.overlap}
+                            {face.contribution > 0 && (
+                              <span className="ml-1 text-amber-600 dark:text-amber-400">+{face.contribution}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div className="mt-8">
@@ -444,6 +568,80 @@ export function CompetitorPanel({
           </div>
         )}
         </>
+      )}
+
+      {profiles.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              竞品总览
+              <span className="ml-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+                按竞争指数排序（权重只看我方名次段 · 分平台 · 长尾词降权） · 点击行展开竞争面
+              </span>
+            </h3>
+            <span className="text-[11px] text-zinc-400">
+              当前平台 {platformLabel(viewPlatform)} · 7 天窗口
+            </span>
+          </div>
+          <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {profiles.map(({ competitor, intel }: any) => {
+              const expanded = expandedId === competitor.id;
+              return (
+                <div key={competitor.id}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(expanded ? null : competitor.id)}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors"
+                  >
+                    <span className="flex-1 min-w-0 flex items-center gap-2">
+                      <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate hover:underline">
+                        {competitor.name}
+                      </span>
+                      <span className="flex gap-0.5 shrink-0">
+                        {(["ios", "macos"] as const).map((p) => (
+                          <span
+                            key={p}
+                            className={cn(
+                              "px-1 py-px rounded text-[9px] font-medium leading-none",
+                              competitorTrackId(competitor, p)
+                                ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600",
+                            )}
+                          >
+                            {p === "macos" ? "macOS" : "iOS"}
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400 w-16 text-right">
+                      重叠 <b className="text-zinc-700 dark:text-zinc-200">{intel.faceCount}</b>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400 w-14 text-right">
+                      压我 <b className="text-red-600 dark:text-red-400">{intel.pressuredCount}</b>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400 w-14 text-right">
+                      在榜 <b className="text-zinc-700 dark:text-zinc-200">{intel.theirOnChart}</b>
+                    </span>
+                    <span
+                      className={cn(
+                        "shrink-0 w-16 text-right text-sm font-bold",
+                        intel.index > 0
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-zinc-400 dark:text-zinc-500",
+                      )}
+                    >
+                      {intel.index}
+                    </span>
+                    <span className="shrink-0 text-zinc-400 dark:text-zinc-500 text-xs w-4 text-center">
+                      {expanded ? "▲" : "▼"}
+                    </span>
+                  </button>
+                  {expanded && renderFacesTable(intel)}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {competitors.length > 0 && (
