@@ -114,6 +114,7 @@ interface ProjectState {
   updateTrackedKeywords: (productId: string, keywords: KeywordEntry[]) => void;
   updateSubmissionKeywords: (productId: string, submission: SubmissionKeywordsEntry[]) => void;
   removeTrackedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
+  removeTrackedKeywords: (productId: string, items: Array<{ language: string; keyword: string }>) => Promise<void>;
   restoreTrackedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
   resumePausedKeyword: (productId: string, language: string, keyword: string) => Promise<void>;
   clearRemovedKeywords: (productId: string, languages: string[]) => Promise<void>;
@@ -456,6 +457,15 @@ export const useProject = create<ProjectState>((set, get) => ({
   removeTrackedKeyword: async (productId, language, keyword) => {
     const updatedProject = normalizeProject(
       await (window as any).appilot.projects.removeTrackedKeyword(productId, language, keyword),
+    ) as unknown as Project;
+    set((s) => ({
+      projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
+    }));
+  },
+
+  removeTrackedKeywords: async (productId, items) => {
+    const updatedProject = normalizeProject(
+      await (window as any).appilot.projects.removeTrackedKeywords(productId, items),
     ) as unknown as Project;
     set((s) => ({
       projects: s.projects.map((project) => (project.id === updatedProject.id ? updatedProject : project)),
