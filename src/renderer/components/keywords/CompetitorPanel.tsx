@@ -3,10 +3,9 @@ import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/app
 import { platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnPrimary, btnSmPrimary, btnSmSecondary } from "../ui/styles";
-import { ValueFlash } from "../ui/ValueFlash";
 
 // —— 竞品矩阵（纯计算辅助，模块级）——
-// 语言标签：矩阵列组头 + 行展开分组标题。
+// 语言标签：矩阵列组头 + 商店级展开的词列 tooltip。
 const FACE_LANG_LABEL: Record<string, string> = {
   en: "英语",
   "zh-Hans": "简体中文",
@@ -24,21 +23,10 @@ function langRank(code: string): number {
   const i = LANG_PRIORITY.indexOf(code);
   return i === -1 ? LANG_PRIORITY.length : i;
 }
-// 交集状态（词行“状态”列）。
-const FACE_STATUS_LABEL: Record<string, string> = {
-  both: "正面竞争",
-  competitorOnly: "它上榜我未上榜",
-  selfOnly: "我上榜它未上榜",
-  offChart: "双方 200 外",
-  unknown: "未采集",
-};
 // 英语地区（组「英语」）与组「全局」的商店口径。
 const EN_REGION_STORES = storefrontsForLanguage("en"); // us/gb/au/ca/nz/ie
 const GROUP_EN_TITLE = `英语地区商店 ${EN_REGION_STORES.join("/")} 的跨店综合`;
 const GROUP_GLOBAL_TITLE = `该 en 词在其它语言商店（非 ${EN_REGION_STORES.join("/")}，如 kr/jp/de）的跨店综合`;
-// 行展开词芯片（英 / 全 / 本地 段）tooltip 复用同一口径。
-const SEG_EN_LOCAL_TIP = `英 = ${GROUP_EN_TITLE}`;
-const SEG_EN_GLOBAL_TIP = `全 = ${GROUP_GLOBAL_TITLE}`;
 
 // —— 矩阵列组（列 = 关键词，按“语言/区域组”分组）——
 // 分组集合 = 各本地化语言（zh-Hans/ja/ko…）+ 两个特殊大组：组「英语」与组「全局」
@@ -191,14 +179,38 @@ function leadTone(myLead: number, theirLead: number, hasData: boolean): { cls: s
   if (myLead + theirLead > 0) return { cls: TONE_TIED, text: `${myLead} : ${theirLead}` };
   return { cls: TONE_FLAT, text: "0 : 0" };
 }
-// 明细 title（矩阵格 / 词段芯片共用）：我最好 #x / 它最好 #y · 我领先商店 a,b / 它领先 c,d。
-// label 传入列组名（简体中文 / 英语 / 全局）或行展开段短标（英 / 全 / 本地）。
+// 明细 title（矩阵格共用）：我最好 #x / 它最好 #y · 我领先商店 a,b / 它领先 c,d。
+// label 传入列组名（简体中文 / 英语 / 全局）。
 function segDetailTitle(keyword: string, label: string, agg: CellAgg): string {
   const parts: string[] = [`我最好 #${agg.myBest ?? "—"}`, `它最好 #${agg.theirBest ?? "—"}`];
   if (agg.myStores.length > 0) parts.push(`我领先：${agg.myStores.map(storefrontDisplayName).join("、")}`);
   if (agg.theirStores.length > 0) parts.push(`它领先：${agg.theirStores.map(storefrontDisplayName).join("、")}`);
   if (agg.myStores.length === 0 && agg.theirStores.length === 0) parts.push("名次并列或未上榜，无一方领先");
   return `「${keyword}」${label}：${parts.join(" · ")}`;
+}
+// —— 行展开（商店级）：格态与词列序辅助 ——
+// (词 × 商店) 格：只认“名次 ≤200”的入榜数据；双方都无在榜数据返回 null（格留白）。
+// 返回三态配色与“它 #x · 我 #y”合并文案（不在榜的一侧省略）：
+// 红 = 它压我（它上榜且更前 / 只有它上榜）· 琥珀 = 重叠(并列在榜) · 绿 = 我方占优（我更前 / 只有我上榜）。
+function storeCellTone(ownRaw: unknown, theirsRaw: unknown): { cls: string; text: string } | null {
+  const own = typeof ownRaw === "number" && ownRaw > 0 && ownRaw <= 200 ? ownRaw : null;
+  const theirs = typeof theirsRaw === "number" && theirsRaw > 0 && theirsRaw <= 200 ? theirsRaw : null;
+  if (own == null && theirs == null) return null;
+  let cls: string;
+  if (theirs != null && (own == null || theirs < own)) cls = TONE_THEIR; // 压我
+  else if (theirs != null && own != null && own === theirs) cls = TONE_TIED; // 重叠(并列在榜)
+  else cls = TONE_MY; // 我方占优
+  const text = [theirs != null ? `它 #${theirs}` : "", own != null ? `我 #${own}` : ""]
+    .filter(Boolean)
+    .join(" · ");
+  return { cls, text };
+}
+// 商店级展开的词列组序：本地化语言（按 LANG_PRIORITY）在前，en 词排最后——与矩阵列序一致
+// （矩阵里 en 词落在「英语」「全局」两个尾组，本地化语言组在前）。
+function faceLangRank(lang: unknown): number {
+  const code = String(lang ?? "en");
+  if (code === "en") return LANG_PRIORITY.length + 1;
+  return langRank(code);
 }
 
 export function CompetitorPanel({
@@ -237,7 +249,7 @@ export function CompetitorPanel({
   const [searchError, setSearchError] = useState("");
   // 竞品总览（competitors:overview → [{competitor, intel, indexHistory}]，intel.faces 即矩阵数据）。
   const [profiles, setProfiles] = useState<any[]>([]);
-  // 矩阵行展开 + (词 × 段) 商店明细下钻。
+  // 矩阵行展开（商店级对比：行 = 商店 × 列 = 词）。
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const [profilesTick, setProfilesTick] = useState(0);
   const [scanBusy, setScanBusy] = useState(false);
@@ -428,14 +440,6 @@ export function CompetitorPanel({
     ),
   ).length;
   const atLimit = defaultLinkedCount >= MAX_COMPETITORS_PER_KEYWORD;
-  const rankCellClass = (rank: number | null) => {
-    if (rank == null) return "bg-zinc-100/70 dark:bg-zinc-800/40 text-zinc-400 dark:text-zinc-500";
-    if (rank <= 10) return "bg-green-700/85 text-white";
-    if (rank <= 50) return "bg-green-500/85 text-white";
-    if (rank <= 100) return "bg-lime-300/80 text-green-950";
-    if (rank <= 200) return "bg-yellow-300/80 text-yellow-950";
-    return "bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700/70 dark:text-zinc-300";
-  };
   const ownTrackId = String(product?.trackId ?? "");
   const hasSelfInResults = candidates.some((c) => String(c.trackId) === ownTrackId);
   // “已添加”按 (竞品, 当前关键词) 判定：同一竞品关联了别的关键词时，
@@ -514,213 +518,135 @@ export function CompetitorPanel({
       </td>
     );
   };
-  // 商店级下钻表：行 = 商店，列 = 我方 / 竞品名次。
-  const renderStoreDrill = (face: any, cells: any[], segLabel: string) => (
-    <div className="overflow-hidden rounded-lg border border-zinc-200/80 dark:border-zinc-700/60">
-      <div className="flex items-center justify-between px-2 py-1 bg-zinc-100/70 dark:bg-zinc-800/40">
-        <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-          「{face.keyword}」× {segLabel} 段 · 商店级明细（近 7 天窗口）
-        </p>
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-500">名次越小越好 · 未上榜 = 该店无名次数据</p>
-      </div>
-      <table className="w-full text-[11px] border-collapse">
-        <thead>
-          <tr className="text-left">
-            <th className="py-1 px-2 font-medium text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700/60 whitespace-nowrap">商店</th>
-            <th className="py-1 px-2 font-medium text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700/60 text-center">我方</th>
-            <th className="py-1 px-2 font-medium text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700/60 text-center">竞品</th>
-          </tr>
-        </thead>
-        <tbody>
-          {cells.map((cell: any) => {
-            const ownRank: number | null = typeof cell?.own === "number" ? (cell.own as number) : null;
-            const theirRank: number | null =
-              typeof cell?.theirs === "number" ? (cell.theirs as number) : null;
-            return (
-              <tr key={cell.storefront} className="border-b border-zinc-100 dark:border-zinc-800 last:border-0">
-                <td className="py-1 px-2 text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
-                  {storefrontDisplayName(cell.storefront)}
-                  <span className="ml-1 font-mono text-[9px] text-zinc-400 dark:text-zinc-500">{cell.storefront}</span>
-                </td>
-                <td className={cn("py-1 px-2 text-center whitespace-nowrap font-medium", rankCellClass(ownRank))}>
-                  <ValueFlash value={ownRank}>{ownRank != null ? `#${ownRank}` : "未上榜"}</ValueFlash>
-                </td>
-                <td className={cn("py-1 px-2 text-center whitespace-nowrap font-medium", rankCellClass(theirRank))}>
-                  <ValueFlash value={theirRank}>{theirRank != null ? `#${theirRank}` : "未上榜"}</ValueFlash>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-  // 单个 face → (英 / 全 / 本地) 段切片，供词行段芯片与商店下钻复用。
-  const faceParts = (face: any): Array<{ label: string; title: string; cells: any[]; agg: CellAgg }> => {
-    const cells: any[] = face?.cells || [];
-    if (cells.length === 0) return [];
-    if (face.language === "en") {
-      const enList = storefrontsForLanguage("en");
-      const parts: Array<{ label: string; title: string; cells: any[]; agg: CellAgg }> = [];
-      const localCells = cells.filter((c: any) => enList.includes(c.storefront));
-      const globalCells = cells.filter((c: any) => !enList.includes(c.storefront));
-      if (localCells.length > 0)
-        parts.push({ label: "英", title: SEG_EN_LOCAL_TIP, cells: localCells, agg: aggregateCells(localCells) });
-      if (globalCells.length > 0)
-        parts.push({ label: "全", title: SEG_EN_GLOBAL_TIP, cells: globalCells, agg: aggregateCells(globalCells) });
-      return parts;
-    }
-    return [
-      {
-        label: "本地",
-        title: `该词在${FACE_LANG_LABEL[face.language] || face.language}商店（${storefrontsForLanguage(face.language).join("/")}）的跨店综合`,
-        cells,
-        agg: aggregateCells(cells),
-      },
-    ];
-  };
-  // 行展开词条目：每个词直接展开其 (英/全/本地) 商店级明细表——矩阵格只给跨店综合，
-  // 具体“某语言某商店里我们和它的名次”在这里看（把商店行从矩阵格“折叠”到了展开区）。
-  const renderWordItem = (face: any) => {
-    const parts = faceParts(face);
-    const status = FACE_STATUS_LABEL[face.overlap] || face.overlap || "未知";
-    return (
-      <div key={`${face.language}\u0000${face.keyword}`} className="py-1.5">
-        <div className="flex items-center gap-2">
-          <span
-            className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-800 dark:text-zinc-200"
-            title={`${face.keyword}（${FACE_LANG_LABEL[face.language] || face.language}）${face.longTail ? " · 双方最新都在 200 名后（长尾降权）" : ""}`}
-          >
-            {face.keyword}
-            {face.longTail && (
-              <span className="ml-1.5 px-1 py-px rounded text-[9px] bg-zinc-100 dark:bg-zinc-800 text-zinc-400 align-middle">
-                长尾
-              </span>
-            )}
-          </span>
-          <span
-            className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap"
-            title={`交集状态（近 7 天窗口）＝ ${status}${face.contribution > 0 ? `；指数贡献 +${face.contribution}` : ""}`}
-          >
-            {status}
-            {face.contribution > 0 && <span className="ml-0.5 text-amber-600 dark:text-amber-400">+{face.contribution}</span>}
-          </span>
-        </div>
-        {parts.length === 0 ? (
-          <p className="ml-2 mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">尚无商店级排名数据。</p>
-        ) : (
-          parts.map((part) => (
-            <div key={part.label} className="mt-1.5 ml-2 border-l-2 border-zinc-100 dark:border-zinc-800 pl-3">
-              <p className="mb-1 text-[10px] text-zinc-400 dark:text-zinc-500" title={part.title}>
-                {part.label === "英" ? "英语地区商店" : part.label === "全" ? "全局（其它语言商店）" : "本地商店"} · 我/它名次
-              </p>
-              {renderStoreDrill(face, part.cells, part.label)}
-            </div>
-          ))
-        )}
-      </div>
-    );
-  };
-  // 行展开 = 词级汇总：按语言分组；英语语言内部再拆“英语地区 / 全局”两组。
+  // 行展开（商店级）：把该竞品这一行在“商店层面”展开——行 = 商店、列 = 该竞品的词
+  // （复用矩阵的关键词/列概念），格 = 该词在该商店 它/我 的最好名次合并一格，三色表示谁压谁。
   const renderRowDetail = (profile: any) => {
     const intel = profile.intel || {};
-    const faces: any[] = intel.faces || [];
-    if (faces.length === 0) {
+    // 词列：该竞品有商店排名数据的词（cells 非空）；排序与矩阵一致——本地化语言组
+    // （按 LANG_PRIORITY）在前，en 词排最后（矩阵中 en 词落在「英语」「全局」两个尾组）。
+    const words: any[] = [...(intel.faces || [])]
+      .filter((f: any) => Array.isArray(f?.cells) && (f.cells as any[]).length > 0)
+      .sort(
+        (a: any, b: any) =>
+          faceLangRank(a?.language) - faceLangRank(b?.language) ||
+          String(a?.keyword ?? "").localeCompare(String(b?.keyword ?? "")),
+      );
+    // 商店集 = union 该竞品全部词列 cells 的 storefront。
+    const storeSet = new Set<string>();
+    for (const w of words) {
+      for (const c of w?.cells || []) {
+        if (typeof c?.storefront === "string" && c.storefront.length > 0) storeSet.add(c.storefront);
+      }
+    }
+    // 只保留“至少有一个词在该商店入榜（名次 ≤200）”的商店行；完全没有在榜数据的行不显示。
+    const hasOnChartCell = (sf: string) =>
+      words.some((w) =>
+        (w?.cells || []).some(
+          (c: any) =>
+            c?.storefront === sf &&
+            ((typeof c?.own === "number" && c.own > 0 && c.own <= 200) ||
+              (typeof c?.theirs === "number" && c.theirs > 0 && c.theirs <= 200)),
+        ),
+      );
+    const storeRows = [...storeSet]
+      .filter(hasOnChartCell)
+      .sort((a, b) => {
+        // 英语地区商店（矩阵「英语」列组口径：us/gb/au/ca/nz/ie）行在前，其余按代码稳定排。
+        const ai = EN_REGION_STORES.indexOf(a);
+        const bi = EN_REGION_STORES.indexOf(b);
+        if (ai !== -1 && bi !== -1) return ai - bi;
+        if (ai !== -1) return -1;
+        if (bi !== -1) return 1;
+        return a.localeCompare(b);
+      });
+    // 空态：该竞品没有任何“在榜”的商店级数据。
+    if (storeRows.length === 0) {
       return (
         <p className="text-xs text-zinc-400 dark:text-zinc-500">
-          尚无采集数据（手动关联的关键词会出现在列表里，等待采集）。
+          暂无商店级在榜数据（先采集或刷新排名）。
         </p>
       );
     }
-    const byLang = new Map<string, any[]>();
-    for (const f of faces) {
-      const lang = String(f.language ?? "en");
-      const list = byLang.get(lang) || [];
-      list.push(f);
-      byLang.set(lang, list);
-    }
-    const langs = [...byLang.keys()].sort((a, b) => langRank(a) - langRank(b));
     return (
-      <div className="space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {(
-            [
-              ["竞争指数", intel.index, "Σ 权重(我方名次段) × 威胁 × 长尾降权（近 7 天窗口）"],
-              ["重叠", intel.faceCount, "重叠 = 双方都跟踪的词数（含已关联未采集）"],
-              ["在榜", intel.theirOnChart, "在榜 = 它进入前 200 的词数"],
-              ["压我", intel.pressuredCount, "压我 = 它名次更靠前、或它上榜我未上榜的词数"],
-            ] as const
-          ).map(([label, value, tip]) => (
-            <span
-              key={label}
-              title={tip}
-              className="inline-flex items-center gap-1 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-500 dark:text-zinc-400"
-            >
-              {label}
-              <b
-                className={
-                  label === "压我"
-                    ? "text-red-500 dark:text-red-400"
-                    : label === "竞争指数"
-                      ? "text-amber-600 dark:text-amber-400"
-                      : "text-zinc-700 dark:text-zinc-200"
-                }
-              >
-                {String(value)}
-              </b>
-            </span>
-          ))}
-        </div>
-        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-          商店级明细（近 7 天窗口）——矩阵格显示跨店综合，这里看每个词在各商店里我们与它的名次：
+      <div className="space-y-1.5">
+        {/* 极简图例：三色小方块与格同色（红 = 压我 · 琥珀 = 重叠(并列在榜) · 绿 = 我方占优）。 */}
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-sm bg-red-500/70" />
+            它压我
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-sm bg-amber-400/80" />
+            重叠(并列在榜)
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/70" />
+            我方占优
+          </span>
         </p>
-        {langs.map((lang) => {
-          const list = byLang.get(lang)!;
-          if (lang === "en") {
-            const enList = storefrontsForLanguage("en");
-            const enLocal: any[] = [];
-            const enGlobalOnly: any[] = [];
-            for (const f of list) {
-              const cells: any[] = f.cells || [];
-              const hasLocal = cells.some((c: any) => enList.includes(c.storefront));
-              if (cells.length === 0 || hasLocal) enLocal.push(f);
-              else enGlobalOnly.push(f);
-            }
-            return (
-              <div key={lang}>
-                <p className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                  英语
-                  <span className="font-normal text-zinc-400 dark:text-zinc-500"> · {list.length} 个词</span>
-                </p>
-                {enLocal.length > 0 && (
-                  <div className="mt-1 ml-2 border-l-2 border-zinc-100 dark:border-zinc-800 pl-2">
-                    <p className="mb-0.5 text-[10px] text-zinc-400 dark:text-zinc-500" title={SEG_EN_LOCAL_TIP}>
-                      英语地区
-                    </p>
-                    {enLocal.map(renderWordItem)}
-                  </div>
-                )}
-                {enGlobalOnly.length > 0 && (
-                  <div className="mt-1 ml-2 border-l-2 border-zinc-100 dark:border-zinc-800 pl-2">
-                    <p className="mb-0.5 text-[10px] text-zinc-400 dark:text-zinc-500" title={SEG_EN_GLOBAL_TIP}>
-                      全局
-                    </p>
-                    {enGlobalOnly.map(renderWordItem)}
-                  </div>
-                )}
-              </div>
-            );
-          }
-          return (
-            <div key={lang}>
-              <p className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                {FACE_LANG_LABEL[lang] || lang}
-                <span className="font-normal text-zinc-400 dark:text-zinc-500"> · {list.length} 个词</span>
-              </p>
-              <div className="mt-1 ml-2 border-l-2 border-zinc-100 dark:border-zinc-800 pl-2">{list.map(renderWordItem)}</div>
-            </div>
-          );
-        })}
+        <div className="overflow-x-auto rounded-lg border border-zinc-200/80 dark:border-zinc-700/60">
+          <table className="border-collapse">
+            <thead>
+              <tr className="border-b-2 border-zinc-300 dark:border-zinc-600">
+                <th
+                  className="px-2 py-1.5 text-left whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400"
+                  title="行 = 商店（只列有在榜数据的店，名次 ≤200 才算在榜）；格 = 该词在该商店 它/我 的最好名次（近 7 天窗口，名次越小越好）"
+                >
+                  商店
+                </th>
+                {words.map((w) => {
+                  const lang = String(w?.language ?? "en");
+                  return (
+                    <th
+                      key={`${lang}\u0000${w.keyword}`}
+                      className="px-1 py-1.5 align-top text-center border-l border-zinc-100 dark:border-zinc-800"
+                      style={{ width: "6.5rem", minWidth: "6.5rem", maxWidth: "6.5rem" }}
+                      title={`「${w.keyword}」· ${FACE_LANG_LABEL[lang] || lang}`}
+                    >
+                      <span className="block break-words leading-tight font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
+                        {w.keyword}
+                      </span>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {storeRows.map((sf) => (
+                <tr key={sf} className="border-b border-zinc-100 dark:border-zinc-800 last:border-0">
+                  <th scope="row" className="px-2 py-1 text-left align-top whitespace-nowrap font-normal">
+                    <span className="text-[11px] text-zinc-600 dark:text-zinc-300">{storefrontDisplayName(sf)}</span>
+                    <span className="ml-1.5 font-mono text-[9px] text-zinc-400 dark:text-zinc-500">{sf}</span>
+                  </th>
+                  {words.map((w) => {
+                    const cell = (w?.cells || []).find((c: any) => c?.storefront === sf);
+                    const state = storeCellTone(cell?.own, cell?.theirs);
+                    return (
+                      <td key={`${String(w?.language ?? "en")}\u0000${w.keyword}`} className="p-0.5">
+                        {state ? (
+                          <span
+                            title={`${storefrontDisplayName(sf)} · 「${w.keyword}」：${state.text}`}
+                            className={cn(
+                              "block rounded-md px-1 py-1 text-center text-[10px] font-medium tabular-nums whitespace-nowrap",
+                              state.cls,
+                            )}
+                          >
+                            {state.text}
+                          </span>
+                        ) : (
+                          <span
+                            title="该店该词双方都无在榜数据（未采集或名次 >200）"
+                            className="block min-h-6 rounded-md"
+                          />
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   };
@@ -903,7 +829,7 @@ export function CompetitorPanel({
                     className="ml-2 text-[10px] font-normal text-zinc-400 dark:text-zinc-500"
                     title="列按“语言/区域组”分组并连续排列，组序固定：本地化语言组（简体中文/韩语…，按语言次序）→ 英语组（en 词在英语地区商店 us/gb/au/ca/nz/ie 的跨店综合）→ 全局组（en 词在其它语言商店如 kr/jp/de 的跨店综合）；同一 en 词可在英语与全局两组各占一列（视为不同维度）。组内关键词按“组内被多少竞品命中”降序；该组无数据（无商店快照）的词不生成列。"
                   >
-                    行 = 竞品（指数降序）· 列 = 关键词（按语言/区域组排列，≤40 列）· 点击行展开词级与商店明细
+                    行 = 竞品（指数降序）· 列 = 关键词（按语言/区域组排列，≤40 列）· 点击行展开商店级对比
                   </span>
                 </h3>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
@@ -978,7 +904,7 @@ export function CompetitorPanel({
                     <th
                       rowSpan={2}
                       className="px-3 py-1.5 text-left align-top whitespace-nowrap text-[10px] font-semibold text-zinc-500 dark:text-zinc-400"
-                      title="行 = 竞品（按竞争指数降序）；点击行查看词级与商店明细"
+                      title="行 = 竞品（按竞争指数降序）；点击行展开商店级对比（行 = 商店 × 列 = 词）"
                     >
                       竞品 / 指数 ↓
                     </th>
@@ -1030,7 +956,7 @@ export function CompetitorPanel({
                         <th
                           scope="row"
                           className="px-2 py-1.5 text-left align-top"
-                          title="点击行展开/收起该竞品的词级与商店明细"
+                          title="点击行展开/收起该竞品的商店级对比（行 = 商店 × 列 = 词）"
                         >
                           <div className="flex items-start gap-1">
                             <div className="min-w-0 flex-1">
