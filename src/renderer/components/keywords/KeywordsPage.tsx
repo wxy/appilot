@@ -679,6 +679,18 @@ export function KeywordsPage() {
           </span>
         )}
       </span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleSelectKeyword(keyword);
+          setPageTab("competitor");
+        }}
+        className="ml-auto shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+        title="跳到竞品标签，聚焦该词与竞品的排名对比"
+      >
+        竞品
+      </button>
     </div>
   );
 
@@ -1201,6 +1213,7 @@ export function KeywordsPage() {
             defaultTerm={selectedKeyword || ""}
             viewLang={currentLang}
             rankSnapshots={rankSnapshots}
+            focusKeyword={selectedKeyword || undefined}
           />
         ) : (
           <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />

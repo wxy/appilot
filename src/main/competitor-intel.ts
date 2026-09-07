@@ -300,3 +300,46 @@ export function buildCompetitorIntel(opts: {
     faces: list.sort((a, b) => b.contribution - a.contribution || a.keyword.localeCompare(b.keyword)),
   };
 }
+
+/** 某日（UTC）起点毫秒。 */
+function startOfUtcDay(ms: number): number {
+  const d = new Date(ms);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * 竞争指数随时间的日历史（每天用“截至当天”的 7 天滑动窗口重算，buildCompetitorIntel
+ * 内部按窗口过滤）：供竞品行内 sparkline / 趋势。
+ */
+export function competitorIndexHistory(opts: {
+  platform: string;
+  rankEntries: CompetitorRankEntry[];
+  ownSnapshots: OwnRankSnapshot[];
+  linkedKeywords?: Array<{ keyword: string; language?: string }>;
+  days?: number;
+  now?: number;
+}): Array<{ day: string; index: number; pressuredCount: number; faceCount: number }> {
+  const now = opts.now ?? Date.now();
+  const days = Math.min(Math.max(opts.days ?? 14, 1), 30);
+  const base = startOfUtcDay(now);
+  const out: Array<{ day: string; index: number; pressuredCount: number; faceCount: number }> = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const dayStart = base - i * 86_400_000;
+    const endOfDay = dayStart + 86_400_000 - 1;
+    const intel = buildCompetitorIntel({
+      platform: opts.platform,
+      rankEntries: opts.rankEntries,
+      ownSnapshots: opts.ownSnapshots,
+      linkedKeywords: opts.linkedKeywords,
+      now: endOfDay,
+    });
+    out.push({
+      day: new Date(dayStart).toISOString().slice(0, 10),
+      index: intel.index,
+      pressuredCount: intel.pressuredCount,
+      faceCount: intel.faceCount,
+    });
+  }
+  return out;
+}
