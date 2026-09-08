@@ -567,16 +567,11 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
   let status: "success" | "failed" = "success";
   let snapshot: any = null;
   try {
-    // 关联该 (关键词, 语言) 的竞品：同一次搜索顺带定位它们的排名。
+    // 竞品采用“命中即记录”：不要求显式 (词 × 竞品) 关联——本次搜索结果里出现哪个
+    // 已跟踪竞品，就顺手记下它在该 (词 × 商店) 的名次（零额外请求）。未命中 = 不在
+    // 结果前 N 名，不写记录（避免为全部竞品×词×店写空记录导致数据膨胀）。
     const competitors =
       (store.get("competitors") || {})[project.id] || [];
-    const linkedCompetitors = competitors.filter((competitor: any) =>
-      (competitor.linkedKeywords || []).some(
-        (link: any) =>
-          link.keyword === task.keyword &&
-          link.language === task.queryLanguage,
-      ),
-    );
     // 只传与当前产品平台一致的竞品 trackId：iOS 产品用 software 实体搜索，
     // macOS 产品用 macSoftware，避免把另一平台的列表拿来对比。
     const { competitorTrackIdFor, migrateCompetitor } = await import(
@@ -584,10 +579,12 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     );
     const entityPlatform: "ios" | "macos" =
       product?.platform === "macos" ? "macos" : "ios";
-    const candidateTrackIds = linkedCompetitors
-      .map((competitor: any) =>
-        competitorTrackIdFor(migrateCompetitor(competitor), entityPlatform),
-      )
+    const tracked = competitors.map((competitor: any) => ({
+      competitor: migrateCompetitor(competitor),
+      trackId: competitorTrackIdFor(migrateCompetitor(competitor), entityPlatform),
+    }));
+    const candidateTrackIds = tracked
+      .map((t: any) => t.trackId)
       .filter(Boolean);
     const result = await searchAppStoreRank({
       term: task.keyword,
@@ -608,30 +605,28 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       totalResults: result.totalResults,
       checkedAt: new Date().toISOString(),
     };
-    if (linkedCompetitors.length > 0 && result.candidateRanks) {
+    if (result.candidateRanks) {
       const ranksAll: Record<string, Record<string, any[]>> =
         store.get("competitorRankSnapshots") || {};
       const rankById: Record<string, any[]> = ranksAll[project.id] || {};
       const checkedAt = new Date().toISOString();
-      for (const competitor of linkedCompetitors) {
-        const competitorTrackId = competitorTrackIdFor(
-          migrateCompetitor(competitor),
-          entityPlatform,
-        );
-        // 该竞品未在当前平台（iOS/macOS）上架：不写排名条目，界面按
-        // trackIds 判定为“未上架”，而不是误显示“未上榜”。
+      for (const t of tracked) {
+        const competitorTrackId = t.trackId;
         if (!competitorTrackId) continue;
+        const foundRank = result.candidateRanks[competitorTrackId];
+        // 只记录真正出现在结果里的名次（未命中不写，避免空记录刷屏/挤出历史）。
+        if (typeof foundRank !== "number" || !Number.isFinite(foundRank) || foundRank <= 0) continue;
         const entry = {
           keyword: task.keyword,
           language: task.queryLanguage,
           storefront: task.storefront,
           platform: entityPlatform,
-          rank: result.candidateRanks[competitorTrackId] ?? null,
+          rank: foundRank,
           checkedAt,
         };
         // 同一 (关键词, 商店, 平台) 只保留最新一条。
-        const prev = rankById[competitor.id] || [];
-        rankById[competitor.id] = [
+        const prev = rankById[t.competitor.id] || [];
+        rankById[t.competitor.id] = [
           ...prev.filter(
             (item: any) =>
               !(
