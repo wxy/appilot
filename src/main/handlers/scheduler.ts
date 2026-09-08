@@ -17,6 +17,7 @@ import { runTaskNow } from "../scheduler";
 import { taskCenterTasksFromDb, taskCenterOverviewFromDb } from "../task-center-db";
 import { clearElectronFailures, mirrorTasksToDb } from "../task-db-sync";
 import { buildRankCoverageMatrix } from "../rank-matrix";
+import { computeExecutionStats, EXEC_STATS_WINDOW_MS } from "../execution-stats";
 
 // 租约心跳新鲜度窗口（与各壳 acquire TTL 一致 60s；daemon 心跳 15s）。
 const DAEMON_HEARTBEAT_TTL_MS = 60_000;
@@ -152,6 +153,9 @@ export function registerSchedulerHandlers(): void {
   });
 
   // 轻量统计：单独刷新顶部面板，避免被 1000+ 任务的完整列表计算拖慢。
+  // 注意：overview 与 list 必须输出同一组统计字段（hitRate/traffic 也在此
+  // 计算），否则事件路径用 overview 整块覆盖 list 结果时，缺失的字段会让
+  // 入榜率/流量在每次更新瞬间闪成 —/0。
   ipcMain.handle("scheduler:overview", async () => {
     const s = await getStore();
     const tasks: ScheduledTask[] = await statsTasksFromDb(s);
@@ -163,10 +167,7 @@ export function registerSchedulerHandlers(): void {
         return s.get("rankExecutions") || [];
       }
     })();
-    const dayMs = 24 * 60 * 60 * 1000;
-    const recent = executions.filter(
-      (entry) => new Date(entry.ts).getTime() >= now - dayMs,
-    );
+    const stats = computeExecutionStats(executions, now, EXEC_STATS_WINDOW_MS);
     const enabled = tasks.filter((task) => task.enabled);
     const overdue = enabled.filter(
       (task) => new Date(task.nextRunAt).getTime() <= now,
@@ -182,9 +183,6 @@ export function registerSchedulerHandlers(): void {
         )
         .map((entry: any) => entry.taskId),
     );
-    const executedToday = executions.filter(
-      (entry) => new Date(entry.ts).getTime() >= todayStart.getTime(),
-    ).length;
     const pending = enabled.filter(
       (task) => !todayExecutedTaskIds.has(task.id),
     ).length;
@@ -192,19 +190,6 @@ export function registerSchedulerHandlers(): void {
       (sum, task) => sum + (task.executionCount || 0),
       0,
     );
-    const avgDurationMs = recent.length
-      ? Math.round(
-          recent.reduce((sum, entry) => sum + (entry.durationMs || 0), 0) /
-            recent.length,
-        )
-      : 0;
-    const successRate = recent.length
-      ? Math.round(
-          (recent.filter((entry) => entry.status === "success").length /
-            recent.length) *
-            100,
-        )
-      : null;
     const nextDue = enabled
       .map((task) => new Date(task.nextRunAt).getTime())
       .sort((a, b) => a - b)[0];
@@ -213,11 +198,14 @@ export function registerSchedulerHandlers(): void {
         total: tasks.length,
         pending,
         overdue,
-        executedToday,
+        executedToday: stats.executedToday,
         totalExecuted,
-        avgDurationMs,
-        densityPerHour: Math.round((recent.length / 24) * 10) / 10,
-        successRate,
+        avgDurationMs: stats.avgDurationMs,
+        densityPerHour: stats.densityPerHour,
+        successRate: stats.successRate,
+        hitRate: stats.hitRate,
+        requestBytes: stats.requestBytes,
+        responseBytes: stats.responseBytes,
         nextDueAt: nextDue ? new Date(nextDue).toISOString() : null,
       },
       nowRunning: schedulerStatusSnapshot().nowRunning || null,
@@ -253,11 +241,9 @@ export function registerSchedulerHandlers(): void {
         return s.get("rankExecutions") || [];
       }
     })();
-    const dayMs = 24 * 60 * 60 * 1000;
-    const recent = executions.filter(
-      (entry) => new Date(entry.ts).getTime() >= now - dayMs,
-    );
-    const success = recent.filter((entry) => entry.status === "success");
+    // 执行统计与 scheduler:overview 同一口径（computeExecutionStats）：
+    // 保证事件路径的 overview 整块合并不会让入榜率/流量字段缺失闪 0。
+    const stats = computeExecutionStats(executions, now, EXEC_STATS_WINDOW_MS);
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayExecutedTaskIds = new Set(
@@ -269,9 +255,6 @@ export function registerSchedulerHandlers(): void {
         )
         .map((entry: any) => entry.taskId),
     );
-    const executedToday = executions.filter(
-      (entry) => new Date(entry.ts).getTime() >= todayStart.getTime(),
-    ).length;
     const pending = dbTasks.filter(
       (task) => !todayExecutedTaskIds.has(task.id),
     ).length;
@@ -279,21 +262,6 @@ export function registerSchedulerHandlers(): void {
       (sum, task) => sum + (task.executionCount || 0),
       0,
     );
-    const avgDurationMs = recent.length
-      ? Math.round(
-          recent.reduce((sum, entry) => sum + (entry.durationMs || 0), 0) /
-            recent.length,
-        )
-      : 0;
-    const successRate = recent.length
-      ? Math.round((success.length / recent.length) * 100)
-      : null;
-    const hitRate = success.length
-      ? Math.round(
-          (success.filter((entry) => entry.rank != null).length / success.length) *
-            100,
-        )
-      : null;
 
     return {
       ...schedulerStatusSnapshot(),
@@ -301,14 +269,14 @@ export function registerSchedulerHandlers(): void {
         total: dbOverview.total,
         pending,
         overdue: dbOverview.overdue,
-        executedToday,
+        executedToday: stats.executedToday,
         totalExecuted,
-        avgDurationMs,
-        densityPerHour: Math.round((recent.length / 24) * 10) / 10,
-        successRate,
-        hitRate,
-        requestBytes: recent.reduce((sum, entry) => sum + (entry.requestBytes || 0), 0),
-        responseBytes: recent.reduce((sum, entry) => sum + (entry.responseBytes || 0), 0),
+        avgDurationMs: stats.avgDurationMs,
+        densityPerHour: stats.densityPerHour,
+        successRate: stats.successRate,
+        hitRate: stats.hitRate,
+        requestBytes: stats.requestBytes,
+        responseBytes: stats.responseBytes,
         nextDueAt: dbOverview.nextDueAt,
       },
       tasks: dbTasks,
