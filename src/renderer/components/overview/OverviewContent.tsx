@@ -6,8 +6,16 @@
  * - DSH 客户端：esbuild 打包本文件，数据来自 appilot_overview 工具结果
  *   （映射成 Project/StoreProduct 形状），回调为简单跳转/无操作。
  *
- * 布局（先结论后细节）：标题/产品选择 → 健康概览行（发布/上架/采集健康）→
- * AI 简报 → 发布摘要/项目状况/竞品概览 → 排名分布 → GitHub 活跃 + 用户反馈。
+ * 布局（自上而下，模拟发布流水线，先结论后细节）：
+ * 标题/产品选择 → 副驾驶简报（置顶宽条）→ 三阶段卡（①开发 → ②发布 → ③上架）
+ * → 竞品状况 → 排名分布 → 用户反馈（保持现状，不再强调）。
+ *
+ * 防重复约定（旧「健康概览行 / 发布摘要卡 / 项目状况卡」内容已归并进阶段卡）：
+ * - repo/HEAD/工作区状态只出现在 ①开发；待处理提交数（draft.commitCount）只在
+ *   ②发布出现一次（它属于发布物料的构成，语义=待处理提交）；
+ * - 商店当前/目标版本与审核状态（deriveVersionStatus）只出现在 ③上架；
+ * - GitHub 凭证徽标只出现在 ①开发，App Store 凭证徽标只出现在 ③上架；
+ * - GitHub ↗ 外部仓库链接只在 ①开发卡出现。
  * 竞品数据由宿主经 props（competitorSummary/competitorHref）注入，DSH 缺数据
  * 传 null/空即可（本组件不调用 window）。
  *
@@ -40,7 +48,6 @@ import { EmptyState } from "../ui/EmptyState";
 import { StatusChip } from "../ui/StatusChip";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { FeedbackThemesCard } from "./FeedbackThemesCard";
-import { ProjectActivityCard } from "./ProjectActivityCard";
 import { overviewRankRows } from "./overviewData";
 import type { CompetitorSummary } from "./overviewData";
 import type { Project, RankSnapshot, StoreProduct } from "../../stores/project";
@@ -62,7 +69,7 @@ export interface OverviewContentProps {
   } | null;
   ascInfo: { versions: any[]; builds: any[]; fetchedAt?: string } | null;
   storeCurrentVersion: string | null;
-  /** 可选注入：项目活跃数据（每日提交数 + 发布），供 ProjectActivityCard 使用；缺省卡片内部取数。 */
+  /** 可选注入：项目活跃数据（每日提交数 + 发布），供 ①开发 的 GitHub 活跃块使用；缺省则只显示 repo 状态。 */
   activityData?: { commits: Record<string, number>; releases: { tag: string; publishedAt: string | null }[] };
   /** 可选注入：用户反馈聚类主题，供 FeedbackThemesCard 使用；缺省卡片内部取数。 */
   feedbackThemes?: FeedbackTheme[];
@@ -86,68 +93,87 @@ export interface OverviewContentProps {
   onBriefAction: (suggestion: BriefSuggestion, status: "adopted" | "ignored") => void;
 }
 
-/** 状态色调 → 圆点/文字颜色（与 StatusChip 的 tone 一一对应）。 */
-const TONE_DOT: Record<string, string> = {
-  zinc: "bg-zinc-300 dark:bg-zinc-600",
-  muted: "bg-zinc-300 dark:bg-zinc-600",
-  amber: "bg-amber-500",
-  emerald: "bg-emerald-500",
-  red: "bg-red-500",
-  blue: "bg-sky-500",
-};
-const TONE_TEXT: Record<string, string> = {
-  zinc: "text-zinc-400 dark:text-zinc-500",
-  muted: "text-zinc-400 dark:text-zinc-500",
-  amber: "text-amber-600 dark:text-amber-500",
-  emerald: "text-emerald-600 dark:text-emerald-500",
-  red: "text-red-500 dark:text-red-400",
-  blue: "text-sky-600 dark:text-sky-400",
-};
 const CHIP_BASE =
   "inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0";
 
-/** 健康概览行的一枚状态块（纯展示，无点击）。 */
-function HealthBlock({
-  label,
-  dotClass,
-  value,
-  valueClass,
-  sub,
-  subClass,
+/** 阶段卡内小标题（与旧 SummaryCard/健康块一致的标签样式）。 */
+const STAGE_LABEL =
+  "text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500";
+
+/** 本地日键（YYYY-MM-DD），activityData.commits 的键按此语义聚合。 */
+function localDayKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * activityData.commits 的最近 N 天提交汇总（本地日）。
+ * 键可能带时间或时区，统一取前 10 位；越界/未来日期忽略。
+ * commits 缺失或空对象 → null（调用方据此隐藏「GitHub 活跃」块、只显示 repo 状态）。
+ */
+function activityWindowStats(
+  commits: Record<string, number> | undefined,
+  days: number,
+): { total: number; today: number; latestKey: string | null } | null {
+  if (!commits || typeof commits !== "object") return null;
+  const keys = Object.keys(commits);
+  if (keys.length === 0) return null;
+  const now = new Date();
+  const today = localDayKey(now);
+  const floor = localDayKey(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1)),
+  );
+  let total = 0;
+  let latestKey: string | null = null;
+  for (const raw of keys) {
+    const key = raw.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+    const count = Math.max(0, Number(commits[raw]) || 0);
+    if (count === 0) continue;
+    if (key >= floor && key <= today) total += count;
+    if (key <= today && (!latestKey || key > latestKey)) latestKey = key;
+  }
+  return { total, today: Math.max(0, Number(commits[today]) || 0), latestKey };
+}
+
+/** 三阶段卡的统一外壳：阶段序号 + 名称 + 单行导语 + 可选头部 CTA + 主体。 */
+function StageCard({
+  step,
+  stepClass,
+  title,
+  lead,
+  right,
+  children,
 }: {
-  label: string;
-  dotClass: string;
-  value: string;
-  valueClass?: string;
-  sub?: ReactNode;
-  subClass?: string;
+  step: string;
+  stepClass: string;
+  title: ReactNode;
+  lead: string;
+  right?: ReactNode;
+  children: ReactNode;
 }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 shadow-sm">
-      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", dotClass)} />
-        {label}
-      </p>
-      <p
-        className={cn(
-          "mt-1.5 truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100",
-          valueClass,
-        )}
-        title={value}
-      >
-        {value}
-      </p>
-      {sub != null && (
-        <p
-          className={cn(
-            "mt-1 truncate text-[11px] text-zinc-400 dark:text-zinc-500",
-            subClass,
-          )}
-        >
-          {sub}
-        </p>
-      )}
-    </div>
+    <section className="flex h-full flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
+      <div className="flex items-start justify-between gap-3 px-5 pt-3.5 pb-1">
+        <h3 className="flex items-center gap-2 min-w-0">
+          <span
+            className={cn(
+              "inline-flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-semibold shrink-0",
+              stepClass,
+            )}
+          >
+            {step}
+          </span>
+          <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+            {title}
+          </span>
+        </h3>
+        {right}
+      </div>
+      <p className="px-5 pb-2 text-[11px] text-zinc-400 dark:text-zinc-500">{lead}</p>
+      <div className="flex-1 px-5 pb-4 pt-1">{children}</div>
+    </section>
   );
 }
 
@@ -215,6 +241,7 @@ export function OverviewContent(props: OverviewContentProps) {
   const rankSnapshots = product.rankSnapshots || [];
   const rankRows = overviewRankRows(trackedActive, rankSnapshots);
   const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
+  const bestRankRow = rankRows[0] || null;
   const newestSnapshot = rankSnapshots.reduce<RankSnapshot | null>(
     (latest, snapshot) =>
       !latest || new Date(snapshot.checkedAt).getTime() > new Date(latest.checkedAt).getTime()
@@ -332,55 +359,20 @@ export function OverviewContent(props: OverviewContentProps) {
       ? versionStatus
       : null;
 
-  // ── 健康概览行派生 ──
-  // 发布块：最近草稿 + 待处理提交数。
-  const releaseDisplayName = releaseDraft ? releaseDraft.name || releaseDraft.tag : null;
+  // ── 三阶段派生 ──
+  // ① 开发：GitHub 活跃（近 7 天合计 + 今日）与 repo 状态。
+  const activityStats = activityWindowStats(activityData?.commits, 7);
+  // ② 发布：最新 Release（draft 优先，activityData.releases 兜底）。
+  const latestReleaseName = releaseDraft ? releaseDraft.name || releaseDraft.tag : null;
+  const latestReleaseDate = releaseDraft ? releaseDraft.publishedAt : null;
+  const activityLatestRelease = activityData?.releases?.[0] ?? null;
+  const fallbackReleaseName = activityLatestRelease?.tag || null;
+  const fallbackReleaseDate = activityLatestRelease?.publishedAt || null;
   const releasePendingCommits = releaseDraft ? releaseDraft.commitCount : 0;
-  // 上架块：商店当前版本（公开查询优先，ASC 兜底）vs 目标版本的审核状态。
+  // ③ 上架：商店当前版本（公开查询优先，ASC 兜底）vs 目标版本的审核状态。
   const liveStoreVersion = storeCurrentVersion || storeLiveVersion || null;
   const targetVersion = submissionDraft?.appVersion || null;
-  const storeTone = effectiveVersionStatus?.tone ?? "muted";
-  const storeSub = targetVersion && effectiveVersionStatus
-    ? `目标 v${targetVersion} · ${effectiveVersionStatus.label}`
-    : liveStoreVersion
-      ? "暂无新版本在途"
-      : submissionDraft
-        ? "发布版本尚未填写"
-        : "未获取到商店信息";
-  // 采集健康块：在榜 TOP10 / 采集新鲜度 / 暂停与待复核。
-  const collectionTone = dataStale
-    ? "red"
-    : pausedCount > 0 || pendingPauseCount > 0
-      ? "amber"
-      : newestCheckedAt
-        ? "emerald"
-        : "zinc";
-  const collectionValue = !trackedActive.length
-    ? "未跟踪关键词"
-    : dataStale
-      ? "数据过期"
-      : !newestCheckedAt
-        ? "等待首次采集"
-        : top10Count > 0
-          ? `TOP10 ${top10Count}`
-          : rankRows.length > 0
-            ? `入榜 ${rankRows.length}`
-            : "暂无上榜";
-  const collectionSubParts = [
-    newestCheckedAt
-      ? dataStale
-        ? `最近采集 ${formatHumanTime(newestCheckedAt)}`
-        : `采集于 ${formatHumanTime(newestCheckedAt)}`
-      : null,
-    pausedCount > 0 ? `暂停 ${pausedCount}` : null,
-    pendingPauseCount > 0 ? `待复核 ${pendingPauseCount}` : null,
-  ].filter(Boolean);
-  const collectionSub =
-    collectionSubParts.length > 0
-      ? collectionSubParts.join(" · ")
-      : trackedActive.length === 0
-        ? "先到排名页生成关键词"
-        : undefined;
+  const storeUnconfigured = !product.trackId && storeLinks.length === 0;
 
   const handledBriefIds = new Set(
     (project.briefActions || []).map((item) => item.id),
@@ -418,7 +410,7 @@ export function OverviewContent(props: OverviewContentProps) {
   const droppedEvents = competitorSummary?.dropped ?? 0;
   const staleCompetitors = competitorSummary?.stale ?? 0;
 
-  // ── 发布摘要卡派生 ──
+  // ── 发布卡 CTA：有草稿 → 打开其发布工作台；否则 → 发布页 ──
   const releaseCardTo = releaseDraft?.tag
     ? `/release?tag=${encodeURIComponent(releaseDraft.tag)}`
     : "/release";
@@ -451,21 +443,6 @@ export function OverviewContent(props: OverviewContentProps) {
               <span className="truncate">{project.localPath}</span>
               <span className="shrink-0 opacity-60 group-hover:opacity-100">⌗</span>
             </button>
-            {repoGithubUrl && (
-              <>
-                <span className="shrink-0">(</span>
-                <button
-                  onClick={() => {
-                    if (repoGithubUrl) onOpenExternal(repoGithubUrl);
-                  }}
-                  className="shrink-0 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
-                  title="打开 GitHub 仓库"
-                >
-                  GitHub
-                </button>
-                <span className="shrink-0">)</span>
-              </>
-            )}
           </div>
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0 min-w-0">
@@ -488,18 +465,6 @@ export function OverviewContent(props: OverviewContentProps) {
                 </button>
               );
             })}
-            <CredentialBadge
-              kind="github"
-              enabled={Boolean(project.hasGithubToken)}
-              projectId={project.id}
-              source={project.githubSource}
-            />
-            <CredentialBadge
-              kind="asc"
-              enabled={Boolean(project.hasAscKey)}
-              projectId={project.id}
-              source={project.ascSource}
-            />
             <button
               onClick={() => onOpenSettings(project.id)}
               className="inline-flex items-center px-2.5 h-7 rounded-full border border-zinc-200 dark:border-zinc-700 text-[11px] text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
@@ -539,51 +504,6 @@ export function OverviewContent(props: OverviewContentProps) {
             )}
           </div>
         </div>
-      </div>
-
-      {/* 健康概览行：发布 / 上架 / 采集健康（最值得关注的三个状态） */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-        <HealthBlock
-          label="发布"
-          dotClass={releaseDraft ? TONE_DOT.amber : TONE_DOT.zinc}
-          value={
-            releaseDraft && releaseDisplayName
-              ? `最新 ${releaseDisplayName}${releasePendingCommits > 0 ? ` · ${releasePendingCommits} 个提交待处理` : ""}`
-              : "无待处理发布"
-          }
-          valueClass={
-            releaseDraft && releasePendingCommits > 0
-              ? "text-amber-700 dark:text-amber-400"
-              : undefined
-          }
-          sub={
-            releaseDraft
-              ? `距上次更新 ${formatHumanTime(releaseDraft.publishedAt)}`
-              : "有新提交或新 tag 时自动发现素材"
-          }
-        />
-        <HealthBlock
-          label="上架"
-          dotClass={TONE_DOT[storeTone] ?? TONE_DOT.zinc}
-          value={liveStoreVersion ? `商店 v${liveStoreVersion}` : "—"}
-          valueClass={liveStoreVersion ? undefined : TONE_TEXT.zinc}
-          sub={storeSub}
-          subClass={TONE_TEXT[storeTone] ?? TONE_TEXT.zinc}
-        />
-        <HealthBlock
-          label="采集健康"
-          dotClass={TONE_DOT[collectionTone] ?? TONE_DOT.zinc}
-          value={collectionValue}
-          valueClass={
-            dataStale
-              ? TONE_TEXT.red
-              : collectionTone === "zinc"
-                ? TONE_TEXT.zinc
-                : undefined
-          }
-          sub={collectionSub}
-          subClass={dataStale ? TONE_TEXT.red : undefined}
-        />
       </div>
 
       {/* Copilot brief */}
@@ -668,74 +588,14 @@ export function OverviewContent(props: OverviewContentProps) {
         )}
       </div>
 
-      {/* 发布摘要 / 项目状况 / 竞品概览 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        {/* 发布摘要卡：草稿 tag / 待处理提交 / 素材文案进度 + 去工作台 CTA */}
-        <SummaryCard
-          title={
-            <span className="inline-flex items-center gap-1.5">
-              <span className="text-amber-500">📦</span> 发布摘要
-            </span>
-          }
-          right={
-            releaseDraft ? (
-              <LinkComponent to={releaseCardTo} className={btnSmPrimary}>
-                打开发布工作台
-              </LinkComponent>
-            ) : (
-              <LinkComponent to="/release" className={btnSmSecondary}>
-                去发布页
-              </LinkComponent>
-            )
-          }
-        >
-          {releaseDraft ? (
-            <div className="px-5 py-3.5">
-              <div className="flex items-center gap-2 flex-wrap">
-                <LinkComponent
-                  to={releaseCardTo}
-                  className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
-                  title={releaseDisplayName ?? undefined}
-                >
-                  {releaseDisplayName}
-                </LinkComponent>
-                {releasePendingCommits > 0 && (
-                  <StatusChip label={`${releasePendingCommits} 个提交待处理`} tone="amber" />
-                )}
-              </div>
-              <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
-                {formatHumanTime(releaseDraft.publishedAt)} 更新 · 提交素材
-              </p>
-              {(submissionDraft || confirmChip) && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {submissionDraft && (
-                    <StatusChip
-                      label={
-                        generatedLanguageCount > 0
-                          ? `${generatedLanguageCount}/${languageTotal} 语言`
-                          : "未生成文案"
-                      }
-                      tone={
-                        languageTotal > 0 && generatedLanguageCount >= languageTotal
-                          ? "emerald"
-                          : "muted"
-                      }
-                    />
-                  )}
-                  {confirmChip && <StatusChip label={confirmChip.label} tone={confirmChip.tone} />}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="px-5 py-7 text-center text-xs text-zinc-400 dark:text-zinc-500">
-              暂无待处理发布（有新提交或新 tag 后自动发现素材）
-            </div>
-          )}
-        </SummaryCard>
-
-        {/* 项目状况卡：仓库状态 + 凭证 + 流量异常 + 设置 CTA */}
-        <SummaryCard
-          title="项目状况"
+      {/* 三阶段流水线：① 开发 → ② 发布 → ③ 上架（每阶段披露最重要的一个信号） */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        {/* ① 开发：GitHub 活跃 + 当前提交 + GitHub 凭证 */}
+        <StageCard
+          step="1"
+          stepClass="bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400"
+          title="开发"
+          lead="仓库当前提交与开发活跃"
           right={
             repoGithubUrl ? (
               <button
@@ -747,21 +607,32 @@ export function OverviewContent(props: OverviewContentProps) {
               </button>
             ) : undefined
           }
-          footer={
-            <button
-              onClick={() => onOpenSettings(project.id)}
-              className={cn(btnSmSecondary, "ml-auto !px-3 !py-1.5")}
-            >
-              {!project.hasGithubToken || !project.hasAscKey ? "去配置/修复凭证" : "项目设置"}
-            </button>
-          }
         >
-          <div className="px-5 py-3.5 space-y-3">
-            <div className="min-w-0">
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">仓库</p>
-              <div className="mt-1 flex items-center gap-1.5 min-w-0">
-                {project.repo ? (
+          <div className="space-y-3">
+            {activityStats && (
+              <div className="min-w-0">
+                <p className={STAGE_LABEL}>GitHub 活跃 · 近 7 天</p>
+                {activityStats.total > 0 ? (
                   <>
+                    <p className="mt-1 text-lg font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
+                      {activityStats.total} 次提交
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+                      {activityStats.today > 0
+                        ? `今日 ${activityStats.today} 次`
+                        : "今日暂无提交"}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">近 7 天无提交</p>
+                )}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className={STAGE_LABEL}>当前提交</p>
+              {project.repo ? (
+                <div className="mt-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                     <span
                       className="min-w-0 font-mono text-[12px] text-zinc-800 dark:text-zinc-200 truncate"
                       title={
@@ -777,48 +648,266 @@ export function OverviewContent(props: OverviewContentProps) {
                     {project.repo.dirty && (
                       <StatusChip label="工作区有改动" tone="amber" />
                     )}
-                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
-                      {project.repo.headDate
-                        ? formatHumanTime(project.repo.headDate)
-                        : null}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>
-                )}
-              </div>
+                  </div>
+                  {project.repo.headDate && (
+                    <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                      上次提交 {formatHumanTime(project.repo.headDate)}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+                  未配置本地仓库路径
+                </p>
+              )}
             </div>
             <div>
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">功能凭证</p>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <p className={STAGE_LABEL}>GitHub 凭证</p>
+              <div className="mt-1.5 flex items-center gap-1.5">
                 <CredentialBadge
                   kind="github"
                   enabled={Boolean(project.hasGithubToken)}
                   projectId={project.id}
                   source={project.githubSource}
                 />
-                <CredentialBadge
-                  kind="asc"
-                  enabled={Boolean(project.hasAscKey)}
-                  projectId={project.id}
-                  source={project.ascSource}
-                />
+                {!project.hasGithubToken && (
+                  <button
+                    onClick={() => onOpenSettings(project.id)}
+                    className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline shrink-0"
+                  >
+                    去设置
+                  </button>
+                )}
               </div>
             </div>
+          </div>
+        </StageCard>
+
+        {/* ② 发布：最新 Release + 待处理提交 + 文案/确认进度 */}
+        <StageCard
+          step="2"
+          stepClass="bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400"
+          title="发布"
+          lead="GitHub Release 与下一个版本待发"
+          right={
+            <LinkComponent to={releaseCardTo} className={releaseDraft ? btnSmPrimary : btnSmSecondary}>
+              去发布页
+            </LinkComponent>
+          }
+        >
+          <div>
+            <p className={STAGE_LABEL}>最新 Release</p>
+            {latestReleaseName || fallbackReleaseName ? (
+              <div className="mt-1 min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                  <LinkComponent
+                    to={releaseCardTo}
+                    className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                    title={latestReleaseName || fallbackReleaseName || undefined}
+                  >
+                    {latestReleaseName || fallbackReleaseName}
+                  </LinkComponent>
+                  {(latestReleaseDate || fallbackReleaseDate) && (
+                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
+                      {formatHumanTime(latestReleaseDate || fallbackReleaseDate)}
+                    </span>
+                  )}
+                </div>
+                {releaseDraft && (
+                  <>
+                    {releasePendingCommits > 0 && (
+                      <p className="mt-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-500">
+                        {releasePendingCommits} 个提交待处理 · 下一个版本待发
+                      </p>
+                    )}
+                    {(submissionDraft || confirmChip) && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {submissionDraft && (
+                          <StatusChip
+                            label={
+                              generatedLanguageCount > 0
+                                ? `${generatedLanguageCount}/${languageTotal} 语言`
+                                : "未生成文案"
+                            }
+                            tone={
+                              languageTotal > 0 && generatedLanguageCount >= languageTotal
+                                ? "emerald"
+                                : "muted"
+                            }
+                          />
+                        )}
+                        {confirmChip && (
+                          <StatusChip label={confirmChip.label} tone={confirmChip.tone} />
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+                暂无发布记录（有新提交或新 tag 后自动发现素材）
+              </p>
+            )}
             {project.trafficError && (
               <p
-                className="text-[11px] text-red-500 dark:text-red-400 truncate"
+                className="mt-2 text-[11px] text-red-500 dark:text-red-400 truncate"
                 title={project.trafficError}
               >
                 流量采集异常：{project.trafficError}
               </p>
             )}
           </div>
-        </SummaryCard>
+        </StageCard>
 
-        {/* 竞品概览卡：跟踪数 / 压我方词 / 进退榜事件 + TOP3（数据由宿主经 competitorSummary 注入） */}
+        {/* ③ 上架与表现：版本状态 + TOP10/最好名次/采集新鲜度 + App Store 凭证 */}
+        <StageCard
+          step="3"
+          stepClass="bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          title="上架"
+          lead="商店版本与榜单表现"
+        >
+          <div className="space-y-3">
+            <div className="min-w-0">
+              <p className={STAGE_LABEL}>上架状态</p>
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                {effectiveVersionStatus && targetVersion ? (
+                  <>
+                    <StatusChip
+                      label={effectiveVersionStatus.label}
+                      tone={effectiveVersionStatus.tone}
+                    />
+                    <span className="font-mono text-[12px] text-zinc-800 dark:text-zinc-200">
+                      目标 v{targetVersion}
+                    </span>
+                  </>
+                ) : (
+                  <span
+                    className={cn(
+                      "text-sm font-semibold",
+                      liveStoreVersion
+                        ? "text-zinc-900 dark:text-zinc-100"
+                        : "text-zinc-400 dark:text-zinc-500",
+                    )}
+                  >
+                    商店 v{liveStoreVersion ?? "—"}
+                  </span>
+                )}
+              </div>
+              <p
+                className={cn(
+                  "mt-1 text-[11px]",
+                  effectiveVersionStatus?.tone === "red"
+                    ? "text-red-500 dark:text-red-400"
+                    : effectiveVersionStatus?.tone === "amber"
+                      ? "text-amber-600 dark:text-amber-500"
+                      : "text-zinc-400 dark:text-zinc-500",
+                )}
+              >
+                {targetVersion
+                  ? liveStoreVersion
+                    ? `商店当前 v${liveStoreVersion}`
+                    : "商店暂未查到该版本"
+                  : liveStoreVersion
+                    ? "暂无新版本在途"
+                    : submissionDraft
+                      ? "发布版本尚未填写"
+                      : storeUnconfigured
+                        ? "未配置商店/上架信息"
+                        : "未获取到商店信息"}
+              </p>
+            </div>
+
+            <div className="border-t border-zinc-100 dark:border-zinc-800 pt-3 min-w-0">
+              <p className={STAGE_LABEL}>表现</p>
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
+                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-100 dark:border-zinc-800 px-2.5 py-2 min-w-0">
+                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500">TOP10 词数</p>
+                  <p
+                    className={cn(
+                      "mt-0.5 text-lg font-semibold leading-tight",
+                      trackedActive.length === 0 || top10Count === 0
+                        ? "text-zinc-400 dark:text-zinc-500"
+                        : "text-emerald-600 dark:text-emerald-400",
+                    )}
+                  >
+                    {trackedActive.length === 0 ? "—" : top10Count}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                    {trackedActive.length === 0
+                      ? "未跟踪关键词"
+                      : rankRows.length > 0
+                        ? `在榜 ${rankRows.length} 词`
+                        : "暂无上榜记录"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-100 dark:border-zinc-800 px-2.5 py-2 min-w-0">
+                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500">最好名次</p>
+                  <p
+                    className={cn(
+                      "mt-0.5 text-lg font-semibold leading-tight truncate",
+                      bestRankRow
+                        ? "text-zinc-900 dark:text-zinc-100"
+                        : "text-zinc-400 dark:text-zinc-500",
+                    )}
+                    title={bestRankRow ? `#${bestRankRow.bestRank} ${bestRankRow.keyword}` : undefined}
+                  >
+                    {bestRankRow ? `#${bestRankRow.bestRank}` : "—"}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                    {bestRankRow
+                      ? `${bestRankRow.keyword} · ${storefrontDisplayName(bestRankRow.storefront)}`
+                      : trackedActive.length === 0
+                        ? "未跟踪关键词"
+                        : "暂无上榜记录"}
+                  </p>
+                </div>
+              </div>
+              <p
+                className={cn(
+                  "mt-2 text-[11px]",
+                  dataStale ? "text-red-500 dark:text-red-400" : "text-zinc-400 dark:text-zinc-500",
+                )}
+              >
+                {newestCheckedAt ? (
+                  dataStale
+                    ? `数据过期 · 上次采集 ${formatHumanTime(newestCheckedAt)}`
+                    : `数据截至 ${formatHumanTime(newestCheckedAt)}`
+                ) : trackedActive.length === 0 ? (
+                  "尚未跟踪关键词"
+                ) : (
+                  "等待首次采集"
+                )}
+              </p>
+            </div>
+
+            <div>
+              <p className={STAGE_LABEL}>App Store 凭证</p>
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <CredentialBadge
+                  kind="asc"
+                  enabled={Boolean(project.hasAscKey)}
+                  projectId={project.id}
+                  source={project.ascSource}
+                />
+                {!project.hasAscKey && (
+                  <button
+                    onClick={() => onOpenSettings(project.id)}
+                    className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline shrink-0"
+                  >
+                    去设置
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </StageCard>
+      </div>
+
+      {/* 竞品状况卡：跟踪数 / 压我方词 / 进退榜事件 + TOP3（数据由宿主经 competitorSummary 注入） */}
+      <div className="mb-4">
         <SummaryCard
-          title="竞品概览"
+          title="竞品状况"
           right={
             competitorHref ? (
               <LinkComponent
@@ -992,13 +1081,8 @@ export function OverviewContent(props: OverviewContentProps) {
         )}
       </div>
 
-      {/* GitHub 活跃 + 用户反馈（保持现状） */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ProjectActivityCard
-          project={project}
-          activity={activityData?.commits}
-          releases={activityData?.releases}
-        />
+      {/* 用户反馈（保持现状，置于页尾不强调） */}
+      <div>
         <FeedbackThemesCard
           project={project}
           themes={feedbackThemes}
