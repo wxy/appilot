@@ -180,6 +180,64 @@ export function registerCompetitorsHandlers(): void {
     return updated;
   });
 
+  // 空白格「+」：关联单个 (词 × 语言) 到竞品后，立即只对该词采集一次排名并回填
+  // （返回快照条数）；后续每日采集会按 linkedKeywords 持续跟进。
+  ipcMain.handle("competitors:linkAndCollect", async (_event, projectId: string, competitorId: string, item: { keyword?: string; language?: string }) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    competitorId = assertNonEmptyString(competitorId, "competitorId");
+    const keyword = item && typeof item.keyword === "string" ? item.keyword.trim() : "";
+    if (!keyword) throw new Error("keyword 不能为空");
+    const language =
+      item && typeof item.language === "string" && item.language.trim()
+        ? item.language.trim()
+        : "en";
+    const s = await getStore();
+    const list = competitorsFor(s, projectId);
+    const index = list.findIndex((entry: any) => entry.id === competitorId);
+    if (index < 0) throw new Error("竞品不存在或已被移除");
+    const keyOf = (link: any) => `${link?.keyword ?? ""}\u0000${link?.language ?? ""}`;
+    const seen = new Map<string, any>(
+      (Array.isArray(list[index]?.linkedKeywords) ? list[index].linkedKeywords : []).map(
+        (link: any) => [keyOf(link), link],
+      ),
+    );
+    const link = { keyword, language };
+    if (!seen.has(keyOf(link))) seen.set(keyOf(link), link);
+    const linked = [...seen.values()];
+    const merged = { ...list[index], linkedKeywords: linked };
+    saveCompetitors(s, projectId, [...list.slice(0, index), merged, ...list.slice(index + 1)]);
+
+    // 只采集刚关联的这个词（把竞品副本的 linkedKeywords 收窄为单条，避免全量重采）。
+    let collected = 0;
+    try {
+      const { collectCompetitorRankSnapshots } = await import("@appilot-labs/appilot-core/competitor-radar");
+      const ranks = await collectCompetitorRankSnapshots({ ...merged, linkedKeywords: [link] });
+      if (ranks.length > 0) {
+        const ranksAll: Record<string, Record<string, any[]>> = s.get("competitorRankSnapshots") || {};
+        const rankById: Record<string, any[]> = ranksAll[projectId] || {};
+        const prev = rankById[competitorId] || [];
+        const kept = prev.filter(
+          (entry: any) =>
+            !ranks.some(
+              (r: any) =>
+                r.keyword === entry.keyword &&
+                r.storefront === entry.storefront &&
+                (entry.platform == null || r.platform === entry.platform),
+            ),
+        );
+        rankById[competitorId] = [...kept, ...ranks].slice(-300);
+        ranksAll[projectId] = rankById;
+        s.set("competitorRankSnapshots", ranksAll);
+        collected = ranks.length;
+      }
+    } catch (err: any) {
+      // 采集失败不阻断关联本身（词已入 linkedKeywords，稍后可手动“刷新排名”）。
+      console.warn(`competitor linkAndCollect 采集失败: ${err?.message || String(err)}`);
+    }
+    notifyDataChanged("competitors");
+    return { ok: true, collected };
+  });
+
   ipcMain.handle("competitors:remove", async (_event, projectId: string, competitorId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     competitorId = assertNonEmptyString(competitorId, "competitorId");
