@@ -71,7 +71,9 @@ export function toTaskRow(t: ElectronTaskLike): TaskRow | null {
     lastRunAt,
     nextRunAt: typeof t.nextRunAt === 'string' ? t.nextRunAt : null,
     lastStatus,
-    lastSummary: null,
+    // 失败原因落盘（rank 等失败时 engine 写 lastSummary），供 DB/任务中心排查。
+    lastSummary:
+      typeof (t as any).lastSummary === "string" ? String((t as any).lastSummary).slice(0, 300) : null,
     runCount: typeof t.executionCount === 'number' ? t.executionCount : 0,
     source: 'electron',
     enabled: !disabled,

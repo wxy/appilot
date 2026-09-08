@@ -728,6 +728,8 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       armItunesSearchBlock(store, `rank "${task.keyword}" @ ${task.storefront}`);
     }
     log.warn(`Scheduled rank task failed for "${task.keyword}" in ${task.storefront}: ${err.message}`);
+    // 失败原因落盘：镜像后 DB/任务中心/CLI 能看到（不再只有日志）。
+    (task as any).lastSummary = String(err?.message || "rank failed").slice(0, 300);
     task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
     task.lastStatus = "failed";
     if (task.consecutiveFailures >= 5) {
