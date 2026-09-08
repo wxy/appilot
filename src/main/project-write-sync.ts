@@ -37,14 +37,16 @@ export function syncProjectToDb(
   const rows = toProductRows(project);
   for (const row of rows) store.products.upsert(row);
   // 草稿(storeSubmissionDrafts) 镜像进 project_blobs（写切(2) 前置：kv projects
-  // 退役后草稿仍可读）。仅当字段存在时更新（含清空），无关写不覆盖 DB 草稿。
+  // 退役后草稿仍可读）。仅当字段存在时更新。⚠️ 防误清：快照里草稿为空数组但 DB
+  // 已有非空草稿时跳过（避免不含草稿的快照把发布历史草稿覆盖成空）。
   if (Object.prototype.hasOwnProperty.call(project, "storeSubmissionDrafts")) {
     try {
-      store.blobs.put(
-        "storeSubmissionDrafts",
-        String(project.name),
-        Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [],
-      );
+      const drafts = Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [];
+      if (drafts.length === 0) {
+        const existing = store.blobs.get("storeSubmissionDrafts", String(project.name));
+        if (Array.isArray(existing) && existing.length > 0) return { registry: true, meta, products: rows.length };
+      }
+      store.blobs.put("storeSubmissionDrafts", String(project.name), drafts);
     } catch (err: any) {
       // 草稿镜像失败不阻断项目同步
     }

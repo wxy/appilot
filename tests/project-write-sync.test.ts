@@ -99,7 +99,7 @@ async function main() {
     console.log('✅ 无效项目跳过');
   }
 
-  // 4. 草稿镜像：字段存在时写入 project_blobs（含清空），无关写不覆盖
+  // 4. 草稿镜像：字段存在时写入 project_blobs；防误清——空数组不覆盖已有草稿
   {
     const store = tempDb();
     const p = electronProject();
@@ -113,11 +113,17 @@ async function main() {
     syncProjectToDb(store, q);
     assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 1, '无字段写不覆盖草稿');
 
-    // 显式清空：字段存在且为空 → DB 清空
+    // 防误清：快照草稿为空数组但 DB 已有非空草稿 → 保留 DB 草稿
     const r = electronProject();
     r.storeSubmissionDrafts = [];
     syncProjectToDb(store, r);
-    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 0, '显式空数组清空草稿');
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 1, '空数组快照不覆盖已有草稿（防误清）');
+
+    // 新建项目：无既有草稿时仍可写入非空草稿
+    const s = electronProject();
+    s.storeSubmissionDrafts = [{ id: 'd2', updatedAt: '2026-09-02T00:00:00Z', localizations: [] }];
+    syncProjectToDb(store, { ...s, name: 'other' });
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'other') as any[]).length, 1, '新项目写入草稿');
     store.close();
     console.log('✅ 草稿镜像（有字段才写/清空/不覆盖）');
   }
