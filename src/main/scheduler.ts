@@ -1,4 +1,10 @@
 import { log } from "@appilot-labs/appilot-core/logger";
+import {
+  // iTunes Search 403 熔断共享键名/冷却时长（headless 执行链同源，避免漂移——
+  // 见 packages/core/src/rank-collector.ts 的熔断契约注释）。
+  ITUNES_SEARCH_BLOCK_KV_KEY,
+  ITUNES_SEARCH_BLOCK_MS,
+} from "@appilot-labs/appilot-core/rank-collector";
 import { powerMonitor } from "electron";
 import { notifyDataChanged } from "./data-sync";
 import {
@@ -155,14 +161,12 @@ export function schedulerStatusSnapshot(): {
 // iTunes Search 403 熔断（被拒/封禁/风控保护）
 //
 // 一旦 iTunes Search API 返回 403，立即停止当次及之后的自动采集，避免持续
-// 请求使情况恶化；冷却期（ITUNES_SEARCH_BLOCK_MS）结束后自动恢复。状态持久化
-// 到 kv（app_kv），应用重启后延续。熔断只在真正走 iTunes Search API 的任务上
-// 触发/检查（rank 类；reviews/ops-sync 分别走 RSS / lookup 端点，不受本熔断
-// 约束——调用点清单见代码注释与验收汇报）。
+// 请求使情况恶化；冷却期（ITUNES_SEARCH_BLOCK_MS = 45 分钟，常量共享自 core
+// rank-collector，headless daemon 同键同窗口）结束后自动恢复。状态持久化
+// 到 kv（app_kv，键 ITUNES_SEARCH_BLOCK_KV_KEY），应用重启后延续。熔断只在
+// 真正走 iTunes Search API 的任务上触发/检查（rank 类；reviews/ops-sync 分别
+// 走 RSS / lookup 端点，不受本熔断约束——调用点清单见代码注释与验收汇报）。
 // ────────────────────────────────────────────────────────────────────────────
-const ITUNES_SEARCH_BLOCK_KV_KEY = "itunesSearchBlockedUntil";
-/** iTunes Search 403 后的冷却时长：45 分钟（建议区间 30–60 分钟，可调）。 */
-const ITUNES_SEARCH_BLOCK_MS = 45 * 60_000;
 /** 熔断命中的调度任务类型：scheduler 内唯一走 iTunes Search API 的任务。 */
 const ITUNES_SEARCH_TASK_KINDS = new Set<string>(["rank"]);
 /** 熔断提示日志节流：每 5 分钟最多一条，避免 60s tick 反复刷屏。 */
@@ -197,8 +201,13 @@ export function itunesSearchBlockState(store: AppStore): {
   };
 }
 
-/** 触发熔断：检测到 403 时写入 until = now + BLOCK_MS，并记录触发点与冷却窗口。 */
-function armItunesSearchBlock(store: AppStore, detail: string): void {
+/**
+ * 触发熔断：检测到 403 时写入 until = now + BLOCK_MS，并记录触发点与冷却窗口。
+ * 导出供主进程手动 /search 入口（handlers/competitors.ts、handlers/projects.ts）
+ * 在自身 catch 命中 403 时复用——依赖方向 handlers → scheduler（scheduler 不反向
+ * 引用任何 handler），键与 headless 侧同一 app_kv，任一侧触发全端生效。
+ */
+export function armItunesSearchBlock(store: AppStore, detail: string): void {
   // 已在冷却期内：保持首次触发的时间窗口，不因并发/重复 403 反复顺延。
   if (itunesSearchBlockUntil(store) !== null) return;
   const until = new Date(Date.now() + ITUNES_SEARCH_BLOCK_MS);

@@ -92,6 +92,8 @@ export function buildRankExecutor(): TaskExecutor {
   return {
     title: '排名采集',
     intervalMinutes: RANK_INTERVAL_MINUTES,
+    // 打 iTunes Search /search：受 403 熔断门控（scheduler 据此跳过派发并写键）。
+    hitsItunesSearch: true,
     run: runRankInstance,
   };
 }

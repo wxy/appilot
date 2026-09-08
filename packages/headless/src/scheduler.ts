@@ -11,6 +11,13 @@
  */
 import type { AppilotStore } from './store.js';
 import type { TaskRow } from './schema.js';
+import { formatItunesBlockClock, isItunesSearchForbidden } from '@appilot-labs/appilot-core/rank-collector';
+import {
+  armItunesSearchBlockStore,
+  isItunesSearchBlockedStore,
+  itunesSearchBlockedUntilStore,
+  itunesSearchBlockSkipSummary,
+} from './itunes-breaker.js';
 
 /**
  * 限流类失败判定（教训 C 落码）：上游临时限制（HTTP 403/429 / rate limit /
@@ -32,6 +39,10 @@ export function rateLimitBackoffMinutes(streak: number, intervalMinutes: number)
 
 /** 实例执行最大并发（网络型任务；超出留待下个 tick——任务仍到期不会丢）。 */
 export const MAX_INFLIGHT_INSTANCES = 10;
+
+/** iTunes 熔断「自动跳过」日志节流（避免重复路径每 tick 刷屏）。 */
+const ITUNES_BLOCK_SKIP_LOG_INTERVAL_MS = 60_000;
+let lastItunesBlockSkipLogAt = 0;
 
 
 export interface ScheduledJobContext {
@@ -62,6 +73,12 @@ export interface TaskExecutor {
   title: string;
   /** 默认间隔（分钟；reconcile seed 用）。 */
   intervalMinutes: number;
+  /**
+   * 该执行器是否请求 iTunes Search API（/search）。为 true 时受 403 熔断约束：
+   * 熔断期内不派发（自动与显式触发均跳过），执行中命中 403 会写熔断键并停掉
+   * 后续自动派发。当前仅 rank 执行器置位；github-sync 走 GitHub API 不受约束。
+   */
+  hitsItunesSearch?: boolean;
   /** 执行该实例；返回摘要。需幂等。 */
   run(ctx: TaskExecutorContext): Promise<string>;
 }
@@ -155,6 +172,28 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   async function executeInstance(task: TaskRow): Promise<void> {
     const executor = task.kind ? executors[task.kind] : undefined;
     if (!executor || running.has(task.id)) return;
+    // iTunes Search 403 熔断（与主进程同键/45min 冷却，见 itunes-breaker.ts）：
+    // 冷却期内不执行 hitsItunesSearch 执行器（当前仅 rank）。跳过语义 = 保留
+    // nextRunAt/lastStatus/runCount（任务维持到期态，解除后自动补跑），仅当摘要
+    // 有变化时写一次说明性 lastSummary；显式 runNow 走这里同样被拦。非该 API
+    // 的执行器（github-sync 等）不受影响。
+    if (executor.hitsItunesSearch === true && isItunesSearchBlockedStore(store)) {
+      const nowLog = Date.now();
+      if (nowLog - lastItunesBlockSkipLogAt >= ITUNES_BLOCK_SKIP_LOG_INTERVAL_MS) {
+        lastItunesBlockSkipLogAt = nowLog;
+        const untilIso = itunesSearchBlockedUntilStore(store);
+        log(
+          `[scheduler:${leaderId}] iTunes Search 熔断中——${task.id} 自动跳过` +
+            (untilIso ? `（冷却至 ${formatItunesBlockClock(untilIso)}）` : ''),
+        );
+      }
+      const summary = itunesSearchBlockSkipSummary(store);
+      const prevRow = store.tasks.get(task.id);
+      if (prevRow && prevRow.lastSummary !== summary) {
+        store.tasks.upsert({ ...prevRow, lastSummary: summary });
+      }
+      return;
+    }
     running.add(task.id);
     const started = new Date().toISOString();
     const base = {
@@ -177,6 +216,17 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       });
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
+      // iTunes Search 403（被拒/封禁/风控）→ 写熔断键（与主进程同键、45 分钟）。
+      // 同批已在途实例 ≤ MAX_INFLIGHT 并发无法中途取消；键生效后本 tick 剩余与
+      // 后续 tick 均不再派发，等效「停止该批剩余 rank」，避免持续请求使情况恶化。
+      if (executor.hitsItunesSearch === true && isItunesSearchForbidden(err)) {
+        if (armItunesSearchBlockStore(store)) {
+          log(
+            `[scheduler:${leaderId}] iTunes Search 403 熔断触发（${task.id}）——` +
+              '暂停自动 rank 采集 45 分钟',
+          );
+        }
+      }
       const rateLimited = isRateLimitError(msg);
       let nextRunAt = base.nextRunAt;
       let lastSummary = msg;
@@ -215,14 +265,18 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   function dueInstances(): TaskRow[] {
     if (Object.keys(executors).length === 0) return [];
     const now = Date.now();
+    // iTunes Search 403 熔断：冷却期内不派发 hitsItunesSearch 执行器的到期实例
+    //（保持到期态，解除后首个 tick 自然补跑）；显式 runNow 由 executeInstance
+    // 前置检查拦下。非该 API 的实例照常派发。
+    const itunesBlocked = isItunesSearchBlockedStore(store, now);
     return store.tasks
       .all()
-      .filter(
-        (t) =>
-          t.kind != null &&
-          t.kind in executors &&
-          (!t.nextRunAt || new Date(t.nextRunAt).getTime() <= now),
-      )
+      .filter((t) => {
+        if (t.kind == null || !(t.kind in executors)) return false;
+        const executor = executors[t.kind];
+        if (executor.hitsItunesSearch === true && itunesBlocked) return false;
+        return !t.nextRunAt || new Date(t.nextRunAt).getTime() <= now;
+      })
       .slice(0, accel ? (accelOpts.tickLimit ?? 100) : 20); // 单 tick 上限（加速放大）
   }
 

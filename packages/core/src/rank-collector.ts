@@ -80,6 +80,75 @@ export function isItunesSearchForbidden(err: unknown): boolean {
   return /iTunes Search API\s+403/.test(message) || /Forbidden/i.test(message);
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// iTunes Search 403 熔断共享契约
+//
+// 键名与冷却时长由**主进程 scheduler**（src/main/scheduler.ts）与 **headless
+// 执行链**（packages/headless 的 scheduler/executor）共用——两端读写同一个
+// app_kv 表（同一 appilot.db），任一侧触发熔断后全端生效。统一放在本模块
+// （core），避免键名/45 分钟在两处漂移。判定函数只吃 kv 原始值：
+// - electron 侧经 getStore().set → kv.set(key, JSON.stringify(v)) 存入的是
+//   **带 JSON 引号的 ISO 字符串**；
+// - headless 直写 app_kv 时可能是裸 ISO。
+// 两种存法都兼容（见 itunesSearchBlockUntilIso 的引号剥离）。
+// ────────────────────────────────────────────────────────────────────────────
+/** 熔断状态 kv 键：值为「熔断解除时刻」（ISO 字符串；未来时间 = 熔断中）。 */
+export const ITUNES_SEARCH_BLOCK_KV_KEY = "itunesSearchBlockedUntil";
+/** iTunes Search 403 后的冷却时长：45 分钟（主进程与 headless 共用，勿单侧改动）。 */
+export const ITUNES_SEARCH_BLOCK_MS = 45 * 60_000;
+
+/** 剥掉 electron 侧 JSON.stringify 产生的引号，得到可解析的 ISO 文本。 */
+function blockIsoFromRaw(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  let text = raw;
+  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (typeof parsed === "string") text = parsed;
+      else return null;
+    } catch {
+      text = text.slice(1, -1);
+    }
+  }
+  const ts = new Date(text).getTime();
+  return Number.isFinite(ts) ? text : null;
+}
+
+/**
+ * 熔断截止（ISO）：kv 原始值解析为**未来**时刻时返回该 ISO，否则（未写入 /
+ * 已过期 / 非法）返回 null。nowMs 可注入便于测试。
+ */
+export function itunesSearchBlockUntilIso(
+  raw: unknown,
+  nowMs: number = Date.now(),
+): string | null {
+  const iso = blockIsoFromRaw(raw);
+  return iso && new Date(iso).getTime() > nowMs ? iso : null;
+}
+
+/** kv 原始值 → 是否处于 iTunes Search 403 熔断（冷却中）。 */
+export function isItunesSearchBlocked(raw: unknown, nowMs: number = Date.now()): boolean {
+  return itunesSearchBlockUntilIso(raw, nowMs) !== null;
+}
+
+/** 本次熔断的解除时刻 ISO（now + ITUNES_SEARCH_BLOCK_MS；写入方统一用它）。 */
+export function itunesSearchBlockUntilIsoForNow(nowMs: number = Date.now()): string {
+  return new Date(nowMs + ITUNES_SEARCH_BLOCK_MS).toISOString();
+}
+
+/** 本机时区 HH:mm（冷却提示文案用）。 */
+export function formatItunesBlockClock(untilIso: string): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const d = new Date(untilIso);
+  if (!Number.isFinite(d.getTime())) return "--:--";
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 熔断中的友好错误文案（主进程手动入口 / headless 跳过提示共用）。 */
+export function itunesSearchBlockFriendlyMessage(untilIso: string): string {
+  return `iTunes Search 被拒绝（403），冷却至 ${formatItunesBlockClock(untilIso)}，请稍后再试`;
+}
+
 export async function searchAppStoreRank(opts: {
   term: string;
   country: string;
@@ -186,6 +255,15 @@ export async function collectKeywordRankings(opts: {
       });
     } catch (err: any) {
       failed += 1;
+      // iTunes Search 403（被拒/封禁/风控）：整批中止并向上抛——剩余目标继续打
+      // API 只会让情况恶化。调用方（projects:collectRanks 等）据此触发熔断键并
+      // 提示用户。其它错误照旧逐目标跳过。
+      if (isItunesSearchForbidden(err)) {
+        log.warn(
+          `Rank lookup forbidden for "${target.keyword}" in ${target.storefront}: ${err.message}——中止后续采集（403 熔断）`,
+        );
+        throw err;
+      }
       log.warn(
         `Rank lookup failed for "${target.keyword}" in ${target.storefront}: ${err.message}`,
       );

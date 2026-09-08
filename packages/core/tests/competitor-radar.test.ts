@@ -9,6 +9,7 @@ import {
   searchCompetitorCandidates,
   searchCompetitorCandidatesAcross,
 } from "../src/competitor-radar";
+import { isItunesSearchForbidden } from "../src/rank-collector";
 import type { Competitor } from "../src/competitor-radar";
 
 let errors = 0;
@@ -36,7 +37,7 @@ async function run() {
       { trackId: 1, trackName: "Global App", primaryGenreName: "Productivity", averageUserRating: 4.9, trackViewUrl: "https://apps.apple.com/sg/app/1/id1", bundleId: "com.global.app" },
     ],
   };
-  globalThis.fetch = (async (input: any) => {
+  const mockItunesFetch = (async (input: any) => {
     const url = typeof input === "string" ? input : String(input);
     if (url.startsWith("https://itunes.apple.com/search")) {
       const country = new URL(url).searchParams.get("country")?.toLowerCase() || "us";
@@ -53,6 +54,7 @@ async function run() {
     }
     return new Response("not found", { status: 404 });
   }) as any;
+  globalThis.fetch = mockItunesFetch;
 
   try {
     const candidates = await searchCompetitorCandidates({
@@ -88,6 +90,17 @@ async function run() {
       across.find((c) => c.trackId === "3")?.country === "sg",
       "本地竞品标记来源商店",
     );
+    // iTunes Search 403 → 从多商店合并搜索向上抛（不被按商店 catch 吞掉）——
+    // competitors:search handler 据此触发熔断。非 403 的偶发失败仍按商店跳过。
+    globalThis.fetch = (async () => new Response("forbidden", { status: 403 })) as any;
+    let forbiddenBubbled = false;
+    try {
+      await searchCompetitorCandidatesAcross({ term: "walk", countries: ["us", "sg"] });
+    } catch (err: any) {
+      forbiddenBubbled = isItunesSearchForbidden(err);
+    }
+    check(forbiddenBubbled, "403 冒泡（across 不静默吞 403）");
+    globalThis.fetch = mockItunesFetch;
     const snapshot = await fetchCompetitorSnapshot(competitor, "token-1");
     check(snapshot.version === "2.0.0" && snapshot.stars === 88 && snapshot.recentReleases[0]?.tag === "v2.0.0", "快照解析 lookup + GitHub stars/releases");
     check(snapshot.date === new Date().toISOString().slice(0, 10), "快照 date 为当天");

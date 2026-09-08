@@ -5,7 +5,17 @@ import {
   migrateCompetitor,
   searchCompetitorCandidatesAcross,
 } from "@appilot-labs/appilot-core/competitor-radar";
-import { refreshProductRankKeywords, runOpsSyncNow } from "../scheduler";
+import {
+  isItunesSearchForbidden,
+  itunesSearchBlockFriendlyMessage,
+  itunesSearchBlockUntilIsoForNow,
+} from "@appilot-labs/appilot-core/rank-collector";
+import {
+  armItunesSearchBlock,
+  itunesSearchBlockState,
+  refreshProductRankKeywords,
+  runOpsSyncNow,
+} from "../scheduler";
 import { sharedStore } from "../registry-sync";
 import { blobGet } from "../db-blob-read";
 import { getStore } from "../store";
@@ -174,13 +184,32 @@ export function registerCompetitorsHandlers(): void {
       Array.isArray(opts?.countries) && opts.countries.length > 0
         ? opts.countries.filter((c: string) => c)
         : [assertNonEmptyString(opts?.country, "country")];
-    return searchCompetitorCandidatesAcross({
-      term,
-      countries,
-      entity: opts?.platform === "macos" ? "macSoftware" : "software",
-      excludeTrackIds: Array.isArray(opts?.excludeTrackIds) ? opts.excludeTrackIds : undefined,
-      excludeBundleIds: Array.isArray(opts?.excludeBundleIds) ? opts.excludeBundleIds : undefined,
-    });
+    // iTunes Search 403 熔断门控：冷却期内不再发起候选搜索（与调度 tick 读同一
+    // app_kv 键 itunesSearchBlockedUntil；getStore().get 与 headless store.kv 均指
+    // 同一 app_kv 表——主进程或 daemon 任一侧触发都在这拦下）。非该 API 的不受影响。
+    const s = await getStore();
+    const block = itunesSearchBlockState(s);
+    if (block.blocked && block.until) {
+      throw new Error(itunesSearchBlockFriendlyMessage(block.until));
+    }
+    try {
+      return await searchCompetitorCandidatesAcross({
+        term,
+        countries,
+        entity: opts?.platform === "macos" ? "macSoftware" : "software",
+        excludeTrackIds: Array.isArray(opts?.excludeTrackIds) ? opts.excludeTrackIds : undefined,
+        excludeBundleIds: Array.isArray(opts?.excludeBundleIds) ? opts.excludeBundleIds : undefined,
+      });
+    } catch (err: any) {
+      // 竞品搜索本身命中 403（core 多商店合并已把 Forbidden 冒泡到这里）→ 触发
+      // 熔断写键（复用 scheduler 导出；依赖方向 handlers → scheduler，无循环）。
+      if (isItunesSearchForbidden(err)) {
+        armItunesSearchBlock(s, `competitors:search "${term}"`);
+        const after = itunesSearchBlockState(s);
+        throw new Error(itunesSearchBlockFriendlyMessage(after.until ?? itunesSearchBlockUntilIsoForNow()));
+      }
+      throw err;
+    }
   });
 
   ipcMain.handle("competitors:snapshots", async (_event, projectId: string, competitorId: string) => {

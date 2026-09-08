@@ -1,6 +1,6 @@
 import { normalizeGitHubUrl } from "./git-info";
 import { fetchGitHubJson } from "./gh-traffic";
-import { itunesSearchApiError } from "./rank-collector";
+import { isItunesSearchForbidden, itunesSearchApiError } from "./rank-collector";
 
 export interface Competitor {
   id: string;
@@ -199,7 +199,13 @@ export async function searchCompetitorCandidatesAcross(opts: {
         excludeBundleIds: opts.excludeBundleIds,
       })
         .then((list) => list.slice(0, limit))
-        .catch(() => []),
+        .catch((err: unknown) => {
+          // iTunes Search 403（被拒/封禁/风控）：不再静默吞成空结果——向上抛，
+          // 让调用方（competitors:search handler）触发熔断并提示。其它失败
+          // （单商店偶发）照旧跳过该商店。
+          if (isItunesSearchForbidden(err)) throw err;
+          return [] as CompetitorCandidate[];
+        }),
     ),
   );
   const byTrackId = new Map<string, CompetitorCandidate>();
