@@ -14,10 +14,12 @@
  *
  * 防重复约定（阶段内分工，避免同一数字并排出现两次）：
  * - GitHub ↗ 外部链接 + GitHub 凭证就绪/去设置只在 ①开发 标题行右侧（顶部）；
- *   repo/HEAD/工作区状态、GitHub 流量异常（trafficError）归 ①开发卡底（仓库侧）。
+ *   repo 分支/工作区状态、GitHub 流量异常（trafficError）归 ①开发卡底（仓库侧，
+ *   一行小字无分隔横线；提交 sha 不重复展示，已在上次提交指标副注/tooltip）。
  * - ①开发「指标卡优先」：四枚等宽小指标 = 自上次发布以来提交（draft.commitCount）
  *   / PR（repoMetrics.pullsSince）/ 开放 Issue（repoMetrics.issues.open）/
- *   上次提交（repo.headDate 相对时间 + headSha 短值）。下方 GitHub 活跃为
+ *   上次提交（repo.headDate 只显示天粒度「今天/N 天」，完整时间在 tooltip；
+ *   副注含 headSha 短值）。下方 GitHub 活跃为
  *   ProjectActivityCard 同款近 4 个月（120 天）热力图（activityHeatmap 纯函数，
  *   activityData.commits + 发布日黄框标注），横向铺满卡宽；无数据 → 「无活跃数据」。
  * - ②发布卡：每个「文案」（project.storeSubmissionDrafts 一条）一行、按 updatedAt
@@ -27,11 +29,14 @@
  *   紧凑小格（横向 wrap，每格 title 说明）：商店当前版本 / 目标+审核状态
  *   （deriveVersionStatus）/ 最新构建状态与时间 / 商店评价（reviews:list 聚合的
  *   评分★与评论数，宿主未接线则不展示）/ App 商店 ↗（storeLinks[0]）/
- *   信息更新于（fetchedAt）/ App Store 凭证状态。不放关键词/竞品。
+ *   信息更新于（fetchedAt）。App Store 凭证就绪/去设置只在 ③标题行右侧
+ *   （与 ① GitHub 凭证位置风格一致）。不放关键词/竞品。
  * - ④竞品与表现（整行宽卡，卡内分区分层阅读）：顶部并排「关键词表现」与「竞品
- *   概况」（状态条，一眼总数）→ 中部 TOP3（名次+名称+指数+压 n 词）与「我方占优
- *   商店」（领先 n/m 竞品列表，能力② computeCompetitorAdvantage 产物）→ 下部
- *   优势/劣势关键词两栏对比（悬停显示领先/被压竞品数）；无竞品 → 「尚未查看竞品」。
+ *   概况」（后者为一行等宽小指标，与 ① MiniMetric 同款）→ 中部 TOP3（名次+名称+
+ *   指数+压 n 词）与「我方占优商店」（领先 n/m 竞品列表，最多展示 3 个、超出显示
+ *   +还有 N 个；能力② computeCompetitorAdvantage 产物）→ 下部
+ *   优势/劣势关键词两栏对比（chip 只显示词名，领先/被压计数进 title）；
+ *   无竞品 → 「尚未查看竞品」。
  *
  * 竞品数据由宿主经 props（competitorSummary/competitorAdvantage/competitorHref）
  * 注入，repo 指标经 repoMetrics、② 文案行经 drafts、GitHub 活跃经 activityData
@@ -59,7 +64,7 @@ import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format"
 import { localizationList } from "../../lib/release-localization";
 import { cn } from "../../lib/utils";
 import { KeywordRuby } from "../ui/KeywordRuby";
-import { CredentialBadge } from "../ui/CredentialBadge";
+import { AppleIcon } from "../ui/Icons";
 import { EmptyState } from "../ui/EmptyState";
 import { StatusChip } from "../ui/StatusChip";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
@@ -262,6 +267,21 @@ function dayTimeLabel(day: string): string {
   if (days < 30) return `${days} 天前`;
   const months = Math.floor(days / 30);
   return `${months} 个月前`;
+}
+
+/** 「上次提交」指标值：只显示天粒度（当天 → 今天，更早 → N 天），避免长文案
+ *  挤掉数值；完整时间由调用方放入 title tooltip。 */
+function commitAgeLabel(iso: string): string {
+  const target = new Date(iso);
+  if (Number.isNaN(target.getTime())) return "—";
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfTargetDay = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+  const dayDiff = Math.round(
+    (startOfToday.getTime() - startOfTargetDay.getTime()) / 86_400_000,
+  );
+  if (dayDiff <= 0) return "今天";
+  return `${dayDiff} 天`;
 }
 
 /**
@@ -653,6 +673,7 @@ export function OverviewContent(props: OverviewContentProps) {
   const droppedEvents = competitorSummary?.dropped ?? 0;
   const staleCompetitors = competitorSummary?.stale ?? 0;
   const advantage = competitorAdvantage && competitorAdvantage.hasData ? competitorAdvantage : null;
+  const dominantStorefrontsTotal = advantage?.dominantStorefronts.length ?? 0;
   const dominantStorefronts = advantage?.dominantStorefronts.slice(0, 3) ?? [];
   const advantageWords = advantage?.advantageKeywords.slice(0, 3) ?? [];
   const disadvantageWords = advantage?.disadvantageKeywords.slice(0, 3) ?? [];
@@ -786,40 +807,42 @@ export function OverviewContent(props: OverviewContentProps) {
     </div>
   );
 
-  // ④ 顶部「竞品概况」状态条（跟踪/压我方词/新上榜/跌出/停滞——只出现有值的事件）。
+  // ④ 顶部「竞品概况」指标条（与 ① 开发卡 MiniMetric 同款等宽小指标：一行五格，
+  // 每格数值 + 小标签 + title tooltip；零值灰显，保持一行等宽排布）。
   const competitorOverviewBlock = (
     <div className="min-w-0">
       <p className={STAGE_LABEL}>竞品概况</p>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <span className={cn(CHIP_BASE, "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400")}>
-          跟踪 {competitorTrackedTotal}
-        </span>
-        <span
-          className={cn(
-            CHIP_BASE,
-            pressuredTotal > 0
-              ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-              : "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-          )}
+      <div className="mt-2 grid grid-cols-5 gap-1.5 min-w-0">
+        <MiniMetric
+          label="跟踪"
+          value={String(competitorTrackedTotal)}
+          muted={competitorTrackedTotal === 0}
+          title="当前跟踪的竞品总数（TOP3 竞品按指数降序展示）"
+        />
+        <MiniMetric
+          label="压我方词"
+          value={String(pressuredTotal)}
+          muted={pressuredTotal === 0}
           title="竞品压制我方词数合计（竞品 ≤200 且领先或我方未进榜）"
-        >
-          {pressuredTotal > 0 ? `压我方词 ${pressuredTotal}` : "暂无压制词"}
-        </span>
-        {gainedEvents > 0 && (
-          <span className={cn(CHIP_BASE, "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")}>
-            新上榜 +{gainedEvents}
-          </span>
-        )}
-        {droppedEvents > 0 && (
-          <span className={cn(CHIP_BASE, "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400")}>
-            跌出 {droppedEvents}
-          </span>
-        )}
-        {staleCompetitors > 0 && (
-          <span className={cn(CHIP_BASE, "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400")}>
-            停滞 {staleCompetitors}
-          </span>
-        )}
+        />
+        <MiniMetric
+          label="新上榜"
+          value={gainedEvents > 0 ? `+${gainedEvents}` : "0"}
+          muted={gainedEvents === 0}
+          title={`竞品词新进榜（≤200）的事件计数${gainedEvents === 0 ? "（0 = 近期无新上榜）" : ""}`}
+        />
+        <MiniMetric
+          label="跌出"
+          value={String(droppedEvents)}
+          muted={droppedEvents === 0}
+          title={`竞品词跌出榜单的事件计数${droppedEvents === 0 ? "（0 = 近期无跌出）" : ""}`}
+        />
+        <MiniMetric
+          label="停滞"
+          value={String(staleCompetitors)}
+          muted={staleCompetitors === 0}
+          title="排名停滞/长期未刷新的竞品数（宿主未提供快照时间信号时为 0）"
+        />
       </div>
     </div>
   );
@@ -1084,15 +1107,17 @@ export function OverviewContent(props: OverviewContentProps) {
               />
               <MiniMetric
                 label="上次提交"
-                value={lastCommitIso ? formatHumanTime(lastCommitIso) : "—"}
+                value={lastCommitIso ? commitAgeLabel(lastCommitIso) : "—"}
                 sub={lastCommitSub ?? undefined}
                 muted={lastCommitIso == null}
                 title={
-                  repoHeadDate
-                    ? `HEAD 提交于 ${repoHeadDate}${repoHeadSha ? ` · ${repoHeadSha.slice(0, 7)}` : ""}`
-                    : lastActivityDay
-                      ? `最近活跃日 ${lastActivityDay}`
-                      : "暂无提交记录（配置本地仓库后展示）"
+                  lastCommitIso
+                    ? repoHeadDate
+                      ? `HEAD 提交于 ${repoHeadDate}${repoHeadSha ? ` · ${repoHeadSha.slice(0, 7)}` : ""}（${formatHumanTime(lastCommitIso)}）`
+                      : lastActivityDay
+                        ? `最近活跃日 ${lastActivityDay}（${formatHumanTime(lastCommitIso)}）`
+                        : formatHumanTime(lastCommitIso)
+                    : "暂无提交记录（配置本地仓库后展示）"
                 }
               />
             </div>
@@ -1103,9 +1128,9 @@ export function OverviewContent(props: OverviewContentProps) {
               releases={activityData?.releases}
             />
 
-            {/* repo HEAD/分支/工作区（卡底次要行，仓库侧信息集中在此；GitHub 凭证
-                就绪/去设置已在标题行右侧，避免重复） */}
-            <div className="mt-auto border-t border-zinc-100 dark:border-zinc-800 pt-2 space-y-1.5 min-w-0">
+            {/* repo 分支/工作区（卡底一行小字，无分隔横线；sha 已在上次提交指标
+                副注/tooltip，GitHub 凭证就绪/去设置已在标题行右侧，避免重复） */}
+            <div className="mt-auto space-y-1 min-w-0">
               {project.repo ? (
                 <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                   <span
@@ -1116,8 +1141,8 @@ export function OverviewContent(props: OverviewContentProps) {
                       project.localPath
                     }
                   >
-                    {project.repo.headSha
-                      ? `${project.repo.headSha.slice(0, 7)}${project.repo.branch && project.repo.branch !== "HEAD" ? ` @ ${project.repo.branch}` : ""}`
+                    {project.repo.branch && project.repo.branch !== "HEAD"
+                      ? project.repo.branch
                       : project.repo.remoteUrl || "—"}
                   </span>
                   {project.repo.dirty && <StatusChip label="工作区有改动" tone="amber" />}
@@ -1254,6 +1279,37 @@ export function OverviewContent(props: OverviewContentProps) {
           stepClass="bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
           title="上架"
           lead="商店版本、审核、评价与构建"
+          right={
+            <div className="flex shrink-0 items-center gap-1.5 min-w-0">
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 h-5 text-[10px] font-medium text-zinc-600 dark:text-zinc-300"
+                title={storeLinks[0] ? storeLinks[0].name : "iOS / macOS App Store"}
+              >
+                <AppleIcon className="w-3 h-3 text-current" />
+                App Store
+              </span>
+              {ascConfigured ? (
+                <span
+                  className="inline-flex shrink-0 items-center rounded-full bg-emerald-50 dark:bg-emerald-500/10 px-2 h-5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+                  title={
+                    project.ascSource
+                      ? `App Store Connect 凭证已配置（${project.ascSource === "global" ? "全局" : "项目覆盖"}），用于版本/审核状态回读、评论洞察`
+                      : "App Store Connect 凭证已配置，用于版本/审核状态回读、评论洞察"
+                  }
+                >
+                  凭证就绪
+                </span>
+              ) : (
+                <button
+                  onClick={() => onOpenSettings(project.id)}
+                  className="shrink-0 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 px-2 h-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400"
+                  title="未配置 App Store Connect 凭证（配置后可展示版本/构建/审核状态与评论洞察）"
+                >
+                  去设置
+                </button>
+              )}
+            </div>
+          }
         >
           <div className="flex h-full min-w-0 flex-col gap-2.5">
             {versionMismatch && (
@@ -1406,33 +1462,6 @@ export function OverviewContent(props: OverviewContentProps) {
                 未配置商店/上架信息
               </p>
             )}
-
-            {!ascConfigured ? (
-              <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
-                <CredentialBadge
-                  kind="asc"
-                  enabled={false}
-                  projectId={project.id}
-                  source={project.ascSource}
-                />
-                <span>未配置 App Store 凭证 · 仅展示商店公开版本信息</span>
-                <button
-                  onClick={() => onOpenSettings(project.id)}
-                  className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-                >
-                  去设置
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <CredentialBadge
-                  kind="asc"
-                  enabled={true}
-                  projectId={project.id}
-                  source={project.ascSource}
-                />
-              </div>
-            )}
           </div>
         </StageCard>
       </div>
@@ -1505,7 +1534,20 @@ export function OverviewContent(props: OverviewContentProps) {
               </div>
 
               <div className="min-w-0">
-                <p className={STAGE_LABEL}>我方占优商店</p>
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className={STAGE_LABEL}>我方占优商店</p>
+                  {dominantStorefrontsTotal > dominantStorefronts.length && (
+                    <span
+                      className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500"
+                      title={`还有 ${dominantStorefrontsTotal - dominantStorefronts.length} 个占优商店：${(advantage?.dominantStorefronts ?? [])
+                        .slice(3)
+                        .map((s) => storefrontDisplayName(s.storefront))
+                        .join("、")}`}
+                    >
+                      +还有 {dominantStorefrontsTotal - dominantStorefronts.length} 个
+                    </span>
+                  )}
+                </div>
                 {dominantStorefronts.length > 0 ? (
                   <ul className="mt-2 grid grid-cols-1 gap-1.5 min-w-0">
                     {dominantStorefronts.map((item) => (
@@ -1551,10 +1593,9 @@ export function OverviewContent(props: OverviewContentProps) {
                         <li
                           key={`${word.language}-${word.keyword}`}
                           className={cn(CHIP_BASE, "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")}
-                          title={`${translationFor(word.language, word.keyword) ? `${translationFor(word.language, word.keyword)} · ` : ""}领先 ${word.wins}/${word.wins + word.losses} 个竞品，被压 ${word.losses} 个`}
+                          title={`${translationFor(word.language, word.keyword) ? `${translationFor(word.language, word.keyword)} · ` : ""}领先 ${word.wins}/${word.wins + word.losses} 个竞品 · 被压 ${word.losses} 个`}
                         >
                           {word.keyword}
-                          <span className="ml-1 opacity-80">领先 {word.wins}/{word.wins + word.losses}</span>
                         </li>
                       ))}
                     </ul>
@@ -1575,10 +1616,9 @@ export function OverviewContent(props: OverviewContentProps) {
                         <li
                           key={`${word.language}-${word.keyword}`}
                           className={cn(CHIP_BASE, "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400")}
-                          title={`${translationFor(word.language, word.keyword) ? `${translationFor(word.language, word.keyword)} · ` : ""}被压 ${word.losses}/${word.wins + word.losses} 个竞品`}
+                          title={`${translationFor(word.language, word.keyword) ? `${translationFor(word.language, word.keyword)} · ` : ""}被压 ${word.losses}/${word.wins + word.losses} 个竞品 · 领先 ${word.wins} 个`}
                         >
                           {word.keyword}
-                          <span className="ml-1 opacity-80">被压 {word.losses}/{word.wins + word.losses}</span>
                         </li>
                       ))}
                     </ul>
