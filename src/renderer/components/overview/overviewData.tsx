@@ -421,6 +421,152 @@ export function activityGridColumns(
   };
 }
 
+/* ── ①开发卡：GitHub 活跃热力图（旧 ProjectActivityCard 的近 4 个月格子图，原样迁移） ── */
+
+/** 热力图标注用的发布（tag + 发布 ISO 时间；只取日期部分命中格子）。 */
+export interface ActivityHeatmapRelease {
+  tag: string;
+  publishedAt: string | null;
+}
+
+/** 热力图的一天（date 为本地 YYYY-MM-DD）。 */
+export interface ActivityHeatmapDay {
+  date: string;
+  count: number;
+  /** 当天发布 tag（无 → null；命中即用黄框标格）。 */
+  releaseTag: string | null;
+  /** 统计窗口起点前的对齐填充日（渲染为不可见）。 */
+  preRange: boolean;
+  /** 今天之后（当前周内未来日，渲染为不可见）。 */
+  future: boolean;
+}
+
+/** 热力图的一周列（周一起始，7 天）。 */
+export interface ActivityHeatmapWeek {
+  weekStart: string;
+  days: ActivityHeatmapDay[];
+}
+
+/** activityHeatmap 的产物（纯数据，渲染交给组件）。 */
+export interface ActivityHeatmap {
+  /** 周列：自窗口起点所在周一起、到本周止，覆盖近 rangeDays 天并保证整周对齐。 */
+  weeks: ActivityHeatmapWeek[];
+  /** 统计窗口起点（本地 YYYY-MM-DD；其前的 preRange 天仅作对齐）。 */
+  rangeStart: string;
+  /** 窗口内提交总数。 */
+  total: number;
+  /** 窗口内最近一个有提交的日期（无 → null）。 */
+  lastCommitDay: string | null;
+  /** 窗口内的发布日标记数。 */
+  releaseCount: number;
+}
+
+function heatmapDayKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function heatmapCalendarDay(date: Date): number {
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000;
+}
+
+/**
+ * activityData.commits（本地 YYYY-MM-DD → 当日提交数）+ 发布列表 → GitHub 风格
+ * 近 rangeDays 天热力图，语义与旧 ProjectActivityCard 完全一致（原样迁移）：
+ * - 统计窗口为「今天往前 rangeDays-1 天」；网格从窗口起点所在周的周一开始按周
+ *   列排布（与 GitHub 对齐），起点前的天标 preRange、当前周今天之后的天标
+ *   future，两者渲染不可见，保证列对齐；横向列数固定为铺满宽度所需。
+ * - 每天按提交数着色（0 灰 / 1–5 / 6–20 / 21–50 / 50+ 四档加深）；命中发布的
+ *   日期带上 releaseTag（组件侧用黄框标注）。
+ * - 无任何有效提交键 → null（调用方显示「无活跃数据」）。
+ * 纯函数（无 window/IPC；now 仅测试注入），组件只负责渲染。
+ */
+export function activityHeatmap(
+  commits: Record<string, number> | null | undefined,
+  releases?: ActivityHeatmapRelease[] | null,
+  rangeDays = 120,
+  now = new Date(),
+): ActivityHeatmap | null {
+  if (!commits || typeof commits !== "object") return null;
+  const counts = new Map<string, number>();
+  for (const raw of Object.keys(commits)) {
+    const key = raw.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+    const count = Math.max(0, Number(commits[raw]) || 0);
+    if (count <= 0) continue;
+    counts.set(key, (counts.get(key) || 0) + count);
+  }
+  if (counts.size === 0) return null;
+
+  const days = Math.max(7, Math.min(365, Math.round(rangeDays)));
+  const todayKey = heatmapDayKey(now);
+  const rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
+  const rangeStartKey = heatmapDayKey(rangeStart);
+  // 窗口起点所在周的周一（可能早于 rangeStart 几天 → 对齐填充）。
+  const dow = rangeStart.getDay();
+  const gridStart = new Date(
+    rangeStart.getFullYear(),
+    rangeStart.getMonth(),
+    rangeStart.getDate() - (dow === 0 ? 6 : dow - 1),
+  );
+  // 今天所在周的周一：周列自 gridStart 至该周（含），保证本周完整 7 天。
+  const todayDow = now.getDay();
+  const currentMonday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - (todayDow === 0 ? 6 : todayDow - 1),
+  );
+  const weekCount =
+    Math.round((heatmapCalendarDay(currentMonday) - heatmapCalendarDay(gridStart)) / 7) + 1;
+
+  const releaseByDay = new Map<string, string>();
+  for (const release of releases || []) {
+    if (!release || !release.tag || !release.publishedAt) continue;
+    const day = String(release.publishedAt).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) releaseByDay.set(day, release.tag);
+  }
+
+  const weeks: ActivityHeatmapWeek[] = [];
+  let total = 0;
+  let lastCommitDay: string | null = null;
+  let releaseCount = 0;
+  for (let w = 0; w < weekCount; w += 1) {
+    const weekStart = new Date(
+      gridStart.getFullYear(),
+      gridStart.getMonth(),
+      gridStart.getDate() + w * 7,
+    );
+    const daysInWeek: ActivityHeatmapDay[] = [];
+    for (let d = 0; d < 7; d += 1) {
+      const date = new Date(
+        weekStart.getFullYear(),
+        weekStart.getMonth(),
+        weekStart.getDate() + d,
+      );
+      const key = heatmapDayKey(date);
+      const preRange = key < rangeStartKey;
+      const future = key > todayKey;
+      const count = preRange || future ? 0 : counts.get(key) || 0;
+      if (count > 0) {
+        total += count;
+        if (!lastCommitDay || key > lastCommitDay) lastCommitDay = key;
+      }
+      const releaseTag = preRange || future ? null : releaseByDay.get(key) || null;
+      if (releaseTag) releaseCount += 1;
+      daysInWeek.push({ date: key, count, releaseTag, preRange, future });
+    }
+    weeks.push({ weekStart: heatmapDayKey(weekStart), days: daysInWeek });
+  }
+  return {
+    weeks,
+    rangeStart: rangeStartKey,
+    total,
+    lastCommitDay,
+    releaseCount,
+  };
+}
+
 /** ≤200 在榜口径下的单方判定：返回值是「我方对某竞品」的胜负。 */
 function onChart(rank: number | null | undefined): rank is number {
   return typeof rank === "number" && Number.isFinite(rank) && rank > 0 && rank <= 200;

@@ -13,21 +13,25 @@
  * → 排名分布（保留）→ 用户反馈（保持现状，置于页尾不强调）。
  *
  * 防重复约定（阶段内分工，避免同一数字并排出现两次）：
- * - repo/HEAD/工作区状态 + GitHub 凭证徽标 + GitHub ↗ 外部链接只在 ①开发
- *   （放卡底/头部次要行）；GitHub 流量异常（trafficError）也归 ①（仓库侧）。
- * - ①开发「指标卡优先」：三枚并排小指标 = 自上次发布以来提交（draft.commitCount）
- *   / PR（repoMetrics.pullsSince）/ 开放 Issue（repoMetrics.issues.open）+
- *   GitHub 活跃格子图（activityData.commits 覆盖 ≥4 周 → 近 6 周 GitHub 风格
- *   格子图；只有近几天 → 近 7 天柱状小图；无数据 → 「无活跃数据」）。
+ * - GitHub ↗ 外部链接 + GitHub 凭证就绪/去设置只在 ①开发 标题行右侧（顶部）；
+ *   repo/HEAD/工作区状态、GitHub 流量异常（trafficError）归 ①开发卡底（仓库侧）。
+ * - ①开发「指标卡优先」：四枚等宽小指标 = 自上次发布以来提交（draft.commitCount）
+ *   / PR（repoMetrics.pullsSince）/ 开放 Issue（repoMetrics.issues.open）/
+ *   上次提交（repo.headDate 相对时间 + headSha 短值）。下方 GitHub 活跃为
+ *   ProjectActivityCard 同款近 4 个月（120 天）热力图（activityHeatmap 纯函数，
+ *   activityData.commits + 发布日黄框标注），横向铺满卡宽；无数据 → 「无活跃数据」。
  * - ②发布卡：每个「文案」（project.storeSubmissionDrafts 一条）一行、按 updatedAt
  *   倒序；顶部一句话小结「最新文案后又 +N 提交 · +M PR」（与 ① 同源同值，但以
  *   一句话而非指标卡呈现，避免视觉重复）只出现在 ②；语言进度 n/total 只在 ② 行内。
- * - ③上架：一行式紧凑呈现（横向小格）：商店当前版本 / 目标+审核状态
- *   （deriveVersionStatus）/ 构建最新状态与时间 / 信息更新于（fetchedAt）/
- *   App Store 凭证未配置提示。不放关键词/竞品。
- * - ④竞品与表现（整行宽卡）：左 = 关键词表现（TOP10/最好名次/采集新鲜度）+
- *   竞品压制概况（跟踪/压我方词/新上榜/跌出/停滞）；右 = TOP3 + 我方占优商店 +
- *   优势/劣势词（能力② computeCompetitorAdvantage 的产物）。
+ * - ③上架：顶部版本不一致提示（商店已上架 vX ≠ 草稿目标 vY → 黄/红条）+ 一行式
+ *   紧凑小格（横向 wrap，每格 title 说明）：商店当前版本 / 目标+审核状态
+ *   （deriveVersionStatus）/ 最新构建状态与时间 / 商店评价（reviews:list 聚合的
+ *   评分★与评论数，宿主未接线则不展示）/ App 商店 ↗（storeLinks[0]）/
+ *   信息更新于（fetchedAt）/ App Store 凭证状态。不放关键词/竞品。
+ * - ④竞品与表现（整行宽卡，卡内分区分层阅读）：顶部并排「关键词表现」与「竞品
+ *   概况」（状态条，一眼总数）→ 中部 TOP3（名次+名称+指数+压 n 词）与「我方占优
+ *   商店」（领先 n/m 竞品列表，能力② computeCompetitorAdvantage 产物）→ 下部
+ *   优势/劣势关键词两栏对比（悬停显示领先/被压竞品数）；无竞品 → 「尚未查看竞品」。
  *
  * 竞品数据由宿主经 props（competitorSummary/competitorAdvantage/competitorHref）
  * 注入，repo 指标经 repoMetrics、② 文案行经 drafts、GitHub 活跃经 activityData
@@ -60,7 +64,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { StatusChip } from "../ui/StatusChip";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
 import { FeedbackThemesCard } from "./FeedbackThemesCard";
-import { activityGridColumns, overviewRankRows } from "./overviewData";
+import { activityHeatmap, overviewRankRows } from "./overviewData";
 import type {
   CompetitorAdvantage,
   CompetitorSummary,
@@ -89,6 +93,15 @@ export interface OverviewRepoMetrics {
   error?: string;
 }
 
+/** ③上架的商店评价摘要（宿主经 reviews:list 聚合；recent30 = 近 30 天新增评论数）。 */
+export interface StoreReviewSummary {
+  total: number;
+  average: number | null;
+  recent30: number;
+  /** 任一商店最近一次评论同步时间（ISO；无 → null）。 */
+  lastSyncedAt: string | null;
+}
+
 export interface OverviewContentProps {
   project: Project | null;
   product: StoreProduct | null;
@@ -98,8 +111,10 @@ export interface OverviewContentProps {
   } | null;
   ascInfo: { versions: any[]; builds: any[]; fetchedAt?: string } | null;
   storeCurrentVersion: string | null;
-  /** 可选注入：项目活跃数据（每日提交数），供 ①开发 的 GitHub 活跃格子图使用；缺省则只显示 repo 状态。 */
+  /** 可选注入：项目活跃数据（每日提交数 + 发布日），供 ①开发 的近 4 个月热力图使用；缺省则只显示 repo 状态。 */
   activityData?: { commits: Record<string, number>; releases: { tag: string; publishedAt: string | null }[] };
+  /** 可选注入：③上架的商店评价摘要（评分★/评论数）。undefined = 宿主未接线 → 不展示该格；null = 已接线但无数据。 */
+  storeReviews?: StoreReviewSummary | null;
   /** 可选注入：②发布卡按时间倒序的「文案」行（宿主从 project.storeSubmissionDrafts 聚合）；空 → 空态。 */
   drafts?: SubmissionDraftRow[];
   /** 可选注入：①开发卡 repo 指标（能力①：PR + issues）；null/未取数 → 不展示。 */
@@ -145,36 +160,8 @@ const DRAFT_STATUS_META: Record<
   draft: { label: "草案", tone: "muted" },
 };
 
-/** 本地日键（YYYY-MM-DD），activityData.commits 的键按此语义聚合。 */
-function localDayKey(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
-/** 最近 7 个本地日的提交柱数据（activityData.commits），供 ①开发 的近 7 天柱状小图。 */
-function activityBars7(
-  commits: Record<string, number> | undefined,
-): { key: string; label: string; count: number; max: number }[] | null {
-  if (!commits || typeof commits !== "object") return null;
-  const now = new Date();
-  const days: { key: string; label: string; count: number }[] = [];
-  for (let offset = 6; offset >= 0; offset -= 1) {
-    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset);
-    const key = localDayKey(date);
-    const count = Math.max(0, Number(commits[key]) || 0);
-    days.push({
-      key,
-      label: `${key.slice(5)}`,
-      count,
-    });
-  }
-  const max = Math.max(1, ...days.map((d) => d.count));
-  return days.map((d) => ({ ...d, max }));
-}
-
 /**
- * 提交数 → 格子图色阶（与 ProjectActivityCard 同款 GitHub 绿）。
+ * 提交数 → 热力图格色阶（与旧 ProjectActivityCard 同款 GitHub 绿，原样沿用）。
  * count = 0 灰；1–5/6–20/21–50/50+ 四档加深。
  */
 function commitTierClass(count: number): string {
@@ -264,17 +251,37 @@ function releaseDraftDeepLink(tag: string | null | undefined, fallback: string):
   return tag ? `/release?tag=${encodeURIComponent(tag)}` : fallback;
 }
 
+/** 与旧 ProjectActivityCard 相同的「按天」相对时间：今天/昨天/N 天前/N 个月前。 */
+function dayTimeLabel(day: string): string {
+  const diff = Date.now() - new Date(`${day}T23:59:59`).getTime();
+  const hours = Math.floor(diff / (60 * 60 * 1000));
+  if (hours <= 0) return "今天";
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "昨天";
+  if (days < 30) return `${days} 天前`;
+  const months = Math.floor(days / 30);
+  return `${months} 个月前`;
+}
+
 /**
- * ①开发卡的 GitHub 活跃块（数据驱动，静态图，prefers-reduced-motion 无关）：
- * - activityData.commits 覆盖 ≥4 周（窗口内最早活跃 ≥28 天前）→ 近 6 周 GitHub
- *   风格格子图（周列 × 周天行，颜色按当日提交数深浅）；
- * - 只有近几天 → 近 7 天柱状小图；
- * - commits 未传/空 → 「无活跃数据」。
+ * ①开发卡的 GitHub 活跃热力图——旧 ProjectActivityCard 的格子图实现「原样迁移」：
+ * - activityData.commits（近 120 天 git log）→ 近 4 个月热力图：统计窗口自周一起
+ *   的整周列排布（今天之前的对齐填充/未来格不可见），横向铺满卡宽（列数固定，
+ *   每格 aspect-square 自适应），颜色按当日提交数深浅；
+ * - releases（宿主 release 数据，带 publishedAt）→ 命中发布的日期黄框标注
+ *   （与旧版一致：ring-amber 描边）；
+ * - 无提交键 → 「无活跃数据」。数据侧为纯函数 activityHeatmap（overviewData，可测）。
  */
-function GitHubActivityBlock({ commits }: { commits?: Record<string, number> }) {
-  const grid = activityGridColumns(commits, 6);
-  const hasData = grid !== null;
-  if (!hasData) {
+function GitHubActivityBlock({
+  commits,
+  releases,
+}: {
+  commits?: Record<string, number>;
+  releases?: { tag: string; publishedAt: string | null }[];
+}) {
+  const heat = activityHeatmap(commits, releases);
+  if (!heat) {
     return (
       <div className="min-w-0">
         <p className={STAGE_LABEL}>GitHub 活跃</p>
@@ -282,102 +289,79 @@ function GitHubActivityBlock({ commits }: { commits?: Record<string, number> }) 
       </div>
     );
   }
-
-  // 覆盖 ≥4 周 → 格子图（近 6 周）。
-  if (grid.spanDays !== null && grid.spanDays >= 28) {
-    const monthLabels: { left: number; text: string }[] = [];
-    let lastMonth = -1;
-    grid.columns.forEach((column, index) => {
-      const month = Number(column.weekStart.slice(5, 7));
+  const columnCount = heat.weeks.length;
+  const monthLabels: { col: number; text: string }[] = [];
+  let lastMonth = -1;
+  heat.weeks.forEach((week, col) => {
+    for (const day of week.days) {
+      if (day.preRange) continue;
+      const month = Number(day.date.slice(5, 7));
       if (month !== lastMonth) {
+        monthLabels.push({ col, text: `${month}月` });
         lastMonth = month;
-        monthLabels.push({ left: index * 12, text: `${month}月` });
       }
-    });
-    return (
-      <div className="min-w-0">
-        <p className={STAGE_LABEL}>GitHub 活跃</p>
-        <div className="mt-1.5 inline-block">
-          <div className="relative h-3.5">
-            {monthLabels.map((label) => (
-              <span
-                key={`${label.text}-${label.left}`}
-                className="absolute text-[9px] leading-none text-zinc-400 dark:text-zinc-500"
-                style={{ left: label.left }}
-              >
-                {label.text}
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-0.5">
-            {grid.columns.map((column) => (
-              <div key={column.weekStart} className="flex flex-col gap-0.5">
-                {column.days.map((day) => (
-                  <div
-                    key={day.date}
-                    className={cn("h-2.5 w-2.5 rounded-[3px]", commitTierClass(day.count))}
-                    title={`${day.date} · ${day.count} 次提交`}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-          <div className="mt-1.5 flex items-center gap-1.5">
+    }
+  });
+  return (
+    <div className="min-w-0">
+      <p className={STAGE_LABEL}>GitHub 活跃 · 近 4 个月</p>
+      <div className="mt-2 w-full">
+        {/* 月份标签：锚在对应周列起点，横向随网格自适应。 */}
+        <div className="relative mb-0.5 h-3.5 w-full">
+          {monthLabels.map((label) => (
+            <span
+              key={`${label.text}-${label.col}`}
+              className="absolute text-[9px] leading-none text-zinc-400 dark:text-zinc-500"
+              style={{ left: `${(label.col / columnCount) * 100}%` }}
+            >
+              {label.text}
+            </span>
+          ))}
+        </div>
+        <div className="flex w-full gap-[3px]">
+          {heat.weeks.map((week) => (
+            <div key={week.weekStart} className="flex min-w-0 flex-1 flex-col gap-[3px]">
+              {week.days.map((day) => (
+                <div
+                  key={day.date}
+                  className={cn(
+                    "w-full rounded-[2px]",
+                    day.preRange || day.future ? "invisible" : commitTierClass(day.count),
+                    day.releaseTag &&
+                      !day.preRange &&
+                      !day.future &&
+                      "ring-1 ring-amber-400 ring-offset-1 ring-offset-white dark:ring-offset-zinc-900",
+                  )}
+                  style={{ aspectRatio: "1 / 1" }}
+                  title={
+                    day.preRange || day.future
+                      ? undefined
+                      : `${day.date} · ${day.count} 次提交` +
+                        (day.releaseTag ? ` · released ${day.releaseTag}` : "")
+                  }
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span className="inline-flex items-center gap-1">
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">少</span>
             {[0, 3, 12, 35, 60].map((n) => (
               <span key={n} className={cn("h-2 w-2 rounded-[2px]", commitTierClass(n))} />
             ))}
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">多</span>
-            <span className="ml-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">
-              近 6 周 · 共 {grid.total} 次提交
-            </span>
-          </div>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded-[2px] ring-1 ring-amber-400 ring-offset-1 ring-offset-white dark:ring-offset-zinc-900 bg-zinc-100 dark:bg-zinc-800" />
+            <span className="text-[10px] text-zinc-400 dark:text-zinc-500">发布</span>
+          </span>
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+            {heat.total} 次提交
+            {heat.releaseCount > 0 ? ` · ${heat.releaseCount} 个发布日` : ""}
+          </span>
         </div>
       </div>
-    );
-  }
-
-  // 只有近几天 → 近 7 天柱状小图。
-  const bars = activityBars7(commits);
-  const barsActive = (bars?.some((bar) => bar.count > 0) ?? false);
-  if (barsActive && bars) {
-    const total = bars.reduce((sum, bar) => sum + bar.count, 0);
-    const today = bars[bars.length - 1]?.count ?? 0;
-    return (
-      <div className="min-w-0">
-        <p className={STAGE_LABEL}>GitHub 活跃 · 近 7 天</p>
-        <div className="mt-1.5 flex h-8 items-end gap-1" aria-hidden="true">
-          {bars.map((bar) => (
-            <div key={bar.key} className="flex h-full min-w-0 flex-1 items-end rounded-sm">
-              <div
-                className={cn(
-                  "w-full rounded-sm",
-                  bar.count > 0
-                    ? "bg-sky-200 dark:bg-sky-500/40"
-                    : "bg-zinc-100 dark:bg-zinc-800",
-                )}
-                style={{
-                  height: `${bar.count > 0 ? Math.max(8, Math.round((bar.count / bar.max) * 100)) : 4}%`,
-                }}
-                title={`${bar.key} · ${bar.count} 次提交`}
-              />
-            </div>
-          ))}
-        </div>
-        <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-          7 天合计 {total} 次
-          {today > 0 ? ` · 今日 ${today} 次` : " · 今日暂无提交"}
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-w-0">
-      <p className={STAGE_LABEL}>GitHub 活跃</p>
-      <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-        近 7 天无提交{grid.total > 0 ? `（近 6 周共 ${grid.total} 次）` : ""}
-      </p>
     </div>
   );
 }
@@ -431,6 +415,19 @@ function buildTone(state: string | null): "emerald" | "amber" | "red" | "muted" 
   return "muted";
 }
 
+/** 版本号数值比较（忽略前导 v/大小写；非纯数字段按 0 计），用于商店 vs 草稿版本提示。 */
+function compareVersion(a: string, b: string): number {
+  const pa = String(a).trim().replace(/^[vV]/, "").split(".");
+  const pb = String(b).trim().replace(/^[vV]/, "").split(".");
+  const length = Math.max(pa.length, pb.length);
+  for (let i = 0; i < length; i += 1) {
+    const na = Number(pa[i]) || 0;
+    const nb = Number(pb[i]) || 0;
+    if (na !== nb) return na - nb;
+  }
+  return 0;
+}
+
 export function OverviewContent(props: OverviewContentProps) {
   const {
     project,
@@ -439,6 +436,7 @@ export function OverviewContent(props: OverviewContentProps) {
     ascInfo,
     storeCurrentVersion,
     activityData,
+    storeReviews,
     drafts,
     repoMetrics,
     feedbackThemes,
@@ -586,12 +584,26 @@ export function OverviewContent(props: OverviewContentProps) {
     ? `/release?tag=${encodeURIComponent(releaseDraft.tag)}`
     : "/release";
 
-  // ── ① 开发：三枚小指标（自上次发布以来提交/PR + 开放 Issue）+ 活跃格子图 ──
+  // ── ① 开发：四枚等宽小指标（自上次发布以来提交/PR + 开放 Issue + 上次提交）──
   const pendingCommits = releaseDraft ? releaseDraft.commitCount : null;
   const repoPulls = repoMetrics?.ok ? repoMetrics.pullsSince : null;
   const repoIssues = repoMetrics?.ok ? repoMetrics.issues : null;
   const repoSinceTag = repoMetrics?.ok ? repoMetrics.sinceTag : null;
   const repoMetricError = repoMetrics && !repoMetrics.ok ? repoMetrics.error ?? null : null;
+  // 上次提交：repo HEAD（本地仓库快照：headDate + headSha）优先；无仓库快照时
+  // 用活跃热力图的最近活跃日兜底（旧 ProjectActivityCard 同款按天相对时间）。
+  const repoHeadSha = project.repo?.headSha || null;
+  const repoHeadDate = project.repo?.headDate || null;
+  const lastActivityDay = (() => {
+    const heat = activityHeatmap(activityData?.commits, activityData?.releases);
+    return heat ? heat.lastCommitDay : null;
+  })();
+  const lastCommitIso = repoHeadDate || (lastActivityDay ? `${lastActivityDay}T23:59:59` : null);
+  const lastCommitSub = repoHeadSha
+    ? repoHeadSha.slice(0, 7)
+    : lastActivityDay
+      ? `活跃于 ${dayTimeLabel(lastActivityDay)}`
+      : null;
 
   // ── ② 发布：文案行（宿主聚合，按 updatedAt 倒序）+ 顶部一句话小结 ──
   const draftRows: SubmissionDraftRow[] = Array.isArray(drafts) ? drafts : [];
@@ -606,7 +618,7 @@ export function OverviewContent(props: OverviewContentProps) {
     return `最新文案后又 ${parts.join(" · ")}`;
   })();
 
-  // ── ③ 上架：一行式（商店版本/目标审核/构建/更新于/凭证）──
+  // ── ③ 上架：版本不一致提示 + 一行式（商店版本/目标审核/构建/评价/商店链接/更新于）──
   const liveStoreVersion = storeCurrentVersion || storeLiveVersion || null;
   const targetVersion = submissionDraft?.appVersion || null;
   const storeUnconfigured = !product.trackId && storeLinks.length === 0;
@@ -615,6 +627,20 @@ export function OverviewContent(props: OverviewContentProps) {
     .sort((a: any, b: any) =>
       String(b.uploadedDate || "").localeCompare(String(a.uploadedDate || "")),
     )[0] as { version?: string; processingState?: string; uploadedDate?: string | null } | undefined;
+  // 目标版本在 ASC 里的版本对象（状态 + 创建时间，title 说明用，不虚造「提审时间」）。
+  const targetAscVersion = targetVersion
+    ? (ascInfo?.versions || []).find(
+        (v: any) => String(v.versionString || "").trim() === targetVersion,
+      ) || null
+    : null;
+  // 商店当前版本 ≠ 草稿目标版本 → 提示条（目标比商店旧则红，否则黄）。
+  const versionMismatch = (() => {
+    if (!liveStoreVersion || !targetVersion) return null;
+    const live = String(liveStoreVersion).trim();
+    const target = String(targetVersion).trim();
+    if (!live || !target || compareVersion(live, target) === 0) return null;
+    return { live, target, downgrade: compareVersion(target, live) < 0 };
+  })();
 
   // ── ④ 竞品与表现（整行宽卡）：关键词表现 + 竞品压制面 + 能力②聚合 ──
   const competitorEntries = competitorSummary?.top ?? [];
@@ -664,13 +690,17 @@ export function OverviewContent(props: OverviewContentProps) {
 
   const hasCompetitorData = Boolean(competitorSummary) && competitorEntries.length > 0;
 
-  // ④ 卡左栏：关键词表现（TOP10 词数 / 最好名次 / 采集新鲜度）——与竞品有无数据无关。
+  // ④ 顶部「关键词表现」状态条（TOP10 词数 / 最好名次 / 采集新鲜度 三格并排，
+  // 一眼总数）——与竞品有无数据无关，无竞品空态也展示。
   const keywordPerformanceBlock = (
     <div className="min-w-0">
       <p className={STAGE_LABEL}>关键词表现</p>
-      <div className="mt-1.5 grid grid-cols-2 gap-2">
-        <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-100 dark:border-zinc-800 px-2.5 py-1.5 min-w-0">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500">TOP10 词数</p>
+      <div className="mt-2 grid grid-cols-3 gap-1.5">
+        <div
+          className="rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-100 dark:border-zinc-800 px-2 py-1.5 min-w-0"
+          title={trackedActive.length > 0 ? `共跟踪 ${trackedActive.length} 个关键词` : "尚未跟踪关键词"}
+        >
+          <p className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">TOP10 词数</p>
           <p
             className={cn(
               "mt-0.5 text-lg font-semibold leading-tight",
@@ -681,21 +711,28 @@ export function OverviewContent(props: OverviewContentProps) {
           >
             {trackedActive.length === 0 ? "—" : top10Count}
           </p>
+          <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+            {trackedActive.length === 0 ? "未跟踪关键词" : `共 ${trackedActive.length} 词`}
+          </p>
         </div>
-        <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-100 dark:border-zinc-800 px-2.5 py-1.5 min-w-0">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500">最好名次</p>
+        <div
+          className="rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-100 dark:border-zinc-800 px-2 py-1.5 min-w-0"
+          title={
+            bestRankRow
+              ? `#${bestRankRow.bestRank} ${bestRankRow.keyword} · ${storefrontDisplayName(bestRankRow.storefront)}`
+              : undefined
+          }
+        >
+          <p className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">最好名次</p>
           <p
             className={cn(
               "mt-0.5 text-lg font-semibold leading-tight truncate",
-              bestRankRow
-                ? "text-zinc-900 dark:text-zinc-100"
-                : "text-zinc-400 dark:text-zinc-500",
+              bestRankRow ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-400 dark:text-zinc-500",
             )}
-            title={bestRankRow ? `#${bestRankRow.bestRank} ${bestRankRow.keyword}` : undefined}
           >
             {bestRankRow ? `#${bestRankRow.bestRank}` : "—"}
           </p>
-          <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+          <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
             {bestRankRow
               ? `${bestRankRow.keyword} · ${storefrontDisplayName(bestRankRow.storefront)}`
               : trackedActive.length === 0
@@ -703,25 +740,92 @@ export function OverviewContent(props: OverviewContentProps) {
                 : "暂无上榜记录"}
           </p>
         </div>
+        <div
+          className={cn(
+            "rounded-lg border px-2 py-1.5 min-w-0",
+            dataStale
+              ? "bg-red-50 dark:bg-red-500/10 border-red-100 dark:border-red-500/20"
+              : "bg-zinc-50 dark:bg-zinc-800/50 border-zinc-100 dark:border-zinc-800",
+          )}
+          title={newestCheckedAt ? `最近一次排名采集 ${newestCheckedAt}` : undefined}
+        >
+          <p className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">采集新鲜度</p>
+          <p
+            className={cn(
+              "mt-0.5 text-lg font-semibold leading-tight truncate",
+              newestCheckedAt
+                ? dataStale
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-zinc-900 dark:text-zinc-100"
+                : "text-zinc-400 dark:text-zinc-500",
+            )}
+            title={newestCheckedAt ? `上次采集 ${formatHumanTime(newestCheckedAt)}` : undefined}
+          >
+            {newestCheckedAt
+              ? formatHumanTime(newestCheckedAt)
+              : trackedActive.length === 0
+                ? "—"
+                : "等待首采"}
+          </p>
+          <p
+            className={cn(
+              "mt-0.5 truncate text-[10px]",
+              dataStale ? "text-red-500 dark:text-red-400" : "text-zinc-400 dark:text-zinc-500",
+            )}
+          >
+            {newestCheckedAt
+              ? dataStale
+                ? "数据过期"
+                : "数据截至"
+              : trackedActive.length === 0
+                ? "未跟踪关键词"
+                : "等待首次采集"}
+          </p>
+        </div>
       </div>
-      <p
-        className={cn(
-          "mt-1.5 text-[11px]",
-          dataStale ? "text-red-500 dark:text-red-400" : "text-zinc-400 dark:text-zinc-500",
-        )}
-      >
-        {newestCheckedAt ? (
-          dataStale
-            ? `数据过期 · 上次采集 ${formatHumanTime(newestCheckedAt)}`
-            : `数据截至 ${formatHumanTime(newestCheckedAt)}`
-        ) : trackedActive.length === 0 ? (
-          "尚未跟踪关键词"
-        ) : (
-          "等待首次采集"
-        )}
-      </p>
     </div>
   );
+
+  // ④ 顶部「竞品概况」状态条（跟踪/压我方词/新上榜/跌出/停滞——只出现有值的事件）。
+  const competitorOverviewBlock = (
+    <div className="min-w-0">
+      <p className={STAGE_LABEL}>竞品概况</p>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className={cn(CHIP_BASE, "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400")}>
+          跟踪 {competitorTrackedTotal}
+        </span>
+        <span
+          className={cn(
+            CHIP_BASE,
+            pressuredTotal > 0
+              ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+              : "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+          )}
+          title="竞品压制我方词数合计（竞品 ≤200 且领先或我方未进榜）"
+        >
+          {pressuredTotal > 0 ? `压我方词 ${pressuredTotal}` : "暂无压制词"}
+        </span>
+        {gainedEvents > 0 && (
+          <span className={cn(CHIP_BASE, "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")}>
+            新上榜 +{gainedEvents}
+          </span>
+        )}
+        {droppedEvents > 0 && (
+          <span className={cn(CHIP_BASE, "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400")}>
+            跌出 {droppedEvents}
+          </span>
+        )}
+        {staleCompetitors > 0 && (
+          <span className={cn(CHIP_BASE, "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400")}>
+            停滞 {staleCompetitors}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+
+  const advantageWordsTotal = advantage?.advantageKeywords.length ?? 0;
+  const disadvantageWordsTotal = advantage?.disadvantageKeywords.length ?? 0;
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -898,42 +1002,66 @@ export function OverviewContent(props: OverviewContentProps) {
 
       {/* 第一行：三张卡（① 开发 / ② 发布 / ③ 上架；md 三列，窄屏堆叠） */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-        {/* ① 开发：三指标 + GitHub 活跃格子图 + repo 状态（卡底） */}
+        {/* ① 开发：四指标 + GitHub 活跃热力图 + repo 状态（卡底） */}
         <StageCard
           step="1"
           stepClass="bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400"
           title="开发"
-          lead="上次发布以来提交/PR、Issue 与活跃"
+          lead="上次发布以来提交/PR、Issue 与近 4 个月活跃"
           right={
-            repoGithubUrl ? (
-              <button
-                onClick={() => onOpenExternal(repoGithubUrl)}
-                className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-                title="打开 GitHub 仓库"
-              >
-                GitHub ↗
-              </button>
+            repoGithubUrl || project.hasGithubToken ? (
+              <div className="flex shrink-0 items-center gap-1.5 min-w-0">
+                {repoGithubUrl && (
+                  <button
+                    onClick={() => onOpenExternal(repoGithubUrl)}
+                    className="shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline"
+                    title="打开 GitHub 仓库"
+                  >
+                    GitHub ↗
+                  </button>
+                )}
+                {project.hasGithubToken ? (
+                  <span
+                    className="inline-flex shrink-0 items-center rounded-full bg-emerald-50 dark:bg-emerald-500/10 px-2 h-5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+                    title={
+                      project.githubSource
+                        ? `GitHub 凭证已配置（${project.githubSource === "global" ? "全局" : "项目覆盖"}），用于 PR/Issue/私有发布统计`
+                        : "GitHub 凭证已配置，用于 PR/Issue/私有发布统计"
+                    }
+                  >
+                    凭证就绪
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => onOpenSettings(project.id)}
+                    className="shrink-0 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 px-2 h-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400"
+                    title="未配置 GitHub 凭证（配置后可展示 PR/Issue 与私有/草案发布统计）"
+                  >
+                    去设置
+                  </button>
+                )}
+              </div>
             ) : undefined
           }
         >
           <div className="flex h-full flex-col gap-3 min-w-0">
-            {/* 指标卡：提交 / PR / 开放 Issue（等宽三列） */}
-            <div className="grid grid-cols-3 gap-1.5 min-w-0">
+            {/* 指标卡：提交 / PR / 开放 Issue / 上次提交（等宽四列） */}
+            <div className="grid grid-cols-4 gap-1.5 min-w-0">
               <MiniMetric
                 label="提交"
                 value={pendingCommits != null ? String(pendingCommits) : "—"}
-                sub="自上次发布以来"
+                sub="发布以来"
                 muted={pendingCommits == null}
                 title={
                   pendingCommits != null
-                    ? `当前发布候选（${releaseDraft?.tag || ""}）收集的提交数`
+                    ? `自上次发布（${releaseDraft?.tag || "当前候选"}）以来收集的提交数`
                     : "暂无发布素材（生成文案后统计）"
                 }
               />
               <MiniMetric
                 label="PR"
                 value={repoPulls != null ? String(repoPulls) : "—"}
-                sub={repoSinceTag ? `自 ${repoSinceTag}` : "GitHub 当前 open"}
+                sub={repoSinceTag ? `自 ${repoSinceTag}` : repoPulls != null ? "当前 open" : undefined}
                 muted={repoPulls == null}
                 title={
                   repoPulls != null && repoSinceTag
@@ -954,12 +1082,29 @@ export function OverviewContent(props: OverviewContentProps) {
                     : "配置 GitHub 凭证后展示"
                 }
               />
+              <MiniMetric
+                label="上次提交"
+                value={lastCommitIso ? formatHumanTime(lastCommitIso) : "—"}
+                sub={lastCommitSub ?? undefined}
+                muted={lastCommitIso == null}
+                title={
+                  repoHeadDate
+                    ? `HEAD 提交于 ${repoHeadDate}${repoHeadSha ? ` · ${repoHeadSha.slice(0, 7)}` : ""}`
+                    : lastActivityDay
+                      ? `最近活跃日 ${lastActivityDay}`
+                      : "暂无提交记录（配置本地仓库后展示）"
+                }
+              />
             </div>
 
-            {/* GitHub 活跃：覆盖 ≥4 周 → 近 6 周格子图；近几天 → 柱状；无数据 → 空态 */}
-            <GitHubActivityBlock commits={activityData?.commits} />
+            {/* GitHub 活跃：近 4 个月热力图（旧 ProjectActivityCard 原样迁移），无数据 → 空态 */}
+            <GitHubActivityBlock
+              commits={activityData?.commits}
+              releases={activityData?.releases}
+            />
 
-            {/* repo HEAD/分支/工作区 + 凭证（卡底次要行，仓库侧信息集中在此） */}
+            {/* repo HEAD/分支/工作区（卡底次要行，仓库侧信息集中在此；GitHub 凭证
+                就绪/去设置已在标题行右侧，避免重复） */}
             <div className="mt-auto border-t border-zinc-100 dark:border-zinc-800 pt-2 space-y-1.5 min-w-0">
               {project.repo ? (
                 <div className="flex items-center gap-1.5 flex-wrap min-w-0">
@@ -976,41 +1121,20 @@ export function OverviewContent(props: OverviewContentProps) {
                       : project.repo.remoteUrl || "—"}
                   </span>
                   {project.repo.dirty && <StatusChip label="工作区有改动" tone="amber" />}
-                  {project.repo.headDate && (
-                    <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                      上次提交 {formatHumanTime(project.repo.headDate)}
-                    </span>
-                  )}
                 </div>
               ) : (
                 <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
                   未配置本地仓库路径
                 </p>
               )}
-              <div className="flex items-center gap-1.5 min-w-0">
-                <CredentialBadge
-                  kind="github"
-                  enabled={Boolean(project.hasGithubToken)}
-                  projectId={project.id}
-                  source={project.githubSource}
-                />
-                {!project.hasGithubToken && (
-                  <button
-                    onClick={() => onOpenSettings(project.id)}
-                    className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline shrink-0"
-                  >
-                    去设置
-                  </button>
-                )}
-                {repoMetricError && (
-                  <span
-                    className="min-w-0 flex-1 truncate text-[10px] text-red-500 dark:text-red-400"
-                    title={repoMetricError}
-                  >
-                    {repoMetricError}
-                  </span>
-                )}
-              </div>
+              {repoMetricError && (
+                <p
+                  className="truncate text-[10px] text-red-500 dark:text-red-400"
+                  title={repoMetricError}
+                >
+                  {repoMetricError}
+                </p>
+              )}
               {project.trafficError && (
                 <p
                   className="truncate text-[11px] text-red-500 dark:text-red-400"
@@ -1124,18 +1248,36 @@ export function OverviewContent(props: OverviewContentProps) {
           </div>
         </StageCard>
 
-        {/* ③ 上架：一行式紧凑呈现（商店版本/目标审核/构建/更新于/凭证提示） */}
+        {/* ③ 上架：版本不一致提示 + 一行式紧凑小格（商店版本/目标审核/构建/评价/商店链接/更新于） */}
         <StageCard
           step="3"
           stepClass="bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
           title="上架"
-          lead="商店版本、构建与凭证"
+          lead="商店版本、审核、评价与构建"
         >
-          <div className="flex h-full min-w-0 flex-col justify-center gap-2.5">
+          <div className="flex h-full min-w-0 flex-col gap-2.5">
+            {versionMismatch && (
+              <div
+                className={cn(
+                  "flex items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] leading-snug",
+                  versionMismatch.downgrade
+                    ? "border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400"
+                    : "border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-500",
+                )}
+                title="商店当前上架版本与本地草稿目标版本不一致"
+              >
+                <span aria-hidden="true" className="shrink-0 leading-none">ⓘ</span>
+                <span className="min-w-0">
+                  商店已上架 v{versionMismatch.live}，草稿目标 v{versionMismatch.target}
+                  {versionMismatch.downgrade ? "（目标低于当前版本，注意核对）" : "（尚未上架，待提审）"}
+                </span>
+              </div>
+            )}
+
             <div className="flex min-w-0 flex-wrap items-stretch gap-1.5">
               <FactCell
                 label="商店当前版本"
-                title={liveStoreVersion ? `App Store 当前上架 v${liveStoreVersion}` : "尚未获取到商店版本"}
+                title={liveStoreVersion ? `App Store 当前上架 v${liveStoreVersion}` : "尚未获取到商店版本（未配置或公开商店查询失败）"}
               >
                 <span
                   className={cn(
@@ -1152,7 +1294,12 @@ export function OverviewContent(props: OverviewContentProps) {
               {targetVersion && effectiveVersionStatus && (
                 <FactCell
                   label="目标 / 审核"
-                  title={`目标版本 v${targetVersion} · ${effectiveVersionStatus.label}`}
+                  title={
+                    `目标版本 v${targetVersion} · ${effectiveVersionStatus.label}` +
+                    (targetAscVersion?.createdDate
+                      ? ` · ASC 版本创建于 ${formatHumanTime(targetAscVersion.createdDate)}`
+                      : "")
+                  }
                 >
                   <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
                   <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
@@ -1161,13 +1308,49 @@ export function OverviewContent(props: OverviewContentProps) {
                 </FactCell>
               )}
 
+              {storeReviews !== undefined && (
+                <FactCell
+                  label="商店评价"
+                  title={
+                    storeReviews && storeReviews.total > 0
+                      ? `App Store 客户评论：累计样本 ${storeReviews.total} 条 · 平均 ★${storeReviews.average ?? "—"} · 近 30 天 ${storeReviews.recent30} 条` +
+                        (storeReviews.lastSyncedAt
+                          ? ` · 同步于 ${formatHumanTime(storeReviews.lastSyncedAt)}`
+                          : "")
+                      : "尚未同步商店评论（去评论页同步后展示评分与评论数）"
+                  }
+                >
+                  {storeReviews && storeReviews.total > 0 ? (
+                    <>
+                      <span className="text-[12px] font-semibold text-amber-600 dark:text-amber-400">
+                        ★ {storeReviews.average ?? "—"}
+                      </span>
+                      <span className="text-[11px] text-zinc-600 dark:text-zinc-300">
+                        {storeReviews.total} 条
+                      </span>
+                    </>
+                  ) : (
+                    <LinkComponent
+                      to="/reviews"
+                      className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+                      title="去评论页同步商店评论"
+                    >
+                      暂无评论 · 去评论页 ↗
+                    </LinkComponent>
+                  )}
+                </FactCell>
+              )}
+
               {ascConfigured && (
                 <FactCell
-                  label="构建"
+                  label="最新构建"
                   title={
-                    latestBuild?.processingState
-                      ? `最新构建 ${latestBuild.version || ""} · ${latestBuild.processingState}`
-                      : undefined
+                    latestBuild
+                      ? `最新构建 ${latestBuild.version || "?"} · ${latestBuild.processingState || "状态未知"}` +
+                        (latestBuild.uploadedDate
+                          ? ` · 上传于 ${formatHumanTime(latestBuild.uploadedDate)}`
+                          : "")
+                      : "ASC 尚未同步构建"
                   }
                 >
                   {latestBuild ? (
@@ -1197,8 +1380,20 @@ export function OverviewContent(props: OverviewContentProps) {
                 </FactCell>
               )}
 
+              {storeLinks[0] && (
+                <FactCell label="App 商店" title={storeLinks[0].name}>
+                  <button
+                    onClick={() => onOpenExternal(storeLinks[0].url)}
+                    className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline"
+                    title={`${storeLinks[0].name}（打开商店页面）`}
+                  >
+                    查看商店 ↗
+                  </button>
+                </FactCell>
+              )}
+
               {ascInfo?.fetchedAt && (
-                <FactCell label="信息更新于">
+                <FactCell label="信息更新于" title="App Store Connect 数据（版本/构建）抓取时间">
                   <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
                     {formatHumanTime(ascInfo.fetchedAt)}
                   </span>
@@ -1247,7 +1442,7 @@ export function OverviewContent(props: OverviewContentProps) {
         step="4"
         stepClass="bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400"
         title="竞品与表现"
-        lead="关键词表现、竞品压制面与优势/劣势词（整行宽卡）"
+        lead="关键词表现与竞品概况、TOP3 与占优商店、优势/劣势词"
         right={
           competitorHref ? (
             <LinkComponent
@@ -1260,58 +1455,32 @@ export function OverviewContent(props: OverviewContentProps) {
         }
       >
         {hasCompetitorData ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 min-w-0">
-            {/* 左栏：关键词表现 + 竞品压制概况 */}
-            <div className="min-w-0 space-y-3">
+          <div className="min-w-0 space-y-4">
+            {/* 顶部：关键词表现 / 竞品概况 并排状态条（一眼总数） */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 min-w-0">
               {keywordPerformanceBlock}
-              <div className="border-t border-zinc-100 dark:border-zinc-800 pt-2.5 min-w-0">
-                <p className={STAGE_LABEL}>竞品压制概况</p>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <span className={cn(CHIP_BASE, "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400")}>
-                    跟踪 {competitorTrackedTotal}
-                  </span>
-                  <span
-                    className={cn(
-                      CHIP_BASE,
-                      pressuredTotal > 0
-                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                        : "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-                    )}
-                    title="竞品压制我方词数合计（竞品 ≤200 且领先或我方未进榜）"
-                  >
-                    {pressuredTotal > 0 ? `压我方词 ${pressuredTotal}` : "暂无压制词"}
-                  </span>
-                  {gainedEvents > 0 && (
-                    <span className={cn(CHIP_BASE, "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")}>
-                      新上榜 +{gainedEvents}
-                    </span>
-                  )}
-                  {droppedEvents > 0 && (
-                    <span className={cn(CHIP_BASE, "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400")}>
-                      跌出 {droppedEvents}
-                    </span>
-                  )}
-                  {staleCompetitors > 0 && (
-                    <span className={cn(CHIP_BASE, "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400")}>
-                      停滞 {staleCompetitors}
+              {competitorOverviewBlock}
+            </div>
+
+            {/* 中部：TOP3 竞品（列表式）| 我方占优商店（领先 n/m 列表） */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 border-t border-zinc-100 dark:border-zinc-800 pt-3.5 min-w-0">
+              <div className="min-w-0">
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className={STAGE_LABEL}>TOP3 竞品</p>
+                  {competitorEntries.length > 3 && (
+                    <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                      另有 {competitorEntries.length - 3} 个
                     </span>
                   )}
                 </div>
-              </div>
-            </div>
-
-            {/* 右栏：TOP3 竞品 + 我方占优商店 + 优势/劣势词（能力②） */}
-            <div className="min-w-0 space-y-3">
-              <div className="min-w-0">
-                <p className={STAGE_LABEL}>TOP3 竞品</p>
-                <div className="mt-1 space-y-0.5">
+                <ul className="mt-2 space-y-1 min-w-0">
                   {competitorEntries.slice(0, 3).map((entry, index) => (
-                    <div key={`${entry.name}-${index}`} className="flex items-center gap-2 min-w-0">
-                      <span className="w-3.5 shrink-0 text-[10px] font-mono text-zinc-400 dark:text-zinc-500">
+                    <li key={`${entry.name}-${index}`} className="flex items-center gap-2 py-0.5 min-w-0">
+                      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-violet-50 dark:bg-violet-500/10 text-[10px] font-semibold text-violet-600 dark:text-violet-400">
                         {index + 1}
                       </span>
                       <span
-                        className="min-w-0 flex-1 truncate text-[11px] text-zinc-800 dark:text-zinc-200"
+                        className="min-w-0 flex-1 truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-200"
                         title={entry.name}
                       >
                         {entry.name}
@@ -1319,99 +1488,120 @@ export function OverviewContent(props: OverviewContentProps) {
                       <span className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500">
                         指数 {entry.index}
                       </span>
-                      <span
-                        className={cn(
-                          CHIP_BASE,
-                          "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400",
-                        )}
-                        title="该竞品压制我方的关键词数"
-                      >
-                        压 {entry.pressuredCount} 词
-                      </span>
-                    </div>
+                      {entry.pressuredCount > 0 && (
+                        <span
+                          className={cn(CHIP_BASE, "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400")}
+                          title="该竞品压制我方的关键词数"
+                        >
+                          压 {entry.pressuredCount} 词
+                        </span>
+                      )}
+                    </li>
                   ))}
-                  {competitorEntries.length > 3 && (
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                      …还有 {competitorEntries.length - 3} 个竞品
-                    </p>
+                  {competitorEntries.length === 0 && (
+                    <li className="text-xs text-zinc-400 dark:text-zinc-500">暂无跟踪竞品</li>
                   )}
-                </div>
+                </ul>
               </div>
 
-              {dominantStorefronts.length > 0 && (
-                <div className="border-t border-zinc-100 dark:border-zinc-800 pt-2.5 min-w-0">
-                  <p className={STAGE_LABEL}>我方占优商店</p>
-                  <ul className="mt-1 space-y-0.5">
+              <div className="min-w-0">
+                <p className={STAGE_LABEL}>我方占优商店</p>
+                {dominantStorefronts.length > 0 ? (
+                  <ul className="mt-2 grid grid-cols-1 gap-1.5 min-w-0">
                     {dominantStorefronts.map((item) => (
-                      <li key={item.storefront} className="flex items-center gap-2 min-w-0">
-                        <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-800 dark:text-zinc-200">
+                      <li
+                        key={item.storefront}
+                        className="flex items-center gap-2 rounded-lg border border-zinc-100 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-800/40 px-2.5 py-1.5 min-w-0"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-800 dark:text-zinc-200">
                           {storefrontDisplayName(item.storefront)}
                         </span>
                         <span
-                          className={cn(CHIP_BASE, "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")}
+                          className="shrink-0 font-mono text-[11px] font-semibold text-emerald-600 dark:text-emerald-400"
                           title={`领先 ${item.leading}/${item.compared} 个可比竞品（被压 ${item.trailing} 个）`}
                         >
-                          领先 {item.leading}/{item.compared} 竞品
+                          领先 {item.leading}/{item.compared}
                         </span>
                       </li>
                     ))}
                   </ul>
-                </div>
-              )}
-
-              {(advantageWords.length > 0 || disadvantageWords.length > 0) && (
-                <div className="border-t border-zinc-100 dark:border-zinc-800 pt-2.5 min-w-0 space-y-1.5">
-                  {advantageWords.length > 0 && (
-                    <div className="min-w-0">
-                      <p className={STAGE_LABEL}>优势词</p>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {advantageWords.map((word) => (
-                          <span
-                            key={`${word.language}-${word.keyword}`}
-                            className={cn(CHIP_BASE, "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")}
-                            title={translationFor(word.language, word.keyword) || undefined}
-                          >
-                            {word.keyword} · 领先 {word.wins}/{word.wins + word.losses}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {disadvantageWords.length > 0 && (
-                    <div className="min-w-0">
-                      <p className={STAGE_LABEL}>劣势词</p>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {disadvantageWords.map((word) => (
-                          <span
-                            key={`${word.language}-${word.keyword}`}
-                            className={cn(CHIP_BASE, "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400")}
-                            title={translationFor(word.language, word.keyword) || undefined}
-                          >
-                            {word.keyword} · 被压 {word.losses}/{word.wins + word.losses}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                ) : (
+                  <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">
+                    暂无占优商店（该平台未见领先名次）
+                  </p>
+                )}
+              </div>
             </div>
+
+            {/* 下部：优势 / 劣势关键词 左右对比（悬停看领先/被压竞品数） */}
+            {(advantageWords.length > 0 || disadvantageWords.length > 0) && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 border-t border-zinc-100 dark:border-zinc-800 pt-3.5 min-w-0">
+                {advantageWords.length > 0 && (
+                  <div className="min-w-0">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className={STAGE_LABEL}>优势关键词</p>
+                      {advantageWordsTotal > advantageWords.length && (
+                        <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                          共 {advantageWordsTotal} 词
+                        </span>
+                      )}
+                    </div>
+                    <ul className="mt-2 flex flex-wrap gap-1.5">
+                      {advantageWords.map((word) => (
+                        <li
+                          key={`${word.language}-${word.keyword}`}
+                          className={cn(CHIP_BASE, "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")}
+                          title={`${translationFor(word.language, word.keyword) ? `${translationFor(word.language, word.keyword)} · ` : ""}领先 ${word.wins}/${word.wins + word.losses} 个竞品，被压 ${word.losses} 个`}
+                        >
+                          {word.keyword}
+                          <span className="ml-1 opacity-80">领先 {word.wins}/{word.wins + word.losses}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {disadvantageWords.length > 0 && (
+                  <div className="min-w-0">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className={STAGE_LABEL}>劣势关键词</p>
+                      {disadvantageWordsTotal > disadvantageWords.length && (
+                        <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                          共 {disadvantageWordsTotal} 词
+                        </span>
+                      )}
+                    </div>
+                    <ul className="mt-2 flex flex-wrap gap-1.5">
+                      {disadvantageWords.map((word) => (
+                        <li
+                          key={`${word.language}-${word.keyword}`}
+                          className={cn(CHIP_BASE, "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400")}
+                          title={`${translationFor(word.language, word.keyword) ? `${translationFor(word.language, word.keyword)} · ` : ""}被压 ${word.losses}/${word.wins + word.losses} 个竞品`}
+                        >
+                          {word.keyword}
+                          <span className="ml-1 opacity-80">被压 {word.losses}/{word.wins + word.losses}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 min-w-0">
             <div className="min-w-0">{keywordPerformanceBlock}</div>
-            <div className="min-w-0">
+            <div className="flex min-w-0 flex-col justify-center">
               <p className={STAGE_LABEL}>竞品</p>
-              <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">尚未查看竞品</p>
+              <p className="mt-1.5 text-xs text-zinc-400 dark:text-zinc-500">尚未查看竞品</p>
               {competitorHref ? (
                 <LinkComponent
                   to={competitorHref}
-                  className="mt-1.5 inline-block text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+                  className="mt-2 inline-block text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
                 >
                   去竞品页 →
                 </LinkComponent>
               ) : (
-                <span className="mt-1.5 block text-[11px] text-zinc-300 dark:text-zinc-600">
+                <span className="mt-2 block text-[11px] text-zinc-300 dark:text-zinc-600">
                   去竞品页
                 </span>
               )}
