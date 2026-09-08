@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
+import type { Review } from "@appilot-labs/appilot-core/review-collector";
 import { useProject } from "../../stores/project";
+import { reviewStats } from "../../lib/review-stats";
 import { OverviewContent } from "./OverviewContent";
+import type { StoreReviewSummary } from "./OverviewContent";
 import {
   aggregateCompetitorOverview,
   computeCompetitorAdvantage,
@@ -56,13 +59,17 @@ export function OverviewPage() {
     sinceIso: string | null;
     error?: string;
   } | null>(null);
-  // ①开发 的 GitHub 活跃数据（每日提交数，近 120 天，键 = 本地 YYYY-MM-DD）由
-  // OverviewContent 的 activityData 消费；取数仍走 activity:commits（原
-  // ProjectActivityCard 内部取数，现收编到阶段卡：≥4 周覆盖 → 格子图，近几天 → 柱状）。
-  const [activityData, setActivityData] = useState<{
-    commits: Record<string, number>;
-    releases: { tag: string; publishedAt: string | null }[];
-  } | null>(null);
+  // ①开发 的 GitHub 活跃数据（每日提交数，近 120 天，键 = 本地 YYYY-MM-DD）与
+  // 发布日（release 黄框标注）。取数仍走 activity:commits + release:list（原
+  // ProjectActivityCard 内部取数，现收编到阶段卡：近 4 个月热力图，无数据 → 空态）。
+  // 拆成两个 state：commits 由本组件单独取数；releases 复用 release:list 结果
+  // （发布日黄框标注源），渲染期合并，避免跨 effect 相互覆盖。
+  const [activityCommits, setActivityCommits] = useState<Record<string, number> | null>(null);
+  const [activityReleases, setActivityReleases] = useState<
+    { tag: string; publishedAt: string | null }[]
+  >([]);
+  // ③上架 的商店评价摘要（reviews:list → reviewStats 聚合）；null = 无数据。
+  const [storeReviews, setStoreReviews] = useState<StoreReviewSummary | null>(null);
   const [briefState, setBriefState] = useState<{
     status: "idle" | "loading" | "ready" | "error";
     suggestions: BriefSuggestion[];
@@ -120,11 +127,26 @@ export function OverviewPage() {
           publishedTags,
         });
         setReleaseSince(releaseSinceFromResult(result));
+        // 发布日黄框标注源：真实发布（非 GitHub 草稿且有 publishedAt）。
+        setActivityReleases(
+          (result?.releases || [])
+            .filter(
+              (item: any) =>
+                item?.githubDraft !== true &&
+                item?.publishedAt &&
+                (item?.tag || item?.name),
+            )
+            .map((item: any) => ({
+              tag: String(item.tag || item.name || ""),
+              publishedAt: item.publishedAt || null,
+            })),
+        );
       } catch {
         if (cancelled) return;
         setReleaseOverview(null);
         setDraftStatusCtx({ currentTag: null, publishedTags: [] });
         setReleaseSince(null);
+        setActivityReleases([]);
       }
     };
     void load();
@@ -157,20 +179,67 @@ export function OverviewPage() {
   // 无 window.appilot（DSH 等宿主自行注入 activityData）→ 保持 null，组件侧隐藏活跃块。
   useEffect(() => {
     if (!project?.id) {
-      setActivityData(null);
+      setActivityCommits(null);
       return;
     }
     let cancelled = false;
     const pending: Promise<Record<string, number>> | undefined = (window as any).appilot?.activity?.commits(project.id);
     if (pending && typeof pending.then === "function") {
       pending
-        .then((commits) => { if (!cancelled) setActivityData({ commits: commits || {}, releases: [] }); })
-        .catch(() => { if (!cancelled) setActivityData(null); });
+        .then((commits) => { if (!cancelled) setActivityCommits(commits || {}); })
+        .catch(() => { if (!cancelled) setActivityCommits(null); });
     } else {
-      setActivityData(null);
+      setActivityCommits(null);
     }
     return () => { cancelled = true; };
   }, [project?.id]);
+
+  // ③上架 的商店评价（评分★/评论数/最近同步时间）：reviews:list（既有通道）→
+  // reviewStats 聚合；无数据 → null。监听 data-changed(reviews/projects) 刷新。
+  useEffect(() => {
+    if (!product?.id) {
+      setStoreReviews(null);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const pending = (window as any).appilot?.reviews?.list?.(product.id!);
+        if (!pending || typeof pending.then !== "function") {
+          if (!cancelled) setStoreReviews(null);
+          return;
+        }
+        const byCountry = await pending;
+        if (cancelled) return;
+        const all: Review[] = [];
+        let lastSyncedAt: string | null = null;
+        for (const entry of Object.values((byCountry as Record<string, any>) || {})) {
+          for (const item of entry?.items || []) all.push(item);
+          const fetchedAt = entry?.lastFetchedAt || null;
+          if (
+            fetchedAt &&
+            (!lastSyncedAt || new Date(fetchedAt).getTime() > new Date(lastSyncedAt).getTime())
+          ) {
+            lastSyncedAt = fetchedAt;
+          }
+        }
+        const stats = reviewStats(all);
+        setStoreReviews({ ...stats, lastSyncedAt });
+      } catch {
+        if (!cancelled) setStoreReviews(null);
+      }
+    };
+    void load();
+    const handler = (e: Event) => {
+      const scope = (e as CustomEvent).detail;
+      if (scope === "reviews" || scope === "projects") void load();
+    };
+    window.addEventListener("appilot:data-changed", handler);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("appilot:data-changed", handler);
+    };
+  }, [product?.id]);
 
   // 竞品概览 + 竞品优势（能力②）：项目 + 当前产品就绪时调 competitors:overview，
   // profiles 同时喂给 aggregateCompetitorOverview（④概览）与
@@ -340,6 +409,13 @@ export function OverviewPage() {
     [project?.id, recordBriefAction, navigate, releaseOverview?.draft?.tag],
   );
 
+  // 活跃数据 = commits（activity:commits）∪ releases（release:list 发布日标注）。
+  // commits 未取到（null，如无 window.appilot）→ 整体 undefined，组件侧隐藏活跃块。
+  const activityData =
+    activityCommits === null
+      ? undefined
+      : { commits: activityCommits, releases: activityReleases };
+
   return (
     <OverviewContent
       project={project ?? null}
@@ -347,7 +423,8 @@ export function OverviewPage() {
       releaseOverview={releaseOverview}
       ascInfo={ascInfo}
       storeCurrentVersion={storeCurrentVersion}
-      activityData={activityData ?? undefined}
+      activityData={activityData}
+      storeReviews={storeReviews}
       drafts={drafts}
       repoMetrics={repoMetrics}
       competitorSummary={competitorSummary}
