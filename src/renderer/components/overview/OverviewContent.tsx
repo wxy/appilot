@@ -136,11 +136,13 @@ export function OverviewContent(props: OverviewContentProps) {
       ),
     ),
   );
-  // 平台暂停的关键词不计入分布（矩阵仍显示，调度不采集）。
-  const distributionKeywords = (product.trackedKeywords || []).filter(
-    (k: any) =>
-      k.status !== "paused" &&
-      !(k.pausedPlatforms || []).includes(product.platform),
+  // 分布词源 = 项目级共享关键词池（与排名页「排名分布」同源）。不能取
+  // product.trackedKeywords：多产品项目里非主产品副本可能为空（DB product_records
+  // 无该平台的词，如 ai-pulse-macos 的 iOS 产品 0 词但快照存在），按产品副本取数
+  // 会导致 iOS 分布整列空白。平台维度由当前产品的 rankSnapshots/supportedLanguages
+  // 表达；平台暂停的关键词不计入分布（矩阵仍显示，调度不采集）。
+  const distributionKeywords = trackedActive.filter(
+    (k) => !(k.pausedPlatforms || []).includes(product.platform),
   );
   const distributionData: {
     storefront: string;
@@ -621,7 +623,9 @@ export function OverviewContent(props: OverviewContentProps) {
                   >
                     #{row.bestRank}
                   </ValueFlash>
-                  <span className="shrink-0 w-11 text-right text-[11px]">
+                  {/* 增长/名次变化：按内容收敛宽度、右对齐。固定 w-11 会为 ▲▼/— 这类
+                      短内容预留大片空白列，挤压左侧可截断的关键词列。 */}
+                  <span className="shrink-0 whitespace-nowrap text-right text-[11px]">
                     {row.trend === "up" && (
                       <span className="text-emerald-600 dark:text-emerald-400">▲{row.delta}</span>
                     )}
