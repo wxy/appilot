@@ -19,6 +19,18 @@ import { taskCenterTasksFromDb, taskCenterOverviewFromDb } from "../task-center-
 import { clearElectronFailures, mirrorTasksToDb } from "../task-db-sync";
 import { buildRankCoverageMatrix } from "../rank-matrix";
 import { computeExecutionStats, EXEC_STATS_WINDOW_MS } from "../execution-stats";
+import {
+  diskSchedulerFingerprint,
+  deriveSchedulerManager,
+  type SchedulerManagerStatus,
+} from "../scheduler-fingerprint";
+import {
+  ensureSchedulerTracked,
+  waitSchedulerDown,
+  clearSpawnRecord,
+  getSpawnRecord,
+  currentDaemonPid,
+} from "../daemon-manager";
 
 // 租约心跳新鲜度窗口（与各壳 acquire TTL 一致 60s；daemon 心跳 15s）。
 const DAEMON_HEARTBEAT_TTL_MS = 60_000;
@@ -43,6 +55,46 @@ function daemonStatus(): { running: boolean; leaderId: string | null; heartbeatA
   } catch {
     return { running: false, leaderId: null, heartbeatAt: null };
   }
+}
+
+/** daemon socket 路径（与共享 DB 同目录，包内约定一致）。 */
+function schedulerSocketPath(): string {
+  try {
+    const { defaultSocketPath } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
+    const { defaultDbPath } = require("@appilot-labs/appilot-headless") as typeof import("@appilot-labs/appilot-headless");
+    return defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath());
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * schedulerManager（每次 status 实时计算）：
+ * - 磁盘指纹：resolveSchedulerCli() 入口文件内容 SHA-1（文件极小，代价可忽略）；
+ * - 运行指纹：仅当「本壳拉起并确认存活」的 daemon 记录 pid 与当前 live hello pid
+ *   吻合时取记录值——否则 null（历史/非本壳拉起/自重启过 → unknown）。
+ */
+async function computeSchedulerManager(): Promise<SchedulerManagerStatus> {
+  const leader = currentLeader();
+  const daemon = daemonStatus();
+  let runningFingerprint: string | null = null;
+  if (daemon.running) {
+    const record = getSpawnRecord();
+    if (record && record.pid > 0) {
+      const socketPath = schedulerSocketPath();
+      const livePid = socketPath ? await currentDaemonPid(socketPath) : null;
+      if (livePid != null && livePid === record.pid) {
+        runningFingerprint = record.fingerprint;
+      }
+    }
+  }
+  return deriveSchedulerManager({
+    daemonRunning: daemon.running,
+    shellRunning: leader === "electron",
+    userStopped: isTaskCenterStopped(),
+    runningFingerprint,
+    diskFingerprint: diskSchedulerFingerprint(),
+  });
 }
 
 function computeTimeline(
@@ -135,6 +187,9 @@ export function registerSchedulerHandlers(): void {
       accelRemainingMs,
       leader: currentLeader(),
       daemon: daemonStatus(),
+      // 调度器指纹监测：运行 vs 磁盘 版本比对（mismatch → 提示重启；unknown →
+      // 历史 daemon 或磁盘不可得 → 建议重启一次纳入监测）。
+      schedulerManager: await computeSchedulerManager(),
       // iTunes Search 403 熔断状态（自动采集暂停提示用）。
       itunesSearchBlock: itunesSearchBlockState(s),
       ...computeRankSchedulerStatus(tasks, now),
@@ -320,18 +375,32 @@ export function registerSchedulerHandlers(): void {
   ipcMain.handle("scheduler:daemonStart", async () => {
     // 1) 恢复本壳 fallback（先清除停止标记——若 daemon 拉起失败仍有壳兜底）
     enableTaskScheduler();
-    // 2) 确保 daemon 在跑（在跑则复用；未跑 spawn detached；单例仲裁自动处理）
+    // 2) 确保 daemon 在跑（在跑则复用；未跑 spawn detached；单例仲裁自动处理）。
+    //    由我们拉起并确认存活时记录 { pid, 磁盘指纹 }（scheduler:status 用它
+    //    推导 schedulerManager.runningFingerprint）。
     try {
-      const { ensureScheduler, defaultSocketPath, resolveSchedulerCli } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
+      const { defaultSocketPath, resolveSchedulerCli } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
       const { defaultDbPath } = require("@appilot-labs/appilot-headless") as typeof import("@appilot-labs/appilot-headless");
       const cli = resolveSchedulerCli();
-      const ok = await ensureScheduler({
-        socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
+      const socketPath = defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath());
+      // spawn 时刻的磁盘指纹：同时写入 daemon env（预留自报）并作为运行指纹候选。
+      const fingerprint = diskSchedulerFingerprint(cli ? () => cli : null);
+      const res = await ensureSchedulerTracked({
+        socketPath,
         spawnCommand: cli ? [process.execPath, cli] : undefined,
+        fingerprint,
         timeoutMs: 5000,
         log: (m) => log.info(`appilot: ${m}`),
       });
-      return { ok, stopped: false };
+      return {
+        ok: res.ok,
+        stopped: false,
+        spawned: res.spawned,
+        pid: res.pid,
+        // daemon 已在本调用确认存活（复用旧 daemon 时为 null → unknown）。
+        fingerprint: res.ok && res.spawned ? fingerprint : null,
+        error: res.error,
+      };
     } catch (err: any) {
       return { ok: false, error: err?.message || String(err) };
     }
@@ -349,6 +418,13 @@ export function registerSchedulerHandlers(): void {
     }
     // 本壳 fallback 一并暂停——避免 daemon 让位后壳循环在下一 tick 接管（等于没停）
     stopTaskScheduler();
+    // 等 daemon 进程退出（socket 移除）再返回——「重启」按钮的 stop→start 顺序
+    // 依赖此保证：立即 start 不会复用到正在退出的旧 daemon。
+    if (daemonStopped) {
+      await waitSchedulerDown(schedulerSocketPath(), 3000).catch(() => undefined);
+    }
+    // 运行中指纹记录随 daemon 停止失效（下次拉起会重记）。
+    clearSpawnRecord();
     log.info(`appilot: 任务中心停止完成（daemonStopped=${daemonStopped} leader=${leader}）`);
     return {
       ok: daemonStopped || leader !== "scheduler",
