@@ -184,6 +184,362 @@ export function aggregateCompetitorOverview(
   return { top, totalTracked: profiles.length, gained, dropped, stale: 0 };
 }
 
+/* ── 能力②：竞品优势聚合（我方占优商店 + 优势/劣势关键词，纯函数可单测） ── */
+
+/** 单个词 × 商店的对比 cell（≤200 在榜口径：双方都在榜才比较谁名次靠前）。 */
+export interface CompetitorAdvantageCell {
+  storefront?: string | null;
+  own?: number | null;
+  theirs?: number | null;
+}
+
+/** 单个竞品在某 (语言 × 关键词) 的竞争面。 */
+export interface CompetitorAdvantageFace {
+  language?: string | null;
+  keyword?: string | null;
+  ownBest?: number | null;
+  theirBest?: number | null;
+  cells?: CompetitorAdvantageCell[] | null;
+}
+
+/** computeCompetitorAdvantage 的入参 = competitors:overview 单条 profile 的形状。 */
+export interface CompetitorAdvantageProfile {
+  competitor?: { name?: string | null } | null;
+  intel?: { faces?: CompetitorAdvantageFace[] | null } | null;
+}
+
+export interface CompetitorAdvantageStorefront {
+  /** 商店代码（us/cn…，展示用 storefrontDisplayName）。 */
+  storefront: string;
+  /** 我方在该店名次领先的竞品数（N）。 */
+  leading: number;
+  /** 该店名次压制我方的竞品数。 */
+  trailing: number;
+  /** 该店有可比数据的竞品总数（M，显示为 领先于 N/M）。 */
+  compared: number;
+}
+
+export interface CompetitorAdvantageKeyword {
+  keyword: string;
+  language: string;
+  /** 我方名次更靠前的竞品数。 */
+  wins: number;
+  /** 压制我方（名次比我们靠前）的竞品数。 */
+  losses: number;
+}
+
+export interface CompetitorAdvantage {
+  /** 是否有任何可比对数据（任一 商店×竞品 或 词×竞品 比较存在）。 */
+  hasData: boolean;
+  /** 我方占优商店（leading > trailing），按净领先降序。 */
+  dominantStorefronts: CompetitorAdvantageStorefront[];
+  /** 我方名次优于多数竞品的关键词，按净优势降序。 */
+  advantageKeywords: CompetitorAdvantageKeyword[];
+  /** 被多数竞品压制/对方占优的关键词，按净劣势降序。 */
+  disadvantageKeywords: CompetitorAdvantageKeyword[];
+}
+
+/* ── ②发布卡：文案（storeSubmissionDrafts）行 ── */
+
+export type SubmissionDraftStatus = "current" | "published" | "draft";
+
+/** ②发布卡的一条「文案」：label + 更新时间 + 状态 + 语言进度分子（纯 props）。 */
+export interface SubmissionDraftRow {
+  /** 稳定 key（draft.id；缺失回退 projectId:tag）。 */
+  key: string;
+  /** 关联的发布 tag（跳转去发布页的口径）。 */
+  tag: string;
+  /** 展示 label：有 appVersion → v{version}，否则用 releaseTag。 */
+  label: string;
+  /** 文案最近更新时间（ISO；无 → null，排序置底）。 */
+  updatedAt: string | null;
+  /** 状态：当前（正在准备的发布候选）/ 已发布 / 草案。 */
+  status: SubmissionDraftStatus;
+  /** 已生成的 localizations 数（语言进度分子；0 = 未生成文案）。 */
+  languageCount: number;
+}
+
+/** submissionDraftRows 的判定上下文（宿主从 release:list 结果提供）。 */
+export interface SubmissionDraftContext {
+  /** 当前发布周期候选的 tag（release:list 的 latestDraft.tag）；判定「当前」。 */
+  currentTag?: string | null;
+  /** 已真实发布的 tag 列表；判定「已发布」。比对忽略前导 v 与大小写。 */
+  publishedTags?: Array<string | null | undefined> | null;
+}
+
+/** tag 归一化：去空白/小写/去前导 v（v1.0.0 ≡ 1.0.0）。 */
+function normalizeDraftTag(tag: string | null | undefined): string {
+  return String(tag || "").trim().toLowerCase().replace(/^v/, "");
+}
+
+/**
+ * 把 project.storeSubmissionDrafts（或 blob 注入的草稿列表）聚合成 ②发布卡的
+ * 纯 props 行：按 updatedAt 倒序；status 由 ctx（release:list 的 currentTag /
+ * publishedTags）判定 当前/已发布/草案。无草稿 → []。纯函数（无 window/IPC）。
+ */
+export function submissionDraftRows(
+  rawDrafts: any[] | null | undefined,
+  ctx?: SubmissionDraftContext | null,
+): SubmissionDraftRow[] {
+  if (!Array.isArray(rawDrafts) || rawDrafts.length === 0) return [];
+  const current = normalizeDraftTag(ctx?.currentTag);
+  const published = new Set<string>();
+  for (const tag of ctx?.publishedTags || []) {
+    const key = normalizeDraftTag(tag);
+    if (key) published.add(key);
+  }
+  const rows: SubmissionDraftRow[] = [];
+  const seen = new Set<string>();
+  for (const draft of rawDrafts) {
+    if (!draft || typeof draft !== "object") continue;
+    const tag = String(draft.releaseTag || draft.tag || "").trim();
+    const version = String(draft.appVersion || "").trim().replace(/^v/i, "");
+    if (!tag && !version) continue;
+    const key = draft.id || `${draft.projectId || "p"}:${tag || version}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const norm = normalizeDraftTag(tag);
+    const status: SubmissionDraftStatus =
+      current && norm === current
+        ? "current"
+        : published.has(norm)
+          ? "published"
+          : "draft";
+    rows.push({
+      key,
+      tag,
+      label: version ? `v${version}` : tag,
+      updatedAt:
+        typeof draft.updatedAt === "string" && draft.updatedAt ? draft.updatedAt : null,
+      status,
+      languageCount: Array.isArray(draft.localizations) ? draft.localizations.length : 0,
+    });
+  }
+  rows.sort((a, b) => {
+    if (!a.updatedAt) return 1;
+    if (!b.updatedAt) return -1;
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
+  return rows;
+}
+
+/* ── ①开发卡：GitHub 活跃格子图数据（activityData.commits 的近 N 周窗口） ── */
+
+/** 格子图的一天（date 为本地 YYYY-MM-DD）。 */
+export interface ActivityGridDay {
+  date: string;
+  count: number;
+}
+
+/** 格子图的一周列（周一开头；6 列 = 近 6 周）。 */
+export interface ActivityGridColumn {
+  weekStart: string;
+  days: ActivityGridDay[];
+}
+
+/** activityGridColumns 的产物（纯数据，渲染交给组件）。 */
+export interface ActivityGrid {
+  /** 近 N 个完整周（本周列最后）。 */
+  columns: ActivityGridColumn[];
+  /** 最早活跃日距今的天数（窗口内无提交 → null，调用方据此退化为柱状图）。 */
+  spanDays: number | null;
+  /** 窗口内提交总数。 */
+  total: number;
+}
+
+function activityLocalDayKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function activityLocalMonday(now: Date): Date {
+  const dow = now.getDay();
+  const daysToMonday = dow === 0 ? 6 : dow - 1;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysToMonday);
+}
+
+function activityDayDiffFrom(a: string, b: string): number {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const at = Date.UTC(ay, am - 1, ad);
+  const bt = Date.UTC(by, bm - 1, bd);
+  return Math.round((at - bt) / 86_400_000);
+}
+
+/**
+ * activityData.commits（键 = 本地 YYYY-MM-DD，值 = 当日提交数）→ GitHub 风格
+ * 格子图列数据：从本周周一起往前共 weeks 个完整周（周一→周日逐日取数，未来
+ * 日期按 0 计）。commits 缺失/无有效键 → null（调用方显示「无活跃数据」）。
+ *
+ * 展示判定由调用方做：spanDays ≥ 28（≥4 周覆盖）→ 格子图；否则只剩近几天 →
+ * 近 7 天柱状图。纯函数，无 window/Date.now 之外副作用。
+ */
+export function activityGridColumns(
+  commits: Record<string, number> | null | undefined,
+  weeks = 6,
+): ActivityGrid | null {
+  if (!commits || typeof commits !== "object") return null;
+  const counts = new Map<string, number>();
+  let hasKey = false;
+  for (const raw of Object.keys(commits)) {
+    const key = raw.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+    const count = Math.max(0, Number(commits[raw]) || 0);
+    if (count <= 0) continue;
+    counts.set(key, (counts.get(key) || 0) + count);
+    hasKey = true;
+  }
+  if (!hasKey) return null;
+
+  const now = new Date();
+  const today = activityLocalDayKey(now);
+  const monday = activityLocalMonday(now);
+  const weekCount = Math.max(1, Math.min(12, weeks));
+  const columns: ActivityGridColumn[] = [];
+  let total = 0;
+  let earliest: string | null = null;
+  for (let w = weekCount - 1; w >= 0; w -= 1) {
+    const weekStart = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - w * 7);
+    const days: ActivityGridDay[] = [];
+    for (let d = 0; d < 7; d += 1) {
+      const date = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + d);
+      const key = activityLocalDayKey(date);
+      const count = key <= today ? counts.get(key) || 0 : 0;
+      if (count > 0) {
+        total += count;
+        if (!earliest || key < earliest) earliest = key;
+      }
+      days.push({ date: key, count });
+    }
+    columns.push({ weekStart: activityLocalDayKey(weekStart), days });
+  }
+  return {
+    columns,
+    spanDays: earliest && earliest <= today ? activityDayDiffFrom(today, earliest) : null,
+    total,
+  };
+}
+
+/** ≤200 在榜口径下的单方判定：返回值是「我方对某竞品」的胜负。 */
+function onChart(rank: number | null | undefined): rank is number {
+  return typeof rank === "number" && Number.isFinite(rank) && rank > 0 && rank <= 200;
+}
+
+/**
+ * 能力②纯函数：跨全部竞品 profiles（competitors:overview 结果）聚合出——
+ * 1) 我方占优商店：按商店逐 cell 对比（双方 ≤200 才比高低；我方不在榜而竞品在榜记
+ *    该店被压），竞品级取多数胜负，输出 leading > trailing 的商店列表；
+ * 2) 优势/劣势关键词：按 (语言 × 关键词) 聚合「我方名次比多少竞品靠前 / 被多少竞品
+ *    压制」，各自列出领先多数竞品的词（wins > losses）与被多数压制的词
+ *    （losses > wins）。
+ *
+ * 约定：竞品不在榜（theirBest/theirs >200 或无采集）不构成对我方的压制，也不计为我方
+ * 「优势」——只把有真实名次的比较计入，避免用竞品缺数据来夸大我方优势。
+ *
+ * 无竞品/空数组 → null（与 aggregateCompetitorOverview 同约定）；有竞品但无任何可比
+ * 数据 → { hasData:false, …空数组 }。纯函数，无 window/IPC 依赖。
+ */
+export function computeCompetitorAdvantage(
+  profiles: CompetitorAdvantageProfile[] | null | undefined,
+): CompetitorAdvantage | null {
+  if (!Array.isArray(profiles) || profiles.length === 0) return null;
+
+  // 词级：keywordKey(language, keyword) → { wins, losses }（跨竞品累加）。
+  const keywordStats = new Map<string, { language: string; keyword: string; wins: number; losses: number }>();
+  // 商店级：storefront → per-competitor wins/losses。
+  const storefrontByCompetitor = new Map<string, Map<string, { wins: number; losses: number }>>();
+
+  for (const profile of profiles) {
+    const faces = profile?.intel?.faces;
+    if (!Array.isArray(faces)) continue;
+    for (const face of faces) {
+      const keyword = face?.keyword;
+      if (!keyword) continue;
+      const language = String(face?.language ?? "");
+      const ownBest = face?.ownBest ?? null;
+      const theirBest = face?.theirBest ?? null;
+
+      // 词级判定（face 级 best 名次；双方都要有采集判定基础）。
+      if (onChart(theirBest)) {
+        const stats = keywordStats.get(`${language}\u0000${keyword}`) || {
+          language,
+          keyword,
+          wins: 0,
+          losses: 0,
+        };
+        if (!onChart(ownBest) || ownBest > theirBest) stats.losses += 1;
+        else if (ownBest < theirBest) stats.wins += 1;
+        keywordStats.set(`${language}\u0000${keyword}`, stats);
+      }
+
+      // 商店级判定（cell 级名次）。
+      const cells = Array.isArray(face?.cells) ? face.cells : [];
+      for (const cell of cells) {
+        const storefront = cell?.storefront;
+        if (!storefront) continue;
+        const own = cell?.own ?? null;
+        const theirs = cell?.theirs ?? null;
+        let win = false;
+        let loss = false;
+        if (onChart(own) && onChart(theirs)) {
+          win = own < theirs;
+          loss = theirs < own;
+        } else if (onChart(theirs) && !onChart(own)) {
+          // 竞品在榜而我方不在榜 → 该词/该店被压。
+          loss = true;
+        }
+        if (!win && !loss) continue;
+        const per = storefrontByCompetitor.get(storefront) || new Map<string, { wins: number; losses: number }>();
+        const acc = per.get(profile?.competitor?.name || "") || { wins: 0, losses: 0 };
+        if (win) acc.wins += 1;
+        if (loss) acc.losses += 1;
+        per.set(profile?.competitor?.name || "", acc);
+        storefrontByCompetitor.set(storefront, per);
+      }
+    }
+  }
+
+  const dominantStorefronts: CompetitorAdvantageStorefront[] = [];
+  for (const [storefront, per] of storefrontByCompetitor) {
+    let leading = 0;
+    let trailing = 0;
+    let compared = 0;
+    for (const acc of per.values()) {
+      if (acc.wins + acc.losses === 0) continue;
+      compared += 1;
+      if (acc.wins > acc.losses) leading += 1;
+      else if (acc.losses > acc.wins) trailing += 1;
+    }
+    if (compared === 0) continue;
+    if (leading > 0 && leading > trailing) {
+      dominantStorefronts.push({ storefront, leading, trailing, compared });
+    }
+  }
+  dominantStorefronts.sort(
+    (a, b) =>
+      (b.leading - b.trailing) - (a.leading - a.trailing) ||
+      b.leading - a.leading ||
+      a.storefront.localeCompare(b.storefront),
+  );
+
+  const advantageKeywords: CompetitorAdvantageKeyword[] = [];
+  const disadvantageKeywords: CompetitorAdvantageKeyword[] = [];
+  for (const stats of keywordStats.values()) {
+    if (stats.wins > stats.losses && stats.wins > 0) advantageKeywords.push({ ...stats });
+    else if (stats.losses > stats.wins && stats.losses > 0) disadvantageKeywords.push({ ...stats });
+  }
+  const byMarginDesc = (a: CompetitorAdvantageKeyword, b: CompetitorAdvantageKeyword) =>
+    Math.abs(b.wins - b.losses) - Math.abs(a.wins - a.losses) ||
+    (a.losses > a.wins ? b.losses - a.losses : b.wins - a.wins) ||
+    a.keyword.localeCompare(b.keyword);
+  advantageKeywords.sort(byMarginDesc);
+  disadvantageKeywords.sort(byMarginDesc);
+
+  const hasData = storefrontByCompetitor.size > 0 || keywordStats.size > 0;
+  return { hasData, dominantStorefronts, advantageKeywords, disadvantageKeywords };
+}
+
 export function MetricBlock({
   to,
   label,

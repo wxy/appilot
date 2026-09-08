@@ -79,6 +79,19 @@ contextBridge.exposeInMainWorld("appilot", {
     commits: (projectId: string): Promise<Record<string, number>> =>
       ipcRenderer.invoke("activity:commits", projectId),
   },
+  overview: {
+    repoMetrics: (
+      projectId: string,
+      opts?: { sinceIso?: string | null; sinceTag?: string | null },
+    ): Promise<{
+      ok: boolean;
+      pullsSince: number | null;
+      issues: { open: number; closed: number } | null;
+      sinceTag: string | null;
+      sinceIso: string | null;
+      error?: string;
+    }> => ipcRenderer.invoke("overview:repoMetrics", projectId, opts),
+  },
   asc: {
     sync: (productId: string): Promise<boolean> => ipcRenderer.invoke("asc:sync", productId),
     status: (productId: string): Promise<any> => ipcRenderer.invoke("asc:status", productId),

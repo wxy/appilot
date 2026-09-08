@@ -545,3 +545,145 @@ export async function fetchPullRequests(
   );
   return results;
 }
+
+/* ── Overview repo metrics: issue counts + PR count since a boundary ────── */
+
+export interface RepoIssueCounts {
+  open: number;
+  closed: number;
+}
+
+const issueCountCache = new Map<string, { at: number; value: RepoIssueCounts }>();
+const ISSUE_COUNT_TTL_MS = 5 * 60_000;
+
+const pullsCountCache = new Map<string, { at: number; value: number }>();
+const PULLS_COUNT_TTL_MS = 5 * 60_000;
+
+/**
+ * GitHub Search API total_count for a query. The search endpoint is the only
+ * reliable way to get *true* issue totals — the REST `/issues` list omits the
+ * `Link` pagination header for single-page results and mixes pull requests
+ * in, so counting pages/Link is fragile. `is:issue` excludes PRs by design.
+ * Returns null on any failure (offline / rate limit / private-repo-without-
+ * token), so callers degrade gracefully instead of throwing.
+ */
+async function searchIssueTotal(
+  query: string,
+  token?: string | null,
+): Promise<number | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const url = `https://api.github.com/search/issues?q=${encodeURIComponent(query)}&per_page=1`;
+    const response = await fetch(url, { headers: githubHeaders(token), signal: controller.signal });
+    if (!response.ok) return null;
+    const raw = await response.text();
+    const data: any = JSON.parse(raw);
+    const total = typeof data?.total_count === "number" ? data.total_count : null;
+    return total == null ? null : Math.max(0, total);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Open/closed issue totals for a repo (issues only, PRs excluded via
+ * `is:issue`). Both sides must succeed — a partial count would mislead the
+ * open/closed/total UI — so any failure degrades to null.
+ * Cached in-process for 5 minutes; never throws.
+ */
+export async function fetchRepoIssueCounts(
+  ownerRepo: string,
+  token?: string | null,
+): Promise<RepoIssueCounts | null> {
+  if (!ownerRepo) return null;
+  const key = `${ownerRepo}#${tokenTag(token)}`;
+  const cached = issueCountCache.get(key);
+  if (cached && Date.now() - cached.at < ISSUE_COUNT_TTL_MS) return cached.value;
+  const [open, closed] = await Promise.all([
+    searchIssueTotal(`repo:${ownerRepo} is:issue state:open`, token),
+    searchIssueTotal(`repo:${ownerRepo} is:issue state:closed`, token),
+  ]);
+  if (open === null || closed === null) {
+    log.warn(`fetchRepoIssueCounts failed for ${ownerRepo} (open=${open}, closed=${closed})`);
+    return null;
+  }
+  const value: RepoIssueCounts = { open, closed };
+  issueCountCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+/**
+ * Pull-request count for the overview dev card:
+ * - with `sinceIso`: PRs *created* at or after the boundary ("自上次发布以来");
+ * - without: total open PRs.
+ *
+ * Uses the dedicated `/pulls` endpoint (never `/issues`, which mixes PRs in)
+ * with `sort=created&direction=desc` paging, so we can stop as soon as a page
+ * falls below the cutoff instead of walking the whole history. Pages are
+ * capped at 10 (1000 PRs) as a defensive bound for the no-boundary open-PR
+ * count; never throws, degrades to null on failure.
+ */
+export async function countPullsSince(
+  ownerRepo: string,
+  token?: string | null,
+  sinceIso?: string | null,
+): Promise<number | null> {
+  if (!ownerRepo) return null;
+  const cutoff = sinceIso ? new Date(sinceIso).getTime() : 0;
+  if (sinceIso && !Number.isFinite(cutoff)) return null;
+  const key = `${ownerRepo}#${tokenTag(token)}#${sinceIso || "open"}`;
+  const cached = pullsCountCache.get(key);
+  if (cached && Date.now() - cached.at < PULLS_COUNT_TTL_MS) return cached.value;
+
+  const state = sinceIso ? "all" : "open";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    let total = 0;
+    let page = 1;
+    let done = false;
+    for (; page <= 10 && !done; page += 1) {
+      const url =
+        `https://api.github.com/repos/${ownerRepo}/pulls` +
+        `?state=${state}&sort=created&direction=desc&per_page=100&page=${page}`;
+      let response = await fetch(url, {
+        headers: githubHeaders(token),
+        signal: controller.signal,
+      });
+      if (token && (response.status === 401 || response.status === 403)) {
+        // Saved token rejected: retry anonymously so public repos still
+        // surface their pull-request counts.
+        response = await fetch(url, {
+          headers: githubHeaders(null),
+          signal: controller.signal,
+        });
+      }
+      if (!response.ok) {
+        log.warn(`countPullsSince fetch failed for ${ownerRepo}: status=${response.status}`);
+        return null;
+      }
+      const data: any = JSON.parse(await response.text());
+      if (!Array.isArray(data) || data.length === 0) break;
+      for (const item of data) {
+        const created =
+          typeof item?.created_at === "string" ? new Date(item.created_at).getTime() : NaN;
+        if (sinceIso && Number.isFinite(created) && created < cutoff) {
+          done = true;
+          break;
+        }
+        if (!sinceIso || Number.isFinite(created)) total += 1;
+      }
+      if (data.length < 100) done = true;
+    }
+    pullsCountCache.set(key, { at: Date.now(), value: total });
+    return total;
+  } catch (err: any) {
+    log.warn(`countPullsSince failed for ${ownerRepo}: ${err.message}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
