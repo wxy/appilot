@@ -52,6 +52,34 @@ async function fetchWithTimeout(url: URL, timeoutMs = 15_000): Promise<Response>
   }
 }
 
+/**
+ * iTunes Search API 请求错误：message 与历史保持一致（"iTunes Search API <status>"，
+ * 旧文本匹配不受影响），另附 status 字段供调用方做 403/429 等封禁/限流判定。
+ */
+export function itunesSearchApiError(status: number): Error & { status: number } {
+  const err = new Error(`iTunes Search API ${status}`) as Error & { status: number };
+  err.status = status;
+  return err;
+}
+
+/**
+ * 判断是否为 iTunes Search 的 403 拒绝（被拒/封禁/风控）。
+ * 兼容带 status 的结构化错误（itunesSearchApiError）与仅文本的错误对象。
+ */
+export function isItunesSearchForbidden(err: unknown): boolean {
+  if (!err) return false;
+  const raw = err as {
+    status?: unknown;
+    response?: { status?: unknown };
+    message?: unknown;
+  };
+  const status =
+    Number(raw?.status) || Number((raw?.response as { status?: unknown } | undefined)?.status) || 0;
+  if (status === 403) return true;
+  const message = typeof raw?.message === "string" ? raw.message : String(err);
+  return /iTunes Search API\s+403/.test(message) || /Forbidden/i.test(message);
+}
+
 export async function searchAppStoreRank(opts: {
   term: string;
   country: string;
@@ -85,7 +113,7 @@ export async function searchAppStoreRank(opts: {
       continue;
     }
     if (!res.ok) {
-      throw new Error(`iTunes Search API ${res.status}`);
+      throw itunesSearchApiError(res.status);
     }
 
     const raw = await res.text();
@@ -108,7 +136,7 @@ export async function searchAppStoreRank(opts: {
     };
   }
 
-  throw new Error(`iTunes Search API ${lastStatus}`);
+  throw itunesSearchApiError(lastStatus);
 }
 
 export async function collectKeywordRankings(opts: {

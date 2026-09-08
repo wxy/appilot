@@ -32,6 +32,8 @@ export function TaskCenterPage() {
     nowRunning: any;
     overview: any;
     tasks: any[];
+    // iTunes Search 403 熔断状态（scheduler:list 附带）。
+    itunesSearchBlock?: { blocked: boolean; until: string | null; remainingMs: number } | null;
   } | null>(null);
   const [timeline, setTimeline] = useState<{
     recent: { hour: number; success: number; failed: number }[];
@@ -340,6 +342,14 @@ export function TaskCenterPage() {
     (t: any) => t.lastStatus === "failed",
   ).length;
   const nowRunning = data?.nowRunning;
+  // iTunes Search 403 熔断：顶部一行黄色提示（自动采集暂停至 HH:mm）。
+  const itunesBlock = data?.itunesSearchBlock?.blocked ? data.itunesSearchBlock : null;
+  const itunesBlockUntilLabel = (() => {
+    if (!itunesBlock?.until) return "";
+    const d = new Date(itunesBlock.until);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  })();
 
   return (
     <div className="p-10 max-w-7xl mx-auto">
@@ -445,6 +455,21 @@ export function TaskCenterPage() {
           )}
         </div>
       </div>
+
+      {/* iTunes Search 403 熔断提示（任务中心顶部一行） */}
+      {itunesBlock && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-300/80 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-400">
+          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+          <span>
+            iTunes Search 被拒绝（403）：自动采集已暂停，冷却至{" "}
+            <span className="font-mono font-semibold">{itunesBlockUntilLabel}</span>
+            后自动恢复
+            {itunesBlock.remainingMs > 0
+              ? `（约 ${Math.max(1, Math.ceil(itunesBlock.remainingMs / 60_000))} 分钟后）`
+              : null}
+          </span>
+        </div>
+      )}
 
       {/* 引擎说明 + 失败任务批量处理（backlog #2） */}
       <div className="mb-5 space-y-2 text-xs">

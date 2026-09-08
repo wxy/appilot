@@ -8,6 +8,7 @@ import {
   schedulerStatusSnapshot,
   schedulerTick,
   setSchedulerAccel,
+  itunesSearchBlockState,
   type ScheduledTask,
 } from "../scheduler";
 import { computeRankSchedulerStatus } from "../scheduler-status";
@@ -134,6 +135,8 @@ export function registerSchedulerHandlers(): void {
       accelRemainingMs,
       leader: currentLeader(),
       daemon: daemonStatus(),
+      // iTunes Search 403 熔断状态（自动采集暂停提示用）。
+      itunesSearchBlock: itunesSearchBlockState(s),
       ...computeRankSchedulerStatus(tasks, now),
     };
   });
@@ -209,6 +212,9 @@ export function registerSchedulerHandlers(): void {
         nextDueAt: nextDue ? new Date(nextDue).toISOString() : null,
       },
       nowRunning: schedulerStatusSnapshot().nowRunning || null,
+      // iTunes Search 403 熔断状态（自动采集暂停提示用；与 list 同字段，
+      // 保证事件路径 overview 整块合并时提示不会闪失）。
+      itunesSearchBlock: itunesSearchBlockState(s),
     };
   });
 
@@ -280,6 +286,8 @@ export function registerSchedulerHandlers(): void {
         nextDueAt: dbOverview.nextDueAt,
       },
       tasks: dbTasks,
+      // iTunes Search 403 熔断状态（任务中心顶部提示用）。
+      itunesSearchBlock: itunesSearchBlockState(s),
     };
   });
 
