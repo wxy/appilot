@@ -272,8 +272,6 @@ export function CompetitorPanel({
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   // —— 空白格「+」关联：pendingLinkKey = `${competitorId}\0${col.key}` 防同格重复点击 ——
   const [pendingLinkKey, setPendingLinkKey] = useState<string | null>(null);
-  // 关联结果短提示（矩阵卡片顶部一行，仿 scanMsg / addMessage 风格）。
-  const [linkFlash, setLinkFlash] = useState<{ text: string; tone: "ok" | "err" } | null>(null);
   // 词钻取聚焦：进入竞品标签时若带词，矩阵只保留该词的列（可关闭回完整矩阵）。
   const [focusCleared, setFocusCleared] = useState(false);
   const wordDrill = focusKeyword && !focusCleared ? focusKeyword : "";
@@ -506,26 +504,21 @@ export function CompetitorPanel({
     setExpandedRowId((prev) => (prev === competitorId ? null : competitorId));
   };
 
-  // —— 空白格「+」：把 (词 × 语言) 关联到该竞品（去重合并；之后按 (竞品 × 词 × 商店)
-  // 采集排名并进入矩阵）。成功后刷新总览并在矩阵卡片顶部给一行短提示；请求期间锁定
-  // 该格（pendingLinkKey）防重复点击。
+  // —— 空白格「+」：把 (词 × 语言) 关联到该竞品并立即只采集这个词的排名（去重合并；
+  // 成功后刷新矩阵；请求期间锁定该格防重复点击）。不弹成功提示，避免页面抖动。
   const handleBlankLink = async (rowCompetitor: any, col: MatrixCol) => {
     const key = `${rowCompetitor?.id}\u0000${col.key}`;
     if (!rowCompetitor?.id || pendingLinkKey === key) return;
     setPendingLinkKey(key);
-    setLinkFlash(null);
     try {
-      await (window as any).appilot?.competitors?.linkKeywords(projectId, rowCompetitor.id, [
-        { keyword: col.keyword, language: col.lang },
-      ]);
-      setLinkFlash({
-        text: `已关联「${col.keyword}」到 ${rowCompetitor?.name || "该竞品"}，排名将随下次采集/刷新更新`,
-        tone: "ok",
+      await (window as any).appilot?.competitors?.linkAndCollect(projectId, rowCompetitor.id, {
+        keyword: col.keyword,
+        language: col.lang,
       });
       await load();
       setProfilesTick((v) => v + 1);
     } catch (err: any) {
-      setLinkFlash({ text: `关联失败：${err?.message || "请稍后重试。"}`, tone: "err" });
+      console.warn(`竞品关联采集失败: ${err?.message || String(err)}`);
     } finally {
       setPendingLinkKey(null);
     }
@@ -552,7 +545,7 @@ export function CompetitorPanel({
       // 灰格 = 双方都已采集（词已在采集范围，关联无意义）、商店展开行与表头一律不加。
       const linkable = !bothSeen && rowCompetitor?.id != null;
       const linkPending = linkable && pendingLinkKey === `${rowCompetitor.id}\u0000${col.key}`;
-      const linkTitle = `关联「${col.keyword}」到 ${rowCompetitor?.name ?? ""}：之后采集/刷新会记录它在这个词的表现`;
+      const linkTitle = `立即关联「${col.keyword}」到 ${rowCompetitor?.name ?? ""} 并采集它在这个词的名次`;
       return (
         <td
           key={col.key}
@@ -985,18 +978,6 @@ export function CompetitorPanel({
           {scanMsg && (
             <p className="px-4 py-2 text-[11px] text-amber-600 dark:text-amber-400 border-b border-zinc-100 dark:border-zinc-800">
               {scanMsg}
-            </p>
-          )}
-          {linkFlash && (
-            <p
-              className={cn(
-                "px-4 py-2 text-[11px] border-b border-zinc-100 dark:border-zinc-800",
-                linkFlash.tone === "err"
-                  ? "text-red-500 dark:text-red-400"
-                  : "text-amber-600 dark:text-amber-400",
-              )}
-            >
-              {linkFlash.text}
             </p>
           )}
           {profiles.length === 0 ? (
