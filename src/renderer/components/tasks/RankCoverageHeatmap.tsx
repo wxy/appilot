@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
 import { cn } from "../../lib/utils";
 
@@ -9,7 +9,42 @@ import { cn } from "../../lib/utils";
  *   次行商店。
  * 每格点阵 = 关键字每 4 词一桶，点随格宽自动换行居中 → 随页宽自适应。
  * 桶色：绿=覆盖齐 / 黄=部分 / 红=有失败 / 浅灰=未到期 / 橙=过期未采。
+ *
+ * 刷新反馈：覆盖数据更新（tasks/rank 事件或轮询）后，把新矩阵与上一次
+ * 矩阵逐格对比桶色序列，对**发生变化的格**播放一次「虚影放大淡出」脉冲
+ * （每个桶点叠一个同色虚影 scale+opacity 0.45s），动画播完自动清除；
+ * prefers-reduced-motion 时跳过打标（颜色照常更新）。
  */
+const PULSE_DURATION_MS = 500;
+const REFRESH_POLL_MS = 10_000;
+
+/** 矩阵逐格摘要（桶色序列）；key = productId|lang|storefront，用于刷新前后对比。 */
+function matrixSignature(matrix: any): Map<string, string> {
+  const sig = new Map<string, string>();
+  const columns = matrix?.columns ?? [];
+  for (const row of matrix?.rows ?? []) {
+    const cells = row?.cells ?? [];
+    for (let ci = 0; ci < cells.length; ci++) {
+      const col = columns[ci];
+      if (!col) continue;
+      const cell = cells[ci];
+      const key = `${row.productId}|${col.lang}|${col.storefront}`;
+      const value =
+        !cell || cell.total === 0
+          ? "0"
+          : cell.buckets.map((b: any) => String(b?.tone ?? "")).join(",");
+      sig.set(key, value);
+    }
+  }
+  return sig;
+}
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 const LANG_LABEL: Record<string, string> = {
   en: "英语",
@@ -125,10 +160,45 @@ export function RankCoverageHeatmap() {
   const [windowHours, setWindowHours] = useState(24);
   // 两项切换：global = 英语（全局）关键词 × 全部商店；langs = 各语言分组视图。
   const [mode, setMode] = useState<HeatmapMode>("global");
+  // 刷新脉冲：key = productId|lang|storefront → 递增序号（同格连续变化可重播）。
+  const [pulse, setPulse] = useState<Record<string, number>>({});
+  const seqRef = useRef(0);
+  const lastMatrixRef = useRef<any>(null);
+  const lastWindowRef = useRef<number>(24);
+  const clearPulseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 新矩阵到达：与上一次逐格对比，变化格打标（播完自动清除）；首帧 /
+  // 切换窗口小时数 / 用户偏好减少动态 = 只更新数据不打标。
+  const applyMatrix = (next: any) => {
+    const prev = lastMatrixRef.current;
+    const prevWindow = lastWindowRef.current;
+    lastMatrixRef.current = next;
+    lastWindowRef.current = windowHours;
+    if (!prev || prevWindow !== windowHours || prefersReducedMotion()) {
+      setPulse({});
+    } else {
+      const prevSig = matrixSignature(prev);
+      const nextSig = matrixSignature(next);
+      const nextPulse: Record<string, number> = {};
+      for (const [key, sig] of nextSig) {
+        if (prevSig.get(key) !== sig) nextPulse[key] = seqRef.current + 1;
+      }
+      if (Object.keys(nextPulse).length > 0) {
+        seqRef.current += 1;
+        setPulse(nextPulse);
+        if (clearPulseRef.current) clearTimeout(clearPulseRef.current);
+        clearPulseRef.current = setTimeout(
+          () => setPulse({}),
+          PULSE_DURATION_MS + 150,
+        );
+      }
+    }
+    setMatrix(next);
+  };
 
   const load = (wh: number = windowHours) => {
     (window as any).appilot?.scheduler?.matrix({ windowHours: wh })
-      .then(setMatrix)
+      .then(applyMatrix)
       .catch(() => undefined);
   };
   useEffect(() => {
@@ -137,11 +207,28 @@ export function RankCoverageHeatmap() {
   }, [windowHours]);
   useEffect(() => {
     const handler = (e: Event) => {
-      if ((e as CustomEvent).detail === "tasks") load();
+      const scope = (e as CustomEvent).detail;
+      // rank = 快照写库后推送（runRankTask 顺序 tasks→写库→rank），此时热力
+      // 数据才真正变化；tasks 覆盖失败/重排等状态变化。两域都接，避免“有点
+      // 变化但组件没刷新”。
+      if (scope === "tasks" || scope === "rank") load();
     };
     window.addEventListener("appilot:data-changed", handler);
-    return () => window.removeEventListener("appilot:data-changed", handler);
+    // daemon 持主执行时本壳没有执行事件推送——热力页打开期间轮询兜底
+    // （组件仅在「覆盖热力」页挂载，关页即停）。
+    const timer = window.setInterval(() => load(), REFRESH_POLL_MS);
+    return () => {
+      window.removeEventListener("appilot:data-changed", handler);
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [windowHours]);
+  useEffect(
+    () => () => {
+      if (clearPulseRef.current) clearTimeout(clearPulseRef.current);
+    },
+    [],
+  );
 
   const { columns = [], rows = [] } = matrix ?? {};
   const inLangView = mode === "langs";
@@ -180,9 +267,19 @@ export function RankCoverageHeatmap() {
     );
   }
   const visibleColumns = orderedPairs.map((p) => p.col);
+  // 每格带上脉冲序号（key = productId|lang|storefront，与 matrixSignature 一致）。
   const visibleRows = rows
-    .map((row: any) => ({ ...row, cells: orderedPairs.map((p) => row.cells[p.i]) }))
-    .filter((row: any) => row.cells.some((c: any) => c && c.total > 0));
+    .map((row: any) => {
+      const cells: Array<{ cell: any; pulseSeq: number; key: string }> = [];
+      for (const p of orderedPairs) {
+        const col = p.col;
+        const cell = row.cells[p.i];
+        const key = `${row.productId}|${col.lang}|${col.storefront}`;
+        cells.push({ cell, pulseSeq: pulse[key] ?? 0, key });
+      }
+      return { ...row, cells };
+    })
+    .filter((row: any) => row.cells.some((c: any) => c.cell && c.cell.total > 0));
   // 各语言视图的语言组头（按拼音排序后的连续段）。
   const langHeads: Array<{ group: string; label: string; span: number }> = [];
   if (inLangView) {
@@ -204,6 +301,7 @@ export function RankCoverageHeatmap() {
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
             产品（仓库 + 平台）× 商店覆盖 · 左上角切换「全局 / 各语言」：全局 = 英语关键词
             × 全部商店；各语言按关键词语言分组 · 语言与商店均按拼音排序 · 每点 = 4 个关键字
+            · 数据刷新时变化格脉冲提示
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
@@ -317,19 +415,39 @@ export function RankCoverageHeatmap() {
                           {PLATFORM_LABEL[row.platform] ?? row.platform ?? ""}
                         </div>
                       </td>
-                      {row.cells.map((cell: any, ci: number) => {
+                      {row.cells.map((entry: any) => {
+                        const { cell, pulseSeq, key } = entry;
                         if (cell.total === 0) {
-                          return <td key={ci} style={{ height: 56 }} />;
+                          return <td key={key} style={{ height: 56 }} />;
                         }
                         return (
-                          <td key={ci} className="align-middle text-center border border-zinc-100 dark:border-zinc-800/60" style={{ height: 56, minWidth: 34 }}>
+                          <td key={key} className="align-middle text-center border border-zinc-100 dark:border-zinc-800/60" style={{ height: 56, minWidth: 34 }}>
                             <div className="flex flex-wrap justify-center content-center gap-[3px]" style={{ minHeight: 44 }}>
-                              {cell.buckets.map((b: any, bi: number) => (
-                                <span
-                                  key={bi}
-                                  className={cn("inline-block w-2 h-2 rounded-[2px]", TONE_CLS[b.tone] ?? "bg-zinc-300")}
-                                />
-                              ))}
+                              {cell.buckets.map((b: any, bi: number) => {
+                                const dotCls = TONE_CLS[b.tone] ?? "bg-zinc-300";
+                                return (
+                                  <span
+                                    key={bi}
+                                    className={cn(
+                                      "relative inline-block w-2 h-2 rounded-[2px]",
+                                      dotCls,
+                                    )}
+                                  >
+                                    {/* 数据变化的格：每桶点叠一个同色虚影放大淡出
+                                        （key=pulseSeq 保证连续刷新可重播）。 */}
+                                    {pulseSeq > 0 && (
+                                      <span
+                                        key={pulseSeq}
+                                        aria-hidden="true"
+                                        className={cn(
+                                          "heat-ghost absolute inset-0 rounded-[2px]",
+                                          dotCls,
+                                        )}
+                                      />
+                                    )}
+                                  </span>
+                                );
+                              })}
                             </div>
                           </td>
                         );

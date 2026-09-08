@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
 import { useProject } from "../../stores/project";
-import { taskGroupKey } from "../../lib/task-grouping";
+import { taskGroupKey, pickGroupNextRun } from "../../lib/task-grouping";
 import {
   formatBytes,
   formatDuration,
@@ -956,7 +956,8 @@ function groupTasks(tasks: any[]): any[] {
         round: task.round || null,
         tasks: [task],
         lastRunAt: task.lastRunAt,
-        nextRunAt: task.nextRunAt,
+        nextRunAt: null,
+        nextDueCount: 0,
         firstRunAt: task.firstRunAt,
         executionCount: task.executionCount || 0,
         lastDurationMs: task.lastDurationMs,
@@ -967,9 +968,6 @@ function groupTasks(tasks: any[]): any[] {
         existing.lastRunAt = task.lastRunAt;
         existing.lastDurationMs = task.lastDurationMs;
       }
-      if (new Date(task.nextRunAt) < new Date(existing.nextRunAt)) {
-        existing.nextRunAt = task.nextRunAt;
-      }
       existing.executionCount += task.executionCount || 0;
       if (task.firstRunAt && (!existing.firstRunAt || new Date(task.firstRunAt) < new Date(existing.firstRunAt))) {
         existing.firstRunAt = task.firstRunAt;
@@ -977,6 +975,14 @@ function groupTasks(tasks: any[]): any[] {
       if (!existing.groupKey && task.groupKey) existing.groupKey = task.groupKey;
       if (!existing.round && task.round) existing.round = task.round;
     }
+  }
+  // 组级「下次执行」不再对全部成员 nextRunAt 取最小（会把到期未跑成员的
+  // 过去时间与已跑成员的最近执行混在一起，造成 next < last 的矛盾展示）：
+  // 只保留已排到未来的最早排期；无未来排期时由 nextDueCount 呈现「已到期」。
+  for (const group of map.values()) {
+    const pick = pickGroupNextRun(group.tasks);
+    group.nextRunAt = pick.nextRunAt;
+    group.nextDueCount = pick.dueCount;
   }
   return [...map.values()];
 }
@@ -1168,11 +1174,19 @@ function TaskSection({
             {group.tasks.length > 0 && (
               (() => {
                 const running = group.tasks.some((t: any) => runningIds.has(t.id));
+                // 下次执行 = 组内最早未来排期；组内整批到期未跑（处理中/暂停）
+                // 时显示「已到期 ×N」，避免把过去的 nextRunAt 排在 lastRunAt 之前。
+                const nextLabel =
+                  group.nextRunAt != null
+                    ? formatHumanTime(group.nextRunAt)
+                    : group.nextDueCount > 0
+                      ? `已到期 ×${group.nextDueCount}`
+                      : "—";
                 return (
                   <div className="flex items-center justify-end gap-1">
                     <div className="min-w-0 text-xs text-zinc-600 dark:text-zinc-300 truncate">
-                      <ValueFlash value={group.nextRunAt} mode="text">
-                        {formatHumanTime(group.nextRunAt)}
+                      <ValueFlash value={nextLabel} mode="text">
+                        {nextLabel}
                       </ValueFlash>
                     </div>
                     <button
