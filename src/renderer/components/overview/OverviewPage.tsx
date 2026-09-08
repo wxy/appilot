@@ -22,6 +22,12 @@ export function OverviewPage() {
   const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
   const [competitorSummary, setCompetitorSummary] = useState<CompetitorSummary | null>(null);
+  // ①开发 的 GitHub 活跃数据（近 7 天提交）由 OverviewContent 的 activityData 消费；
+  // 取数仍走 activity:commits（原 ProjectActivityCard 内部取数，现收编到阶段卡）。
+  const [activityData, setActivityData] = useState<{
+    commits: Record<string, number>;
+    releases: { tag: string; publishedAt: string | null }[];
+  } | null>(null);
   const [briefState, setBriefState] = useState<{
     status: "idle" | "loading" | "ready" | "error";
     suggestions: BriefSuggestion[];
@@ -79,6 +85,25 @@ export function OverviewPage() {
       .catch(() => { if (!cancelled) setStoreCurrentVersion(null); });
     return () => { cancelled = true; };
   }, [product?.id]);
+
+  // GitHub 活跃（每日提交数，键为本地 YYYY-MM-DD）：OverviewContent ①开发 卡消费。
+  // 无 window.appilot（DSH 等宿主自行注入 activityData）→ 保持 null，组件侧隐藏活跃块。
+  useEffect(() => {
+    if (!project?.id) {
+      setActivityData(null);
+      return;
+    }
+    let cancelled = false;
+    const pending: Promise<Record<string, number>> | undefined = (window as any).appilot?.activity?.commits(project.id);
+    if (pending && typeof pending.then === "function") {
+      pending
+        .then((commits) => { if (!cancelled) setActivityData({ commits: commits || {}, releases: [] }); })
+        .catch(() => { if (!cancelled) setActivityData(null); });
+    } else {
+      setActivityData(null);
+    }
+    return () => { cancelled = true; };
+  }, [project?.id]);
 
   // 竞品概览（OverviewContent「竞品概览」卡）：项目 + 当前产品就绪时调
   // competitors:overview 并聚合成 CompetitorSummary（纯函数，见 overviewData）；
@@ -195,6 +220,7 @@ export function OverviewPage() {
       releaseOverview={releaseOverview}
       ascInfo={ascInfo}
       storeCurrentVersion={storeCurrentVersion}
+      activityData={activityData ?? undefined}
       competitorSummary={competitorSummary}
       competitorHref="/keywords"
       briefState={briefState}
