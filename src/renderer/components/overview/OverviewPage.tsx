@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import type { BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
 import { useProject } from "../../stores/project";
 import { OverviewContent } from "./OverviewContent";
+import { aggregateCompetitorOverview } from "./overviewData";
+import type { CompetitorSummary } from "./overviewData";
 
 /**
  * 总览页（Electron 侧壳）：负责取数（IPC + zustand + 路由），渲染共享内容组件
@@ -19,6 +21,7 @@ export function OverviewPage() {
   } | null>(null);
   const [ascInfo, setAscInfo] = useState<{ versions: any[]; builds: any[]; fetchedAt?: string } | null>(null);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
+  const [competitorSummary, setCompetitorSummary] = useState<CompetitorSummary | null>(null);
   const [briefState, setBriefState] = useState<{
     status: "idle" | "loading" | "ready" | "error";
     suggestions: BriefSuggestion[];
@@ -76,6 +79,46 @@ export function OverviewPage() {
       .catch(() => { if (!cancelled) setStoreCurrentVersion(null); });
     return () => { cancelled = true; };
   }, [product?.id]);
+
+  // 竞品概览（OverviewContent「竞品概览」卡）：项目 + 当前产品就绪时调
+  // competitors:overview 并聚合成 CompetitorSummary（纯函数，见 overviewData）；
+  // 失败/无数据 → null。范围切换时以 cancelled 丢弃过期响应；监听
+  // appilot:data-changed（competitors/projects）自动刷新。
+  useEffect(() => {
+    if (!project?.id || !product?.id) {
+      setCompetitorSummary(null);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const pending: Promise<any[]> | undefined = (window as any).appilot?.competitors?.overview(
+          project.id!,
+          product.id!,
+        );
+        if (!pending || typeof pending.then !== "function") {
+          if (!cancelled) setCompetitorSummary(null);
+          return;
+        }
+        const profiles = await pending;
+        if (!cancelled) setCompetitorSummary(aggregateCompetitorOverview(profiles || []));
+      } catch {
+        if (!cancelled) setCompetitorSummary(null);
+      }
+    };
+    void load();
+    const handler = (e: Event) => {
+      const scope = (e as CustomEvent).detail;
+      if (scope === "competitors" || scope === "projects") {
+        void load();
+      }
+    };
+    window.addEventListener("appilot:data-changed", handler);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("appilot:data-changed", handler);
+    };
+  }, [project?.id, product?.id]);
 
   const handleGenerateBrief = useCallback(async () => {
     if (!project || !product) return;
@@ -152,6 +195,8 @@ export function OverviewPage() {
       releaseOverview={releaseOverview}
       ascInfo={ascInfo}
       storeCurrentVersion={storeCurrentVersion}
+      competitorSummary={competitorSummary}
+      competitorHref="/keywords"
       briefState={briefState}
       onSelectProduct={selectProduct}
       onOpenExternal={(url) => (window as any).appilot?.openExternal(url)}

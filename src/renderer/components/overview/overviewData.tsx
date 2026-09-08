@@ -120,6 +120,70 @@ export function overviewTrendData(
   return { series, data };
 }
 
+/* ── 竞品概览聚合（OverviewContent「竞品概览」卡的数据契约） ── */
+
+/** 单个已跟踪竞品在本平台的竞争面摘要（卡片只取前三展示，合计对整表求和）。 */
+export interface CompetitorOverviewEntry {
+  name: string;
+  /** 竞争指数（intel.index，越大威胁越高；无采集为 0）。 */
+  index: number;
+  /** 压制我方词数（intel.pressuredCount：竞品 ≤200 且领先或我方未进榜）。 */
+  pressuredCount: number;
+}
+
+/** OverviewContent「竞品概览」卡入参；DSH 等无竞品数据的宿主不传（null）。 */
+export interface CompetitorSummary {
+  /** 全部已跟踪竞品（按指数降序）；卡片 slice(0,3) 展示 TOP3。 */
+  top: CompetitorOverviewEntry[];
+  /** 跟踪竞品总数。 */
+  totalTracked: number;
+  /** 事件计数：竞品词新进榜（≤200）。 */
+  gained: number;
+  /** 事件计数：竞品词跌出榜。 */
+  dropped: number;
+  /** 停滞/长期未刷新竞品数；宿主无快照时间信号可给 0（卡片据此隐藏）。 */
+  stale: number;
+}
+
+/** competitors:overview 单条结果的最小形状（聚合只消费这三个字段）。 */
+export interface CompetitorOverviewProfile {
+  competitor?: { name?: string | null } | null;
+  intel?: { index?: number; pressuredCount?: number } | null;
+  events?: Array<{ kind?: string }> | null;
+}
+
+/**
+ * 把 `competitors:overview` 返回的 profiles（[{ competitor, intel,
+ * indexHistory, events }]）聚合成 CompetitorSummary：top 全表按 intel.index
+ * 降序（卡片取前三）、gained/dropped 由 events 的 kind 计数、totalTracked =
+ * profiles.length、压我方词合计 = Σ intel.pressuredCount（卡片侧对 top 求和）。
+ * 无竞品/空数组 → null。纯函数（无 window/IPC 依赖），Electron OverviewPage
+ * 取数后调用；其它宿主（如 DSH）可复用同一聚合。
+ *
+ * 注：intel/events 只携带 7/14 天窗口内的数据，无法可靠判定「快照 ≥10 天未
+ * 更新」的停滞竞品数，故 stale 置 0；需要时由宿主另行补充。
+ */
+export function aggregateCompetitorOverview(
+  profiles: CompetitorOverviewProfile[] | null | undefined,
+): CompetitorSummary | null {
+  if (!Array.isArray(profiles) || profiles.length === 0) return null;
+  const top: CompetitorOverviewEntry[] = profiles.map((profile) => ({
+    name: profile?.competitor?.name || "未命名竞品",
+    index: profile?.intel?.index ?? 0,
+    pressuredCount: profile?.intel?.pressuredCount ?? 0,
+  }));
+  top.sort((a, b) => b.index - a.index || b.pressuredCount - a.pressuredCount);
+  let gained = 0;
+  let dropped = 0;
+  for (const profile of profiles) {
+    for (const event of profile?.events || []) {
+      if (event?.kind === "gained") gained += 1;
+      else if (event?.kind === "dropped") dropped += 1;
+    }
+  }
+  return { top, totalTracked: profiles.length, gained, dropped, stale: 0 };
+}
+
 export function MetricBlock({
   to,
   label,
