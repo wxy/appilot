@@ -31,16 +31,6 @@ contextBridge.exposeInMainWorld("appilot", {
     list: (projectId: string): Promise<any[]> => ipcRenderer.invoke("competitors:list", projectId),
     save: (projectId: string, competitor: any): Promise<{ list: any[]; merged: boolean }> =>
       ipcRenderer.invoke("competitors:save", projectId, competitor),
-    linkKeywords: (
-      projectId: string,
-      competitorId: string,
-      items: Array<{ keyword: string; language: string }>,
-    ): Promise<any> => ipcRenderer.invoke("competitors:linkKeywords", projectId, competitorId, items),
-    linkAndCollect: (
-      projectId: string,
-      competitorId: string,
-      item: { keyword: string; language: string },
-    ): Promise<any> => ipcRenderer.invoke("competitors:linkAndCollect", projectId, competitorId, item),
     remove: (projectId: string, competitorId: string): Promise<boolean> =>
       ipcRenderer.invoke("competitors:remove", projectId, competitorId),
     search: (opts: {
@@ -58,10 +48,8 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("competitors:rankSnapshots", projectId, competitorId),
     overview: (projectId: string, productId: string): Promise<any[]> =>
       ipcRenderer.invoke("competitors:overview", projectId, productId),
-    scanOnChart: (projectId: string, productId: string, opts?: { force?: boolean }): Promise<any> =>
-      ipcRenderer.invoke("competitors:scanOnChart", projectId, productId, opts),
-    refreshRanks: (projectId: string): Promise<boolean> =>
-      ipcRenderer.invoke("competitors:refreshRanks", projectId),
+    refreshKeywords: (projectId: string, productId: string): Promise<{ requested: number; ran: number }> =>
+      ipcRenderer.invoke("competitors:refreshKeywords", projectId, productId),
     sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("competitors:sync", projectId),
   },
 

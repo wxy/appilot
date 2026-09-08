@@ -5,7 +5,7 @@ import {
   migrateCompetitor,
   searchCompetitorCandidatesAcross,
 } from "@appilot-labs/appilot-core/competitor-radar";
-import { runOpsSyncNow } from "../scheduler";
+import { refreshProductRankKeywords, runOpsSyncNow } from "../scheduler";
 import { sharedStore } from "../registry-sync";
 import { blobGet } from "../db-blob-read";
 import { getStore } from "../store";
@@ -148,96 +148,6 @@ export function registerCompetitorsHandlers(): void {
     return { list: next, merged };
   });
 
-  // 竞品「关联更多关键词」：items 按 (keyword + language) 去重后合并进该竞品
-  // linkedKeywords（保留原有），保存后返回更新后的竞品对象。
-  ipcMain.handle("competitors:linkKeywords", async (_event, projectId: string, competitorId: string, items: Array<{ keyword?: string; language?: string }>) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
-    competitorId = assertNonEmptyString(competitorId, "competitorId");
-    if (!Array.isArray(items)) throw new Error("items 必须是数组");
-    const s = await getStore();
-    const list = competitorsFor(s, projectId);
-    const index = list.findIndex((item: any) => item.id === competitorId);
-    if (index < 0) throw new Error("竞品不存在或已被移除");
-    const keyOf = (link: any) => `${link?.keyword ?? ""}\u0000${link?.language ?? ""}`;
-    const seen = new Map<string, any>(
-      (Array.isArray(list[index]?.linkedKeywords) ? list[index].linkedKeywords : []).map(
-        (link: any) => [keyOf(link), link],
-      ),
-    );
-    for (const item of items || []) {
-      const keyword = item && typeof item.keyword === "string" ? item.keyword.trim() : "";
-      if (!keyword) continue;
-      const language =
-        item && typeof item.language === "string" && item.language.trim()
-          ? item.language.trim()
-          : "en";
-      const link = { keyword, language };
-      if (!seen.has(keyOf(link))) seen.set(keyOf(link), link);
-    }
-    const updated = { ...list[index], linkedKeywords: [...seen.values()] };
-    saveCompetitors(s, projectId, [...list.slice(0, index), updated, ...list.slice(index + 1)]);
-    notifyDataChanged("competitors");
-    return updated;
-  });
-
-  // 空白格「+」：关联单个 (词 × 语言) 到竞品后，立即只对该词采集一次排名并回填
-  // （返回快照条数）；后续每日采集会按 linkedKeywords 持续跟进。
-  ipcMain.handle("competitors:linkAndCollect", async (_event, projectId: string, competitorId: string, item: { keyword?: string; language?: string }) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
-    competitorId = assertNonEmptyString(competitorId, "competitorId");
-    const keyword = item && typeof item.keyword === "string" ? item.keyword.trim() : "";
-    if (!keyword) throw new Error("keyword 不能为空");
-    const language =
-      item && typeof item.language === "string" && item.language.trim()
-        ? item.language.trim()
-        : "en";
-    const s = await getStore();
-    const list = competitorsFor(s, projectId);
-    const index = list.findIndex((entry: any) => entry.id === competitorId);
-    if (index < 0) throw new Error("竞品不存在或已被移除");
-    const keyOf = (link: any) => `${link?.keyword ?? ""}\u0000${link?.language ?? ""}`;
-    const seen = new Map<string, any>(
-      (Array.isArray(list[index]?.linkedKeywords) ? list[index].linkedKeywords : []).map(
-        (link: any) => [keyOf(link), link],
-      ),
-    );
-    const link = { keyword, language };
-    if (!seen.has(keyOf(link))) seen.set(keyOf(link), link);
-    const linked = [...seen.values()];
-    const merged = { ...list[index], linkedKeywords: linked };
-    saveCompetitors(s, projectId, [...list.slice(0, index), merged, ...list.slice(index + 1)]);
-
-    // 只采集刚关联的这个词（把竞品副本的 linkedKeywords 收窄为单条，避免全量重采）。
-    let collected = 0;
-    try {
-      const { collectCompetitorRankSnapshots } = await import("@appilot-labs/appilot-core/competitor-radar");
-      const ranks = await collectCompetitorRankSnapshots({ ...merged, linkedKeywords: [link] });
-      if (ranks.length > 0) {
-        const ranksAll: Record<string, Record<string, any[]>> = s.get("competitorRankSnapshots") || {};
-        const rankById: Record<string, any[]> = ranksAll[projectId] || {};
-        const prev = rankById[competitorId] || [];
-        const kept = prev.filter(
-          (entry: any) =>
-            !ranks.some(
-              (r: any) =>
-                r.keyword === entry.keyword &&
-                r.storefront === entry.storefront &&
-                (entry.platform == null || r.platform === entry.platform),
-            ),
-        );
-        rankById[competitorId] = [...kept, ...ranks].slice(-300);
-        ranksAll[projectId] = rankById;
-        s.set("competitorRankSnapshots", ranksAll);
-        collected = ranks.length;
-      }
-    } catch (err: any) {
-      // 采集失败不阻断关联本身（词已入 linkedKeywords，稍后可手动“刷新排名”）。
-      console.warn(`competitor linkAndCollect 采集失败: ${err?.message || String(err)}`);
-    }
-    notifyDataChanged("competitors");
-    return { ok: true, collected };
-  });
-
   ipcMain.handle("competitors:remove", async (_event, projectId: string, competitorId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     competitorId = assertNonEmptyString(competitorId, "competitorId");
@@ -342,152 +252,20 @@ export function registerCompetitorsHandlers(): void {
     return profiles;
   });
 
-  // 立即为所有竞品的关联关键词补采排名（无需等待下次定时关键词抓取）。
-  ipcMain.handle("competitors:refreshRanks", async (_event, projectId: string) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
-    const s = await getStore();
-    const list = competitorsFor(s, projectId);
-    const { collectCompetitorRankSnapshots } = await import("@appilot-labs/appilot-core/competitor-radar");
-    const ranksAll: Record<string, Record<string, any[]>> =
-      s.get("competitorRankSnapshots") || {};
-    const rankById: Record<string, any[]> = ranksAll[projectId] || {};
-    for (const competitor of list) {
-      const ranks = await collectCompetitorRankSnapshots(competitor);
-      if (ranks.length === 0) continue;
-      const prev = rankById[competitor.id] || [];
-      const kept = prev.filter(
-        (item: any) =>
-          !ranks.some(
-            (r: any) =>
-              r.keyword === item.keyword &&
-              r.storefront === item.storefront &&
-              (item.platform == null || r.platform === item.platform),
-          ),
-      );
-      rankById[competitor.id] = [...kept, ...ranks].slice(-300);
-    }
-    ranksAll[projectId] = rankById;
-    s.set("competitorRankSnapshots", ranksAll);
-    notifyDataChanged("competitors");
-    return true;
-  });
-
   ipcMain.handle("competitors:sync", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     return runOpsSyncNow(projectId);
   });
 
-  // 在榜词扫描：只扫我方「在榜词」（决策 2）——每个词取我方名次最好的
-  // 商店做一次前 N 名搜索；命中已跟踪竞品 → 回填该词排名（进入竞争面聚合）。
-  // 每日限流一次，可 force 重扫。
-  ipcMain.handle("competitors:scanOnChart", async (_event, projectId: string, productId: string, opts?: { force?: boolean }) => {
+  // 手动「重抓我方关键词」：把该产品在 scheduledTasks 里的全部 rank 任务各重跑一次。
+  // 竞品采集已是「抓我方关键词命中即记录」（见 scheduler runRankTask）——重跑中结果里
+  // 出现的已跟踪竞品会被顺手记下名次，无需任何按 (竞品 × 关联词) 驱动的额外采集。
+  // 抓词过程本身会刷新数据，这里再统一通知一次保证 UI 即时更新。
+  ipcMain.handle("competitors:refreshKeywords", async (_event, projectId: string, productId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     productId = assertNonEmptyString(productId, "productId");
-    const s = await getStore();
-    const projects: any[] = s.get("projects") || [];
-    const project = projects.find((p: any) =>
-      (p.storeProducts || []).some((sp: any) => sp?.id === productId),
-    );
-    if (!project) return { ok: false, error: "Product not found" };
-    const product = (project.storeProducts || []).find((sp: any) => sp?.id === productId);
-    const platform: "ios" | "macos" = product?.platform === "macos" ? "macos" : "ios";
-    const entity = platform === "macos" ? "macSoftware" : "software";
-
-    // 每日限流（force 跳过）。
-    const scanState: Record<string, { lastScanAt: string }> = s.get("competitorScanState") || {};
-    const last = scanState[productId]?.lastScanAt;
-    if (!opts?.force && last && Date.now() - new Date(last).getTime() < 24 * 3600_000) {
-      return { ok: false, throttled: true, lastScanAt: last };
-    }
-
-    // 我方在榜词（窗口内 ≤200，含语言），每词取我方名次最好的商店作为扫描点。
-    const ownSnapshots: any[] = (() => {
-      try {
-        const dbRows = sharedStore().snapshots.history(project.name, { productId });
-        if (Array.isArray(dbRows) && dbRows.length > 0) return dbRows;
-      } catch {
-        // 回退
-      }
-      return Array.isArray(product?.rankSnapshots) ? product.rankSnapshots : [];
-    })();
-    const windowAgo = Date.now() - 7 * 86_400_000;
-    const perKw = new Map<string, { language: string; keyword: string; storefront: string; rank: number }>();
-    for (const snap of ownSnapshots) {
-      if (!snap?.keyword || !snap?.storefront) continue;
-      if (snap.checkedAt && new Date(snap.checkedAt).getTime() < windowAgo) continue;
-      const rank = typeof snap.rank === "number" && snap.rank > 0 ? snap.rank : null;
-      if (rank == null || rank > 200) continue; // 只扫在榜词
-      const language = String(snap.language ?? "en");
-      const key = `${language}\u0000${snap.keyword}`;
-      const cur = perKw.get(key);
-      if (!cur || rank < cur.rank) perKw.set(key, { language, keyword: snap.keyword, storefront: snap.storefront, rank });
-    }
-    const targets = [...perKw.values()].sort((a, b) => a.rank - b.rank).slice(0, 40);
-
-    const list = competitorsFor(s, projectId).map(migrateCompetitor);
-    const ranksAll: Record<string, Record<string, any[]>> = s.get("competitorRankSnapshots") || {};
-    const rankById: Record<string, any[]> = ranksAll[projectId] || {};
-    const selfTrackId = String(product?.trackId ?? "");
-    const { searchCompetitorCandidatesAcross } = await import("@appilot-labs/appilot-core/competitor-radar");
-
-    const foundByCompetitor: Record<string, number> = {};
-    let checked = 0;
-    for (const t of targets) {
-      checked += 1;
-      let results: any[] = [];
-      try {
-        results = await searchCompetitorCandidatesAcross({ term: t.keyword, countries: [t.storefront], entity });
-      } catch {
-        continue; // 单词失败不阻断
-      }
-      for (const c of results || []) {
-        if (!c || c.trackId == null) continue;
-        if (String(c.trackId) === selfTrackId) continue;
-        const matched = list.find((comp: any) => {
-          const ids = [
-            comp?.trackId,
-            ...Object.values(comp?.trackIds || {}),
-          ].filter(Boolean).map(String);
-          return ids.includes(String(c.trackId));
-        });
-        if (matched) {
-          const rank = typeof c.ranks?.[t.storefront] === "number" ? c.ranks[t.storefront] : null;
-          const prev = rankById[matched.id] || [];
-          const nextRanks = prev.filter(
-            (item: any) =>
-              !(
-                item.keyword === t.keyword &&
-                item.storefront === t.storefront &&
-                (item.platform == null || item.platform === platform)
-              ),
-          );
-          nextRanks.push({
-            keyword: t.keyword,
-            language: t.language,
-            storefront: t.storefront,
-            platform,
-            rank,
-            checkedAt: new Date().toISOString(),
-          });
-          rankById[matched.id] = nextRanks.slice(-300);
-          foundByCompetitor[matched.id] = (foundByCompetitor[matched.id] ?? 0) + 1;
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, 150)); // 温和节流
-    }
-
-    if (checked > 0) {
-      ranksAll[projectId] = rankById;
-      s.set("competitorRankSnapshots", ranksAll);
-    }
-    scanState[productId] = { lastScanAt: new Date().toISOString() };
-    s.set("competitorScanState", scanState);
+    const result = await refreshProductRankKeywords(projectId, productId);
     notifyDataChanged("competitors");
-    return {
-      ok: true,
-      checked,
-      updatedCompetitors: Object.keys(foundByCompetitor).length,
-      foundKeywords: Object.values(foundByCompetitor).reduce((a: number, b: number) => a + b, 0),
-    };
+    return result;
   });
 }

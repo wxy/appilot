@@ -1522,6 +1522,43 @@ export async function runTaskNow(taskId: string): Promise<boolean> {
   return runTaskById(store, taskId);
 }
 
+/**
+ * 手动「重抓我方关键词」：把该产品在 scheduledTasks 里的全部 rank 任务
+ * （kind === "rank" 且 productId 匹配）逐个立即执行一次。
+ * 竞品采集已是「抓我方关键词命中即记录」（见 runRankTask）——rank 任务跑完会把
+ * 结果里出现的已跟踪竞品顺手记下，因此这里只重放我方关键词任务即可，不再需要任何
+ * 按 (竞品 × 关联词) 驱动的额外采集。单任务失败不阻断：runTaskById 返回 false 时
+ * 只不计数；任务之间加 200ms 小节流，避免短时间打爆搜索接口。
+ */
+export async function refreshProductRankKeywords(
+  projectId: string,
+  productId: string,
+): Promise<{ requested: number; ran: number }> {
+  const store = await getStore();
+  // 归属校验：productId 必须确实挂在 projectId 名下（rank 任务 productId 形如
+  // `${projId}:${platform}` 全局唯一），防止调用方传错组合去触发别的项目的任务。
+  const context = findProductContext(store.get("projects") || [], productId);
+  if (context?.project?.id !== projectId) {
+    log.warn(
+      `refreshProductRankKeywords skipped: product ${productId} not under project ${projectId}`,
+    );
+    return { requested: 0, ran: 0 };
+  }
+  const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
+  const rankTasks = tasks.filter(
+    (task): task is RankScheduledTask =>
+      task.kind === "rank" && task.productId === productId,
+  );
+  let ran = 0;
+  for (let i = 0; i < rankTasks.length; i += 1) {
+    if (await runTaskById(store, rankTasks[i].id)) ran += 1;
+    if (i + 1 < rankTasks.length) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  return { requested: rankTasks.length, ran };
+}
+
 /** Read the task immediately before execution, then persist its final state. */
 async function runTaskById(store: AppStore, taskId: string): Promise<boolean> {
   const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
