@@ -1,4 +1,16 @@
-import { searchAppStoreRank, collectKeywordRankings } from "../src/rank-collector";
+import {
+  ITUNES_SEARCH_BLOCK_KV_KEY,
+  ITUNES_SEARCH_BLOCK_MS,
+  collectKeywordRankings,
+  formatItunesBlockClock,
+  isItunesSearchBlocked,
+  isItunesSearchForbidden,
+  itunesSearchApiError,
+  itunesSearchBlockFriendlyMessage,
+  itunesSearchBlockUntilIso,
+  itunesSearchBlockUntilIsoForNow,
+  searchAppStoreRank,
+} from "../src/rank-collector";
 
 let errors = 0;
 function assert(condition: boolean, msg: string) {
@@ -83,6 +95,67 @@ async function run() {
   assert(collection.snapshots.length === 1, "collects one snapshot");
   assert(collection.snapshots[0].rank === 1, "collected snapshot has correct rank");
   assert(collection.failed === 0, "no failed lookups");
+
+  // ── iTunes Search 403 熔断共享契约（纯判定） ──
+  const now = Date.parse("2026-08-23T12:00:00Z");
+  const futureIso = new Date(now + 60_000).toISOString();
+  const pastIso = new Date(now - 60_000).toISOString();
+  assert(
+    itunesSearchBlockUntilIso(futureIso, now) === futureIso,
+    "blockedUntil: 未来时刻 → 返回截止 ISO",
+  );
+  assert(itunesSearchBlockUntilIso(pastIso, now) === null, "blockedUntil: 过去时刻 → null（已解除）");
+  assert(
+    itunesSearchBlockUntilIso(JSON.stringify(futureIso), now) === futureIso,
+    "blockedUntil: 兼容 electron 的 JSON 引号存法",
+  );
+  assert(itunesSearchBlockUntilIso("garbage", now) === null, "blockedUntil: 非法值 → null");
+  assert(itunesSearchBlockUntilIso(undefined, now) === null, "blockedUntil: 未写入 → null");
+  assert(isItunesSearchBlocked(futureIso, now) === true, "isItunesSearchBlocked: 未来时刻 = 熔断中");
+  assert(isItunesSearchBlocked(pastIso, now) === false, "isItunesSearchBlocked: 过期 = 已解除");
+  const untilFor = itunesSearchBlockUntilIsoForNow(now);
+  assert(
+    new Date(untilFor).getTime() === now + ITUNES_SEARCH_BLOCK_MS,
+    "冷却窗口固定 45 分钟（与主进程一致）",
+  );
+  assert(
+    ITUNES_SEARCH_BLOCK_KV_KEY === "itunesSearchBlockedUntil",
+    "kv 键名与主进程 scheduler 一致",
+  );
+  assert(
+    /^\d{1,2}:\d{2}$/.test(formatItunesBlockClock(untilFor)),
+    "冷却时钟格式 HH:mm",
+  );
+  assert(
+    itunesSearchBlockFriendlyMessage(untilFor).includes("403") &&
+      itunesSearchBlockFriendlyMessage(untilFor).includes("请稍后再试"),
+    "友好文案含 403 与稍后再试",
+  );
+  assert(isItunesSearchForbidden(itunesSearchApiError(403)) === true, "403 谓词命中结构化错误");
+  assert(isItunesSearchForbidden(itunesSearchApiError(429)) === false, "429 不属于熔断");
+  assert(
+    isItunesSearchForbidden(Object.assign(new Error("iTunes Search API 403"), {})) === true,
+    "403 谓词兜底匹配文本",
+  );
+
+  // ── 采集途中 403 → 整批中止并向上抛（供 projects:collectRanks 触发熔断） ──
+  (globalThis as any).fetch = async () =>
+    ({ ok: false, status: 403, text: async () => "" }) as any;
+  let forbiddenAborted = false;
+  try {
+    await collectKeywordRankings({
+      targets: [
+        { keyword: "a", language: "en", storefront: "us" },
+        { keyword: "b", language: "en", storefront: "us" },
+      ],
+      trackId: "222",
+      productType: "ios",
+      delayMs: 0,
+    });
+  } catch (err: any) {
+    forbiddenAborted = isItunesSearchForbidden(err);
+  }
+  assert(forbiddenAborted, "403 中断整批（不再继续打后续目标）并向上抛");
 }
 
 run().finally(() => {

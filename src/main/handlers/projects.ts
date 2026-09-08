@@ -4,6 +4,11 @@ import path from "path";
 import { log } from "@appilot-labs/appilot-core/logger";
 import { appendRankSnapshots } from "@appilot-labs/appilot-core/rank-snapshots";
 import { evaluatePause, normalizeTrackedKeyword } from "@appilot-labs/appilot-core/rank-keywords";
+import {
+  isItunesSearchForbidden,
+  itunesSearchBlockFriendlyMessage,
+  itunesSearchBlockUntilIsoForNow,
+} from "@appilot-labs/appilot-core/rank-collector";
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { createAiProvider } from "../ai-service";
 import { sharedStore } from "../registry-sync";
@@ -26,7 +31,12 @@ import {
   migrateLegacyStoreProducts,
 } from "../project-state";
 import { buildProjectProfileFor } from "../release-service";
-import { githubSyncCacheEntry, schedulerTick } from "../scheduler";
+import {
+  armItunesSearchBlock,
+  githubSyncCacheEntry,
+  itunesSearchBlockState,
+  schedulerTick,
+} from "../scheduler";
 import { getStore } from "../store";
 import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
@@ -1888,6 +1898,15 @@ export function registerProjectsHandlers(): void {
     if (!context) throw new Error("Store product not found");
     const { project, product } = context;
     if (!product.trackId) throw new Error("缺少 App Store Track ID，请先确认 README 中的商店链接。");
+    // iTunes Search 403 熔断门控：冷却期内「立即采集」直接拦下，不再发起任何
+    // iTunes /search（读同一 app_kv 键 itunesSearchBlockedUntil——getStore().get
+    // 与 headless store.kv 指向同一 app_kv；主进程/daemon/DSH 任一侧触发都拦）。
+    // lookupApp（lookup 端点）不属于 /search 熔断范围，但既然整批注定要打 /search，
+    // 提前在进入网络前拦截更省。
+    const block = itunesSearchBlockState(s);
+    if (block.blocked && block.until) {
+      throw new Error(itunesSearchBlockFriendlyMessage(block.until));
+    }
 
     let keywords: any[] = ensureProjectKeywordPool(project).trackedKeywords || [];
     if (typeof language === "string" && language) {
@@ -1928,18 +1947,35 @@ export function registerProjectsHandlers(): void {
     );
 
     const { collectKeywordRankings } = await import("@appilot-labs/appilot-core/rank-collector");
-    const result = await collectKeywordRankings({
-      targets,
-      trackId: product.trackId,
-      productType: product.platform,
-      entity,
-      delayMs: 1000,
-      onProgress: (progress) => {
-        if (!event.sender.isDestroyed()) {
-          event.sender.send("projects:collectRanksProgress", progress);
-        }
-      },
-    });
+    let result: Awaited<ReturnType<typeof collectKeywordRankings>>;
+    try {
+      result = await collectKeywordRankings({
+        targets,
+        trackId: product.trackId,
+        productType: product.platform,
+        entity,
+        delayMs: 1000,
+        onProgress: (progress) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send("projects:collectRanksProgress", progress);
+          }
+        },
+      });
+    } catch (err: any) {
+      // 手动采集本身命中 403（core collectKeywordRankings 已把 Forbidden 整批
+      // 中止并向上抛，剩余关键词不再打 API）→ 触发熔断写键并给用户友好提示。
+      // 依赖方向 handlers → scheduler（复用导出，无循环依赖）。
+      if (isItunesSearchForbidden(err)) {
+        armItunesSearchBlock(s, `projects:collectRanks ${product.trackName ?? productId}`);
+        const after = itunesSearchBlockState(s);
+        throw new Error(
+          itunesSearchBlockFriendlyMessage(
+            after.until ?? itunesSearchBlockUntilIsoForNow(),
+          ),
+        );
+      }
+      throw err;
+    }
 
     // Re-read before writing: the product captured before the network call may
     // be stale (concurrent handlers can replace the whole projects array).
