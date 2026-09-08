@@ -41,13 +41,23 @@ export function TaskCenterPage() {
   } | undefined>(undefined);
   const [accel, setAccel] = useState(false);
   const [accelRemainingMs, setAccelRemainingMs] = useState<number | null>(null);
-  // 任务中心控制（架构收敛 C2）：daemon/壳调度启停状态。
+  // 任务中心控制（架构收敛 C2）：daemon/壳调度启停 + 调度器指纹监测。
   const [daemonCtrl, setDaemonCtrl] = useState<{
     userStopped: boolean;
     leader: string | null;
     daemon: { running: boolean } | null;
+    // scheduler:status 新增的调度器版本监测（运行 vs 磁盘指纹）。
+    manager: {
+      mode: "daemon" | "inapp" | "stopped";
+      runningFingerprint: string | null;
+      diskFingerprint: string | null;
+      unknown: boolean;
+      mismatch: boolean;
+    } | null;
   } | null>(null);
   const [ctrlBusy, setCtrlBusy] = useState(false);
+  // 正在执行的控制动作（区分按钮忙碌文案：启动中/暂停中/重启中）。
+  const [ctrlAction, setCtrlAction] = useState<"start" | "stop" | "restart" | null>(null);
   const [ctrlErr, setCtrlErr] = useState<string | null>(null);
   // 失败任务批量处理（backlog #2）
   const [failBusy, setFailBusy] = useState<string | null>(null);
@@ -121,32 +131,44 @@ export function TaskCenterPage() {
       .catch(() => undefined);
   };
 
-  // 读取当前加速模式 + 任务中心启停状态。
+  // 读取当前加速模式 + 调度器启停/版本监测状态。
+  const applyStatus = (status: any) => {
+    setAccel(Boolean(status?.accel));
+    setAccelRemainingMs(
+      typeof status?.accelRemainingMs === "number" ? status.accelRemainingMs : null,
+    );
+    setDaemonCtrl({
+      userStopped: Boolean(status?.userStopped),
+      leader: status?.leader ?? null,
+      daemon: status?.daemon ?? null,
+      manager: status?.schedulerManager ?? null,
+    });
+  };
+
+  // 周期重读调度器状态（含版本监测）：磁盘/运行指纹变化（如应用更新后）
+  // 最多 ~30s 反映到「版本不一致」提示，不必等用户操作。
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      (window as any).appilot?.scheduler?.status()
+        .then(applyStatus)
+        .catch(() => undefined);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     (window as any).appilot?.scheduler?.status()
-      .then((status: any) => {
-        setAccel(Boolean(status?.accel));
-        setAccelRemainingMs(
-          typeof status?.accelRemainingMs === "number" ? status.accelRemainingMs : null,
-        );
-        setDaemonCtrl({
-          userStopped: Boolean(status?.userStopped),
-          leader: status?.leader ?? null,
-          daemon: status?.daemon ?? null,
-        });
-      })
+      .then(applyStatus)
       .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 启停动作后重读状态（daemon 让位/拉起是异步的，稍后刷新）。
   const readCtrl = () => {
     (window as any).appilot?.scheduler?.status()
       .then((status: any) => {
-        setDaemonCtrl({
-          userStopped: Boolean(status?.userStopped),
-          leader: status?.leader ?? null,
-          daemon: status?.daemon ?? null,
-        });
+        applyStatus(status);
         return (window as any).appilot?.scheduler?.list();
       })
       .then(setData)
@@ -156,14 +178,16 @@ export function TaskCenterPage() {
   const daemonStart = () => {
     if (ctrlBusy) return;
     setCtrlBusy(true);
+    setCtrlAction("start");
     setCtrlErr(null);
     (window as any).appilot?.scheduler?.daemonStart()
       .then((r: any) => {
-        if (!r?.ok) setCtrlErr(r?.error || "任务中心启动失败（daemon 不可用）");
+        if (!r?.ok) setCtrlErr(r?.error || "调度器启动失败（daemon 不可用）");
       })
       .catch((e: any) => setCtrlErr(e?.message || String(e)))
       .finally(() => {
         setCtrlBusy(false);
+        setCtrlAction(null);
         readCtrl();
       });
   };
@@ -171,14 +195,40 @@ export function TaskCenterPage() {
   const daemonStop = () => {
     if (ctrlBusy) return;
     setCtrlBusy(true);
+    setCtrlAction("stop");
     setCtrlErr(null);
     (window as any).appilot?.scheduler?.daemonStop()
       .then((r: any) => {
-        if (!r?.ok) setCtrlErr("停止任务中心失败（daemon 未响应）");
+        if (!r?.ok) setCtrlErr("暂停调度器失败（daemon 未响应）");
       })
       .catch((e: any) => setCtrlErr(e?.message || String(e)))
       .finally(() => {
         setCtrlBusy(false);
+        setCtrlAction(null);
+        readCtrl();
+      });
+  };
+
+  // 重启调度器 = 先停止（daemon 关停 + 壳 fallback 暂停，等待进程退出）再启动
+  // （复用现有 daemonStop/daemonStart IPC 流程；主进程 stop 已等待 daemon 退出，
+  // 顺序执行不会复用到正在退出的旧进程）。用于应用更新后加载磁盘最新代码。
+  const restartScheduler = () => {
+    if (ctrlBusy || !engineActive || daemonCtrl == null) return;
+    setCtrlBusy(true);
+    setCtrlAction("restart");
+    setCtrlErr(null);
+    (window as any).appilot?.scheduler?.daemonStop()
+      .then((r: any) => {
+        if (!r?.ok) setCtrlErr("重启：暂停调度器失败（daemon 未响应）");
+        return (window as any).appilot?.scheduler?.daemonStart();
+      })
+      .then((r: any) => {
+        if (r && !r?.ok) setCtrlErr(r?.error || "重启：启动调度器失败（daemon 不可用）");
+      })
+      .catch((e: any) => setCtrlErr(e?.message || String(e)))
+      .finally(() => {
+        setCtrlBusy(false);
+        setCtrlAction(null);
         readCtrl();
       });
   };
@@ -313,23 +363,35 @@ export function TaskCenterPage() {
   const failedGroups = groupTasks(failed);
   const overview = data?.overview;
 
-  // 引擎状态（统一模型）：运行（daemon/本应用）/ 已暂停 / 未运行 ——
-  // 供头部控制条与加速可用性派生。
+  // 调度器状态（统一模型）：运行（daemon/本应用）/ 已停止 / 未运行 ——
+  // 供头部「调度器」控制区与加速可用性派生。状态源沿用 daemonCtrl
+  // （userStopped/leader/daemon），模式优先取 server 端 schedulerManager.mode
+  // （主进程派生，含指纹比对）；旧主进程无该字段时回退到 leader/daemon 推导。
   const engineStopped = daemonCtrl?.userStopped ?? false;
+  const mgr = daemonCtrl?.manager ?? null;
+  const hasMgr = mgr != null;
   const engineByDaemon =
-    !engineStopped && Boolean(daemonCtrl?.daemon?.running || daemonCtrl?.leader === "scheduler");
-  const engineByElectron = !engineStopped && daemonCtrl?.leader === "electron";
+    !engineStopped &&
+    (hasMgr
+      ? mgr.mode === "daemon"
+      : Boolean(daemonCtrl?.daemon?.running || daemonCtrl?.leader === "scheduler"));
+  const engineByElectron =
+    !engineStopped &&
+    (hasMgr ? mgr.mode === "inapp" : daemonCtrl?.leader === "electron");
   const engineActive = engineByDaemon || engineByElectron;
   const engineLabel =
     daemonCtrl == null
-      ? "任务中心读取中…"
+      ? "调度器读取中…"
       : engineStopped
-        ? "已暂停"
+        ? "已停止"
         : engineByDaemon
-          ? "运行中 · 常驻 daemon"
+          ? "运行中 · 常驻调度器"
           : engineByElectron
             ? "运行中 · 本应用"
             : "未运行";
+  // 版本监测行：仅「常驻调度器」模式有意义。
+  const daemonMode = !engineStopped && engineByDaemon;
+  const fpShort = (fp: string | null | undefined) => (fp ? fp.slice(0, 7) : null);
   const enginePillCls = daemonCtrl == null
     ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
     : engineStopped
@@ -360,99 +422,151 @@ export function TaskCenterPage() {
             后台数据采集与同步的调度健康度、执行负载与时间线。
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          {nowRunning && engineActive && (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              正在执行{" "}
-              {nowRunning.kind === "github-sync" ? "GitHub 发布监听" : nowRunning.keyword}
-            </span>
-          )}
-          <span
-            className={cn("px-2.5 py-1 rounded-full text-xs font-medium", enginePillCls)}
-            title={
-              engineStopped
-                ? "任务中心已暂停：自动调度停止；重启应用后随启动恢复"
-                : engineActive
-                  ? "任务中心自动调度运行中"
-                  : "任务中心未运行"
-            }
-          >
-            {engineLabel}
-          </span>
-          <button
-            type="button"
-            disabled={ctrlBusy || daemonCtrl == null}
-            onClick={() => (engineActive ? daemonStop() : daemonStart())}
-            className={cn(
-              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-50",
-              engineActive
-                ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600"
-                : "border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:border-emerald-600",
-            )}
-            title={
-              engineActive
-                ? "暂停任务中心：关停常驻 daemon 并暂停本应用调度（手动运行仍可用；重启应用随启动恢复）"
-                : "启动任务中心：拉起常驻 daemon（appilot-scheduler），自动调度恢复"
-            }
-          >
-            {ctrlBusy
-              ? engineActive
-                ? "暂停中…"
-                : "启动中…"
-              : engineActive
-                ? "暂停任务中心"
-                : "启动任务中心"}
-          </button>
-          <button
-            type="button"
-            disabled={!engineActive || ctrlBusy}
-            onClick={() => {
-              // 未开启 → 开启；已开启 → 延长 5 分钟。
-              (window as any).appilot?.scheduler?.setAccel(true)
-                .then(() => {
-                  setAccel(true);
-                  (window as any).appilot?.scheduler?.list()
-                    .then(setData)
-                    .catch(() => undefined);
-                  (window as any).appilot?.scheduler?.status()
-                    .then((st: any) =>
-                      setAccelRemainingMs(
-                        typeof st?.accelRemainingMs === "number" ? st.accelRemainingMs : null,
-                      ),
-                    )
-                    .catch(() => undefined);
-                })
-                .catch(() => undefined);
-            }}
-            className={cn(
-              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
-              accel
-                ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
-            )}
-            title={
-              !engineActive
-                ? "任务中心已暂停——先「启动任务中心」再加速"
-                : accel
-                  ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
-                  : "开启加速模式，以更快速度处理积压任务"
-            }
-          >
-            {accel ? (
-              <>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          {/* 标题/模式块：调度器 + 状态 chip + 正在执行 */}
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {nowRunning && engineActive && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
                 <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                {accelRemainingMs != null
-                  ? `加速中 · ${Math.ceil(accelRemainingMs / 1000)} 秒后自动解除`
-                  : "加速模式（开）"}
-              </>
-            ) : (
-              "加速模式"
+                正在执行{" "}
+                {nowRunning.kind === "github-sync" ? "GitHub 发布监听" : nowRunning.keyword}
+              </span>
             )}
-          </button>
-          {ctrlErr && (
-            <span className="text-red-500 dark:text-red-400 text-xs">{ctrlErr}</span>
-          )}
+            <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+              调度器
+            </span>
+            <span
+              className={cn("px-2.5 py-1 rounded-full text-xs font-medium", enginePillCls)}
+              title={
+                engineStopped
+                  ? "调度器已停止：后台不再自动采集（手动「立即运行 / 加速」仍可用）；重启应用随启动恢复"
+                  : engineActive
+                    ? "调度器自动调度运行中"
+                    : "调度器未运行——点击「启动」拉起常驻调度器"
+              }
+            >
+              {engineLabel}
+            </span>
+          </div>
+
+          {/* 版本监测行：运行 vs 磁盘 代码指纹（仅常驻调度器模式） */}
+          {daemonMode && mgr ? (
+            <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-md">
+              {mgr.unknown ? (
+                <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  运行指纹未知（重启一次以纳入监测）
+                </span>
+              ) : (
+                <>
+                  <span
+                    className="text-[11px] font-mono text-zinc-500 dark:text-zinc-400"
+                    title={`运行代码指纹 ${mgr.runningFingerprint} · 磁盘代码指纹 ${mgr.diskFingerprint}`}
+                  >
+                    运行 {fpShort(mgr.runningFingerprint)} · 磁盘{" "}
+                    {fpShort(mgr.diskFingerprint)}
+                  </span>
+                  {mgr.mismatch && (
+                    <span className="px-1.5 py-0.5 rounded border border-amber-300/80 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                      版本不一致，请重启调度器
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          ) : null}
+
+          {/* 管理按钮：启动 / 暂停 / 重启 + 加速 */}
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            <button
+              type="button"
+              disabled={ctrlBusy || daemonCtrl == null || engineActive}
+              onClick={daemonStart}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                "border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:border-emerald-600",
+              )}
+              title={
+                engineActive
+                  ? "调度器已在运行——应用更新后请用「重启」加载磁盘最新代码"
+                  : "启动调度器：拉起常驻 daemon（appilot-scheduler），自动调度恢复"
+              }
+            >
+              {ctrlAction === "start" ? "启动中…" : "启动"}
+            </button>
+            <button
+              type="button"
+              disabled={ctrlBusy || daemonCtrl == null || !engineActive}
+              onClick={daemonStop}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600",
+              )}
+              title="暂停调度器：关停常驻 daemon 并暂停本应用调度（手动「立即运行」仍可用；重启应用随启动恢复）"
+            >
+              {ctrlAction === "stop" ? "暂停中…" : "暂停"}
+            </button>
+            <button
+              type="button"
+              disabled={ctrlBusy || daemonCtrl == null || !engineActive}
+              onClick={restartScheduler}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                "border-zinc-300 dark:border-zinc-600 bg-white dark:bg-transparent text-zinc-600 dark:text-zinc-300 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400",
+              )}
+              title="重启调度器：先停止（关停 daemon 并等待退出）再启动，加载磁盘上的最新代码——应用更新后提示「版本不一致」时使用"
+            >
+              {ctrlAction === "restart" ? "重启中…" : "重启"}
+            </button>
+            <button
+              type="button"
+              disabled={!engineActive || ctrlBusy}
+              onClick={() => {
+                // 未开启 → 开启；已开启 → 延长 5 分钟。
+                (window as any).appilot?.scheduler?.setAccel(true)
+                  .then(() => {
+                    setAccel(true);
+                    (window as any).appilot?.scheduler?.list()
+                      .then(setData)
+                      .catch(() => undefined);
+                    (window as any).appilot?.scheduler?.status()
+                      .then((st: any) =>
+                        setAccelRemainingMs(
+                          typeof st?.accelRemainingMs === "number" ? st.accelRemainingMs : null,
+                        ),
+                      )
+                      .catch(() => undefined);
+                  })
+                  .catch(() => undefined);
+              }}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                accel
+                  ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                  : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
+              )}
+              title={
+                !engineActive
+                  ? "调度器未运行——先「启动调度器」再加速"
+                  : accel
+                    ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
+                    : "开启加速模式，以更快速度处理积压任务"
+              }
+            >
+              {accel ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  {accelRemainingMs != null
+                    ? `加速中 · ${Math.ceil(accelRemainingMs / 1000)} 秒后自动解除`
+                    : "加速模式（开）"}
+                </>
+              ) : (
+                "加速模式"
+              )}
+            </button>
+            {ctrlErr && (
+              <span className="text-red-500 dark:text-red-400 text-xs">{ctrlErr}</span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -475,7 +589,7 @@ export function TaskCenterPage() {
       <div className="mb-5 space-y-2 text-xs">
         {engineStopped ? (
           <p className="text-zinc-400 dark:text-zinc-500">
-            已暂停——后台不再自动采集；重启应用后随启动恢复（手动「立即运行 / 加速」仍可用）。
+            调度器已暂停——后台不再自动采集；重启应用后随启动恢复（手动「立即运行 / 加速」仍可用）。
           </p>
         ) : null}
         {data != null && totalFailed > 0 ? (

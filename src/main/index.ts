@@ -5,6 +5,8 @@ import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
 import { startRegistrySync, releaseElectronLease } from "./registry-sync";
 import { startTaskScheduler } from "./scheduler";
+import { ensureSchedulerTracked } from "./daemon-manager";
+import { diskSchedulerFingerprint } from "./scheduler-fingerprint";
 import { registerHeadlessReadIpc } from "./headless-ipc";
 import { registerDbAdminHandlers } from "./db-admin";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
@@ -99,15 +101,19 @@ app.on("will-quit", () => {
 /**
  * P4：best-effort 确保调度守护进程在跑（fire-and-forget，不阻塞窗口创建）。
  * daemon 优先 acquire 成为调度主；本壳旧调度保留（scheduleGate 会让位）。
+ * 用 daemon-manager 的 tracked 拉起：由本壳 spawn 的 daemon 会记录启动指纹
+ * （pid 绑定），任务中心「调度器」区据此比对 运行 vs 磁盘 版本。
  */
 function ensureSchedulerDaemon(): void {
   try {
-    const { ensureScheduler, defaultSocketPath, resolveSchedulerCli } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
+    const { defaultSocketPath, resolveSchedulerCli } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
     const { defaultDbPath } = require("@appilot-labs/appilot-headless") as typeof import("@appilot-labs/appilot-headless");
     const cli = resolveSchedulerCli();
-    void ensureScheduler({
+    const fingerprint = diskSchedulerFingerprint(cli ? () => cli : null);
+    void ensureSchedulerTracked({
       socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
       spawnCommand: cli ? [process.execPath, cli] : undefined,
+      fingerprint,
       timeoutMs: 3000,
       log: (m) => log.info(`appilot: ${m}`),
     });
