@@ -249,7 +249,7 @@ export function CompetitorPanel({
   viewLang: string;
   /** 旧“竞品跟踪”视图的入参（排名明细现来自 overview 的 intel.faces），保留以兼容调用方。 */
   rankSnapshots: any[];
-  /** 项目关键词池。保留以兼容调用方；矩阵空白格「+」现直接按列 (keyword × lang) 关联，不再需要候选词池。 */
+  /** 项目关键词池。保留以兼容调用方；矩阵空白格不再提供「+」关联（显式 (竞品 × 词) 关联采集已移除，采集只随我方关键词命中记录），不再需要候选词池。 */
   projectKeywords?: any[];
   /** 从关键词矩阵钻取进来的词：进入即聚焦“该词 × 全部竞品”对比（可关闭回完整矩阵）。 */
   focusKeyword?: string;
@@ -260,7 +260,6 @@ export function CompetitorPanel({
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
   const [addMessage, setAddMessage] = useState("");
-  const [refreshingRanks, setRefreshingRanks] = useState(false);
   const [page, setPage] = useState(0);
   const [searchError, setSearchError] = useState("");
   // 竞品总览（competitors:overview → [{competitor, intel, indexHistory}]，intel.faces 即矩阵数据）。
@@ -268,10 +267,9 @@ export function CompetitorPanel({
   // 矩阵行展开（商店级对比：行 = 商店 × 列 = 词）。
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const [profilesTick, setProfilesTick] = useState(0);
-  const [scanBusy, setScanBusy] = useState(false);
-  const [scanMsg, setScanMsg] = useState<string | null>(null);
-  // —— 空白格「+」关联：pendingLinkKey = `${competitorId}\0${col.key}` 防同格重复点击 ——
-  const [pendingLinkKey, setPendingLinkKey] = useState<string | null>(null);
+  // 手动「重抓我方词」：请求期间禁用按钮，结束后横幅提示结果。
+  const [refreshingKeywords, setRefreshingKeywords] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
   // 词钻取聚焦：进入竞品标签时若带词，矩阵只保留该词的列（可关闭回完整矩阵）。
   const [focusCleared, setFocusCleared] = useState(false);
   const wordDrill = focusKeyword && !focusCleared ? focusKeyword : "";
@@ -300,29 +298,6 @@ export function CompetitorPanel({
   }, [projectId, product?.id]);
   useEffect(() => { loadOverview(); }, [loadOverview, profilesTick]);
   useEffect(() => { load(); }, [load]);
-  // 在榜词扫描：只扫我方在榜词（每日限流，界面提示结果）。
-  const handleScanOnChart = async () => {
-    if (scanBusy || !product?.id) return;
-    setScanBusy(true);
-    setScanMsg(null);
-    try {
-      const res = await (window as any).appilot?.competitors?.scanOnChart(projectId, product.id);
-      if (res?.ok) {
-        setScanMsg(
-          `扫描 ${res.checked} 个在榜词：${res.updatedCompetitors} 个已跟踪竞品新增交集 ${res.foundKeywords} 处。`,
-        );
-      } else if (res?.throttled) {
-        setScanMsg("今日已扫描过（每日限流一次），明天再来或需要强制重扫告诉我。");
-      } else {
-        setScanMsg(res?.error || "扫描失败");
-      }
-      setProfilesTick((v) => v + 1);
-    } catch (err: any) {
-      setScanMsg(err?.message || "扫描失败");
-    } finally {
-      setScanBusy(false);
-    }
-  };
   // 主进程数据变更推送：竞品数据更新时自动刷新列表。
   useEffect(() => {
     const handler = (e: Event) => {
@@ -396,9 +371,8 @@ export function CompetitorPanel({
         trackIds: { [platform]: candidate.trackId },
         githubUrl: null,
         notes: "",
-        // 关联当前关键词：之后按 (竞品, 关键词, 商店) 采集竞品排名。
-        // 关联语言 = 搜索时的视图语言（中文视图 → cn/sg，英文视图 → us/gb 等），
-        // 竞品排名按该语言商店采集，与矩阵中该视图看到的排名一致。
+        // 记下当前关键词（兼容保留）；之后无需按 (竞品 × 词) 额外采集——常规定时抓我方
+        // 关键词时命中的竞品会自动记下名次，与这里的搜索语言一致即可被矩阵聚合。
         linkedKeywords: keyword
           ? [{ keyword, language }]
           : [],
@@ -437,15 +411,28 @@ export function CompetitorPanel({
     setProfilesTick((v) => v + 1);
     if (expandedRowId === competitorId) setExpandedRowId(null);
   };
-  const handleRefreshRanks = async () => {
-    if (refreshingRanks) return;
-    setRefreshingRanks(true);
+  // 手动「重抓我方词」：把该产品全部已排程的我方关键词任务各重跑一次——抓词结果里
+  // 出现的已跟踪竞品会被自动记下（命中即记录），完成后矩阵的命中排名随之出现。
+  const handleRefreshKeywords = async () => {
+    if (refreshingKeywords || !product?.id) return;
+    setRefreshingKeywords(true);
+    setRefreshMsg(null);
     try {
-      await (window as any).appilot?.competitors?.refreshRanks(projectId);
+      const res = await (window as any).appilot?.competitors?.refreshKeywords(
+        projectId,
+        product.id,
+      );
+      const requested = Number(res?.requested ?? 0);
+      const ran = Number(res?.ran ?? 0);
+      setRefreshMsg(
+        `已触发重抓我方关键词（共 ${requested} 个任务，成功 ${ran} 个），完成后竞品命中排名会自动出现。`,
+      );
       await load();
       setProfilesTick((v) => v + 1);
+    } catch (err: any) {
+      setRefreshMsg(err?.message || "重抓失败");
     } finally {
-      setRefreshingRanks(false);
+      setRefreshingKeywords(false);
     }
   };
 
@@ -504,29 +491,9 @@ export function CompetitorPanel({
     setExpandedRowId((prev) => (prev === competitorId ? null : competitorId));
   };
 
-  // —— 空白格「+」：把 (词 × 语言) 关联到该竞品并立即只采集这个词的排名（去重合并；
-  // 成功后刷新矩阵；请求期间锁定该格防重复点击）。不弹成功提示，避免页面抖动。
-  const handleBlankLink = async (rowCompetitor: any, col: MatrixCol) => {
-    const key = `${rowCompetitor?.id}\u0000${col.key}`;
-    if (!rowCompetitor?.id || pendingLinkKey === key) return;
-    setPendingLinkKey(key);
-    try {
-      await (window as any).appilot?.competitors?.linkAndCollect(projectId, rowCompetitor.id, {
-        keyword: col.keyword,
-        language: col.lang,
-      });
-      await load();
-      setProfilesTick((v) => v + 1);
-    } catch (err: any) {
-      console.warn(`竞品关联采集失败: ${err?.message || String(err)}`);
-    } finally {
-      setPendingLinkKey(null);
-    }
-  };
-
   // —— 竞品矩阵渲染辅助 ——
   // (竞品 × 组 × 词) 的跨店综合格：只统计该组覆盖商店集里的领先数。
-  const renderCell = (col: MatrixCol, face: any, rowCompetitor: any) => {
+  const renderCell = (col: MatrixCol, face: any) => {
     const cells = (face?.cells || []).filter((c: any) => col.group.inGroup(c?.storefront));
     const agg = aggregateCells(cells);
     const hasData = agg.myBest != null || agg.theirBest != null;
@@ -541,49 +508,19 @@ export function CompetitorPanel({
           : agg.theirSeen > 0
             ? `「${col.keyword}」${col.group.label}：竞品已采集，我方无该词数据`
             : `「${col.keyword}」${col.group.label}：该竞品未采集此词（无排名快照）`;
-      // 无色空白格（未采集 / 单方已采集，词不在该竞品采集范围）放一个「+」把它关联过去；
-      // 灰格 = 双方都已采集（词已在采集范围，关联无意义）、商店展开行与表头一律不加。
-      const linkable = !bothSeen && rowCompetitor?.id != null;
-      const linkPending = linkable && pendingLinkKey === `${rowCompetitor.id}\u0000${col.key}`;
-      const linkTitle = `立即关联「${col.keyword}」到 ${rowCompetitor?.name ?? ""} 并采集它在这个词的名次`;
       return (
         <td
           key={col.key}
           className={cn("p-0.5 border-l border-zinc-200/60 dark:border-zinc-700/50", CELL_BORDER_B)}
           title={blankTitle}
         >
-          {linkable ? (
-            <span className="flex h-6 items-center justify-center" title={blankTitle}>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void handleBlankLink(rowCompetitor, col);
-                }}
-                disabled={linkPending}
-                title={linkTitle}
-                aria-label={linkTitle}
-                className={cn(
-                  "flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none transition-colors",
-                  "border-zinc-200/80 bg-zinc-100 text-zinc-400",
-                  "dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-500",
-                  "hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600",
-                  "dark:hover:border-amber-500/60 dark:hover:bg-amber-500/15 dark:hover:text-amber-400",
-                  linkPending && "opacity-50",
-                )}
-              >
-                {linkPending ? "…" : "+"}
-              </button>
-            </span>
-          ) : (
-            <span
-              title={blankTitle}
-              className={cn(
-                "block min-h-6 rounded-md",
-                bothSeen && "bg-zinc-200/70 dark:bg-zinc-700/40",
-              )}
-            />
-          )}
+          <span
+            title={blankTitle}
+            className={cn(
+              "block min-h-6 rounded-md",
+              bothSeen && "bg-zinc-200/70 dark:bg-zinc-700/40",
+            )}
+          />
         </td>
       );
     }
@@ -647,7 +584,7 @@ export function CompetitorPanel({
           {/* 占住冻结首列位置，避免横向滚动时该行首列区域露出空洞 */}
           <td className={cn("sticky left-0 z-20 px-3 py-1", STORE_ROW_BG, CELL_BORDER_B)} />
           <td colSpan={totalCols} className={cn("px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400", CELL_BORDER_B)}>
-            暂无商店级在榜数据（先采集或刷新排名）。
+            暂无商店级在榜数据（重抓我方词后，命中的竞品排名会自动补采进来）。
           </td>
         </tr>,
       );
@@ -956,39 +893,30 @@ export function CompetitorPanel({
                 </span>
                 <button
                   type="button"
-                  onClick={() => void handleScanOnChart()}
-                  disabled={scanBusy}
+                  onClick={() => void handleRefreshKeywords()}
+                  disabled={refreshingKeywords || !product?.id}
                   className={btnSmSecondary}
-                  title="只扫我方在榜词，发现已跟踪竞品的新交集并回填排名（每日限流一次）"
+                  title="把该产品全部已排程的「我方关键词」各重抓一次——结果里出现的已跟踪竞品会被自动记下名次，无需按 (竞品 × 关联词) 单独采集"
                 >
-                  {scanBusy ? "扫描在榜词…" : "扫描在榜词"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleRefreshRanks()}
-                  disabled={refreshingRanks}
-                  className={btnSmSecondary}
-                  title="为所有竞品的关联关键词补采一次最新排名"
-                >
-                  {refreshingRanks ? "采集中…" : "刷新排名"}
+                  {refreshingKeywords ? "重抓中…" : "重抓我方词"}
                 </button>
               </div>
             </div>
           </div>
-          {scanMsg && (
+          {refreshMsg && (
             <p className="px-4 py-2 text-[11px] text-amber-600 dark:text-amber-400 border-b border-zinc-100 dark:border-zinc-800">
-              {scanMsg}
+              {refreshMsg}
             </p>
           )}
           {profiles.length === 0 ? (
             <p className="px-4 py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">
-              暂无竞争面数据 —— 点击“扫描在榜词”或“刷新排名”开始采集（按 (竞品 × 词 × 商店) 回填后这里出现矩阵）。
+              暂无竞争面数据 —— 点击“重抓我方词”开始采集（抓我方关键词时命中的竞品会自动回填，矩阵随即出现）。
             </p>
           ) : matrixCols.length === 0 ? (
             <p className="px-4 py-6 text-center text-xs text-zinc-400 dark:text-zinc-500">
               {wordDrill
-                ? `「${wordDrill}」暂未采集到任何竞品的排名 —— 关闭聚焦可查看完整矩阵；点“刷新排名”可为已关联词补采。`
-                : "尚无采集到排名的关键词列 —— 点击“扫描在榜词”或“刷新排名”采集。"}
+                ? `「${wordDrill}」暂未采集到任何竞品的排名 —— 关闭聚焦可查看完整矩阵；点“重抓我方词”可为该词补采。`
+                : "尚无采集到排名的关键词列 —— 点击“重抓我方词”采集。"}
             </p>
           ) : (
             <div className="overflow-auto max-h-[min(72vh,42rem)]">
@@ -1175,7 +1103,7 @@ export function CompetitorPanel({
                           </div>
                         </th>
                         {matrixCols.map((col) =>
-                          renderCell(col, faceMap.get(`${col.lang}\u0000${col.keyword}`), competitor),
+                          renderCell(col, faceMap.get(`${col.lang}\u0000${col.keyword}`)),
                         )}
                       </tr>,
                       ...(expanded ? renderRowDetail(profile, faceMap) : []),
