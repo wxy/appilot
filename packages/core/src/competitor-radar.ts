@@ -1,5 +1,6 @@
 import { normalizeGitHubUrl } from "./git-info";
 import { fetchGitHubJson } from "./gh-traffic";
+import { itunesSearchApiError } from "./rank-collector";
 
 export interface Competitor {
   id: string;
@@ -146,7 +147,7 @@ export async function searchCompetitorCandidates(opts: {
   url.searchParams.set("entity", opts.entity || "software");
   url.searchParams.set("limit", "50");
   const res = await fetchWithTimeout(url.toString());
-  if (!res.ok) throw new Error(`iTunes Search API ${res.status}`);
+  if (!res.ok) throw itunesSearchApiError(res.status);
   const data = JSON.parse(await res.text());
   const excludedTrack = new Set(opts.excludeTrackIds || []);
   const excludedBundle = new Set(opts.excludeBundleIds || []);

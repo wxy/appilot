@@ -151,6 +151,70 @@ export function schedulerStatusSnapshot(): {
   return { running: schedulerRunning, nowRunning: nowRunningTask };
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// iTunes Search 403 熔断（被拒/封禁/风控保护）
+//
+// 一旦 iTunes Search API 返回 403，立即停止当次及之后的自动采集，避免持续
+// 请求使情况恶化；冷却期（ITUNES_SEARCH_BLOCK_MS）结束后自动恢复。状态持久化
+// 到 kv（app_kv），应用重启后延续。熔断只在真正走 iTunes Search API 的任务上
+// 触发/检查（rank 类；reviews/ops-sync 分别走 RSS / lookup 端点，不受本熔断
+// 约束——调用点清单见代码注释与验收汇报）。
+// ────────────────────────────────────────────────────────────────────────────
+const ITUNES_SEARCH_BLOCK_KV_KEY = "itunesSearchBlockedUntil";
+/** iTunes Search 403 后的冷却时长：45 分钟（建议区间 30–60 分钟，可调）。 */
+const ITUNES_SEARCH_BLOCK_MS = 45 * 60_000;
+/** 熔断命中的调度任务类型：scheduler 内唯一走 iTunes Search API 的任务。 */
+const ITUNES_SEARCH_TASK_KINDS = new Set<string>(["rank"]);
+/** 熔断提示日志节流：每 5 分钟最多一条，避免 60s tick 反复刷屏。 */
+const ITUNES_BLOCK_LOG_INTERVAL_MS = 5 * 60_000;
+let lastItunesBlockTickLogAt = 0;
+
+/** 读取熔断截止（ISO 字符串）；过期即视为已解除（到期自然恢复）。 */
+function itunesSearchBlockUntil(store: AppStore): string | null {
+  const raw = store.get(ITUNES_SEARCH_BLOCK_KV_KEY);
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  const ts = new Date(raw).getTime();
+  return Number.isFinite(ts) && ts > Date.now() ? raw : null;
+}
+
+/** 检测函数：kv 键（itunesSearchBlockedUntil）> now 即为熔断中（冷却中）。 */
+export function isItunesSearchBlocked(store: AppStore): boolean {
+  return itunesSearchBlockUntil(store) !== null;
+}
+
+/** 熔断状态快照（供 IPC handlers 暴露给 UI：任务中心顶部提示）。 */
+export function itunesSearchBlockState(store: AppStore): {
+  blocked: boolean;
+  until: string | null;
+  remainingMs: number;
+} {
+  const until = itunesSearchBlockUntil(store);
+  if (!until) return { blocked: false, until: null, remainingMs: 0 };
+  return {
+    blocked: true,
+    until,
+    remainingMs: Math.max(0, new Date(until).getTime() - Date.now()),
+  };
+}
+
+/** 触发熔断：检测到 403 时写入 until = now + BLOCK_MS，并记录触发点与冷却窗口。 */
+function armItunesSearchBlock(store: AppStore, detail: string): void {
+  // 已在冷却期内：保持首次触发的时间窗口，不因并发/重复 403 反复顺延。
+  if (itunesSearchBlockUntil(store) !== null) return;
+  const until = new Date(Date.now() + ITUNES_SEARCH_BLOCK_MS);
+  store.set(ITUNES_SEARCH_BLOCK_KV_KEY, until.toISOString());
+  log.warn(
+    `appilot: iTunes Search 403 熔断触发（${detail}）——自动采集暂停，冷却至 ` +
+      `${formatClock(until)}（${Math.round(ITUNES_SEARCH_BLOCK_MS / 60_000)} 分钟后自动恢复）`,
+  );
+}
+
+/** 本机时区 HH:mm（提示文案用）。 */
+function formatClock(until: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(until.getHours())}:${pad(until.getMinutes())}`;
+}
+
 /**
  * Runs per day for rank tasks. Currently fixed at 1 (one unique
  * keyword × language × platform × storefront combo per day); the knob is
@@ -551,7 +615,7 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
     return;
   }
 
-  const { searchAppStoreRank } = await import("@appilot-labs/appilot-core/rank-collector");
+  const { searchAppStoreRank, isItunesSearchForbidden } = await import("@appilot-labs/appilot-core/rank-collector");
   const entity = await resolveRankEntity(product);
   const startedAt = Date.now();
   nowRunningTask = {
@@ -648,6 +712,12 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
   } catch (err: any) {
     status = "failed";
     durationMs = Date.now() - startedAt;
+    // iTunes Search 403（封禁/风控）优先走熔断：记录冷却窗口，中断后续自动
+    // 任务。原有失败处理（consecutiveFailures 累计/连续失败禁用/30 分钟重试
+    // 排期）完整保留，不被熔断逻辑吞掉。
+    if (isItunesSearchForbidden(err)) {
+      armItunesSearchBlock(store, `rank "${task.keyword}" @ ${task.storefront}`);
+    }
     log.warn(`Scheduled rank task failed for "${task.keyword}" in ${task.storefront}: ${err.message}`);
     task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
     task.lastStatus = "failed";
@@ -1177,6 +1247,19 @@ async function runScheduledTask(
   task: ScheduledTask,
 ): Promise<boolean> {
   if (activeTaskRuns.has(task.id)) return false;
+  // iTunes Search 熔断：走 iTunes Search API 的任务（rank）在冷却期内不执行。
+  // 自动 tick 已在派发前整体跳过；此处兜底手动「立即执行」路径（runTaskNow /
+  // refreshProductRankKeywords 等）。其它非该 API 的任务不受影响。
+  if (ITUNES_SEARCH_TASK_KINDS.has(task.kind)) {
+    const block = itunesSearchBlockState(store);
+    if (block.blocked) {
+      log.warn(
+        `appilot: 手动执行被 iTunes Search 熔断拦下（${task.id}）——冷却至 ` +
+          `${formatClock(new Date(block.until as string))}，请稍后再试`,
+      );
+      return false;
+    }
+  }
   activeTaskRuns.add(task.id);
   try {
     switch (task.kind) {
@@ -1213,6 +1296,29 @@ export async function schedulerTick(): Promise<void> {
       return; // schedulerLoopOnce 会继续安排下一轮；非主轮不做派发
     }
     const store = await getStore();
+    // iTunes Search 403 熔断：冷却期内本 tick 不派发任何自动任务（本地整理
+    // reconcile 一并跳过，解除后首个 tick 自然补齐）。冷却结束后自动恢复。
+    if (isItunesSearchBlocked(store)) {
+      const nowLog = Date.now();
+      if (nowLog - lastItunesBlockTickLogAt >= ITUNES_BLOCK_LOG_INTERVAL_MS) {
+        lastItunesBlockTickLogAt = nowLog;
+        const until = itunesSearchBlockState(store).until as string;
+        log.warn(
+          `appilot: iTunes Search 熔断中——自动采集暂停，冷却至 ` +
+            `${formatClock(new Date(until))} 后自动恢复`,
+        );
+      }
+      // 熔断期间仍处理「加速超时自动解除」，避免整个冷却窗口内以 10s 高频空转。
+      const accelActive = store.get("schedulerAccel") === true;
+      const accelUntil = store.get("schedulerAccelUntil");
+      if (accelActive && accelUntil && Date.now() >= new Date(accelUntil).getTime()) {
+        await disableAccel(store);
+        overdueScattered = false;
+        notifyDataChanged("tasks");
+      }
+      return;
+    }
+    lastItunesBlockTickLogAt = 0;
     await reconcileRankTasks(store);
     await reconcileGithubSyncTasks(store);
     await reconcileOpsTasks(store);
@@ -1313,11 +1419,19 @@ export async function schedulerTick(): Promise<void> {
       maxPerTick,
     );
 
-    for (const task of selected) {
+    for (const [taskIndex, task] of selected.entries()) {
       // 加速到期按任务粒度检查：到期即停，不再执行完整个 round。
       if (accel) {
         const until = store.get("schedulerAccelUntil");
         if (until && Date.now() >= new Date(until).getTime()) break;
+      }
+      // iTunes Search 熔断：每个任务派发前检查（覆盖跨 await 间隙被并发手动
+      // 执行触发熔断的场景）——冷却期内不再派发剩余自动任务。
+      if (isItunesSearchBlocked(store)) {
+        log.warn(
+          `appilot: iTunes Search 熔断中——本 tick 剩余 ${selected.length - taskIndex} 个自动任务停止派发（冷却结束后自动恢复）`,
+        );
+        break;
       }
       if (task.kind === "github-sync") {
         if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
@@ -1329,6 +1443,14 @@ export async function schedulerTick(): Promise<void> {
         if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
       } else {
         if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
+      }
+      // 同一 tick 内遇到 403：立即中断当前批次剩余任务（不要在循环里继续跑
+      // 下一个），熔断状态已由 runRankTask 写入。
+      if (isItunesSearchBlocked(store)) {
+        log.warn(
+          `appilot: iTunes Search 403 触发熔断——本 tick 剩余 ${selected.length - taskIndex - 1} 个自动任务已中断（冷却结束后自动恢复）`,
+        );
+        break;
       }
       // 执行完成才计入“已处理”：早退任务（暂停/删除关键词、产品缺失）不
       // 计为已处理，避免提前触发 allHandled 自动关闭。
@@ -1389,8 +1511,11 @@ async function schedulerLoopOnceInner(): Promise<void> {
   const accel = store.get("schedulerAccel") === true;
   // 加速模式跳过积压分散：让任务按序立即处理，而不是散到未来 120 分钟。
   if (!overdueScattered && !accel) {
-    await scatterOverdueTasks(store);
-    overdueScattered = true;
+    // iTunes Search 熔断期间不摊铺积压：保持任务到期，冷却结束后尽快补跑。
+    if (!isItunesSearchBlocked(store)) {
+      await scatterOverdueTasks(store);
+      overdueScattered = true;
+    }
   }
   await schedulerTick();
   if (schedulerPaused) return;
