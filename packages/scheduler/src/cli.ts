@@ -71,7 +71,22 @@ async function main(): Promise<void> {
   if (args[0] === 'status') {
     const res = await sendSchedulerCommand(socketPath, 'hello', { client: 'cli', pid: process.pid });
     if (res.ok && res.result) {
-      console.log(JSON.stringify({ running: true, schedulerDaemon: true, ...(res.result as object) }, null, 2));
+      // daemon 自状态（架构收敛 B）：status 方法；旧 daemon 未实现时仅输出 hello ack。
+      const self = await sendSchedulerCommand(socketPath, 'status', {}, 2500);
+      console.log(
+        JSON.stringify(
+          {
+            running: true,
+            schedulerDaemon: true,
+            ...(res.result as object),
+            ...(self.ok && self.result && typeof self.result === 'object'
+              ? { status: self.result }
+              : { status: null }),
+          },
+          null,
+          2,
+        ),
+      );
       return;
     }
     // daemon 未跑；查共享 DB 租约看是否有壳（dsh/electron）在调度。

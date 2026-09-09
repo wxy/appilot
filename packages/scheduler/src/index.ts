@@ -1,10 +1,17 @@
-export { runDaemon, SCHEDULER_LEADER_ID, defaultSocketPath } from './daemon.js';
-export type { DaemonOptions, DaemonHandle } from './daemon.js';
+export { runDaemon, SCHEDULER_LEADER_ID, defaultSocketPath, schedulerPackageVersion, SCHEDULER_FINGERPRINT_ENV } from './daemon.js';
+export type { DaemonOptions, DaemonHandle, DaemonSelfStatus } from './daemon.js';
 export { createSchedulerServer } from './server.js';
 export type { SchedulerServer, ServerHandlers } from './server.js';
 export { ensureScheduler, resolveSchedulerCli } from './ensure.js';
 export { sendSchedulerCommand } from './client.js';
-export { controlRunNow, controlAccelerate, controlShutdown, controlStatus } from './control.js';
+export {
+  controlRunNow,
+  controlAccelerate,
+  controlShutdown,
+  controlStatus,
+  controlDaemonStatus,
+  controlRunDue,
+} from './control.js';
 export type { ControlOptions, LeaderControl } from './control.js';
 export type { CommandResult } from './client.js';
 export type { EnsureOptions } from './ensure.js';

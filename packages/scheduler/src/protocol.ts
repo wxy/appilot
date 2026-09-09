@@ -13,7 +13,14 @@ export type ClientRequest =
   | { method: 'runNow'; params: { taskId: string } }
   | { method: 'accelerate'; params: { on: boolean; seconds?: number } }
   | { method: 'shutdown'; params?: Record<string, never> }
-  | { method: 'bye'; params?: Record<string, never> };
+  | { method: 'bye'; params?: Record<string, never> }
+  /**
+   * status：daemon 自维护状态快照（架构收敛 B——startedAt/uptime/已处理数等）。
+   * 旧版本 daemon 未实现时返回 error（调用方 graceful 归 null，不视为故障）。
+   */
+  | { method: 'status'; params?: Record<string, never> }
+  /** runDue：要求 daemon 立即处理当前到期任务（tick 一次；代替壳内 schedulerTick 执行）。 */
+  | { method: 'runDue'; params?: Record<string, never> };
 
 /** daemon → 客户端。 */
 export type ServerMessage =

@@ -114,6 +114,39 @@ export interface LeaseScheduler {
   setAccel(on: boolean): boolean;
   /** 当前是否加速。 */
   isAccel(): boolean;
+  /**
+   * 本调度器实例的执行统计（内存计数；架构收敛 B：daemon 自维护状态的数据源）。
+   * 口径见 SchedulerStats 注释——只统计「本进程实际执行」（到期/runNow），
+   * 不统计被熔断跳过 / 并发去重拦截的执行。
+   */
+  stats(): SchedulerStats;
+  /** 立即跑一轮 tick（仅主生效；供 daemon socket runDue 用）。 */
+  kick(): void;
+}
+
+/**
+ * 调度器执行统计（每次请求实时快照；本进程内存计数，重启归零）。
+ * - processed：执行尝试次数（开始执行即计，含失败；到期 tick + runNow 同口径）；
+ * - succeeded / failed：按执行结果分类（与任务行 lastStatus 一致语义）；
+ * - uniqueTasks：处理过的不同任务 id 数（processedTasks 口径，daemon 状态复用）；
+ * - processedToday：按本地日期滚动的「今天已执行」计数；
+ * - lastRunAt：最近一次执行开始时间（ISO）。
+ */
+export interface SchedulerStats {
+  /** 本调度器实例创建时间（ISO；daemon 状态 startedAt 用）。 */
+  startedAt: string;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  uniqueTasks: number;
+  processedToday: number;
+  lastRunAt: string | null;
+}
+
+/** 本地日期键（yyyy-MM-dd；processedToday 日滚动用，纯函数便于测试）。 */
+export function localDayKey(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /** 加速模式参数（opt-in）。 */
@@ -136,9 +169,48 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   let accel = false;
   const running = new Set<string>();
 
+  // ── 执行统计（架构收敛 B：daemon 自维护状态在 headless 调度循环处的累计点）──
+  // 计数发生在 execute/executeInstance 真正开始执行实例时（并发去重/熔断跳过不
+  // 计数）；成功/失败在 try/catch 落定后分类。全部为本进程内存变量——daemon 是
+  // 唯一调度执行体时即「本 daemon」计数；重启归零（daemon status 一并暴露
+  // startedAt/uptime，口径见 SchedulerStats）。
+  const statsState = {
+    startedAt: new Date().toISOString(),
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    processedToday: 0,
+    todayKey: localDayKey(new Date()),
+    lastRunAt: null as string | null,
+  };
+  const seenTaskIds = new Set<string>();
+  function statsNoteStart(taskId: string): void {
+    statsState.processed += 1;
+    seenTaskIds.add(taskId);
+    const key = localDayKey(new Date());
+    if (key !== statsState.todayKey) {
+      statsState.todayKey = key;
+      statsState.processedToday = 0;
+    }
+    statsState.processedToday += 1;
+    statsState.lastRunAt = new Date().toISOString();
+  }
+  function schedulerStats(): SchedulerStats {
+    return {
+      startedAt: statsState.startedAt,
+      processed: statsState.processed,
+      succeeded: statsState.succeeded,
+      failed: statsState.failed,
+      uniqueTasks: seenTaskIds.size,
+      processedToday: statsState.processedToday,
+      lastRunAt: statsState.lastRunAt,
+    };
+  }
+
   async function execute(job: ScheduledJob): Promise<void> {
     if (running.has(job.id)) return;
     running.add(job.id);
+    statsNoteStart(job.id);
     const started = new Date().toISOString();
     const prev = store.tasks.get(job.id);
     const base = {
@@ -156,7 +228,9 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         lastStatus: 'ok' as const,
         lastSummary: summary,
       });
+      statsState.succeeded += 1;
     } catch (err: any) {
+      statsState.failed += 1;
       store.tasks.upsert({
         ...base,
         lastRunAt: started,
@@ -195,6 +269,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       return;
     }
     running.add(task.id);
+    statsNoteStart(task.id);
     const started = new Date().toISOString();
     const base = {
       id: task.id,
@@ -214,6 +289,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         lastStatus: 'ok' as const,
         lastSummary: summary,
       });
+      statsState.succeeded += 1;
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
       // iTunes Search 403（被拒/封禁/风控）→ 写熔断键（与主进程同键、45 分钟）。
@@ -248,6 +324,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         lastStatus: 'error' as const,
         lastSummary,
       });
+      statsState.failed += 1;
     } finally {
       running.delete(task.id);
     }
@@ -353,6 +430,12 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         return store.tasks.get(id);
       }
       return undefined;
+    },
+    stats() {
+      return schedulerStats();
+    },
+    kick() {
+      tick();
     },
   };
 }

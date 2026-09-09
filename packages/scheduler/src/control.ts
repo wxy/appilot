@@ -72,3 +72,23 @@ export async function controlShutdown(opts: ControlOptions = {}): Promise<Comman
   const { socketPath } = resolvePaths(opts);
   return sendSchedulerCommand(socketPath, 'shutdown', {}, 5000);
 }
+
+/** daemon 自维护状态（架构收敛 B）：socket status；daemon 不可达/未实现 → null。 */
+export async function controlDaemonStatus(
+  opts: ControlOptions = {},
+): Promise<(Record<string, unknown> & { daemonPid: number }) | null> {
+  const { socketPath } = resolvePaths(opts);
+  const res = await sendSchedulerCommand(socketPath, 'status', {}, 3000);
+  if (!res.ok || !res.result || typeof res.result !== 'object') return null;
+  const r = res.result as Record<string, unknown>;
+  const pid = Number(r.daemonPid);
+  if (!Number.isFinite(pid) || pid <= 0) return null;
+  return { ...r, daemonPid: pid };
+}
+
+/** 要求 daemon 立即处理当前到期任务（tick 一次）。daemon 不可达 → false。 */
+export async function controlRunDue(opts: ControlOptions = {}): Promise<boolean> {
+  const { socketPath } = resolvePaths(opts);
+  const res = await sendSchedulerCommand(socketPath, 'runDue', {}, 5000);
+  return res.ok === true;
+}
