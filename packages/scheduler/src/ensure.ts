@@ -98,7 +98,7 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
   const child = spawn(spawnCommand[0], spawnCommand.slice(1), {
     detached: true,
     stdio: 'ignore',
-    env: process.env,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   });
   child.unref();
   // daemon 快速 exit 0 = 单例仲裁让位（已有调度者——壳/其他 daemon 持主）：
