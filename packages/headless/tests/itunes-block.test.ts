@@ -2,7 +2,8 @@
  * iTunes Search 403 熔断（headless 侧）最小单测：
  * - itunes-breaker 纯逻辑：读/写共享 store.kv 的同键判定、45 分钟窗口、幂等；
  * - scheduler 门控：熔断期内 hitsItunesSearch 执行器（rank）自动/显式跳过，
- *   非 iTunes 执行器照常；执行中命中 403 → 写熔断键并停止后续派发。
+ *   非 iTunes 执行器照常；执行中命中 403 → 写熔断键并停止后续派发，
+ *   **不落 error 状态**（403 = 上游风控：保留原状态/排期，冷却解除后补跑）。
  * 不 mock 网络：只测判定与写键逻辑位（store 用临时 SQLite 文件）。
  */
 import assert from 'node:assert/strict';
@@ -152,8 +153,10 @@ async function main() {
     store.close();
   });
 
-  // ── scheduler 门控 B：执行中命中 403 → 写熔断键 + 停掉同批后续 rank ──
-  await runCase('scheduler: 403 命中写键并停止同批后续 rank', async () => {
+  // ── scheduler 门控 B：执行中命中 403 → 写熔断键 + 停掉同批后续 rank，
+  //    且**不落 error 状态**（403 = 上游风控非应用故障；落 error 会让每次冷却
+  //    结束自动补跑再遇 403 反复刷红，用户清除后仍复现）。 ──
+  await runCase('scheduler: 403 只写熔断键不落 error，并停止同批后续 rank', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'headless-block-arm-'));
     const store = openStore(join(dir, 'appilot.db'));
     let rankCalls = 0;
@@ -178,7 +181,9 @@ async function main() {
 
     const failedRow = await sched.runNow('rank:first');
     assert.equal(rankCalls, 1, '403 实例被执行过一次');
-    assert.equal(failedRow?.lastStatus, 'error', '403 实例记 error');
+    assert.equal(failedRow?.lastStatus, 'never', '403 不落 error：保留原状态（冷却解除后补跑）');
+    assert.equal(failedRow?.runCount ?? -1, 0, '403 不累计 runCount（同熔断跳过语义）');
+    assert.ok(String(failedRow?.lastSummary ?? '').includes('熔断'), '403 写说明性 lastSummary 痕迹');
     assert.ok(isItunesSearchBlockedStore(store), '403 命中后熔断键已写入（45 分钟）');
     const armUntil = itunesSearchBlockedUntilStore(store);
     assert.ok(
@@ -188,7 +193,8 @@ async function main() {
 
     const second = await sched.runNow('rank:second');
     assert.equal(rankCalls, 1, '同批后续 rank 被门控跳过（不重复打 API）');
-    assert.equal(second?.lastStatus, 'never', '被跳过的后续实例状态未改（解除后补跑）');
+    assert.equal(second?.lastStatus, 'never', '被熔断门控的后续实例状态未改（解除后补跑）');
+    assert.ok(String(second?.lastSummary ?? '').includes('熔断'), '被门控的后续实例写熔断说明');
 
     sched.dispose();
     store.close();
