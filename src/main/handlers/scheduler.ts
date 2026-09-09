@@ -465,25 +465,36 @@ export function registerSchedulerHandlers(): void {
         /* 下轮 hydrate 会再镜像 */
       }
     }
-    // 2) 非 Electron 源失败实例行（daemon/CLI 等）直清 DB
+    // 2) 直清 DB 里所有失败实例行（不区分源——electron 行的行级 error 与
+    //    electronJson 可能不同步，只清 electron 源会被漏掉）：置 never 并清理
+    //    electronJson 里的 failed/lastRunAt，engine 下次加载即为干净状态。
     const store = sharedStore();
     const rows = store.tasks
       .all()
-      .filter(
-        (t) =>
-          t.kind != null &&
-          t.lastStatus === "error" &&
-          (t.source ?? "electron") !== "electron",
-      );
+      .filter((t) => t.kind != null && t.lastStatus === "error");
     const byKind: Record<string, number> = {};
     const now = Date.now();
     for (const r of rows) {
       const spreadMin = reschedule ? 30 + (hashOf(r.id) % 180) : 0;
+      let electronJson: string | null = r.electronJson ?? null;
+      if (electronJson) {
+        try {
+          const ej = JSON.parse(electronJson);
+          if (ej && typeof ej === "object") {
+            delete ej.lastStatus;
+            delete ej.lastRunAt;
+            ej.consecutiveFailures = 0;
+            electronJson = JSON.stringify(ej);
+          }
+        } catch {
+          // 解析失败保留原串
+        }
+      }
       store.tasks.upsert({
         id: r.id,
         title: r.title,
         intervalMinutes: r.intervalMinutes,
-        lastRunAt: r.lastRunAt,
+        lastRunAt: null,
         nextRunAt: reschedule
           ? new Date(now + spreadMin * 60_000).toISOString()
           : r.nextRunAt,
@@ -493,6 +504,8 @@ export function registerSchedulerHandlers(): void {
         source: r.source,
         kind: r.kind,
         instance: r.instance,
+        enabled: r.enabled !== false,
+        electronJson,
       });
       const k = r.kind ?? "?";
       byKind[k] = (byKind[k] ?? 0) + 1;
