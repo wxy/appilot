@@ -5,7 +5,7 @@ import { sharedStore } from "./registry-sync";
 import { migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
-import { mirrorTasksToDb, electronTaskFromRow, backfillTaskHistoryFromExecutions, purgeOrphanProjectTasks } from "./task-db-sync";
+import { mirrorTasksToDb, electronTaskFromRow, backfillTaskHistoryOnce, purgeOrphanProjectTasks } from "./task-db-sync";
 import { buildLightProjects } from "./projects-db-light";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
@@ -97,10 +97,12 @@ export async function getStore(): Promise<AppStore> {
     } catch (err: any) {
       log.warn(`kv rankExecutions 清理失败: ${err.message}`);
     }
-    // 任务历史回填：kv scheduledTasks 退役前未迁移历史；用 executions 一次性补
-    // 无 lastRunAt 的 electron 任务行（幂等，之后真实执行会覆盖）。
+    // 任务历史回填（一次性，标记守卫）：kv scheduledTasks 退役前未迁移历史；用
+    // executions 补无 lastRunAt 的 electron 任务行。必须只跑一次——否则用户
+    // 「清除失败」把 lastRunAt 置空后，下次启动会把 rank_executions 里的 failed
+    // 历史原样填回（行 error + electronJson failed），清除后重启又复现。
     try {
-      const n = backfillTaskHistoryFromExecutions(shared);
+      const n = backfillTaskHistoryOnce(shared);
       if (n > 0) log.info(`appilot: backfilled task history for ${n} tasks from executions`);
     } catch (err: any) {
       log.warn(`task history backfill failed: ${err.message}`);
