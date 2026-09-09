@@ -109,3 +109,28 @@ export function formatElapsed(seconds: number): string {
   const s = seconds % 60;
   return `${m}分${s > 0 ? `${String(s).padStart(2, "0")}秒` : ""}`;
 }
+
+/** 紧凑计数（密集小卡/指标用）：1234 → "1.2k"，12000 → "12k"，99 → "99"。 */
+export function formatCompactNumber(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs < 1000) return String(Math.round(n));
+  const k = n / 1000;
+  const body = k >= 100 ? String(Math.round(k)) : k.toFixed(1).replace(/\.0$/, "");
+  return `${body}k`;
+}
+
+/** 紧凑运行时长（密集小卡/指标用）：45s / 12m / 3h 12m / 2d 5h。 */
+export function formatUptimeShort(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hour = Math.floor(min / 60);
+  const restMin = min % 60;
+  if (hour < 24) return restMin > 0 ? `${hour}h ${restMin}m` : `${hour}h`;
+  const day = Math.floor(hour / 24);
+  const restHour = hour % 24;
+  return restHour > 0 ? `${day}d ${restHour}h` : `${day}d`;
+}

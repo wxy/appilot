@@ -104,7 +104,7 @@ export function restartSpec(): RestartSpec {
   return {
     command: process.execPath,
     args: process.argv.slice(1),
-    env: process.env,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   };
 }
 

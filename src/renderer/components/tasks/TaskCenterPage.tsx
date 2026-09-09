@@ -5,8 +5,11 @@ import { useProject } from "../../stores/project";
 import { taskGroupKey, pickGroupNextRun } from "../../lib/task-grouping";
 import {
   formatBytes,
+  formatCompactNumber,
   formatDuration,
+  formatDurationMs,
   formatHumanTime,
+  formatUptimeShort,
   languageLabel,
   platformLabel,
 } from "../../lib/format";
@@ -414,9 +417,28 @@ export function TaskCenterPage() {
           : engineError != null
             ? "调度器异常"
             : "调度器启动中…";
-  // 版本监测行：仅「常驻调度器」模式有意义。
+  // 版本监测（紧凑卡片态）：仅 mismatch/unknown 时以小 badge 提示，常态不显示
+  // 指纹行。daemonMode = 仅「常驻调度器」模式有意义。
   const daemonMode = engineActive && (mgr?.mode === "daemon" || daemonSelf != null);
-  const fpShort = (fp: string | null | undefined) => (fp ? fp.slice(0, 7) : null);
+  const fpAlert =
+    daemonMode && mgr
+      ? mgr.mismatch
+        ? "mismatch"
+        : mgr.unknown
+          ? "unknown"
+          : null
+      : null;
+  // 状态 chip 的悬停说明（替代原先常驻的长句/长标题）。
+  const engineTitle =
+    daemonCtrl == null
+      ? "正在读取调度器状态…"
+      : engineStopped
+        ? "调度器已停止：后台不再自动采集（手动「立即运行 / 加速」仍可用）；重启应用随启动恢复"
+        : engineActive
+          ? "调度器（常驻 daemon）自动调度运行中"
+          : engineError != null
+            ? `调度器异常：${engineError}（应用会自动重试，无需手动操作）`
+            : "调度器未运行——正在启动或等待拉起";
   const enginePillCls =
     daemonCtrl == null
       ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
@@ -432,6 +454,12 @@ export function TaskCenterPage() {
     (t: any) => t.lastStatus === "failed",
   ).length;
   const nowRunning = data?.nowRunning;
+  // 「正在执行」紧凑标签：github-sync 用固定名，其余用关键词；卡片内截断显示。
+  const nowRunningLabel = nowRunning
+    ? nowRunning.kind === "github-sync"
+      ? "GitHub 发布监听"
+      : String(nowRunning.keyword ?? nowRunning.kind ?? "")
+    : null;
   // iTunes Search 403 熔断：顶部一行黄色提示（自动采集暂停至 HH:mm）。
   const itunesBlock = data?.itunesSearchBlock?.blocked ? data.itunesSearchBlock : null;
   const itunesBlockUntilLabel = (() => {
@@ -450,181 +478,189 @@ export function TaskCenterPage() {
             后台数据采集与同步的调度健康度、执行负载与时间线。
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1.5 shrink-0">
-          {/* 标题/模式块：调度器 + 状态 chip + 正在执行 */}
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            {nowRunning && engineActive && (
-              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium">
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                正在执行{" "}
-                {nowRunning.kind === "github-sync" ? "GitHub 发布监听" : nowRunning.keyword}
+        {/* 调度器卡片：状态 chip + 紧凑按钮 + mini 指标；长文案/指纹常态不展开 */}
+        <div className="flex-1 min-w-0 flex justify-end">
+          <div className="w-full max-w-xl rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 shadow-sm">
+            {/* 主区：调度器标签 + 状态 chip（+ 正在执行）+ 紧凑按钮 */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 shrink-0">
+                调度器
               </span>
-            )}
-            <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-              调度器
-            </span>
-            <span
-              className={cn("px-2.5 py-1 rounded-full text-xs font-medium", enginePillCls)}
-              title={
-                engineStopped
-                  ? "调度器已停止：后台不再自动采集（手动「立即运行 / 加速」仍可用）；重启应用随启动恢复"
-                  : engineActive
-                    ? "调度器（常驻 daemon）自动调度运行中"
-                    : engineError != null
-                      ? "调度器异常：未运行且最近一次拉起失败，正在自动重试（每约 20s 一次）"
-                      : "调度器未运行——正在启动或等待拉起"
-              }
-            >
-              {engineLabel}
-            </span>
-          </div>
-
-          {/* daemon 自维护状态（架构收敛 B/C）：启动于 / 运行时长 / 已处理任务 */}
-          {daemonMode && daemonSelf ? (
-            <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-xl">
               <span
-                className="text-[11px] text-zinc-500 dark:text-zinc-400"
-                title={`调度器进程 #${daemonCtrl?.leader ?? ""} · 版本 ${daemonSelf.version}`}
+                className={cn(
+                  "px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap",
+                  enginePillCls,
+                )}
+                title={engineTitle}
               >
-                调度器已启动 {formatHumanTime(daemonSelf.startedAt)} · 运行{" "}
-                {formatDuration(daemonSelf.uptimeMs)}
+                {engineLabel}
               </span>
-              <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                已处理 {daemonSelf.processedExecutions} 次执行
-                {daemonSelf.processedTasks != null
-                  ? `（${daemonSelf.processedTasks} 个任务）`
-                  : ""}{" "}
-                · 今日 {daemonSelf.executedToday} · v{daemonSelf.version}
-              </span>
-            </div>
-          ) : null}
-
-          {/* 调度器异常详情：拉起失败原因 + 自动重试提示 */}
-          {engineError != null ? (
-            <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-xl">
-              <span className="text-[11px] text-red-500 dark:text-red-400">
-                调度器未运行——拉起失败：{engineError}（应用会自动重试，无需手动操作）
-              </span>
-            </div>
-          ) : null}
-
-          {/* 版本监测行：运行 vs 磁盘 代码指纹（仅常驻调度器模式） */}
-          {daemonMode && mgr ? (
-            <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-md">
-              {mgr.unknown ? (
-                <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                  运行指纹未知（重启一次以纳入监测）
-                </span>
-              ) : (
-                <>
-                  <span
-                    className="text-[11px] font-mono text-zinc-500 dark:text-zinc-400"
-                    title={`运行代码指纹 ${mgr.runningFingerprint} · 磁盘代码指纹 ${mgr.diskFingerprint}`}
-                  >
-                    运行 {fpShort(mgr.runningFingerprint)} · 磁盘{" "}
-                    {fpShort(mgr.diskFingerprint)}
+              {nowRunning && engineActive ? (
+                <span
+                  className="flex items-center gap-1.5 min-w-0 text-[11px] text-amber-700 dark:text-amber-400"
+                  title={`正在执行 ${nowRunningLabel}`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                  <span className="truncate max-w-[8rem]">
+                    正在执行 {nowRunningLabel}
                   </span>
-                  {mgr.mismatch && (
-                    <span className="px-1.5 py-0.5 rounded border border-amber-300/80 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-                      版本不一致，请重启调度器
-                    </span>
+                </span>
+              ) : null}
+              <div className="flex items-center gap-1 ml-auto">
+                <button
+                  type="button"
+                  disabled={ctrlBusy || daemonCtrl == null || engineActive}
+                  onClick={daemonStart}
+                  aria-label="启动调度器"
+                  className={cn(
+                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:border-emerald-600",
                   )}
-                </>
-              )}
+                  title={
+                    engineActive
+                      ? "调度器已在运行——应用更新后请用「重启」加载磁盘最新代码"
+                      : "启动调度器：拉起常驻 daemon，自动调度恢复"
+                  }
+                >
+                  {ctrlAction === "start" ? "…" : "启动"}
+                </button>
+                <button
+                  type="button"
+                  disabled={ctrlBusy || daemonCtrl == null || !engineActive}
+                  onClick={daemonStop}
+                  aria-label="暂停调度器"
+                  className={cn(
+                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600",
+                  )}
+                  title="暂停调度器：关停常驻 daemon（手动「立即运行」仍可用；重启应用随启动恢复）"
+                >
+                  {ctrlAction === "stop" ? "…" : "暂停"}
+                </button>
+                <button
+                  type="button"
+                  disabled={ctrlBusy || daemonCtrl == null || !engineActive}
+                  onClick={restartScheduler}
+                  aria-label="重启调度器"
+                  className={cn(
+                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "border-zinc-300 dark:border-zinc-600 bg-white dark:bg-transparent text-zinc-600 dark:text-zinc-300 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400",
+                  )}
+                  title="重启调度器：先停止再启动，加载磁盘最新代码——「版本不一致」提示时使用"
+                >
+                  {ctrlAction === "restart" ? "…" : "重启"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!engineActive || ctrlBusy}
+                  onClick={() => {
+                    // 未开启 → 开启；已开启 → 延长 5 分钟。
+                    (window as any).appilot?.scheduler?.setAccel(true)
+                      .then(() => {
+                        setAccel(true);
+                        (window as any).appilot?.scheduler?.list()
+                          .then(setData)
+                          .catch(() => undefined);
+                        (window as any).appilot?.scheduler?.status()
+                          .then((st: any) =>
+                            setAccelRemainingMs(
+                              typeof st?.accelRemainingMs === "number" ? st.accelRemainingMs : null,
+                            ),
+                          )
+                          .catch(() => undefined);
+                      })
+                      .catch(() => undefined);
+                  }}
+                  aria-label={accel ? "延长加速 5 分钟" : "开启加速模式"}
+                  className={cn(
+                    "inline-flex items-center justify-center gap-1 h-7 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    accel
+                      ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
+                  )}
+                  title={
+                    !engineActive
+                      ? "调度器未运行——先「启动调度器」再加速"
+                      : accel
+                        ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
+                        : "开启加速模式，以更快速度处理积压任务"
+                  }
+                >
+                  {accel ? (
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      {accelRemainingMs != null
+                        ? `加速 · ${Math.ceil(accelRemainingMs / 1000)}s`
+                        : "加速中"}
+                    </>
+                  ) : (
+                    "加速"
+                  )}
+                </button>
+              </div>
             </div>
-          ) : null}
 
-          {/* 管理按钮：启动 / 暂停 / 重启 + 加速 */}
-          <div className="flex items-center gap-1.5 flex-wrap justify-end">
-            <button
-              type="button"
-              disabled={ctrlBusy || daemonCtrl == null || engineActive}
-              onClick={daemonStart}
-              className={cn(
-                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
-                "border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:border-emerald-600",
-              )}
-              title={
-                engineActive
-                  ? "调度器已在运行——应用更新后请用「重启」加载磁盘最新代码"
-                  : "启动调度器：拉起常驻 daemon（appilot-scheduler），自动调度恢复"
-              }
-            >
-              {ctrlAction === "start" ? "启动中…" : "启动"}
-            </button>
-            <button
-              type="button"
-              disabled={ctrlBusy || daemonCtrl == null || !engineActive}
-              onClick={daemonStop}
-              className={cn(
-                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
-                "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600",
-              )}
-              title="暂停调度器：关停常驻 daemon（手动「立即运行」仍可用；重启应用随启动恢复）"
-            >
-              {ctrlAction === "stop" ? "暂停中…" : "暂停"}
-            </button>
-            <button
-              type="button"
-              disabled={ctrlBusy || daemonCtrl == null || !engineActive}
-              onClick={restartScheduler}
-              className={cn(
-                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
-                "border-zinc-300 dark:border-zinc-600 bg-white dark:bg-transparent text-zinc-600 dark:text-zinc-300 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400",
-              )}
-              title="重启调度器：先停止（关停 daemon 并等待退出）再启动，加载磁盘上的最新代码——应用更新后提示「版本不一致」时使用"
-            >
-              {ctrlAction === "restart" ? "重启中…" : "重启"}
-            </button>
-            <button
-              type="button"
-              disabled={!engineActive || ctrlBusy}
-              onClick={() => {
-                // 未开启 → 开启；已开启 → 延长 5 分钟。
-                (window as any).appilot?.scheduler?.setAccel(true)
-                  .then(() => {
-                    setAccel(true);
-                    (window as any).appilot?.scheduler?.list()
-                      .then(setData)
-                      .catch(() => undefined);
-                    (window as any).appilot?.scheduler?.status()
-                      .then((st: any) =>
-                        setAccelRemainingMs(
-                          typeof st?.accelRemainingMs === "number" ? st.accelRemainingMs : null,
-                        ),
-                      )
-                      .catch(() => undefined);
-                  })
-                  .catch(() => undefined);
-              }}
-              className={cn(
-                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
-                accel
-                  ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                  : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
-              )}
-              title={
-                !engineActive
-                  ? "调度器未运行——先「启动调度器」再加速"
-                  : accel
-                    ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
-                    : "开启加速模式，以更快速度处理积压任务"
-              }
-            >
-              {accel ? (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                  {accelRemainingMs != null
-                    ? `加速中 · ${Math.ceil(accelRemainingMs / 1000)} 秒后自动解除`
-                    : "加速模式（开）"}
-                </>
-              ) : (
-                "加速模式"
-              )}
-            </button>
-            {ctrlErr && (
-              <span className="text-red-500 dark:text-red-400 text-xs">{ctrlErr}</span>
-            )}
+            {/* mini 指标行：仅 daemon 运行且有自状态时显示；指纹警示以小 badge 附行尾 */}
+            {daemonMode && daemonSelf ? (
+              <div className="mt-1.5 flex items-center gap-x-2.5 gap-y-0.5 flex-wrap text-[10px] leading-4">
+                <MiniMetric
+                  label="已处理"
+                  value={formatCompactNumber(daemonSelf.processedExecutions)}
+                  title={`已处理 ${daemonSelf.processedExecutions} 次执行${
+                    daemonSelf.processedTasks != null
+                      ? `（${daemonSelf.processedTasks} 个任务）`
+                      : ""
+                  }`}
+                />
+                <MiniMetric
+                  label="今日"
+                  value={String(daemonSelf.executedToday)}
+                  title={`今日已执行 ${daemonSelf.executedToday} 次`}
+                />
+                <MiniMetric
+                  label="运行"
+                  value={formatUptimeShort(daemonSelf.uptimeMs)}
+                  title={`启动于 ${formatHumanTime(daemonSelf.startedAt)} · 已运行 ${formatDurationMs(
+                    daemonSelf.uptimeMs,
+                  )}`}
+                />
+                <MiniMetric
+                  value={`v${daemonSelf.version ?? "?"}`}
+                  title={`调度器版本 ${daemonSelf.version ?? "未知"}${
+                    daemonCtrl?.leader ? ` · 进程 #${daemonCtrl.leader}` : ""
+                  }`}
+                />
+                {fpAlert === "mismatch" && mgr ? (
+                  <span
+                    className="ml-auto px-1.5 py-px rounded border border-amber-300/80 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-[10px] font-semibold text-amber-700 dark:text-amber-400 whitespace-nowrap"
+                    title={`运行代码指纹 ${mgr.runningFingerprint ?? "未知"} · 磁盘代码指纹 ${
+                      mgr.diskFingerprint ?? "未知"
+                    }——重启调度器加载磁盘最新代码`}
+                  >
+                    版本不一致，请重启调度器
+                  </span>
+                ) : fpAlert === "unknown" ? (
+                  <span
+                    className="ml-auto px-1.5 py-px rounded bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
+                    title="运行指纹未知：重启一次调度器后纳入版本监测"
+                  >
+                    运行指纹未知
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* 异常 / 操作错误：一行短错误，常态不显示 */}
+            {engineError != null || ctrlErr ? (
+              <div className="mt-1 flex items-center gap-1.5 min-w-0 text-[11px] leading-4 text-red-500 dark:text-red-400">
+                <span
+                  className="truncate"
+                  title={engineError != null ? engineError : (ctrlErr ?? undefined)}
+                >
+                  {engineError != null ? "调度器未运行，自动重试中" : ctrlErr}
+                </span>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -644,13 +680,14 @@ export function TaskCenterPage() {
         </div>
       )}
 
-      {/* 引擎说明 + 失败任务批量处理（backlog #2） */}
-      <div className="mb-5 space-y-2 text-xs">
-        {engineStopped ? (
-          <p className="text-zinc-400 dark:text-zinc-500">
-            调度器已暂停——后台不再自动采集；重启应用后随启动恢复（手动「立即运行 / 加速」仍可用）。
-          </p>
-        ) : null}
+      {/* 失败任务批量处理（backlog #2）；「调度器已暂停」说明已并入右上卡片 chip */}
+      <div
+        className={
+          (data != null && totalFailed > 0) || failMsg
+            ? "mb-5 space-y-2 text-xs"
+            : "hidden"
+        }
+      >
         {data != null && totalFailed > 0 ? (
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-500/10 px-4 py-3 text-red-700 dark:text-red-400">
             <span className="font-medium">有 {totalFailed} 个任务实例处于失败状态</span>
@@ -882,6 +919,31 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
       </ValueFlash>
       {sub && <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">{sub}</div>}
     </div>
+  );
+}
+
+// 调度器卡片内的 mini 指标（值 + 小标签），长说明放 title tooltip。
+function MiniMetric({
+  label,
+  value,
+  title,
+}: {
+  label?: string;
+  value: string;
+  title?: string;
+}) {
+  return (
+    <span
+      className="flex items-baseline gap-1 whitespace-nowrap text-[10px] leading-4"
+      title={title}
+    >
+      {label != null ? (
+        <span className="text-zinc-400 dark:text-zinc-500">{label}</span>
+      ) : null}
+      <span className="font-semibold text-zinc-600 dark:text-zinc-300 tabular-nums">
+        {value}
+      </span>
+    </span>
   );
 }
 

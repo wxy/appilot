@@ -276,6 +276,9 @@ export async function ensureSchedulerTracked(
   // 2) spawn detached（不随父死；stdio 忽略；env 带指纹）。
   log(`spawning scheduler: ${spawnCommand.join(" ")}`);
   const env: NodeJS.ProcessEnv = { ...process.env };
+  // 用 Electron 可执行文件跑 node 脚本时必须标记为 node 模式，否则 daemon 会
+  // 作为一个 Electron 应用启动（Dock/任务栏出现图标）。
+  env.ELECTRON_RUN_AS_NODE = "1";
   if (opts.fingerprint != null) env[SCHEDULER_FINGERPRINT_ENV] = opts.fingerprint;
   const child = spawn(spawnCommand[0], spawnCommand.slice(1), {
     detached: true,
