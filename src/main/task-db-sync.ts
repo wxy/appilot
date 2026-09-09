@@ -184,6 +184,11 @@ export function clearElectronFailures(
  * 用 rank_executions 回填 electron 任务行的历史执行字段（一次性/幂等）：
  * kv scheduledTasks 退役后，历史 lastRunAt/runCount/status 仅存在于 executions；
  * 仅补 lastRunAt 为 null 的行，避免覆盖后续真实更新。
+ *
+ * ⚠️ 复活陷阱（本函数是「清除失败后重启又复现」的根因，见 backfillTaskHistoryOnce）：
+ * 「清除失败」会把 lastRunAt 置空——下次启动这里会把 rank_executions 里同一批
+ * 的 failed 历史原样填回（行 error + electronJson lastStatus:'failed'），等于
+ * 把用户刚清掉的失败重新标红。因此调用方必须经 backfillTaskHistoryOnce 只跑一次。
  */
 export function backfillTaskHistoryFromExecutions(
   store: { tasks: { all(): any[]; upsert(row: any): void }; executions: { since(iso: string, limit?: number): Record<string, unknown>[] } },
@@ -230,6 +235,33 @@ export function backfillTaskHistoryFromExecutions(
     patched += 1;
   }
   return patched;
+}
+
+/** 历史回填「只跑一次」标记键（app_kv；kv scheduledTasks 退役迁移完成后置位）。 */
+export const TASK_HISTORY_BACKFILL_MARK = "taskHistoryBackfillDone";
+
+/** backfillTaskHistoryOnce 所需的最小 store 形状。 */
+export interface TaskHistoryBackfillStore {
+  kv: { get(key: string): string | undefined; set(key: string, value: string): void };
+  tasks: { all(): any[]; upsert(row: any): void };
+  executions: { since(iso: string, limit?: number): Record<string, unknown>[] };
+}
+
+/**
+ * 历史回填封装（**只跑一次**，启动时调用）：
+ * 首次（无标记）执行 backfillTaskHistoryFromExecutions 并置标记；此后每次启动
+ * 直接跳过。若不跳过，用户「清除失败」把 lastRunAt 置空后，下一次启动会用
+ * rank_executions 里的 failed 历史把同一批任务重新标成 error——这正是多次
+ * 「清除后重启又复现 82 个失败」的根因（清除永远不粘）。标记置位后清除才真正
+ * 持久。返回本次补丁行数（跳过时 0）。
+ */
+export function backfillTaskHistoryOnce(store: TaskHistoryBackfillStore): number {
+  if (store.kv.get(TASK_HISTORY_BACKFILL_MARK)) return 0;
+  const n = backfillTaskHistoryFromExecutions(
+    store as Parameters<typeof backfillTaskHistoryFromExecutions>[0],
+  );
+  store.kv.set(TASK_HISTORY_BACKFILL_MARK, new Date().toISOString());
+  return n;
 }
 
 /** 孤儿任务引用判定所需的最小 store 形状。 */

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import { openStore } from '@appilot-labs/appilot-headless';
-import { mirrorTasksToDb, toTaskRow, clearElectronFailures, purgeOrphanProjectTasks } from '../src/main/task-db-sync';
+import { mirrorTasksToDb, toTaskRow, clearElectronFailures, purgeOrphanProjectTasks, backfillTaskHistoryOnce, TASK_HISTORY_BACKFILL_MARK } from '../src/main/task-db-sync';
 
 async function main(): Promise<void> {
   const dbPath = join(mkdtempSync(join(tmpdir(), 'task-db-sync-test-')), 'appilot.db');
@@ -144,6 +144,38 @@ async function main(): Promise<void> {
   assert.deepEqual(purgeOrphanProjectTasks(purgeStore), [], '二次清理应为空（幂等）');
   purgeStore.close();
   console.log('✓ purgeOrphanProjectTasks（孤儿清理/注册表保护/幂等）');
+
+  // 10. 历史回填「只跑一次」守卫：清除失败后重启不再被 executions 历史复活
+  const bf = openStore(join(mkdtempSync(join(tmpdir(), 'task-backfill-once-')), 'appilot.db'));
+  // seed：electron 镜像行、无 lastRunAt（= 用户刚「清除失败」后的状态），但其
+  // taskId 在 rank_executions 里留有 failed 历史——旧代码每次启动都会把它复活。
+  const seedJson = { id: 'rank:resurrect', kind: 'rank', intervalMinutes: 1440 };
+  bf.tasks.upsert({
+    id: 'rank:resurrect', title: '排名采集', intervalMinutes: 1440, lastRunAt: null,
+    nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0,
+    source: 'electron', electronJson: JSON.stringify(seedJson),
+  });
+  bf.executions.add({ ts: '2026-09-08T09:34:00Z', taskId: 'rank:resurrect', status: 'failed', durationMs: 246, entryJson: '{}' });
+
+  // 首次调用：回填 failed 历史（旧行为本身）+ 置「只跑一次」标记
+  const n1 = backfillTaskHistoryOnce(bf);
+  assert.equal(n1, 1, '首次应回填 1 行历史');
+  assert.equal(bf.tasks.get('rank:resurrect')?.lastStatus, 'error', '旧行为：failed 历史被填回 error');
+  const mark = bf.kv.get(TASK_HISTORY_BACKFILL_MARK);
+  assert.ok(mark && !Number.isNaN(Date.parse(mark)), '首次后应写入标记（ISO）');
+
+  // 用户再次「清除失败」（置空状态/lastRunAt + 清理 electronJson）……
+  bf.tasks.upsert({
+    id: 'rank:resurrect', title: '排名采集', intervalMinutes: 1440, lastRunAt: null,
+    nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0,
+    source: 'electron', electronJson: JSON.stringify(seedJson),
+  });
+  // ……重启后第二次调用：标记已存在 → 直接跳过，不再复活
+  const n2 = backfillTaskHistoryOnce(bf);
+  assert.equal(n2, 0, '标记存在 → 跳过回填');
+  assert.equal(bf.tasks.get('rank:resurrect')?.lastStatus, 'never', '清除后重启不再被 failed 历史复活');
+  bf.close();
+  console.log('✓ backfillTaskHistoryOnce（只跑一次：清除后重启不复活）');
 
   store.close();
   console.log('task-db-sync 单测全部通过 ✓');
