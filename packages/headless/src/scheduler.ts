@@ -295,6 +295,14 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       // iTunes Search 403（被拒/封禁/风控）→ 写熔断键（与主进程同键、45 分钟）。
       // 同批已在途实例 ≤ MAX_INFLIGHT 并发无法中途取消；键生效后本 tick 剩余与
       // 后续 tick 均不再派发，等效「停止该批剩余 rank」，避免持续请求使情况恶化。
+      //
+      // 且**不落 error 状态**（#269 教训落码）：403 是上游风控而非应用故障。若照
+      // 常写 lastStatus:'error'，每次冷却（45min）结束后到期实例自动补跑再遇 403
+      // 会再次写红行——用户「清除失败」后同批 403 又复现，清除永远不粘。此分支与
+      // 派发前熔断跳过同语义：保留任务原状态/nextRunAt/runCount/lastRunAt（解除
+      // 冷却后到期自然补跑），仅当摘要变化时写一条说明性 lastSummary 作为痕迹。
+      // daemon 级失败计数仍 +1（运行确实以失败告终，与限流类同口径）；不影响
+      // 任务行状态，因此任务中心失败列表/横幅不会再生。
       if (executor.hitsItunesSearch === true && isItunesSearchForbidden(err)) {
         if (armItunesSearchBlockStore(store)) {
           log(
@@ -302,6 +310,13 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
               '暂停自动 rank 采集 45 分钟',
           );
         }
+        const blockSummary = itunesSearchBlockSkipSummary(store);
+        const prevRow = store.tasks.get(task.id);
+        if (prevRow && prevRow.lastSummary !== blockSummary) {
+          store.tasks.upsert({ ...prevRow, lastSummary: blockSummary });
+        }
+        statsState.failed += 1;
+        return;
       }
       const rateLimited = isRateLimitError(msg);
       let nextRunAt = base.nextRunAt;
