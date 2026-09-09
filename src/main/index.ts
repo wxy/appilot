@@ -69,15 +69,17 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   setupLogger();
   registerIpcHandlers();
   registerHeadlessReadIpc();
   registerDbAdminHandlers();
-  // P4：确保调度守护进程（best-effort；daemon 优先成为主，本壳调度保留为
-  // lease 仲裁 fallback——Electron scheduleGate 会让位给 daemon）。
-  ensureSchedulerDaemon();
-  startTaskScheduler();
+  // P4：daemon 常驻为主——先确保调度守护进程并确认它在跑；确认失败才启用
+  // 本壳调度兜底（避免冷启动时壳先拿租约、daemon 抢不到而一直显示“本应用”）。
+  const daemonOk = await ensureSchedulerDaemon();
+  if (!daemonOk) {
+    startTaskScheduler();
+  }
   // 共享注册表（方案 A）：启动 hydrate + 初始写回 + watch 对侧变更。
   startRegistrySync(getStore);
   Menu.setApplicationMenu(Menu.buildFromTemplate([]));
@@ -129,20 +131,22 @@ app.on("will-quit", () => {
  * 用 daemon-manager 的 tracked 拉起：由本壳 spawn 的 daemon 会记录启动指纹
  * （pid 绑定），任务中心「调度器」区据此比对 运行 vs 磁盘 版本。
  */
-function ensureSchedulerDaemon(): void {
+async function ensureSchedulerDaemon(): Promise<boolean> {
   try {
     const { defaultSocketPath, resolveSchedulerCli } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
     const { defaultDbPath } = require("@appilot-labs/appilot-headless") as typeof import("@appilot-labs/appilot-headless");
     const cli = resolveSchedulerCli();
     const fingerprint = diskSchedulerFingerprint(cli ? () => cli : null);
-    void ensureSchedulerTracked({
+    const res = await ensureSchedulerTracked({
       socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
       spawnCommand: cli ? [process.execPath, cli] : undefined,
       fingerprint,
-      timeoutMs: 3000,
+      timeoutMs: 4000,
       log: (m) => log.info(`appilot: ${m}`),
     });
+    return res.ok === true;
   } catch (err: any) {
     log.warn(`scheduler ensure skipped: ${err?.message || String(err)}`);
+    return false;
   }
 }
