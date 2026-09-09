@@ -28,6 +28,21 @@ export function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [statusMsg, setStatusMsg] = useState("");
+  // 调度器偏好：应用退出时是否同时退出后台 daemon。
+  const [exitWithDaemon, setExitWithDaemon] = useState(false);
+  useEffect(() => {
+    (window as any).appilot?.scheduler?.preferences?.()
+      .then((p: any) => setExitWithDaemon(Boolean(p?.exitWithDaemon)))
+      .catch(() => undefined);
+  }, []);
+  const toggleExitWithDaemon = async (value: boolean) => {
+    setExitWithDaemon(value);
+    try {
+      await (window as any).appilot?.scheduler?.setPreferences?.({ exitWithDaemon: value });
+    } catch {
+      // 保存失败保持本地状态即可
+    }
+  };
 
   useEffect(() => {
     (window as any).appilot?.ai?.getConfig().then((c: any) => {
@@ -112,6 +127,29 @@ export function SettingsPage() {
     <div className="p-10 max-w-2xl mx-auto">
       <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">设置</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-8">配置 AI 供应商以启用分析能力。</p>
+
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden mb-8 shadow-sm">
+        <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">调度器</h3>
+        </div>
+        <div className="p-6 space-y-5">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={exitWithDaemon}
+              onChange={(e) => void toggleExitWithDaemon(e.target.checked)}
+              className="mt-0.5 accent-amber-500"
+            />
+            <span className="text-sm text-zinc-700 dark:text-zinc-300">
+              应用退出时同时退出后台调度器
+              <span className="mt-0.5 block text-xs text-zinc-400 dark:text-zinc-500">
+                默认关闭：后台调度（排名/发布/评论采集）以常驻进程独立运行，关闭应用后继续采集；
+                开启后应用退出会一并停止后台调度，下次打开应用时自动重新启动。
+              </span>
+            </span>
+          </label>
+        </div>
+      </div>
 
       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden mb-8 shadow-sm">
         <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">

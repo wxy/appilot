@@ -434,6 +434,18 @@ export function registerSchedulerHandlers(): void {
     };
   });
 
+  // 偏好：应用退出时是否同时退出后台 daemon（默认否 = 常驻继续采集）。
+  ipcMain.handle("scheduler:preferences", async () => {
+    const s = await getStore();
+    return { exitWithDaemon: s.get("schedulerExitWithDaemon") === true };
+  });
+  ipcMain.handle("scheduler:setPreferences", async (_event, prefs: { exitWithDaemon?: boolean }) => {
+    const s = await getStore();
+    const exitWithDaemon = Boolean(prefs?.exitWithDaemon);
+    s.set("schedulerExitWithDaemon", exitWithDaemon);
+    return { exitWithDaemon };
+  });
+
   // ── 失败任务批量处理（backlog #2）：clear = 清错误态按原排期；
   //    reschedule = 清错误态 + nextRunAt 限速摊铺（教训 B：同刻到期会触发
   //    上游限流，如 iTunes Search 403/429）──
@@ -523,4 +535,27 @@ async function sendToDaemon(
   } catch {
     return false;
   }
+}
+
+/**
+ * 应用退出时（设置「退出同时退出后台调度器」开启）调用：关 daemon + 停本壳调度。
+ * 独立于 IPC，供 index 退出钩子复用，避免重复注册 handler。
+ */
+export async function stopSchedulerForAppExit(): Promise<void> {
+  try {
+    await sendToDaemon("shutdown", {});
+  } catch (err: any) {
+    log.warn(`daemon shutdown(exit) 发送失败: ${err.message}`);
+  }
+  try {
+    stopTaskScheduler();
+  } catch {
+    /* 退出路径静默 */
+  }
+  try {
+    await waitSchedulerDown(schedulerSocketPath(), 2500).catch(() => undefined);
+  } catch {
+    /* 忽略等待超时 */
+  }
+  clearSpawnRecord();
 }
