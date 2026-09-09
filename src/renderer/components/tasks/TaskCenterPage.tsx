@@ -41,18 +41,37 @@ export function TaskCenterPage() {
   } | undefined>(undefined);
   const [accel, setAccel] = useState(false);
   const [accelRemainingMs, setAccelRemainingMs] = useState<number | null>(null);
-  // 任务中心控制（架构收敛 C2）：daemon/壳调度启停 + 调度器指纹监测。
+  // 任务中心控制（架构收敛 C）：单一「调度器」（常驻 daemon）启停/重启 +
+  // 版本指纹监测 + daemon 自状态（启动于/已处理等）。
   const [daemonCtrl, setDaemonCtrl] = useState<{
     userStopped: boolean;
     leader: string | null;
     daemon: { running: boolean } | null;
+    // daemon 自维护状态（scheduler:status.daemonSelf；不可得为 null）。
+    daemonSelf: {
+      version: string;
+      startedAt: string;
+      uptimeMs: number;
+      processedExecutions: number;
+      processedTasks: number;
+      executedToday: number;
+      lastRunAt: string | null;
+      accel: boolean;
+      fingerprint: string | null;
+    } | null;
     // scheduler:status 新增的调度器版本监测（运行 vs 磁盘指纹）。
     manager: {
-      mode: "daemon" | "inapp" | "stopped";
+      mode: "daemon" | "stopped" | "inapp";
       runningFingerprint: string | null;
       diskFingerprint: string | null;
       unknown: boolean;
       mismatch: boolean;
+    } | null;
+    // 统一调度器状态机（daemon/stopped/error/starting；scheduler:status.engine）。
+    engine: {
+      mode: "daemon" | "stopped" | "error" | "starting";
+      error: string | null;
+      lastAttemptAt: string | null;
     } | null;
   } | null>(null);
   const [ctrlBusy, setCtrlBusy] = useState(false);
@@ -141,7 +160,9 @@ export function TaskCenterPage() {
       userStopped: Boolean(status?.userStopped),
       leader: status?.leader ?? null,
       daemon: status?.daemon ?? null,
+      daemonSelf: status?.daemonSelf ?? null,
       manager: status?.schedulerManager ?? null,
+      engine: status?.engine ?? null,
     });
   };
 
@@ -363,42 +384,49 @@ export function TaskCenterPage() {
   const failedGroups = groupTasks(failed);
   const overview = data?.overview;
 
-  // 调度器状态（统一模型）：运行（daemon/本应用）/ 已停止 / 未运行 ——
-  // 供头部「调度器」控制区与加速可用性派生。状态源沿用 daemonCtrl
-  // （userStopped/leader/daemon），模式优先取 server 端 schedulerManager.mode
-  // （主进程派生，含指纹比对）；旧主进程无该字段时回退到 leader/daemon 推导。
+  // 调度器状态（统一模型，架构收敛 C）：单一「调度器」= 常驻 daemon。
+  // mode 仅 运行中(daemon) / 已停止 / 异常(拉起失败) / 启动中——壳内「本应用」
+  // 模式已删除。优先取 server 端 engine.mode；旧主进程无该字段时回退推导。
   const engineStopped = daemonCtrl?.userStopped ?? false;
+  const engineMode = daemonCtrl?.engine?.mode ?? null;
   const mgr = daemonCtrl?.manager ?? null;
   const hasMgr = mgr != null;
-  const engineByDaemon =
+  // daemon 在服务（运行中）：自状态可得 / manager=daemon / 租约主=scheduler 任一。
+  const daemonUp =
     !engineStopped &&
-    (hasMgr
-      ? mgr.mode === "daemon"
-      : Boolean(daemonCtrl?.daemon?.running || daemonCtrl?.leader === "scheduler"));
-  const engineByElectron =
-    !engineStopped &&
-    (hasMgr ? mgr.mode === "inapp" : daemonCtrl?.leader === "electron");
-  const engineActive = engineByDaemon || engineByElectron;
+    (Boolean(daemonCtrl?.daemonSelf) ||
+      (hasMgr && mgr.mode === "daemon") ||
+      Boolean(daemonCtrl?.daemon?.running) ||
+      daemonCtrl?.leader === "scheduler");
+  const engineActive = !engineStopped && daemonUp;
+  const daemonSelf = daemonCtrl?.daemonSelf ?? null;
+  const engineError =
+    engineMode === "error"
+      ? daemonCtrl?.engine?.error ?? "调度器未能在超时内拉起"
+      : null;
   const engineLabel =
     daemonCtrl == null
       ? "调度器读取中…"
       : engineStopped
         ? "已停止"
-        : engineByDaemon
+        : engineActive
           ? "运行中 · 常驻调度器"
-          : engineByElectron
-            ? "运行中 · 本应用"
-            : "未运行";
+          : engineError != null
+            ? "调度器异常"
+            : "调度器启动中…";
   // 版本监测行：仅「常驻调度器」模式有意义。
-  const daemonMode = !engineStopped && engineByDaemon;
+  const daemonMode = engineActive && (mgr?.mode === "daemon" || daemonSelf != null);
   const fpShort = (fp: string | null | undefined) => (fp ? fp.slice(0, 7) : null);
-  const enginePillCls = daemonCtrl == null
-    ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
-    : engineStopped
-      ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300"
-      : engineActive
-        ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-        : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400";
+  const enginePillCls =
+    daemonCtrl == null
+      ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+      : engineStopped
+        ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300"
+        : engineActive
+          ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+          : engineError != null
+            ? "bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400"
+            : "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400";
   // 失败任务数（整页范围，非筛选后——横幅反映全局健康）
   const totalFailed = (data?.tasks || []).filter(
     (t: any) => t.lastStatus === "failed",
@@ -441,13 +469,44 @@ export function TaskCenterPage() {
                 engineStopped
                   ? "调度器已停止：后台不再自动采集（手动「立即运行 / 加速」仍可用）；重启应用随启动恢复"
                   : engineActive
-                    ? "调度器自动调度运行中"
-                    : "调度器未运行——点击「启动」拉起常驻调度器"
+                    ? "调度器（常驻 daemon）自动调度运行中"
+                    : engineError != null
+                      ? "调度器异常：未运行且最近一次拉起失败，正在自动重试（每约 20s 一次）"
+                      : "调度器未运行——正在启动或等待拉起"
               }
             >
               {engineLabel}
             </span>
           </div>
+
+          {/* daemon 自维护状态（架构收敛 B/C）：启动于 / 运行时长 / 已处理任务 */}
+          {daemonMode && daemonSelf ? (
+            <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-xl">
+              <span
+                className="text-[11px] text-zinc-500 dark:text-zinc-400"
+                title={`调度器进程 #${daemonCtrl?.leader ?? ""} · 版本 ${daemonSelf.version}`}
+              >
+                调度器已启动 {formatHumanTime(daemonSelf.startedAt)} · 运行{" "}
+                {formatDuration(daemonSelf.uptimeMs)}
+              </span>
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                已处理 {daemonSelf.processedExecutions} 次执行
+                {daemonSelf.processedTasks != null
+                  ? `（${daemonSelf.processedTasks} 个任务）`
+                  : ""}{" "}
+                · 今日 {daemonSelf.executedToday} · v{daemonSelf.version}
+              </span>
+            </div>
+          ) : null}
+
+          {/* 调度器异常详情：拉起失败原因 + 自动重试提示 */}
+          {engineError != null ? (
+            <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-xl">
+              <span className="text-[11px] text-red-500 dark:text-red-400">
+                调度器未运行——拉起失败：{engineError}（应用会自动重试，无需手动操作）
+              </span>
+            </div>
+          ) : null}
 
           {/* 版本监测行：运行 vs 磁盘 代码指纹（仅常驻调度器模式） */}
           {daemonMode && mgr ? (
@@ -501,7 +560,7 @@ export function TaskCenterPage() {
                 "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                 "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600",
               )}
-              title="暂停调度器：关停常驻 daemon 并暂停本应用调度（手动「立即运行」仍可用；重启应用随启动恢复）"
+              title="暂停调度器：关停常驻 daemon（手动「立即运行」仍可用；重启应用随启动恢复）"
             >
               {ctrlAction === "stop" ? "暂停中…" : "暂停"}
             </button>

@@ -5,7 +5,6 @@ import {
   ITUNES_SEARCH_BLOCK_KV_KEY,
   ITUNES_SEARCH_BLOCK_MS,
 } from "@appilot-labs/appilot-core/rank-collector";
-import { powerMonitor } from "electron";
 import { notifyDataChanged } from "./data-sync";
 import {
   enrichKeywordFromSnapshots,
@@ -30,9 +29,7 @@ import {
   nextRunAt,
   nextRankRunAt,
   nextRunWithinMinutes,
-  rebalanceCollapsedTasks,
   opsSyncTaskId,
-  prioritizeGroupCompletion,
   pruneRoundMembers,
   rankGroupKey,
   reviewsSyncTaskId,
@@ -40,10 +37,11 @@ import {
   type SchedulerRoundState,
 } from "./schedule";
 import { getStore } from "./store";
-import { scheduleGate, sharedStore } from "./registry-sync";
+import { sharedStore } from "./registry-sync";
 import { recordRankSnapshotToDb } from "./rank-db-sync";
-import { reconcileTaskInstances, type TaskInstanceSpec, type TaskRow } from "@appilot-labs/appilot-headless";
+import { reconcileTaskInstances, type TaskInstanceSpec } from "@appilot-labs/appilot-headless";
 import type { AppStore } from "./store";
+import { requestDaemonRunDue, resolveDaemonSpawnConfig } from "./daemon-manager";
 
 interface ScheduledTaskBase {
   id: string;
@@ -106,26 +104,10 @@ export interface RunningTaskInfo {
   startedAt: string;
 }
 
-let schedulerTimer: NodeJS.Timeout | null = null;
-let schedulerRunning = false;
 const activeTaskRuns = new Set<string>();
-let overdueScattered = false;
-let powerListenersRegistered = false;
-/** How many rank tasks one scheduler tick may execute (throughput vs load). */
-const MAX_RANK_TASKS_PER_TICK = 8;
-const TICK_INTERVAL_MS = 60_000;
-const TICK_INTERVAL_ACCEL_MS = 10_000;
-const TASK_BREAK_MS = 1500;
-const TASK_BREAK_ACCEL_MS = 200;
-const ACCEL_MAX_ROUNDS = 6;
-const ACCEL_MAX_TASKS_PER_TICK = 40;
-const ACCEL_AUTO_OFF_MS = 5 * 60_000;
-let schedulerPaused = false;
-// 任务中心「停止」状态（架构收敛 C2）：用户经壳显式停止自动调度（daemon 关停 +
-// 本壳 fallback 暂停）。置位后调度循环不再启动/重排，直到「启动」清除。
+// 任务中心「停止」状态（架构收敛 C2）：用户经壳显式停止自动调度（daemon 关停）。
+// 置位后 watchdog 不再重试拉起 daemon、UI 显示「已停止」，直到「启动」清除。
 let taskCenterStopped = false;
-// 单次加速会话中已处理过的任务：添油时跳过，避免执行后被推回未来的任务被反复拉取。
-let accelHandledTaskIds = new Set<string>();
 // 执行记录的写入链：调度 tick 与手动触发并发写时保证串行，避免互相覆盖
 // 导致统计（流量/入榜率）忽清忽恢复。
 let executionsWriteChain: Promise<void> = Promise.resolve();
@@ -146,15 +128,15 @@ function appendExecution(_store: AppStore, entry: Record<string, any>): Promise<
 /** What the scheduler is executing right now (for the timeline UI). */
 let nowRunningTask: RunningTaskInfo | null = null;
 
-export function isSchedulerTimerActive(): boolean {
-  return Boolean(schedulerTimer);
-}
-
+/**
+ * 壳内已不再有自动调度循环（架构收敛 A）：本快照只反映「壳内手动执行」
+ * 是否在进行中（运行权始终在常驻 daemon，见 scheduler:status 的 engine/daemonSelf）。
+ */
 export function schedulerStatusSnapshot(): {
   running: boolean;
   nowRunning: RunningTaskInfo | null;
 } {
-  return { running: schedulerRunning, nowRunning: nowRunningTask };
+  return { running: false, nowRunning: nowRunningTask };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -169,9 +151,6 @@ export function schedulerStatusSnapshot(): {
 // ────────────────────────────────────────────────────────────────────────────
 /** 熔断命中的调度任务类型：scheduler 内唯一走 iTunes Search API 的任务。 */
 const ITUNES_SEARCH_TASK_KINDS = new Set<string>(["rank"]);
-/** 熔断提示日志节流：每 5 分钟最多一条，避免 60s tick 反复刷屏。 */
-const ITUNES_BLOCK_LOG_INTERVAL_MS = 5 * 60_000;
-let lastItunesBlockTickLogAt = 0;
 
 /** 读取熔断截止（ISO 字符串）；过期即视为已解除（到期自然恢复）。 */
 function itunesSearchBlockUntil(store: AppStore): string | null {
@@ -507,7 +486,7 @@ function reconcileSchedulerRounds(store: AppStore, tasks: ScheduledTask[]): void
 
 /**
  * P1：github-sync 执行源切共享 DB 实例——electron-store scheduledTasks 不再
- * 生成 github-sync（由主 tick 从 DB 拉到期实例执行，见 runDueGithubSyncInstances）；
+ * 生成 github-sync（执行由常驻 daemon 从 DB 拉到期实例完成）；
  * 本函数只负责把期望实例集 reconcile 进共享 DB（source=electron）。
  */
 async function reconcileGithubSyncTasks(store: AppStore): Promise<void> {
@@ -901,98 +880,6 @@ async function githubSyncBody(
   return { inspection, summary: inspection.summary };
 }
 
-/** P1：DB 实例模式——执行到期 github-sync 实例并写回共享 DB 行状态。 */
-async function runGithubSyncInstanceDb(store: AppStore, row: TaskRow): Promise<void> {
-  const inst = (row.instance ?? {}) as any;
-  const projects: any[] = store.get("projects") || [];
-  const project =
-    projects.find((p: any) => p?.id === inst.projectId) ||
-    (inst.projectName ? projects.find((p: any) => p?.name === inst.projectName) : null) ||
-    null;
-  const startedIso = new Date().toISOString();
-  nowRunningTask = {
-    kind: "github-sync",
-    keyword: "GitHub 发布监听",
-    language: "",
-    storefront: "",
-    startedAt: startedIso,
-  };
-  const startedMs = Date.now();
-  const s = sharedStore();
-  const base: any = {
-    id: row.id,
-    title: row.title || "GitHub 发布同步",
-    intervalMinutes: row.intervalMinutes || 60,
-    runCount: (row.runCount ?? 0) + 1,
-    source: row.source,
-    kind: row.kind,
-    instance: row.instance,
-  };
-  const recordExecution = (status: "success" | "failed") => {
-    // 与任务行同 id 记一条执行（时间线/今日统计/首次执行兜底一致）。
-    void appendExecution(store, {
-      ts: new Date().toISOString(),
-      taskId: row.id,
-      productId: inst?.projectId ?? null,
-      keyword: null,
-      language: null,
-      storefront: null,
-      kind: "github-sync",
-      status,
-      durationMs: Date.now() - startedMs,
-    });
-  };
-  try {
-    const { summary } = await githubSyncBody(store, project, () => {});
-    s.tasks.upsert({
-      ...base,
-      lastRunAt: startedIso,
-      nextRunAt: new Date(Date.now() + 60 * 60_000).toISOString(),
-      lastStatus: "ok",
-      lastSummary: `${inst.projectName ?? project?.name ?? project?.id}: ${summary}`,
-    });
-    recordExecution("success");
-  } catch (err: any) {
-    log.warn(`Github sync instance failed for ${row.id}: ${err?.message || String(err)}`);
-    s.tasks.upsert({
-      ...base,
-      lastRunAt: startedIso,
-      nextRunAt: new Date(Date.now() + 30 * 60_000).toISOString(),
-      lastStatus: "error",
-      lastSummary: err?.message || String(err),
-    });
-    recordExecution("failed");
-  } finally {
-    nowRunningTask = null;
-  }
-}
-
-/** P1：主 tick 拉到期 github-sync DB 实例执行（上限 3/轮；Electron 作为执行宿主）。 */
-async function runDueGithubSyncInstances(store: AppStore): Promise<void> {
-  try {
-    const s = sharedStore();
-    const now = Date.now();
-    // 只看 kind + 到期：实例行 source 可能是 dsh（reconcile 保留原来源，或由
-    // DSH 壳先建）也可能是 electron——只认 electron 会把 dsh 实例行漏执行，
-    // 导致任务行的 lastRunAt/nextRunAt 永远停留在旧值（发布监听「下次执行」过期）。
-    const due = s.tasks
-      .all()
-      .filter(
-        (t) =>
-          t.kind === "github-sync" &&
-          !!t.instance &&
-          (!t.nextRunAt || new Date(t.nextRunAt).getTime() <= now),
-      )
-      .slice(0, 3);
-    for (const row of due) {
-      await runGithubSyncInstanceDb(store, row);
-    }
-  } catch (err: any) {
-    log.warn(`github-sync db instances failed: ${err?.message || String(err)}`);
-  }
-}
-
-
 async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void> {
   const projects: any[] = store.get("projects") || [];
   const project = projects.find((item: any) => item.id === task.projectId) || null;
@@ -1297,45 +1184,22 @@ async function runScheduledTask(
   }
 }
 
+/**
+ * 壳侧 schedulerTick 已收敛为「任务池 reconcile + 通知 daemon」（架构收敛 A）：
+ * 壳不再在此执行任何到期任务，也不再 acquire 调度租约（无 scheduleGate）——
+ * - 重算 electron 域任务池（rank/github-sync/ops/reviews/build-status 的
+ *   scheduledTasks 推导与 DB 实例同步，UI 与 daemon 读同一份）；
+ * - 保留 tick 的既有整理副作用（草稿身份迁移）；
+ * - 最后经 socket runDue 通知常驻 daemon「立即处理到期」——daemon 未跑时该
+ *   通知为空操作（调度器异常由 ensure 状态/watchdog 负责拉起与展示）。
+ * 手动「立即执行」走 runTaskNow（handler 路由 daemon 优先，见 handlers/scheduler）。
+ */
 export async function schedulerTick(): Promise<void> {
-  if (schedulerRunning) return;
-  schedulerRunning = true;
   try {
-    // Phase 3：租约门——非调度主（如 DSH 在跑）时本轮跳过定时派发；
-    // 显式 IPC 触发（runTaskNow 等）不受影响，仍可手动执行。
-    if (!scheduleGate()) {
-      return; // schedulerLoopOnce 会继续安排下一轮；非主轮不做派发
-    }
     const store = await getStore();
-    // iTunes Search 403 熔断：冷却期内本 tick 不派发任何自动任务（本地整理
-    // reconcile 一并跳过，解除后首个 tick 自然补齐）。冷却结束后自动恢复。
-    if (isItunesSearchBlocked(store)) {
-      const nowLog = Date.now();
-      if (nowLog - lastItunesBlockTickLogAt >= ITUNES_BLOCK_LOG_INTERVAL_MS) {
-        lastItunesBlockTickLogAt = nowLog;
-        const until = itunesSearchBlockState(store).until as string;
-        log.warn(
-          `appilot: iTunes Search 熔断中——自动采集暂停，冷却至 ` +
-            `${formatClock(new Date(until))} 后自动恢复`,
-        );
-      }
-      // 熔断期间仍处理「加速超时自动解除」，避免整个冷却窗口内以 10s 高频空转。
-      const accelActive = store.get("schedulerAccel") === true;
-      const accelUntil = store.get("schedulerAccelUntil");
-      if (accelActive && accelUntil && Date.now() >= new Date(accelUntil).getTime()) {
-        await disableAccel(store);
-        overdueScattered = false;
-        notifyDataChanged("tasks");
-      }
-      return;
-    }
-    lastItunesBlockTickLogAt = 0;
     await reconcileRankTasks(store);
     await reconcileGithubSyncTasks(store);
     await reconcileOpsTasks(store);
-    // P1：github-sync 实例由本 tick 从共享 DB 拉取执行（谁持主谁执行；
-    // 新 seed 实例（nextRunAt=now）本 tick 即可执行首轮）。
-    await runDueGithubSyncInstances(store);
     // Migrate existing drafts to the appVersion identity (one copy per
     // target version) when legacy duplicates exist.
     const projectsForMigration = store.get("projects") || [];
@@ -1344,204 +1208,16 @@ export async function schedulerTick(): Promise<void> {
       if (normalizeDraftIdentity(project)) draftsChanged = true;
     }
     if (draftsChanged) store.set("projects", projectsForMigration);
-
-    const now = Date.now();
-    const accel = store.get("schedulerAccel") === true;
-    const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
-    const touchedTaskIds = new Set<string>();
-    // 非加速状态下自愈“排期坍缩”：一次性重排/迁移可能把整批任务的下次
-    // 执行时间设成同一分钟，这里按各自稳定相位重新散布，避免未来某一分钟
-    // 同时爆发成积压。加速期间跳过（当轮拉取的任务共享同一分钟）。
-    if (!accel) {
-      const rebalanced = rebalanceCollapsedTasks(
-        tasks,
-        new Date(now),
-        rankRunsPerDay(store),
-      );
-      if (rebalanced.changed) {
-        tasks.splice(0, tasks.length, ...rebalanced.tasks);
-        store.set("scheduledTasks", tasks);
-      }
+    // reconcile 的变更已由 store.set 同步进共享 DB；请 daemon 立即处理到期任务。
+    try {
+      await requestDaemonRunDue(resolveDaemonSpawnConfig().socketPath);
+    } catch {
+      /* daemon 未跑/旧版无 runDue：等待 watchdog 拉起或 daemon 下轮 tick */
     }
-    // 渐进提速：加速不是瞬间满负荷，而是每轮逐步提升到峰值（踩油门）。
-    let accelRound = 0;
-    if (accel) {
-      accelRound = Number(store.get("schedulerAccelRound") || 0) + 1;
-      store.set("schedulerAccelRound", accelRound);
-    }
-    const accelFactor = accel ? Math.min(1, accelRound / ACCEL_MAX_ROUNDS) : 0;
-    const maxPerTick = accel
-      ? Math.round(MAX_RANK_TASKS_PER_TICK + (ACCEL_MAX_TASKS_PER_TICK - MAX_RANK_TASKS_PER_TICK) * accelFactor)
-      : MAX_RANK_TASKS_PER_TICK;
-    const breakMs = accel
-      ? Math.round(TASK_BREAK_MS - (TASK_BREAK_MS - TASK_BREAK_ACCEL_MS) * accelFactor)
-      : TASK_BREAK_MS;
-    // Oldest-overdue first: array order is per-project, so an early project can
-    // otherwise starve every later project (GloWalk sat enabled but untouched
-    // behind ai-pulse's larger task list).
-    const due = tasks
-      .filter(
-        (task) =>
-          task.enabled &&
-          new Date(task.nextRunAt).getTime() <= now,
-      )
-      .sort((a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime());
-    // 添油战术：加速时不把所有任务一次性提前，而是每轮从未来拉取紧邻的
-    // 未处理任务补足本轮额度——平滑推进，结束后无需把任务推回。
-    if (accel) {
-      const future = tasks
-        .filter(
-          (task) =>
-            task.enabled &&
-            !accelHandledTaskIds.has(task.id) &&
-            new Date(task.nextRunAt).getTime() > now,
-        )
-        .sort(
-          (a, b) =>
-            new Date(a.nextRunAt).getTime() -
-            new Date(b.nextRunAt).getTime(),
-        );
-      const need = maxPerTick - due.length;
-      if (need > 0 && future.length > 0) {
-        const pulled = future.slice(0, need);
-        const nowIso = new Date(now).toISOString();
-        for (const task of pulled) task.nextRunAt = nowIso;
-        due.push(...pulled);
-        store.set("scheduledTasks", tasks);
-      }
-      // 自动解除：超过时限，或所有启用任务都已被加速处理过。
-      const until = store.get("schedulerAccelUntil");
-      const expired = until && Date.now() >= new Date(until).getTime();
-      const allHandled =
-        tasks.filter(
-          (task) => task.enabled && !accelHandledTaskIds.has(task.id),
-        ).length === 0;
-      if (expired || (allHandled && accelRound > 1)) {
-        await disableAccel(store);
-        overdueScattered = false;
-        notifyDataChanged("tasks");
-        due.length = 0;
-      }
-    }
-    // Run whole keyword groups back-to-back so a group's round completes as
-    // early as possible, then take the tick's throughput cap.
-    const selected = prioritizeGroupCompletion(due).slice(
-      0,
-      maxPerTick,
-    );
-
-    for (const [taskIndex, task] of selected.entries()) {
-      // 加速到期按任务粒度检查：到期即停，不再执行完整个 round。
-      if (accel) {
-        const until = store.get("schedulerAccelUntil");
-        if (until && Date.now() >= new Date(until).getTime()) break;
-      }
-      // iTunes Search 熔断：每个任务派发前检查（覆盖跨 await 间隙被并发手动
-      // 执行触发熔断的场景）——冷却期内不再派发剩余自动任务。
-      if (isItunesSearchBlocked(store)) {
-        log.warn(
-          `appilot: iTunes Search 熔断中——本 tick 剩余 ${selected.length - taskIndex} 个自动任务停止派发（冷却结束后自动恢复）`,
-        );
-        break;
-      }
-      if (task.kind === "github-sync") {
-        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
-      } else if (task.kind === "ops-sync") {
-        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
-      } else if (task.kind === "reviews-sync") {
-        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
-      } else if (task.kind === "build-status") {
-        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
-      } else {
-        if (await runScheduledTask(store, task)) touchedTaskIds.add(task.id);
-      }
-      // 同一 tick 内遇到 403：立即中断当前批次剩余任务（不要在循环里继续跑
-      // 下一个），熔断状态已由 runRankTask 写入。
-      if (isItunesSearchBlocked(store)) {
-        log.warn(
-          `appilot: iTunes Search 403 触发熔断——本 tick 剩余 ${selected.length - taskIndex - 1} 个自动任务已中断（冷却结束后自动恢复）`,
-        );
-        break;
-      }
-      // 执行完成才计入“已处理”：早退任务（暂停/删除关键词、产品缺失）不
-      // 计为已处理，避免提前触发 allHandled 自动关闭。
-      accelHandledTaskIds.add(task.id);
-      await new Promise((resolve) =>
-        setTimeout(resolve, breakMs),
-      );
-    }
-    // Merge only tasks this tick actually executed. Copying the entire startup
-    // snapshot back lets a manual run that finished during this tick lose its
-    // freshly persisted lastRunAt/nextRunAt.
-    const latestTasks: ScheduledTask[] = store.get("scheduledTasks") || [];
-    const byId = new Map(
-      tasks
-        .filter((task) => touchedTaskIds.has(task.id))
-        .map((task) => [task.id, task]),
-    );
-    const merged = latestTasks.map((task) => byId.get(task.id) || task);
-    for (const task of byId.values()) {
-      if (!merged.some((item) => item.id === task.id)) merged.push(task);
-    }
-    store.set("scheduledTasks", merged);
+    notifyDataChanged("tasks");
   } catch (err: any) {
-    log.error(`Task scheduler tick failed: ${err.message}`);
-  } finally {
-    schedulerRunning = false;
+    log.error(`Task scheduler reconcile failed: ${err.message}`);
   }
-}
-
-async function scatterOverdueTasks(store: AppStore): Promise<void> {
-  const now = Date.now();
-  const tasks: ScheduledTask[] = store.get("scheduledTasks") || [];
-  let changed = false;
-  for (const task of tasks) {
-    if (task.enabled && new Date(task.nextRunAt).getTime() <= now) {
-      task.nextRunAt = nextRunWithinMinutes(task.id, 120);
-      changed = true;
-    }
-  }
-  if (changed) {
-    store.set("scheduledTasks", tasks);
-  }
-}
-
-async function schedulerLoopOnce(): Promise<void> {
-  try {
-    await schedulerLoopOnceInner();
-  } catch (err: any) {
-    // 调度循环崩溃点显形：任何一轮失败都记录并继续下一轮，避免静默停摆。
-    log.error(`scheduler loop failed: ${err?.stack || err?.message || String(err)}`);
-    if (schedulerPaused) return;
-    schedulerTimer = setTimeout(() => void schedulerLoopOnce(), TICK_INTERVAL_MS);
-  }
-}
-
-async function schedulerLoopOnceInner(): Promise<void> {
-  const store = await getStore();
-  const accel = store.get("schedulerAccel") === true;
-  // 加速模式跳过积压分散：让任务按序立即处理，而不是散到未来 120 分钟。
-  if (!overdueScattered && !accel) {
-    // iTunes Search 熔断期间不摊铺积压：保持任务到期，冷却结束后尽快补跑。
-    if (!isItunesSearchBlocked(store)) {
-      await scatterOverdueTasks(store);
-      overdueScattered = true;
-    }
-  }
-  await schedulerTick();
-  if (schedulerPaused) return;
-  schedulerTimer = setTimeout(
-    () => void schedulerLoopOnce(),
-    accel ? TICK_INTERVAL_ACCEL_MS : TICK_INTERVAL_MS,
-  );
-}
-
-function startSchedulerLoop(): void {
-  if (schedulerTimer) return;
-  // 任务中心已被用户显式停止：不启动/不重排（resume / setAccel 等路径也过此守卫）。
-  if (taskCenterStopped) return;
-  schedulerPaused = false;
-  void schedulerLoopOnce();
 }
 
 /** 任务中心是否已被用户显式停止（P 收敛 C2）。 */
@@ -1550,91 +1226,18 @@ export function isTaskCenterStopped(): boolean {
 }
 
 /**
- * 停止任务中心（用户显式）：暂停本壳 fallback 调度循环。
- * daemon 的关停由调用方（IPC handler）另行发送 shutdown——两处都停才算「停了」。
+ * 停止任务中心（用户显式「暂停」）：置停止标记（daemon 的关停由 IPC handler
+ * 另行 shutdown）。壳内已无调度循环可停——标记仅用于状态展示与暂停 watchdog 重试。
  */
 export function stopTaskScheduler(): void {
   taskCenterStopped = true;
-  pauseTaskScheduler();
-  log.info('appilot: 任务中心已停止（用户暂停，本壳调度循环退出）');
+  log.info("appilot: 任务中心已停止（用户暂停；常驻调度器已关停）");
 }
 
-/** 启动任务中心：清除停止标记并恢复调度循环（daemon 拉起由调用方 ensure）。 */
+/** 启动任务中心（用户「启动」）：清除停止标记；daemon 拉起由调用方 ensure。 */
 export function enableTaskScheduler(): void {
   taskCenterStopped = false;
-  startSchedulerLoop();
-  log.info('appilot: 任务中心已启动（调度循环恢复）');
-}
-
-/** Stop the scheduler timer so sleep is not disturbed while the system suspends. */
-export function pauseTaskScheduler(): void {
-  schedulerPaused = true;
-  if (schedulerTimer) {
-    clearTimeout(schedulerTimer);
-    schedulerTimer = null;
-  }
-}
-
-/** Restart the scheduler after the system resumes, scattering the backlog. */
-export function resumeTaskScheduler(): void {
-  overdueScattered = false;
-  startSchedulerLoop();
-}
-
-/**
- * 加速模式：更快的调度节奏（10 秒一轮、每轮最多 40 个任务、任务间 200ms），
- * 用于快速清空积压（如重建某平台的全部排名数据）。
- */
-export async function setSchedulerAccel(enabled: boolean): Promise<void> {
-  const store = await getStore();
-  if (enabled) {
-    // 开启或延长：每次点击把截止时间延长 5 分钟（已开启时累加）。
-    const alreadyOn = store.get("schedulerAccel") === true;
-    // 只有从关闭切换到开启时才是全新会话：清空已处理集合、轮次从 0 重新
-    // 爬坡。已开启时点击仅表示延长，必须保留已处理集合，否则已执行过的
-    // 任务会重新进入“可拉取”池而被重复执行。
-    if (!alreadyOn) {
-      accelHandledTaskIds = new Set();
-      store.set("schedulerAccelRound", 0);
-    }
-    const existingUntil = store.get("schedulerAccelUntil");
-    const base =
-      alreadyOn && existingUntil
-        ? new Date(existingUntil).getTime()
-        : Date.now();
-    const until = Math.max(Date.now() + ACCEL_AUTO_OFF_MS, base + ACCEL_AUTO_OFF_MS);
-    store.set("schedulerAccel", true);
-    store.set("schedulerAccelUntil", new Date(until).toISOString());
-  } else {
-    await disableAccel(store);
-  }
-  // 立即应用新的调度节奏。
-  if (schedulerTimer) {
-    clearTimeout(schedulerTimer);
-    schedulerTimer = null;
-  }
-  startSchedulerLoop();
-  return;
-}
-
-/**
- * 关闭加速：停止加速调度节奏。添油模式下每轮只从未来拉取本轮额度内的
- * 任务并当场执行，不存在“被提前但未执行”的残留；未处理任务仍保留在原
- * 排期，之后由正常调度按各自间隔继续执行。
- */
-async function disableAccel(store: AppStore): Promise<void> {
-  accelHandledTaskIds = new Set();
-  store.set("schedulerAccel", false);
-  store.set("schedulerAccelUntil", null);
-}
-
-export function startTaskScheduler(): void {
-  startSchedulerLoop();
-  if (!powerListenersRegistered) {
-    powerListenersRegistered = true;
-    powerMonitor.on("suspend", pauseTaskScheduler);
-    powerMonitor.on("resume", resumeTaskScheduler);
-  }
+  log.info("appilot: 任务中心已启动");
 }
 
 export async function runOpsSyncNow(projectId: string): Promise<boolean> {

@@ -31,6 +31,49 @@ export const DEFAULT_TTL_MS = 60_000;
 /** 代码自检周期：部署新 dist 后至多这么久即自重启加载新代码。 */
 export const DEFAULT_UPDATE_CHECK_INTERVAL_MS = 60_000;
 
+/**
+ * 本包版本（daemon 自状态 version 字段）：运行时读 package.json（dist 与源码
+ * 两态下 ../package.json 均指向本包；读取失败回退 '0.0.0'）。
+ */
+export function schedulerPackageVersion(): string {
+  try {
+    const pkg = require('../package.json') as { version?: string };
+    return typeof pkg?.version === 'string' && pkg.version ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+/**
+ * 壳 spawn daemon 时经 env 注入的「启动时刻磁盘指纹」键（与 Electron 主进程
+ * scheduler-fingerprint 同键——daemon 自状态 status.fingerprint 读取该值上报，
+ * 壳优先用 daemon 上报指纹比对运行版本，未知时才退回磁盘比对）。
+ */
+export const SCHEDULER_FINGERPRINT_ENV = 'APPILOT_SCHEDULER_FINGERPRINT';
+
+/**
+ * daemon 自维护状态（架构收敛 B）：每次 status 请求实时快照。
+ * - startedAt/uptimeMs：本 daemon 进程成为调度主的时刻/已运行时长；
+ * - processedExecutions：headless 调度循环里本 daemon 实际执行次数（见
+ *   LeaseScheduler.stats 口径——到期 tick + runNow，含失败；熔断跳过不计）；
+ * - processedTasks：处理过的不同任务实例数；executedToday：按本地日期滚动；
+ * - lastRunAt/version/fingerprint/pid 供壳读取与运行版本比对。
+ */
+export interface DaemonSelfStatus {
+  daemonPid: number;
+  version: string;
+  startedAt: string;
+  uptimeMs: number;
+  processedExecutions: number;
+  processedTasks: number;
+  executedToday: number;
+  lastRunAt: string | null;
+  accel: boolean;
+  accelUntil: string | null;
+  fingerprint: string | null;
+  leaderId: string;
+}
+
 /** 默认 socket 路径（与共享 DB 同目录：scheduler.sock）。 */
 export function defaultSocketPath(dbPath?: string): string {
   return join(dirname(dbPath ?? process.env.APPILOT_DB_FILE ?? ''), 'scheduler.sock');
@@ -106,6 +149,32 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     log,
   });
   let accelOffTimer: ReturnType<typeof setTimeout> | null = null;
+  let accelUntilIso: string | null = null;
+
+  // ── daemon 自维护状态（架构收敛 B）──
+  // startedAt = 本 daemon 的调度器（成为调度主时创建）时刻；uptime/累计计数
+  // 每次 status 实时算（headless LeaseScheduler.stats 计数，见其口径注释）。
+  const daemonVersion = schedulerPackageVersion();
+  // 壳 spawn 时注入的启动指纹（见 SCHEDULER_FINGERPRINT_ENV）；daemon 自报，
+  // 壳 status 优先用该值做运行指纹比对（老 daemon 无此字段 → 壳退磁盘比对）。
+  const daemonFingerprint = process.env[SCHEDULER_FINGERPRINT_ENV] ?? null;
+  const daemonStatus = (): DaemonSelfStatus => {
+    const s = scheduler.stats();
+    return {
+      daemonPid: process.pid,
+      version: daemonVersion,
+      startedAt: s.startedAt,
+      uptimeMs: Math.max(0, Date.now() - new Date(s.startedAt).getTime()),
+      processedExecutions: s.processed,
+      processedTasks: s.uniqueTasks,
+      executedToday: s.processedToday,
+      lastRunAt: s.lastRunAt,
+      accel: scheduler.isAccel(),
+      accelUntil: accelUntilIso,
+      fingerprint: daemonFingerprint,
+      leaderId: SCHEDULER_LEADER_ID,
+    };
+  };
 
   // reconcile：共享 DB 注册项目 → github-sync 实例（DSH 同一推导）。
   const reconcile = () => {
@@ -134,23 +203,32 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       if (!result) throw new Error(`未知任务实例: ${taskId}`);
       return result;
     },
+    onRunDue: () => {
+      // 要求立即处理到期（壳 UI「立即执行到期」/ reconcile 后 kick）：tick 一轮，
+      // 仅主生效（daemon 持主即执行；从者 tick 内自行尝试接管）。
+      scheduler.kick();
+    },
     onAccelerate: (on, seconds) => {
       if (accelOffTimer) clearTimeout(accelOffTimer);
       accelOffTimer = null;
       if (on) {
         scheduler.setAccel(true);
-        log(`accelerate on${seconds ? ` for ${seconds}s` : ''}`);
         const ms = Math.min(seconds && seconds > 0 ? seconds * 1000 : 5 * 60_000, 30 * 60_000);
+        accelUntilIso = new Date(Date.now() + ms).toISOString();
+        log(`accelerate on${seconds ? ` for ${seconds}s` : ''}`);
         accelOffTimer = setTimeout(() => {
           scheduler.setAccel(false);
+          accelUntilIso = null;
           accelOffTimer = null;
           log('accelerate auto-off');
         }, ms);
       } else {
         scheduler.setAccel(false);
+        accelUntilIso = null;
         log('accelerate off');
       }
     },
+    onStatus: () => daemonStatus(),
     onShutdown: () => selfShutdown?.(),
     // 壳启动通知（ensure hello 后 fire-and-forget）：立即检查代码是否已更新。
     onCheckUpdate: () => {
@@ -188,6 +266,16 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       rmSync(socketPath, { force: true });
     } catch {
       /* 清理失败无碍 */
+    }
+    // 显式让位租约：停止后继任者（壳重启拉起）无需等 TTL 即可接管。同 id 双进程
+    // 场景（重启间隙新 daemon 先 acquire）由「同 id 心跳新鲜拒绝」兜底——先退出
+    // 者先 release，杜绝双跑。
+    try {
+      if (store.lease.release(SCHEDULER_LEADER_ID)) {
+        log('lease released (shutdown)');
+      }
+    } catch (err: any) {
+      log(`lease release failed (TTL 兜底): ${err?.message || String(err)}`);
     }
     store.close();
     log('daemon exited cleanly');

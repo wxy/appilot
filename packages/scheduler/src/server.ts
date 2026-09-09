@@ -19,6 +19,10 @@ export interface ServerHandlers {
    * 返回是否检测到变更——自重启在响应写回后由 daemon 内部调度。
    */
   onCheckUpdate?(): { changed: boolean };
+  /** status：daemon 自维护状态快照（startedAt/uptime/processed/version 等）。 */
+  onStatus?(): object | null;
+  /** runDue：立即处理当前到期任务（kick 一轮 tick）。 */
+  onRunDue?(): void;
   /** shutdown：让 daemon 优雅退出（reply 后调用方自会关闭进程）。 */
   onShutdown?(): void;
   /** 记录日志。 */
@@ -82,6 +86,19 @@ export function createSchedulerServer(socketPath: string, handlers: ServerHandle
         }
         case 'accelerate':
           handlers.onAccelerate?.(msg.params?.on === true, Number(msg.params?.seconds ?? 0) || undefined);
+          reply({ ok: true });
+          break;
+        case 'status': {
+          const status = handlers.onStatus?.() ?? null;
+          if (status == null) {
+            reply(undefined, { code: -32001, message: 'daemon 未实现 status（版本过旧，请升级）' });
+          } else {
+            reply({ ok: true, ...status });
+          }
+          break;
+        }
+        case 'runDue':
+          handlers.onRunDue?.();
           reply({ ok: true });
           break;
         case 'shutdown':

@@ -4,16 +4,17 @@ import log from "electron-log";
 import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
 import { startRegistrySync, releaseElectronLease } from "./registry-sync";
-import { startTaskScheduler } from "./scheduler";
+import { isTaskCenterStopped } from "./scheduler";
 import { stopSchedulerForAppExit } from "./handlers/scheduler";
-import { ensureSchedulerTracked } from "./daemon-manager";
-import { diskSchedulerFingerprint } from "./scheduler-fingerprint";
+import { ensureSchedulerDaemon, startSchedulerWatchdog } from "./daemon-manager";
 import { registerHeadlessReadIpc } from "./headless-ipc";
 import { registerDbAdminHandlers } from "./db-admin";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
 import { setupLogger } from "./logger";
 
 let mainWindow: BrowserWindow | null = null;
+/** 调度 daemon 周期重试 watchdog 的停止函数（应用退出时清理）。 */
+let stopSchedulerWatchdog: (() => void) | null = null;
 
 app.setName("Appilot");
 if (process.platform === "win32") {
@@ -74,12 +75,22 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
   registerHeadlessReadIpc();
   registerDbAdminHandlers();
-  // P4：daemon 常驻为主——先确保调度守护进程并确认它在跑；确认失败才启用
-  // 本壳调度兜底（避免冷启动时壳先拿租约、daemon 抢不到而一直显示“本应用”）。
-  const daemonOk = await ensureSchedulerDaemon();
-  if (!daemonOk) {
-    startTaskScheduler();
-  }
+  // 架构收敛 A：Electron 壳不再作为调度执行体。
+  // 冷启动：await 确保常驻调度 daemon ——
+  // - 成功 → 不启动任何壳内调度（daemon 是唯一自动调度者）；
+  // - 失败 → 不启用壳内调度兜底，失败原因记入调度器状态（UI「调度器异常/
+  //   未运行」，scheduler:status 读取），并启动 watchdog 周期重试拉起
+  //   （20s 一次；daemon 恢复即转运行；用户「暂停」后停）。
+  await ensureSchedulerDaemon({
+    timeoutMs: 4000,
+    log: (m) => log.info(`appilot: ${m}`),
+  });
+  stopSchedulerWatchdog = startSchedulerWatchdog({
+    intervalMs: 20_000,
+    timeoutMs: 5000,
+    paused: () => isTaskCenterStopped(),
+    log: (m) => log.info(`appilot: ${m}`),
+  });
   // 共享注册表（方案 A）：启动 hydrate + 初始写回 + watch 对侧变更。
   startRegistrySync(getStore);
   Menu.setApplicationMenu(Menu.buildFromTemplate([]));
@@ -118,35 +129,15 @@ app.on("before-quit", (event) => {
 });
 app.on("will-quit", () => {
   try {
+    stopSchedulerWatchdog?.();
+    stopSchedulerWatchdog = null;
+  } catch {
+    /* 退出路径静默 */
+  }
+  try {
     releaseElectronLease();
   } catch {
     /* 退出路径静默 */
   }
 });
 
-
-/**
- * P4：best-effort 确保调度守护进程在跑（fire-and-forget，不阻塞窗口创建）。
- * daemon 优先 acquire 成为调度主；本壳旧调度保留（scheduleGate 会让位）。
- * 用 daemon-manager 的 tracked 拉起：由本壳 spawn 的 daemon 会记录启动指纹
- * （pid 绑定），任务中心「调度器」区据此比对 运行 vs 磁盘 版本。
- */
-async function ensureSchedulerDaemon(): Promise<boolean> {
-  try {
-    const { defaultSocketPath, resolveSchedulerCli } = require("@appilot-labs/appilot-scheduler") as typeof import("@appilot-labs/appilot-scheduler");
-    const { defaultDbPath } = require("@appilot-labs/appilot-headless") as typeof import("@appilot-labs/appilot-headless");
-    const cli = resolveSchedulerCli();
-    const fingerprint = diskSchedulerFingerprint(cli ? () => cli : null);
-    const res = await ensureSchedulerTracked({
-      socketPath: defaultSocketPath(process.env.APPILOT_DB_FILE || defaultDbPath()),
-      spawnCommand: cli ? [process.execPath, cli] : undefined,
-      fingerprint,
-      timeoutMs: 4000,
-      log: (m) => log.info(`appilot: ${m}`),
-    });
-    return res.ok === true;
-  } catch (err: any) {
-    log.warn(`scheduler ensure skipped: ${err?.message || String(err)}`);
-    return false;
-  }
-}
