@@ -301,6 +301,10 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("scheduler:matrix", opts),
     daemonStart: (): Promise<any> => ipcRenderer.invoke("scheduler:daemonStart"),
     daemonStop: (): Promise<any> => ipcRenderer.invoke("scheduler:daemonStop"),
+    preferences: (): Promise<{ exitWithDaemon: boolean }> =>
+      ipcRenderer.invoke("scheduler:preferences"),
+    setPreferences: (prefs: { exitWithDaemon?: boolean }): Promise<{ exitWithDaemon: boolean }> =>
+      ipcRenderer.invoke("scheduler:setPreferences", prefs),
     clearFailures: (mode: "clear" | "reschedule"): Promise<any> =>
       ipcRenderer.invoke("scheduler:clearFailures", mode),
   },

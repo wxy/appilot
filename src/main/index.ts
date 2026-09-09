@@ -5,6 +5,7 @@ import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
 import { startRegistrySync, releaseElectronLease } from "./registry-sync";
 import { startTaskScheduler } from "./scheduler";
+import { stopSchedulerForAppExit } from "./handlers/scheduler";
 import { ensureSchedulerTracked } from "./daemon-manager";
 import { diskSchedulerFingerprint } from "./scheduler-fingerprint";
 import { registerHeadlessReadIpc } from "./headless-ipc";
@@ -89,6 +90,30 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => app.quit());
+// 设置「应用退出时同时退出后台调度器」时，退出前关掉 daemon（默认不关，常驻继续采集）。
+let schedulerExitCleanup = false;
+app.on("before-quit", (event) => {
+  if (schedulerExitCleanup) return;
+  event.preventDefault();
+  (async () => {
+    try {
+      const s = await getStore();
+      if (s.get("schedulerExitWithDaemon") === true) {
+        await stopSchedulerForAppExit();
+      }
+      try {
+        releaseElectronLease();
+      } catch {
+        /* 退出路径静默 */
+      }
+    } catch {
+      // 读取偏好失败也照常退出
+    } finally {
+      schedulerExitCleanup = true;
+      app.quit();
+    }
+  })();
+});
 app.on("will-quit", () => {
   try {
     releaseElectronLease();
