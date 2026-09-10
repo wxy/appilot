@@ -376,6 +376,10 @@ export interface DaemonSelfState {
     suspended: boolean;
     dispatchAllowed: boolean;
   } | null;
+  /** 是否正持有「保持唤醒」（休眠窗口内收尾在途请求）。 */
+  holdingSleep?: boolean;
+  /** 本机是否具备保持唤醒能力（macOS）。 */
+  sleepHoldAvailable?: boolean;
 }
 
 export async function readDaemonSelfState(

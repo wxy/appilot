@@ -238,6 +238,76 @@ async function main(): Promise<void> {
     store.close();
   });
 
+  await runCase('休眠保持：窗口阶段有在途请求才持有；收尾后释放；清醒不持有', async () => {
+    const store = openStore(join(mkdtempSync(join(tmpdir(), 'sched-hold-')), 'appilot.db'));
+    let clock = 0;
+    const holds: boolean[] = [];
+    const hold = {
+      setHold: (on: boolean) => {
+        if (holds[holds.length - 1] !== on) holds.push(on);
+      },
+      isHolding: () => holds[holds.length - 1] === true,
+      isAvailable: () => true,
+      dispose: () => {},
+    };
+    // 手动控制完成时机：观察「有在途请求 → 持有」→「收尾完成 → 释放」
+    let release: (() => void) | null = null;
+    const exec = {
+      title: '网络任务',
+      intervalMinutes: 1440,
+      run: async () => {
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        return 'ok';
+      },
+    };
+    const sched = createLeaseScheduler({
+      store,
+      leaderId: 'hold-it',
+      jobs: [],
+      executors: { net: exec },
+      heartbeatMs: 100_000,
+      now: () => clock,
+      sleepHold: hold,
+      sleepWindow: { gapMs: 120 * S, defaultWindowMs: 45 * S, safetyMs: 8 * S, burstTickMs: 0 },
+    });
+
+    // 未知阶段（未观测到休眠）：即使有在途请求也不持有（避免机器整天不睡）
+    seedDue(store, 'h1', clock);
+    sched.kick();
+    await tick();
+    assert.ok(!holds.includes(true), `unknown 阶段不持有保持唤醒（记录 ${JSON.stringify(holds)}）`);
+    release?.();
+    await tick();
+
+    // 冻结 1h → 唤醒进入窗口阶段：派发 → 有在途 → 持有
+    clock += 60 * MIN;
+    seedDue(store, 'h2', clock);
+    sched.kick();
+    await tick();
+    assert.equal(holds[holds.length - 1], true, '窗口阶段有在途请求 → 保持唤醒');
+    release?.();
+    await tick();
+    assert.equal(holds[holds.length - 1], false, '在途清空 → 释放保持唤醒（让系统按原节奏睡）');
+
+    // 清醒会话：长时间活跃后不持有
+    for (let i = 0; i < 6; i++) {
+      clock += 60 * S;
+      sched.kick();
+      await tick();
+    }
+    assert.equal(sched.sleep()?.phase, 'awake', '长时间活跃 → 判定清醒会话');
+    seedDue(store, 'h3', clock);
+    sched.kick();
+    await tick();
+    assert.equal(holds[holds.length - 1], false, '清醒会话不持有（用户在电脑前，照常全速）');
+    release?.();
+    await tick();
+    sched.dispose();
+    store.close();
+  });
+
   if (failures > 0) {
     console.error(`\n${failures} test(s) FAILED`);
     process.exit(1);

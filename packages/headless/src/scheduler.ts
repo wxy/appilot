@@ -24,6 +24,7 @@ import {
   type SleepWindowOptions,
   type SleepWindowSnapshot,
 } from './sleep-window.js';
+import type { SleepHold } from './sleep-hold.js';
 
 /**
  * 限流类失败判定（教训 C 落码）：上游临时限制（HTTP 403/429 / rate limit /
@@ -156,6 +157,12 @@ export interface LeaseSchedulerOptions {
    * 传 false 关闭（测试或非桌面环境）。
    */
   sleepWindow?: SleepWindowOptions | false;
+  /**
+   * 休眠保持（见 sleep-hold.ts）：**仅在休眠窗口阶段且有待完成执行时**打开
+   * 「短暂阻止空闲睡眠」，把手上的在途请求跑完再让系统睡——避免「发出即被冻结、
+   * 下次唤醒才超时失败」。清醒会话不持有（否则机器整天不睡）。传 null/不传 = 关闭。
+   */
+  sleepHold?: SleepHold | null;
   /** 时钟注入（测试用；默认 Date.now）。 */
   now?(): number;
   log?(msg: string): void;
@@ -238,6 +245,22 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   const now = opts.now ?? (() => Date.now());
   const sleepCfg = resolveSleepWindowOptions(opts.sleepWindow === false ? {} : (opts.sleepWindow ?? {}));
   const sleepTracker = opts.sleepWindow === false ? null : createSleepWindowTracker(sleepCfg);
+  const sleepHold: SleepHold | null = opts.sleepHold ?? null;
+
+  /**
+   * 重新评估「保持唤醒」：仅当处于休眠窗口阶段（睡眠即将发生）且仍有在途执行时
+   * 才持有——这样窗口末尾停止派发后，在途请求能跑完再睡（每次窗口仅多占用几秒），
+   * 而用户在电脑前的清醒会话不受影响。
+   */
+  function refreshSleepHold(): void {
+    if (!sleepHold) return;
+    const holding =
+      sleepTracker != null &&
+      !sleepTracker.isSuspended() &&
+      running.size > 0 &&
+      sleepTracker.snapshot(now()).phase === 'window';
+    sleepHold.setHold(holding);
+  }
 
   // ── 执行统计（架构收敛 B：daemon 自维护状态在 headless 调度循环处的累计点）──
   // 计数发生在 execute/executeInstance 真正开始执行实例时（并发去重/熔断跳过不
@@ -280,6 +303,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   async function execute(job: ScheduledJob): Promise<void> {
     if (running.has(job.id)) return;
     running.add(job.id);
+    refreshSleepHold();
     statsNoteStart(job.id);
     const started = new Date().toISOString();
     const prev = store.tasks.get(job.id);
@@ -309,6 +333,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       });
     } finally {
       running.delete(job.id);
+      refreshSleepHold();
     }
   }
 
@@ -380,6 +405,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       return;
     }
     running.add(task.id);
+    refreshSleepHold();
     statsNoteStart(task.id);
     const started = new Date().toISOString();
     const base = {
@@ -490,6 +516,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       statsState.failed += 1;
     } finally {
       running.delete(task.id);
+      refreshSleepHold();
     }
   }
 
@@ -555,6 +582,8 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     }
     // 节拍自适应：加速 > 休眠窗口（用满短暂窗口）> 心跳。
     syncTimerInterval();
+    // 窗口阶段/在途状态可能刚变化（唤醒、窗口结束）→ 重估是否保持唤醒。
+    refreshSleepHold();
   }
 
   /** 当前应有的 tick 节拍（毫秒）。 */
@@ -609,6 +638,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       timer = null;
       leader = false;
       accel = false;
+      sleepHold?.setHold(false);
     },
     isLeader() {
       return leader;

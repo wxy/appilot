@@ -72,6 +72,10 @@ export function TaskCenterPage() {
         suspended: boolean;
         dispatchAllowed: boolean;
       } | null;
+      /** 是否正持有「保持唤醒」（休眠窗口内在途请求收尾）。 */
+      holdingSleep?: boolean;
+      /** 本机是否具备保持唤醒能力（macOS）。 */
+      sleepHoldAvailable?: boolean;
     } | null;
     // scheduler:status 新增的调度器版本监测（运行 vs 磁盘指纹）。
     manager: {
@@ -645,11 +649,19 @@ export function TaskCenterPage() {
                     节拍调度、窗口末尾停止派发；被休眠打断的执行不计失败。 */}
                 {daemonSelf.sleep && daemonSelf.sleep.sleepCycles > 0 ? (
                   <MiniMetric
-                    label={daemonSelf.sleep.suspended ? "休眠" : "窗口"}
+                    label={
+                      daemonSelf.holdingSleep
+                        ? "收尾"
+                        : daemonSelf.sleep.suspended
+                          ? "休眠"
+                          : "窗口"
+                    }
                     value={
-                      daemonSelf.sleep.suspended
-                        ? "已暂停"
-                        : `~${Math.round(daemonSelf.sleep.avgWindowMs / 1000)}s`
+                      daemonSelf.holdingSleep
+                        ? "保持唤醒"
+                        : daemonSelf.sleep.suspended
+                          ? "已暂停"
+                          : `~${Math.round(daemonSelf.sleep.avgWindowMs / 1000)}s`
                     }
                     title={`系统休眠感知：已观测 ${daemonSelf.sleep.sleepCycles} 次休眠${
                       daemonSelf.sleep.lastFrozenMs > 0
@@ -660,6 +672,10 @@ export function TaskCenterPage() {
                     )}s 内按窗口节拍调度，窗口末尾停止派发${
                       daemonSelf.sleep.sleepInterrupts > 0
                         ? ` · 被休眠打断 ${daemonSelf.sleep.sleepInterrupts} 次（不计失败）`
+                        : ""
+                    }${
+                      daemonSelf.holdingSleep
+                        ? " · 正在收尾在途请求：短暂延迟空闲休眠，跑完即释放"
                         : ""
                     }${daemonSelf.sleep.suspended ? " · 系统休眠中：暂停派发新任务" : ""}`}
                   />
