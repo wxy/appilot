@@ -69,6 +69,22 @@ check(!hasRankDimension(null), "null 无排名维度");
   check(stats.successRate === 100, "成功率仍按全部成功/全部计");
 }
 
+// ── 「重试」不计入执行次数/密度/成功率（daemon 侧瞬时抖动/限流的自动重试） ──
+{
+  const executions = [
+    rankExec({ agoHours: 1, keyword: "ok", rank: 1 }),
+    rankExec({ agoHours: 2, keyword: "ok2", rank: 2 }),
+    rankExec({ agoHours: 2, status: "failed", rank: null }),
+    // 瞬时抖动的自动重试：任务行不标红，统计也不该被稀释。
+    rankExec({ agoHours: 3, status: "retry", rank: null }),
+    rankExec({ agoHours: 3, status: "retry", rank: null }),
+  ];
+  const stats = computeExecutionStats(executions as any, now);
+  check(stats.recentCount === 3, `重试不进近 24h 计数（实际 ${stats.recentCount}）`);
+  check(stats.successRate === 67, `成功率 = 2 成功 / 3 有结论（实际 ${stats.successRate}%）`);
+  check(stats.executedToday === 3, `今日执行同样排除重试（实际 ${stats.executedToday}）`);
+}
+
 // ── 入榜率：窗口内没有查排名成功 → null（UI 显示 —） ───────────────────────
 {
   const executions = [
