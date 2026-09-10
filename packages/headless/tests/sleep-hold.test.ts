@@ -68,7 +68,8 @@ function main(): void {
   runCase('macOS：setHold(true) spawn caffeinate（幂等）；false/dispose 释放', () => {
     const log: { cmd: string; args: string[] }[] = [];
     const { spawn, children } = fakeSpawner(log);
-    const hold = createSleepHold({ platform: 'darwin', maxHoldSec: 120, spawn });
+    // releaseDelayMs: 0 → 立即释放语义（延迟释放行为见下一个用例）
+    const hold = createSleepHold({ platform: 'darwin', maxHoldSec: 120, spawn, releaseDelayMs: 0 });
     assert.equal(hold.isAvailable(), true);
     assert.equal(hold.isHolding(), false, '初始未持有');
 
@@ -96,7 +97,7 @@ function main(): void {
   runCase('子进程异常退出 → 归为未持有（可重新保持）', () => {
     const log: { cmd: string; args: string[] }[] = [];
     const { spawn, children } = fakeSpawner(log);
-    const hold = createSleepHold({ platform: 'darwin', spawn });
+    const hold = createSleepHold({ platform: 'darwin', spawn, releaseDelayMs: 0 });
     hold.setHold(true);
     assert.equal(hold.isHolding(), true);
     children[0].emitExit(); // caffeinate -t 到期自然退出
@@ -105,11 +106,33 @@ function main(): void {
     assert.equal(log.length, 2, '可重新保持');
   });
 
+  runCase('释放延迟：跨过批间空隙（避免 spawn/kill 抖动），期间再次需要则取消释放', async () => {
+    const log: { cmd: string; args: string[] }[] = [];
+    const { spawn, children } = fakeSpawner(log);
+    const hold = createSleepHold({ platform: 'darwin', spawn, releaseDelayMs: 60 });
+    hold.setHold(true);
+    assert.equal(log.length, 1, '首批派发 → 持有');
+    // 批间空隙：在途清空 → 不立刻释放（延迟内仍持有）
+    hold.setHold(false);
+    assert.equal(hold.isHolding(), true, '延迟期内仍持有（不 kill，避免抖动）');
+    hold.setHold(true);
+    assert.equal(log.length, 1, '空隙内再次派发 → 未重复 spawn');
+    assert.equal(children[0].killed, false, '未被 kill');
+    // 窗口结束（持续空闲超过延迟）→ 真正释放
+    hold.setHold(false);
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(hold.isHolding(), false, '延迟结束 → 释放');
+    assert.equal(children[0].killed, true, '释放时 kill');
+    assert.equal(log.length, 1, '整个窗口只 spawn 一次');
+    hold.dispose();
+  });
+
   runCase('spawn 抛错：容忍（不抛出），退化为易抖动分类', () => {
     const logs: string[] = [];
     let calls = 0;
     const hold = createSleepHold({
       platform: 'darwin',
+      releaseDelayMs: 0,
       log: (m) => logs.push(m),
       spawn: () => {
         calls += 1;

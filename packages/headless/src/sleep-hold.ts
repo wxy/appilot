@@ -31,6 +31,12 @@ export interface SleepHoldOptions {
   enabled?: boolean;
   /** 单次保持上限（秒，兜底自释放；默认 180）。 */
   maxHoldSec?: number;
+  /**
+   * 释放延迟（毫秒，默认 15000）：窗口内是分批派发的，批间空隙（在途清空的瞬间）
+   * 若立刻释放会变成「spawn→kill→spawn…」每小时数次进程抖动；延迟释放让保持跨过
+   * 批间空隙、覆盖整个窗口，窗口结束后再真正释放。
+   */
+  releaseDelayMs?: number;
   /** 命令与参数（默认 macOS `caffeinate -i -t <maxHoldSec>`）；测试注入。 */
   spawn?(cmd: string, args: string[]): SleepHoldSpawned;
   log?(msg: string): void;
@@ -54,9 +60,11 @@ export function supportsSleepHold(platform: string = process.platform, enabled =
 export function createSleepHold(opts: SleepHoldOptions = {}): SleepHold {
   const platform = opts.platform ?? process.platform;
   const maxHoldSec = opts.maxHoldSec ?? 180;
+  const releaseDelayMs = opts.releaseDelayMs ?? 15_000;
   const available = supportsSleepHold(platform, opts.enabled !== false);
   const log = opts.log ?? (() => {});
   let child: SleepHoldSpawned | null = null;
+  let releaseTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
 
   const spawnImpl =
@@ -68,7 +76,13 @@ export function createSleepHold(opts: SleepHoldOptions = {}): SleepHold {
       return { kill: () => p.kill(), once: (ev, cb) => p.once(ev as never, cb as never) };
     });
 
+  function clearReleaseTimer(): void {
+    if (releaseTimer) clearTimeout(releaseTimer);
+    releaseTimer = null;
+  }
+
   function release(reason: string): void {
+    clearReleaseTimer();
     if (!child) return;
     try {
       child.kill();
@@ -85,6 +99,7 @@ export function createSleepHold(opts: SleepHoldOptions = {}): SleepHold {
     setHold(on) {
       if (!available || disposed) return;
       if (on) {
+        clearReleaseTimer(); // 批间空隙内再次需要 → 取消待释放
         if (child) return; // 幂等
         try {
           const c = spawnImpl('caffeinate', ['-i', '-t', String(maxHoldSec)]);
@@ -98,7 +113,18 @@ export function createSleepHold(opts: SleepHoldOptions = {}): SleepHold {
           log(`保持唤醒失败（忽略，退化为易抖动分类）：${err?.message || String(err)}`);
         }
       } else {
-        release('无在途请求');
+        if (!child || releaseTimer) return; // 未持有 / 已在待释放
+        if (releaseDelayMs <= 0) {
+          release('无在途请求');
+          return;
+        }
+        // 延迟释放：跨过批间空隙（窗口内每几秒一批），窗口结束再真正放行系统休眠。
+        releaseTimer = setTimeout(() => {
+          releaseTimer = null;
+          release('无在途请求（批间延迟结束）');
+        }, releaseDelayMs);
+        // 不要因为该定时器阻止 daemon 进程退出。
+        (releaseTimer as { unref?: () => void }).unref?.();
       }
     },
     dispose() {
