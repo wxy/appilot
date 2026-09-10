@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import fs from "fs";
 import { normalizeLocalPath } from "../util";
+import { isAllowedAppStorePage, safeHttpUrl } from "../url-policy";
 
 let appPageWindow: BrowserWindow | null = null;
 
@@ -9,17 +10,18 @@ export function registerShellHandlers(): void {
 
   // ── Shell ──
   ipcMain.handle("shell:openExternal", (_event, url: string) => {
-    if (!/^https?:\/\//i.test(url)) {
+    const target = safeHttpUrl(url);
+    if (!target) {
       throw new Error("Only http/https URLs can be opened");
     }
-    return shell.openExternal(url);
+    return shell.openExternal(target.toString());
   });
 
   // 在应用内的网页窗口中打开 App Store 商品页，避免 macOS 路由到
   // App Store 客户端（未在当地上架时客户端无法显示）。
   ipcMain.handle("shell:openAppPage", (_event, url: string) => {
-    if (!/^https:\/\//i.test(url)) {
-      throw new Error("Only https URLs can be opened in-app");
+    if (!isAllowedAppStorePage(url)) {
+      throw new Error("Only Apple App Store pages can be opened in-app");
     }
     // 去掉 iTunes 的 ?uo=4 打开参数（可能导致跳转/打开客户端）。
     const cleanUrl = url.replace(/\?uo=\d+$/, "");
@@ -41,6 +43,17 @@ export function registerShellHandlers(): void {
       appPageWindow.webContents.setUserAgent(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       );
+      appPageWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+        const target = safeHttpUrl(popupUrl);
+        if (target) void shell.openExternal(target.toString());
+        return { action: "deny" };
+      });
+      appPageWindow.webContents.on("will-navigate", (event, nextUrl) => {
+        if (isAllowedAppStorePage(nextUrl)) return;
+        event.preventDefault();
+        const target = safeHttpUrl(nextUrl);
+        if (target) void shell.openExternal(target.toString());
+      });
       appPageWindow.loadURL(cleanUrl);
       appPageWindow.on("closed", () => {
         appPageWindow = null;

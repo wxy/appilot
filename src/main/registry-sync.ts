@@ -20,7 +20,6 @@ import {
 } from '@appilot-labs/appilot-headless';
 import { log } from '@appilot-labs/appilot-core/logger';
 import { importRankHistoryToDb } from './rank-db-sync';
-import { backfillRankSnapshotsToElectron } from './rank-backfill';
 import { syncRichDataToDb } from './rich-data-sync';
 import { hydrateFromDbCore, syncRegistryCore } from './registry-sync-core';
 import {
@@ -135,8 +134,6 @@ export function startRegistrySync(
   let timer: ReturnType<typeof setInterval> | null = null;
 
   // rank 反向同步日志节流（聚合窗口 ≥60s；rank 恢复期高频命中时不刷屏）。
-  let backfillAccum = 0;
-  let lastBackfillLogAt = 0;
 
   const hydrateOnce = async () => {
     try {
@@ -187,27 +184,9 @@ export function startRegistrySync(
       } catch (err: any) {
         log.warn(`rich data sync failed: ${err.message}`);
       }
-      // P2b：rank 快照反向同步（DB → electron-store 排名页）——DSH/daemon
-      // 持主执行的 rank 结果同步回 Electron UI；仅 DB 新于本地才写。
-      // 日志节流：rank 恢复期 daemon 持续产出时每 10s 轮询都会命中，
-      // 聚合到 ≥60s 才记一条（避免每 10s 噪音）。
-      try {
-        const n = backfillRankSnapshotsToElectron(sharedStore(), projects as any[]);
-        if (n > 0) {
-          s.set('projects', projects);
-          backfillAccum += n;
-          const nowMs = Date.now();
-          if (nowMs - lastBackfillLogAt >= 60_000) {
-            log.info(
-              `appilot: backfilled rank snapshots (${backfillAccum} products since last log)`,
-            );
-            backfillAccum = 0;
-            lastBackfillLogAt = nowMs;
-          }
-        }
-      } catch (err: any) {
-        log.warn(`rank backfill failed: ${err.message}`);
-      }
+      // rank 页面已直接从共享 DB 组装快照（projects:list includeSnapshots）。
+      // 不再把 DB 历史反灌进 app_kv projects：轻量 hydration 每次都不含快照，
+      // 反灌会在 10 秒轮询中反复重写相同数据并制造大量无效日志/磁盘写入。
     } catch (err: any) {
       log.warn(`registry sync failed: ${err.message}`);
     }

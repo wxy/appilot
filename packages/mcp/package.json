@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx tests/*.test.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

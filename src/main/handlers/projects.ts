@@ -255,9 +255,15 @@ export function registerProjectsHandlers(): void {
       const index = projects.findIndex((project) => project.id === projectId);
       if (index < 0) throw new Error("Project not found");
       const project = { ...projects[index] };
+      const previousName = String(project.name || "").trim();
 
       if (typeof settings.name === "string" && settings.name.trim()) {
-        project.name = settings.name.trim();
+        const nextName = settings.name.trim();
+        const duplicate = projects.some(
+          (candidate: any) => candidate.id !== projectId && String(candidate.name || "").trim() === nextName,
+        );
+        if (duplicate) throw new Error(`项目名已存在：${nextName}`);
+        project.name = nextName;
       }
       if (
         typeof settings.localPath === "string" &&
@@ -292,8 +298,22 @@ export function registerProjectsHandlers(): void {
       const latestProjects: any[] = s.get("projects") || [];
       const latestIndex = latestProjects.findIndex((p: any) => p.id === projectId);
       if (latestIndex >= 0) {
-        latestProjects[latestIndex] = project;
-        s.set("projects", latestProjects);
+        const nextName = String(project.name || "").trim();
+        let renamedSharedDb = false;
+        if (previousName && nextName && previousName !== nextName) {
+          const renamed = sharedStore().projects.renameDeep(previousName, nextName);
+          if (!renamed) throw new Error(`共享数据库中找不到待改名项目：${previousName}`);
+          renamedSharedDb = true;
+        }
+        try {
+          latestProjects[latestIndex] = project;
+          s.set("projects", latestProjects);
+        } catch (err) {
+          // app_kv 与结构化表共用 SQLite，但当前适配器仍是两个短事务；第二步失败时
+          // 立即反向改名，避免留下半迁移状态。
+          if (renamedSharedDb) sharedStore().projects.renameDeep(nextName, previousName);
+          throw err;
+        }
       }
       void schedulerTick();
     notifyDataChanged("projects");

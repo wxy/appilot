@@ -27,6 +27,8 @@ export interface AppilotStore {
      * 把共享 DB 里残留的注册表行重新水合回 electron-store（项目“复活”）。
      */
     removeDeep(name: string): boolean;
+    /** 原子迁移以项目名为外键/缓存键的全部共享数据。 */
+    renameDeep(oldName: string, newName: string): boolean;
   };
   /** 通用键值（v7）：electron-store 全量迁入 SQLite 的落地表；值为原始字符串（JSON 文本）。 */
   kv: {
@@ -244,6 +246,76 @@ export function openStore(dbPath: string): AppilotStore {
           db.prepare('DELETE FROM project_release_cache WHERE projectName = ?').run(name);
           const res = db.prepare('DELETE FROM projects WHERE name = ?').run(name);
           return Number(res.changes) > 0;
+        });
+      },
+      renameDeep(oldName, newName) {
+        const from = oldName.trim();
+        const to = newName.trim();
+        if (!from || !to) throw new Error('项目名不能为空');
+        if (from === to) return Boolean(db.prepare('SELECT 1 FROM projects WHERE name = ?').get(from));
+        return tx(() => {
+          const existing = db.prepare('SELECT 1 FROM projects WHERE name = ?').get(from);
+          if (!existing) return false;
+          if (db.prepare('SELECT 1 FROM projects WHERE name = ?').get(to)) {
+            throw new Error(`项目名已存在：${to}`);
+          }
+
+          db.prepare('UPDATE projects SET name = ?, updatedAt = ? WHERE name = ?')
+            .run(to, new Date().toISOString(), from);
+          db.prepare('UPDATE project_meta SET projectName = ? WHERE projectName = ?').run(to, from);
+          db.prepare('UPDATE product_records SET projectName = ? WHERE projectName = ?').run(to, from);
+          db.prepare('UPDATE rank_snapshots SET projectName = ? WHERE projectName = ?').run(to, from);
+          db.prepare('UPDATE project_release_cache SET projectName = ? WHERE projectName = ?').run(to, from);
+          db.prepare(
+            `UPDATE project_blobs SET projectKey = ?, updatedAt = ?
+             WHERE domain = 'storeSubmissionDrafts' AND projectKey = ?`,
+          ).run(to, new Date().toISOString(), from);
+
+          // github-sync 的稳定实例 id 与 instance 都含项目名；改名必须同步迁移，
+          // 否则旧任务会残留到下一轮 reconcile，期间可能重复执行或写回旧缓存键。
+          const taskRows = db.prepare('SELECT * FROM tasks').all() as any[];
+          for (const row of taskRows) {
+            let nextId = row.id;
+            let nextInstance = row.instance;
+            let nextElectronJson = row.electronJson;
+            let changed = false;
+            if (row.id === `github-sync:${from}`) {
+              nextId = `github-sync:${to}`;
+              changed = true;
+            }
+            if (typeof row.instance === 'string' && row.instance) {
+              try {
+                const parsed = JSON.parse(row.instance);
+                if (parsed?.projectName === from) {
+                  parsed.projectName = to;
+                  nextInstance = JSON.stringify(parsed);
+                  changed = true;
+                }
+              } catch {
+                // 损坏的可选 instance 保持原样；不阻断项目主体改名。
+              }
+            }
+            if (typeof row.electronJson === 'string' && row.electronJson) {
+              try {
+                const parsed = JSON.parse(row.electronJson);
+                if (nextId !== row.id) parsed.id = nextId;
+                if (parsed?.projectName === from) {
+                  parsed.projectName = to;
+                  nextElectronJson = JSON.stringify(parsed);
+                  changed = true;
+                }
+              } catch {
+                // 同上：旧的诊断副本损坏时不扩大失败面。
+              }
+            }
+            if (!changed) continue;
+            if (nextId !== row.id && db.prepare('SELECT 1 FROM tasks WHERE id = ?').get(nextId)) {
+              throw new Error(`项目改名后的任务已存在：${nextId}`);
+            }
+            db.prepare('UPDATE tasks SET id = ?, instance = ?, electronJson = ? WHERE id = ?')
+              .run(nextId, nextInstance, nextElectronJson, row.id);
+          }
+          return true;
         });
       },
     },

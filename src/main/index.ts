@@ -4,17 +4,19 @@ import log from "electron-log";
 import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
 import { startRegistrySync, releaseElectronLease } from "./registry-sync";
-import { isTaskCenterStopped } from "./scheduler";
+import { isTaskCenterStopped, startElectronOnlyScheduler } from "./scheduler";
 import { stopSchedulerForAppExit, notifyDaemonPowerState } from "./handlers/scheduler";
 import { ensureSchedulerDaemon, startSchedulerWatchdog } from "./daemon-manager";
 import { registerHeadlessReadIpc } from "./headless-ipc";
 import { registerDbAdminHandlers } from "./db-admin";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
 import { setupLogger } from "./logger";
+import { isAllowedRendererNavigation, safeHttpUrl } from "./url-policy";
 
 let mainWindow: BrowserWindow | null = null;
 /** 调度 daemon 周期重试 watchdog 的停止函数（应用退出时清理）。 */
 let stopSchedulerWatchdog: (() => void) | null = null;
+let stopElectronOnlyScheduler: (() => void) | null = null;
 
 app.setName("Appilot");
 if (process.platform === "win32") {
@@ -41,8 +43,15 @@ function createWindow() {
 
   // Open external links in system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    const target = safeHttpUrl(url);
+    if (target) void shell.openExternal(target.toString());
     return { action: "deny" };
+  });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isAllowedRendererNavigation(url, process.env.ELECTRON_RENDERER_URL)) return;
+    event.preventDefault();
+    const target = safeHttpUrl(url);
+    if (target) void shell.openExternal(target.toString());
   });
 
   // 渲染进程错误转发到主日志，便于排查界面问题。
@@ -105,6 +114,7 @@ app.whenReady().then(async () => {
   });
   // 共享注册表（方案 A）：启动 hydrate + 初始写回 + watch 对侧变更。
   startRegistrySync(getStore);
+  stopElectronOnlyScheduler = startElectronOnlyScheduler();
   Menu.setApplicationMenu(Menu.buildFromTemplate([]));
   if (process.platform === "darwin" && app.dock) {
     app.dock.setIcon(path.join(__dirname, "../../resources/icon_1024.png"));
@@ -143,6 +153,8 @@ app.on("will-quit", () => {
   try {
     stopSchedulerWatchdog?.();
     stopSchedulerWatchdog = null;
+    stopElectronOnlyScheduler?.();
+    stopElectronOnlyScheduler = null;
   } catch {
     /* 退出路径静默 */
   }
@@ -152,4 +164,3 @@ app.on("will-quit", () => {
     /* 退出路径静默 */
   }
 });
-

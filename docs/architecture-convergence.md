@@ -1,6 +1,6 @@
 # 架构收敛：Electron 唯一完整壳 + DSH 轻量工具插件
 
-> 状态：2026-09-04 决策，C1（本文档）已合。此为路线基准——后续 PR 逐步落地，不另行争论方向。
+> 状态：2026-09-10 更新。C1–C5 主体已落地；凭据相关富数据任务保留受控的 Electron 运行时执行层。
 
 ## 0. 决策摘要（第一性原理）
 
@@ -27,7 +27,8 @@ headless（SQLite 单库 + 实例任务引擎 + 租约调度 + daemon 常驻）�
       │      ├── 呈现：任务中心 / 排名 / 发布 / 评论 / 设置
       │      ├── 控制任务中心：启动/停止/加速/立即运行（见 §2）
       │      ├── 数据管理：DB 信息 / 快照清理 / 备份（见 §3）
-      │      └── 拉起 daemon（app 启动 best-effort；关掉应用后 daemon 继续采集）
+      │      ├── 拉起 daemon（app 启动 best-effort；关掉应用后继续采集无头任务）
+      │      └── 安全执行需 safeStorage/富对象的 ops/reviews/build-status
       │
       ├── DSH 轻量插件（工具集 + 结果卡片，见 §4）
       │      └── agent 对话：查任务状态 / 查排名快照 / 跑检查 / 跑单个任务
@@ -91,7 +92,7 @@ headless（SQLite 单库 + 实例任务引擎 + 租约调度 + daemon 常驻）�
 
 ## 5. 保留不动的地基（不随壳收缩回退）
 
-- headless：schema v6、tasks 实例引擎、lease 单例、reconcile（seed/参数刷新/prune）；
+- headless：schema v13、tasks 实例引擎、lease 单例、reconcile（seed/参数刷新/prune）；
 - scheduler daemon：常驻、socket 控制面、**代码自更新**（部署后自动重启，2026-09-04 落成）；
 - Electron 侧 DB 直读（任务中心 DB 视图、rankProgress、release cache 双写与 hydrate 反向同步）；
 - core 纯函数包分层。
@@ -101,13 +102,14 @@ headless（SQLite 单库 + 实例任务引擎 + 租约调度 + daemon 常驻）�
 | # | 内容 | 产物 |
 |---|---|---|
 | C1 | 收敛决策固化 | 本文档 + product-backlog 更新 ✅ |
-| C2 | Electron 任务中心控制 | §2 的 IPC + 顶栏状态条/启停按钮 |
-| C3 | Electron 数据管理 | §3 的 db:info + 清理/备份/压缩 UI |
+| C2 | Electron 任务中心控制 | §2 的 IPC + 顶栏状态条/启停按钮 ✅ |
+| C3 | Electron 数据管理 | §3 的 db:info + 清理/备份/压缩 UI ✅ |
 | C4 | DSH 插件降级 | §4 移除大 UI 挂载点、保留工具+卡片、**新增 /appilot 斜杠命令**（PR #172）；client 1229KB→14KB |
-| C5 | 协调逻辑收窄 | ✅ 租约同 id 互斥（PR #175，防双 daemon）；⏳ 403/429 限流退避 + 并发上限（教训 C 落码）；壳内调度 fallback 退役评估 |
+| C5 | 协调逻辑收窄 | ✅ 租约同 id 互斥、403/429 共享熔断与限流；Electron 只保留凭据/富数据任务的受控执行层 |
 
 ## 7. 边界与不做
 
 - DSH 不做跨端常驻数据视图/全局任务中心 GUI（宿主约束，此前反复验证的硬边界）；
-- 「无 UI 也采集」由 daemon 承担——停止任务中心是显式用户动作，不是应用退出副作用；
+- `rank` / `github-sync` 的「无 UI 也采集」由 daemon 承担；依赖 Electron Keychain 解密或完整
+  项目富对象的 `ops/reviews/build-status` 仅在应用运行时自动执行，避免把明文凭据交给后台环境变量；
 - Electron 上架 App Store：独立决策，列入产品 backlog 跟踪，不阻塞 C1–C5。

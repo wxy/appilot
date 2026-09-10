@@ -19,25 +19,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # npm ci 冷装 621 包要 4–7 分钟（实测主瓶颈）——缓存 node_modules，
-      # 同 lock 命中即跳过 npm ci（typecheck 与 test 共享同一份）
-      - uses: actions/cache@v4
-        id: nm-cache
-        with:
-          path: node_modules
-          key: nm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            nm-${{ runner.os }}-
-      - name: Install deps（命中跳过 / 未命中增量）
-        shell: bash
-        run: |
-          if [ "${{ steps.nm-cache.outputs.cache-hit }}" = "true" ]; then
-            echo "node_modules 缓存命中（lock 未变）——跳过安装"
-          else
-            # lock 变更（如版本 bump）时不做 npm ci 全量冷装（4–7min），
-            # 在恢复的 node_modules 上增量同步差异，通常 1min 内完成。
-            npm install --no-audit --no-fund --prefer-offline
-          fi
+      - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
 
   test:
@@ -51,21 +33,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: actions/cache@v4
-        id: nm-cache-test
-        with:
-          path: node_modules
-          key: nm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            nm-${{ runner.os }}-
-      - name: Install deps（命中跳过 / 未命中增量）
-        shell: bash
-        run: |
-          if [ "${{ steps.nm-cache-test.outputs.cache-hit }}" = "true" ]; then
-            echo "node_modules 缓存命中（lock 未变）——跳过安装"
-          else
-            npm install --no-audit --no-fund --prefer-offline
-          fi
+      - run: npm ci --no-audit --no-fund
       - run: npm test
 
   # Platform build — only on master push (expensive: macOS 10x, Windows 2x).
@@ -84,4 +52,4 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx electron-vite build
+      - run: npm run build
