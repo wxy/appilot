@@ -97,6 +97,20 @@ export interface TaskExecutorContext extends ScheduledJobContext {
   task: TaskRow;
 }
 
+/**
+ * 执行器返回（结构化可选）：摘要 + 时间线执行记录附加字段。
+ *
+ * run 返回纯字符串（向后兼容）等价于 `{ summary }`。rank 等执行器返回结构体，
+ * 把 rank/总结果数/平台等只有执行器知道的字段带出来——时间线的入榜率
+ * （execution-stats 的 hasRankDimension/rank）依赖这些字段，否则统计会失真。
+ */
+export interface TaskRunResult {
+  /** 摘要文本（任务行 lastSummary / 时间线展示）。 */
+  summary: string;
+  /** 执行记录（rank_executions）附加字段：rank/totalResults/requestBytes 等。 */
+  execution?: Record<string, unknown>;
+}
+
 export interface TaskExecutor {
   /** 默认标题（reconcile seed 用）。 */
   title: string;
@@ -108,8 +122,13 @@ export interface TaskExecutor {
    * 后续自动派发。当前仅 rank 执行器置位；github-sync 走 GitHub API 不受约束。
    */
   hitsItunesSearch?: boolean;
-  /** 执行该实例；返回摘要。需幂等。 */
-  run(ctx: TaskExecutorContext): Promise<string>;
+  /** 执行该实例；返回摘要（或摘要 + 执行记录附加字段）。需幂等。 */
+  run(ctx: TaskExecutorContext): Promise<string | TaskRunResult>;
+}
+
+/** 归一化执行器返回值：字符串 → { summary }。 */
+export function normalizeRunResult(result: string | TaskRunResult): TaskRunResult {
+  return typeof result === 'string' ? { summary: result } : result;
 }
 
 export interface LeaseSchedulerOptions {
@@ -271,6 +290,47 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     }
   }
 
+  /**
+   * 落一条执行记录（rank_executions）——任务中心时间线/执行统计的数据源。
+   *
+   * 架构收敛后（#281 起调度只在 daemon）执行记录曾**只有壳内调度器写**，daemon
+   * 只写任务行与 rank_snapshots，于是时间线在壳内调度停用后就没有任何记录
+   * （2026-09-09 12:59 本地之后全空），用户「看不到失败的执行记录」。这里补齐。
+   *
+   * status 口径与任务行一致，避免时间线与任务中心互相矛盾：
+   * - success：成功执行；
+   * - failed：真失败（业务错误 / 瞬时错误连续 ≥ TRANSIENT_RED_STREAK 次）；
+   * - retry：瞬时抖动或限流的自动重试（任务行不标红）；统计口径不计入
+   *   successRate 分母（见 execution-stats）。
+   */
+  function recordExecution(
+    task: TaskRow,
+    status: 'success' | 'failed' | 'retry',
+    started: string,
+    summary: string | null,
+    extra?: Record<string, unknown>,
+  ): void {
+    try {
+      const inst = (task.instance ?? {}) as Record<string, unknown>;
+      const startedMs = Date.parse(started);
+      store.executions.add({
+        ts: started,
+        taskId: task.id,
+        kind: task.kind ?? null,
+        status,
+        durationMs: Number.isFinite(startedMs) ? Math.max(0, Date.now() - startedMs) : null,
+        productId: inst.productId ?? null,
+        keyword: inst.keyword ?? null,
+        language: inst.queryLanguage ?? null,
+        storefront: inst.storefront ?? null,
+        summary,
+        ...(extra ?? {}),
+      });
+    } catch (err: any) {
+      log(`[scheduler:${leaderId}] 执行记录写入失败（${task.id}）: ${err?.message || String(err)}`);
+    }
+  }
+
   /** 执行一个 DB 实例任务行（v4：kind 在 executors）。状态写回保留 kind/instance。 */
   async function executeInstance(task: TaskRow): Promise<void> {
     const executor = task.kind ? executors[task.kind] : undefined;
@@ -311,13 +371,14 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       instance: task.instance,
     };
     try {
-      const summary = await executor.run({ store, log, task });
+      const ran = normalizeRunResult(await executor.run({ store, log, task }));
       store.tasks.upsert({
         ...base,
         lastRunAt: started,
         lastStatus: 'ok' as const,
-        lastSummary: summary,
+        lastSummary: ran.summary,
       });
+      recordExecution(task, 'success', started, ran.summary, ran.execution);
       statsState.succeeded += 1;
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -344,6 +405,8 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         if (prevRow && prevRow.lastSummary !== blockSummary) {
           store.tasks.upsert({ ...prevRow, lastSummary: blockSummary });
         }
+        // 时间线留痕：403 是「重试」而非失败（冷却解除后补跑）。
+        recordExecution(task, 'retry', started, blockSummary, { reason: 'itunes-403' });
         statsState.failed += 1;
         return;
       }
@@ -366,6 +429,10 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         if (prev && streak < TRANSIENT_RED_STREAK) {
           // 重试中：保留原状态/派生字段（不标红、不推周期），仅排短退避 + 写说明。
           store.tasks.upsert({ ...prev, nextRunAt, lastSummary });
+          recordExecution(task, 'retry', started, lastSummary, {
+            reason: transient ? 'transient' : 'rate-limit',
+            streak,
+          });
         } else {
           store.tasks.upsert({
             ...base,
@@ -373,6 +440,11 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
             lastRunAt: started,
             lastStatus: 'error' as const,
             lastSummary,
+          });
+          // 连续多次 → 真失败，时间线同步标红（failed）。
+          recordExecution(task, 'failed', started, lastSummary, {
+            reason: transient ? 'transient' : 'rate-limit',
+            streak,
           });
         }
         statsState.failed += 1;
@@ -384,6 +456,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         lastStatus: 'error' as const,
         lastSummary: msg,
       });
+      recordExecution(task, 'failed', started, msg, { reason: 'error' });
       statsState.failed += 1;
     } finally {
       running.delete(task.id);

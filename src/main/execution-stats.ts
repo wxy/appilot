@@ -12,6 +12,8 @@
  * - hitRate（入榜率）：只在「真正查排名的执行」上计算——条目带 keyword /
  *   kind=rank / 语言×商店等采集指纹。github-sync / ops / reviews / build
  *   等无排名维度的成功执行不进分母，否则会把入榜率稀释并随其批次抖动；
+ * - status='retry'（daemon 侧瞬时抖动/限流的自动重试，任务行不标红）不计入
+ *   执行次数/密度/成功率；
  * - 流量（requestBytes/responseBytes）：近 24h 求和（条目字段缺失按 0）；
  *   窗口内**完全无数据**时沿用最近一次非空测量，避免展示瞬态归零。
  */
@@ -87,6 +89,9 @@ export function computeExecutionStats(
 
   for (const entry of executions) {
     if (entry == null || typeof entry !== "object") continue;
+    // 「重试」不是一次有结论的执行（瞬时抖动/限流的自动重试；任务行也不标红）：
+    // 不计入执行次数/密度/成功率，否则上游抖一下成功率就被稀释。
+    if (entry.status === "retry") continue;
     const t = msOf(entry.ts);
     if (!Number.isFinite(t)) continue;
     if (t >= todayStartMs) executedToday += 1;

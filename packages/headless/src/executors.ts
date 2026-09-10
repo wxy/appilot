@@ -5,7 +5,7 @@
  * 分发执行——任务执行实现唯一来源是 core 纯函数，不存在壳特有任务。
  * 执行器只依赖 store.tasks 中的实例参数（instance）与共享 DB，不读壳存储。
  */
-import type { TaskExecutor, TaskExecutorContext } from './scheduler.js';
+import type { TaskExecutor, TaskExecutorContext, TaskRunResult } from './scheduler.js';
 import {
   inspectProjectRelease,
   type ProjectReleaseInspection,
@@ -99,7 +99,7 @@ export function buildRankExecutor(): TaskExecutor {
 }
 
 /** rank 实例执行体：查产品上下文（DB product_records）→ core 采集 → 写 DB 快照。 */
-export async function runRankInstance(ctx: TaskExecutorContext): Promise<string> {
+export async function runRankInstance(ctx: TaskExecutorContext): Promise<TaskRunResult> {
   const { task, store, log } = ctx;
   const args = (task.instance ?? {}) as Partial<RankInstanceArgs>;
   if (!args.keyword || !args.storefront || !args.productId) {
@@ -152,7 +152,23 @@ export async function runRankInstance(ctx: TaskExecutorContext): Promise<string>
   }
   const competitorCount = result.candidateRanks ? Object.keys(result.candidateRanks).length : 0;
   const rankText = snap.rank == null ? '未上榜' : `第 ${snap.rank} 名`;
-  return `${projectName}(${platform ?? '?'}): ${args.keyword} @ ${args.storefront} → ${rankText}（共 ${snap.totalResults} 结果${competitorCount > 0 ? `，竞品 ${competitorCount}` : ''}）`;
+  // 结构化返回：时间线执行记录需要 rank/总结果数（入榜率与统计口径依赖），
+  // 这些只有执行器知道（摘要文本仅供人读）。
+  return {
+    summary: `${projectName}(${platform ?? '?'}): ${args.keyword} @ ${args.storefront} → ${rankText}（共 ${snap.totalResults} 结果${competitorCount > 0 ? `，竞品 ${competitorCount}` : ''}）`,
+    execution: {
+      kind: RANK_KIND,
+      projectName,
+      productId: args.productId,
+      platform: platform ?? null,
+      keyword: args.keyword,
+      language: args.queryLanguage ?? 'en',
+      storefront: args.storefront,
+      rank: snap.rank,
+      totalResults: snap.totalResults,
+      competitorCount,
+    },
+  };
 }
 
 /** github-sync 实例执行体：深度检测（inspectProjectRelease）+ 写 DB 发布缓存。 */
