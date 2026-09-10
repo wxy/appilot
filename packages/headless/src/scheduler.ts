@@ -29,6 +29,35 @@ export function isRateLimitError(message: string): boolean {
 }
 
 /**
+ * 瞬时上游/网络抖动判定：请求超时被 abort、连接被中断、DNS/连接错误等——
+ * 这些是「等一会儿再试就好」的临时状况，不是任务本身失败。
+ *
+ * 典型来源：core rank-collector 的 fetchWithTimeout（15s）abort → Node fetch 抛
+ * `This operation was aborted`；上游/中间设备掐连接 → `terminated` / `socket hang
+ * up`；网络不可达 → `fetch failed` 包裹 ECONNRESET/ETIMEDOUT 等。
+ *
+ * 语义：单次抖动不该把任务标红（用户看到的「失败」应指真实故障），也不该把实例
+ * 按 interval 推后一整天（rank interval=1440min → 一次抖动丢一天数据）。处理为
+ * 短退避自动重试，连续 ≥ TRANSIENT_RED_STREAK 次才落 error（真实故障仍可见）。
+ * 注意：403 是封禁而非抖动，由 403 熔断分支先行处理，不在此列。
+ */
+export function isTransientUpstreamError(message: string): boolean {
+  const msg = message || '';
+  return /(operation was aborted|\baborted\b|terminated|socket hang up|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EPIPE|UND_ERR|network error)/i.test(
+    msg,
+  );
+}
+
+/**
+ * 瞬时错误连续次数达到该值时仍落 error 标红：单次抖动静默重试，反复失败说明是
+ * 真问题（网络断/上游持续不可用），必须让用户看到。
+ */
+export const TRANSIENT_RED_STREAK = 3;
+
+/** 连续次数跨次持久在 lastSummary 前缀里（成功一次即被成功摘要覆盖、自然清零）。 */
+const RETRY_STREAK_RE = /^(?:TRANSIENT|RATELIMIT):(\d+)/;
+
+/**
  * 限流退避分钟（指数增长）：5 → 10 → 20 → 40 → 80 → 160 min（streak 封顶 6），
  * 且不超过任务自身周期/3h——既给上游冷却时间，又不把实例推过正常周期太多。
  */
@@ -318,26 +347,42 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         statsState.failed += 1;
         return;
       }
-      const rateLimited = isRateLimitError(msg);
-      let nextRunAt = base.nextRunAt;
-      let lastSummary = msg;
-      if (rateLimited) {
-        // 限流：指数短退避自动重试（连续限流 streak 累进，RATELIMIT:n 标记），
-        // 而非把实例推回整个 interval（教训 C——曾全池 403 需等 12h 才重试）。
+      // 瞬时抖动（请求超时 abort / 连接被掐 / DNS 连接错误）与限流（429 等）：
+      // 都是「等一会儿再试」的上游状况，不是任务失败。处理为指数短退避自动重试
+      // （5→10→20min），且**单次不标红**——否则每天几十次抖动会把任务中心刷成
+      // 一片红（用户看到的「又有很多失败」），还会把 rank 实例推后一整天
+      // （interval=1440min → 一次抖动丢一天数据）。连续 ≥ TRANSIENT_RED_STREAK
+      // 次才落 error：反复失败是真问题，必须可见。
+      const transient = isTransientUpstreamError(msg);
+      const rateLimited = !transient && isRateLimitError(msg);
+      if (transient || rateLimited) {
         const prev = store.tasks.get(task.id);
-        const prevMatch = /^RATELIMIT:(\d+)/.exec((prev && prev.lastSummary) || '');
+        const prevMatch = RETRY_STREAK_RE.exec((prev && prev.lastSummary) || '');
         const streak = prevMatch ? Number(prevMatch[1]) + 1 : 1;
-        lastSummary = `RATELIMIT:${streak}: ${msg}`;
-        nextRunAt = new Date(
-          Date.now() + rateLimitBackoffMinutes(streak, base.intervalMinutes) * 60_000,
-        ).toISOString();
+        const tag = transient ? 'TRANSIENT' : 'RATELIMIT';
+        const backoffMs = rateLimitBackoffMinutes(streak, base.intervalMinutes) * 60_000;
+        const nextRunAt = new Date(Date.now() + backoffMs).toISOString();
+        const lastSummary = `${tag}:${streak}: ${msg}`;
+        if (prev && streak < TRANSIENT_RED_STREAK) {
+          // 重试中：保留原状态/派生字段（不标红、不推周期），仅排短退避 + 写说明。
+          store.tasks.upsert({ ...prev, nextRunAt, lastSummary });
+        } else {
+          store.tasks.upsert({
+            ...base,
+            nextRunAt,
+            lastRunAt: started,
+            lastStatus: 'error' as const,
+            lastSummary,
+          });
+        }
+        statsState.failed += 1;
+        return;
       }
       store.tasks.upsert({
         ...base,
-        nextRunAt,
         lastRunAt: started,
         lastStatus: 'error' as const,
-        lastSummary,
+        lastSummary: msg,
       });
       statsState.failed += 1;
     } finally {
