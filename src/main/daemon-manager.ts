@@ -361,6 +361,21 @@ export interface DaemonSelfState {
   accelUntil: string | null;
   fingerprint: string | null;
   leaderId: string;
+  /**
+   * 休眠窗口状态（daemon 侧 headless sleep-window；旧 daemon 无此字段 → undefined）：
+   * 任务中心据此显示「窗口 ~45s」/「系统休眠中·已暂停」并说明休眠打断不计失败。
+   */
+  sleep?: {
+    phase: "unknown" | "window" | "awake";
+    windowStartedAtMs: number | null;
+    sleepCycles: number;
+    avgWindowMs: number;
+    lastFrozenMs: number;
+    lastWakeAtMs: number | null;
+    sleepInterrupts: number;
+    suspended: boolean;
+    dispatchAllowed: boolean;
+  } | null;
 }
 
 export async function readDaemonSelfState(

@@ -12,6 +12,14 @@ export type ClientRequest =
   | { method: 'checkUpdate'; params?: Record<string, never> }
   | { method: 'runNow'; params: { taskId: string } }
   | { method: 'accelerate'; params: { on: boolean; seconds?: number } }
+  /**
+   * suspend/resume：系统休眠通知（壳 powerMonitor 'suspend'/'resume'）。
+   * suspend 期间不派发新任务（在途请求跑完）；resume 后按休眠窗口节拍恢复
+   * （见 headless sleep-window.ts）。旧 daemon 未实现时返回未知方法错误，
+   * 调用方忽略即可（daemon 侧仍有 tick 间隔自检兜底）。
+   */
+  | { method: 'suspend'; params?: Record<string, never> }
+  | { method: 'resume'; params?: Record<string, never> }
   | { method: 'shutdown'; params?: Record<string, never> }
   | { method: 'bye'; params?: Record<string, never> }
   /**

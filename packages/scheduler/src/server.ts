@@ -15,6 +15,11 @@ export interface ServerHandlers {
   /** accelerate：开/关加速（催快积压）。 */
   onAccelerate?(on: boolean, seconds?: number): void;
   /**
+   * suspend/resume：系统休眠通知（壳 powerMonitor）。on=true 表示系统即将休眠
+   * →暂停派发；on=false 表示已唤醒→恢复（并按休眠窗口节拍跑一轮）。
+   */
+  onSuspend?(on: boolean): void;
+  /**
    * checkUpdate：立即检查磁盘代码是否已更新（壳启动通知；daemon 随后自重启）。
    * 返回是否检测到变更——自重启在响应写回后由 daemon 内部调度。
    */
@@ -86,6 +91,14 @@ export function createSchedulerServer(socketPath: string, handlers: ServerHandle
         }
         case 'accelerate':
           handlers.onAccelerate?.(msg.params?.on === true, Number(msg.params?.seconds ?? 0) || undefined);
+          reply({ ok: true });
+          break;
+        case 'suspend':
+          handlers.onSuspend?.(true);
+          reply({ ok: true });
+          break;
+        case 'resume':
+          handlers.onSuspend?.(false);
           reply({ ok: true });
           break;
         case 'status': {

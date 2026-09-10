@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { createSchedulerServer, type SchedulerServer } from './server.js';
 import { SCHEDULER_PROTOCOL_VERSION } from './protocol.js';
-import type { LeaseScheduler } from '@appilot-labs/appilot-headless';
+import type { LeaseScheduler, SleepWindowSnapshot } from '@appilot-labs/appilot-headless';
 import {
   fingerprintDirs,
   isChanged,
@@ -72,6 +72,12 @@ export interface DaemonSelfStatus {
   accelUntil: string | null;
   fingerprint: string | null;
   leaderId: string;
+  /**
+   * 休眠窗口状态（headless sleep-window.ts；旧版 headless 无该方法时为 null）：
+   * phase/avgWindowMs/sleepCycles/lastWakeAt/sleepInterrupts/suspended——壳据此
+   * 在任务中心显示「休眠窗口 ~45s·打断 N」或「系统休眠中·已暂停」。
+   */
+  sleep: SleepWindowSnapshot | null;
 }
 
 /** 默认 socket 路径（与共享 DB 同目录：scheduler.sock）。 */
@@ -173,6 +179,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       accelUntil: accelUntilIso,
       fingerprint: daemonFingerprint,
       leaderId: SCHEDULER_LEADER_ID,
+      sleep: typeof (scheduler as { sleep?: unknown }).sleep === 'function' ? scheduler.sleep() : null,
     };
   };
 
@@ -227,6 +234,11 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
         accelUntilIso = null;
         log('accelerate off');
       }
+    },
+    onSuspend: (on) => {
+      // 系统休眠通知（壳 powerMonitor）：休眠前排空派发，唤醒后按窗口节拍恢复。
+      scheduler.setSuspended(on);
+      log(on ? 'system suspend → 暂停派发' : 'system resume → 按休眠窗口恢复调度');
     },
     onStatus: () => daemonStatus(),
     onShutdown: () => selfShutdown?.(),

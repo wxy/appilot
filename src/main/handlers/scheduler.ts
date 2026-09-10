@@ -99,7 +99,7 @@ function daemonSocketPath(): string {
 
 /** 向 daemon socket 发一条命令（成功返回 true；不可达/异常 false）。 */
 async function sendToDaemon(
-  method: "accelerate" | "runNow" | "shutdown",
+  method: "accelerate" | "runNow" | "shutdown" | "suspend" | "resume",
   params: Record<string, unknown>,
 ): Promise<boolean> {
   try {
@@ -109,6 +109,15 @@ async function sendToDaemon(
   } catch {
     return false;
   }
+}
+
+/**
+ * 通知 daemon 系统即将休眠 / 已唤醒（powerMonitor 'suspend'/'resume'）。
+ * 休眠期 daemon 不派发新任务；唤醒后按休眠窗口节拍恢复调度。daemon 不可达时
+ * 静默失败——daemon 侧有 tick 间隔自检兜底（见 headless sleep-window.ts）。
+ */
+export async function notifyDaemonPowerState(suspended: boolean): Promise<boolean> {
+  return sendToDaemon(suspended ? "suspend" : "resume", {});
 }
 
 function computeTimeline(
