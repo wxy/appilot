@@ -155,12 +155,32 @@ export function TaskCenterPage() {
     refresh();
     refreshTimeline();
     // 加速模式下刷新更频繁（5 秒），正常 15 秒。
-    const timer = window.setInterval(refresh, accel ? 5_000 : 15_000);
+    // ⚠️ 时间线必须跟着同一节拍刷新：调度已收敛到常驻 daemon，daemon 直写共享 DB
+    // 时**不会**触发壳内 appilot:data-changed("tasks")（那些通知只在壳内路径发出），
+    // 此前时间线只在挂载 + 该事件时取数 → 启动调度器后时间线一直停在挂载那刻（空）。
+    const timer = window.setInterval(() => {
+      refresh();
+      refreshTimeline();
+    }, accel ? 5_000 : 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
   }, [accel]);
+
+  // 切到时间线页签时立即取一次（不等下一个节拍），打开就能看到最新执行。
+  useEffect(() => {
+    if (viewTab !== "timeline") return;
+    let cancelled = false;
+    (window as any).appilot?.scheduler?.timeline()
+      .then((next: any) => {
+        if (!cancelled) setTimeline(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [viewTab]);
 
   const refreshNow = () => {
     (window as any).appilot?.scheduler?.list()
