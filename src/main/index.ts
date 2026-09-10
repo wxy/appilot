@@ -1,11 +1,11 @@
-import { app, BrowserWindow, Menu, shell } from "electron";
+import { app, BrowserWindow, Menu, powerMonitor, shell } from "electron";
 import path from "path";
 import log from "electron-log";
 import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
 import { startRegistrySync, releaseElectronLease } from "./registry-sync";
 import { isTaskCenterStopped } from "./scheduler";
-import { stopSchedulerForAppExit } from "./handlers/scheduler";
+import { stopSchedulerForAppExit, notifyDaemonPowerState } from "./handlers/scheduler";
 import { ensureSchedulerDaemon, startSchedulerWatchdog } from "./daemon-manager";
 import { registerHeadlessReadIpc } from "./headless-ipc";
 import { registerDbAdminHandlers } from "./db-admin";
@@ -90,6 +90,18 @@ app.whenReady().then(async () => {
     timeoutMs: 5000,
     paused: () => isTaskCenterStopped(),
     log: (m) => log.info(`appilot: ${m}`),
+  });
+  // 系统休眠感知（实测：Mac 空闲时每小时一轮 Maintenance Sleep，每轮仅 ~45s
+  // DarkWake 窗口；窗口末尾被入睡打断的请求醒来才超时失败）。休眠前通知 daemon
+  // 暂停派发，唤醒后恢复（daemon 侧另有 tick 间隔自检兜底，即使此事件不触发也
+  // 能在窗口末尾停止派发、并把唤醒后的瞬时错误判为休眠打断）。
+  powerMonitor.on("suspend", () => {
+    log.info("appilot: 系统休眠 → 通知 daemon 暂停派发");
+    void notifyDaemonPowerState(true);
+  });
+  powerMonitor.on("resume", () => {
+    log.info("appilot: 系统唤醒 → 通知 daemon 恢复调度");
+    void notifyDaemonPowerState(false);
   });
   // 共享注册表（方案 A）：启动 hydrate + 初始写回 + watch 对侧变更。
   startRegistrySync(getStore);

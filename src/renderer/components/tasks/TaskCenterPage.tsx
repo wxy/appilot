@@ -61,6 +61,17 @@ export function TaskCenterPage() {
       lastRunAt: string | null;
       accel: boolean;
       fingerprint: string | null;
+      /** 休眠窗口状态（daemon 侧 sleep-window；旧 daemon 无此字段）。 */
+      sleep?: {
+        phase: "unknown" | "window" | "awake";
+        avgWindowMs: number;
+        sleepCycles: number;
+        lastFrozenMs: number;
+        lastWakeAtMs: number | null;
+        sleepInterrupts: number;
+        suspended: boolean;
+        dispatchAllowed: boolean;
+      } | null;
     } | null;
     // scheduler:status 新增的调度器版本监测（运行 vs 磁盘指纹）。
     manager: {
@@ -630,6 +641,29 @@ export function TaskCenterPage() {
                     daemonCtrl?.leader ? ` · 进程 #${daemonCtrl.leader}` : ""
                   }`}
                 />
+                {/* 休眠窗口：系统休眠（macOS 维护休眠每小时仅 ~45s 窗口）时按窗口
+                    节拍调度、窗口末尾停止派发；被休眠打断的执行不计失败。 */}
+                {daemonSelf.sleep && daemonSelf.sleep.sleepCycles > 0 ? (
+                  <MiniMetric
+                    label={daemonSelf.sleep.suspended ? "休眠" : "窗口"}
+                    value={
+                      daemonSelf.sleep.suspended
+                        ? "已暂停"
+                        : `~${Math.round(daemonSelf.sleep.avgWindowMs / 1000)}s`
+                    }
+                    title={`系统休眠感知：已观测 ${daemonSelf.sleep.sleepCycles} 次休眠${
+                      daemonSelf.sleep.lastFrozenMs > 0
+                        ? `（最近冻结 ${formatDurationMs(daemonSelf.sleep.lastFrozenMs)}）`
+                        : ""
+                    } · 唤醒窗口 ~${Math.round(
+                      daemonSelf.sleep.avgWindowMs / 1000,
+                    )}s 内按窗口节拍调度，窗口末尾停止派发${
+                      daemonSelf.sleep.sleepInterrupts > 0
+                        ? ` · 被休眠打断 ${daemonSelf.sleep.sleepInterrupts} 次（不计失败）`
+                        : ""
+                    }${daemonSelf.sleep.suspended ? " · 系统休眠中：暂停派发新任务" : ""}`}
+                  />
+                ) : null}
                 {fpAlert === "mismatch" && mgr ? (
                   <span
                     className="ml-auto px-1.5 py-px rounded border border-amber-300/80 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-[10px] font-semibold text-amber-700 dark:text-amber-400 whitespace-nowrap"

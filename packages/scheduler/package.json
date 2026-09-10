@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx tests/*.test.ts",
+    "test": "for f in tests/*.test.ts; do echo \"== $f\"; tsx \"$f\" || exit 1; done",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
