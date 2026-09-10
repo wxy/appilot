@@ -9,7 +9,7 @@ export type { ProjectRow, RankSnapshotRow, TaskRow, LeaseRow, ProjectMetaRow, Pr
 export { openStore } from './store.js';
 export type { AppilotStore } from './store.js';
 export { defaultDbPath, defaultLegacyRegistryPath, importLegacyRegistry } from './paths.js';
-export { createLeaseScheduler, isRateLimitError, rateLimitBackoffMinutes, MAX_INFLIGHT_INSTANCES, localDayKey } from './scheduler.js';
+export { createLeaseScheduler, isRateLimitError, rateLimitBackoffMinutes, isTransientUpstreamError, TRANSIENT_RED_STREAK, MAX_INFLIGHT_INSTANCES, localDayKey } from './scheduler.js';
 export type {
   ScheduledJob,
   ScheduledJobContext,
@@ -17,9 +17,16 @@ export type {
   LeaseSchedulerOptions,
   TaskExecutor,
   TaskExecutorContext,
+  TaskRunResult,
   SchedulerAccelOptions,
   SchedulerStats,
 } from './scheduler.js';
+export { createSleepWindowTracker, resolveSleepWindowOptions } from './sleep-window.js';
+export type {
+  SleepWindowOptions,
+  SleepWindowSnapshot,
+  SleepWindowTracker,
+} from './sleep-window.js';
 export { createHeadlessService } from './service.js';
 export type { HeadlessService, RankGroupProgress } from './service.js';
 export { buildHeadlessJobs } from './jobs.js';

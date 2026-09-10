@@ -18,6 +18,12 @@ import {
   itunesSearchBlockedUntilStore,
   itunesSearchBlockSkipSummary,
 } from './itunes-breaker.js';
+import {
+  createSleepWindowTracker,
+  resolveSleepWindowOptions,
+  type SleepWindowOptions,
+  type SleepWindowSnapshot,
+} from './sleep-window.js';
 
 /**
  * 限流类失败判定（教训 C 落码）：上游临时限制（HTTP 403/429 / rate limit /
@@ -144,6 +150,14 @@ export interface LeaseSchedulerOptions {
   heartbeatMs?: number;
   /** 加速模式参数（可选；提供即启用 setAccel 能力）。 */
   accel?: SchedulerAccelOptions;
+  /**
+   * 休眠窗口感知（默认启用；见 sleep-window.ts）：冻结检测 → 窗口末尾停止派发，
+   * 窗口内加快 tick 节拍，唤醒后的瞬时错误判为「休眠打断」而不标红。
+   * 传 false 关闭（测试或非桌面环境）。
+   */
+  sleepWindow?: SleepWindowOptions | false;
+  /** 时钟注入（测试用；默认 Date.now）。 */
+  now?(): number;
   log?(msg: string): void;
 }
 
@@ -168,6 +182,10 @@ export interface LeaseScheduler {
    * 不统计被熔断跳过 / 并发去重拦截的执行。
    */
   stats(): SchedulerStats;
+  /** 休眠窗口状态快照（未启用时为 null；daemon status 用）。 */
+  sleep(): SleepWindowSnapshot | null;
+  /** 外部暂停/恢复调度（系统休眠通知：暂停期不派发新任务）。 */
+  setSuspended(on: boolean): void;
   /** 立即跑一轮 tick（仅主生效；供 daemon socket runDue 用）。 */
   kick(): void;
 }
@@ -214,8 +232,12 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   const log = opts.log ?? (() => {});
   let leader = false;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let timerMs: number | null = null;
   let accel = false;
   const running = new Set<string>();
+  const now = opts.now ?? (() => Date.now());
+  const sleepCfg = resolveSleepWindowOptions(opts.sleepWindow === false ? {} : (opts.sleepWindow ?? {}));
+  const sleepTracker = opts.sleepWindow === false ? null : createSleepWindowTracker(sleepCfg);
 
   // ── 执行统计（架构收敛 B：daemon 自维护状态在 headless 调度循环处的累计点）──
   // 计数发生在 execute/executeInstance 真正开始执行实例时（并发去重/熔断跳过不
@@ -223,25 +245,25 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   // 唯一调度执行体时即「本 daemon」计数；重启归零（daemon status 一并暴露
   // startedAt/uptime，口径见 SchedulerStats）。
   const statsState = {
-    startedAt: new Date().toISOString(),
+    startedAt: new Date(now()).toISOString(),
     processed: 0,
     succeeded: 0,
     failed: 0,
     processedToday: 0,
-    todayKey: localDayKey(new Date()),
+    todayKey: localDayKey(new Date(now())),
     lastRunAt: null as string | null,
   };
   const seenTaskIds = new Set<string>();
   function statsNoteStart(taskId: string): void {
     statsState.processed += 1;
     seenTaskIds.add(taskId);
-    const key = localDayKey(new Date());
+    const key = localDayKey(new Date(now()));
     if (key !== statsState.todayKey) {
       statsState.todayKey = key;
       statsState.processedToday = 0;
     }
     statsState.processedToday += 1;
-    statsState.lastRunAt = new Date().toISOString();
+    statsState.lastRunAt = new Date(now()).toISOString();
   }
   function schedulerStats(): SchedulerStats {
     return {
@@ -265,7 +287,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       id: job.id,
       title: job.title,
       intervalMinutes: job.intervalMinutes,
-      nextRunAt: new Date(Date.now() + job.intervalMinutes * 60_000).toISOString(),
+      nextRunAt: new Date(now() + job.intervalMinutes * 60_000).toISOString(),
       runCount: (prev?.runCount ?? 0) + 1,
     };
     try {
@@ -318,7 +340,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         taskId: task.id,
         kind: task.kind ?? null,
         status,
-        durationMs: Number.isFinite(startedMs) ? Math.max(0, Date.now() - startedMs) : null,
+        durationMs: Number.isFinite(startedMs) ? Math.max(0, now() - startedMs) : null,
         productId: inst.productId ?? null,
         keyword: inst.keyword ?? null,
         language: inst.queryLanguage ?? null,
@@ -341,7 +363,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     // 有变化时写一次说明性 lastSummary；显式 runNow 走这里同样被拦。非该 API
     // 的执行器（github-sync 等）不受影响。
     if (executor.hitsItunesSearch === true && isItunesSearchBlockedStore(store)) {
-      const nowLog = Date.now();
+      const nowLog = now();
       if (nowLog - lastItunesBlockSkipLogAt >= ITUNES_BLOCK_SKIP_LOG_INTERVAL_MS) {
         lastItunesBlockSkipLogAt = nowLog;
         const untilIso = itunesSearchBlockedUntilStore(store);
@@ -364,7 +386,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       id: task.id,
       title: task.title || executor.title,
       intervalMinutes: task.intervalMinutes || executor.intervalMinutes,
-      nextRunAt: new Date(Date.now() + (task.intervalMinutes || executor.intervalMinutes) * 60_000).toISOString(),
+      nextRunAt: new Date(now() + (task.intervalMinutes || executor.intervalMinutes) * 60_000).toISOString(),
       runCount: (task.runCount ?? 0) + 1,
       source: task.source,
       kind: task.kind,
@@ -419,18 +441,26 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       const transient = isTransientUpstreamError(msg);
       const rateLimited = !transient && isRateLimitError(msg);
       if (transient || rateLimited) {
+        const nowMs = now();
+        // 唤醒后 grace 内的瞬时错误：请求其实是被系统休眠冻结、唤醒时才被我们的
+        // 超时定时器 abort 的（实测失败行的 lastRunAt 正好落在 Entering Sleep 那
+        // 一秒）。这既不是任务失败也不是上游问题——**不计入失败连击**，否则每睡
+        // 一轮就有一批任务被判红；摘要标注 SLEEP-INTERRUPT 便于排查。
+        const sleepInterrupted = transient && sleepTracker != null && sleepTracker.isSleepInterrupted(nowMs);
+        if (sleepInterrupted) sleepTracker?.noteSleepInterrupt();
         const prev = store.tasks.get(task.id);
         const prevMatch = RETRY_STREAK_RE.exec((prev && prev.lastSummary) || '');
-        const streak = prevMatch ? Number(prevMatch[1]) + 1 : 1;
+        const prevStreak = prevMatch ? Number(prevMatch[1]) : 0;
+        const streak = sleepInterrupted ? Math.max(1, prevStreak) : prevStreak + 1;
         const tag = transient ? 'TRANSIENT' : 'RATELIMIT';
         const backoffMs = rateLimitBackoffMinutes(streak, base.intervalMinutes) * 60_000;
-        const nextRunAt = new Date(Date.now() + backoffMs).toISOString();
-        const lastSummary = `${tag}:${streak}: ${msg}`;
-        if (prev && streak < TRANSIENT_RED_STREAK) {
+        const nextRunAt = new Date(nowMs + backoffMs).toISOString();
+        const lastSummary = sleepInterrupted ? `SLEEP-INTERRUPT: ${msg}` : `${tag}:${streak}: ${msg}`;
+        if (prev && (sleepInterrupted || streak < TRANSIENT_RED_STREAK)) {
           // 重试中：保留原状态/派生字段（不标红、不推周期），仅排短退避 + 写说明。
           store.tasks.upsert({ ...prev, nextRunAt, lastSummary });
           recordExecution(task, 'retry', started, lastSummary, {
-            reason: transient ? 'transient' : 'rate-limit',
+            reason: sleepInterrupted ? 'sleep-interrupt' : transient ? 'transient' : 'rate-limit',
             streak,
           });
         } else {
@@ -464,34 +494,44 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   }
 
   function dueJobs(): ScheduledJob[] {
-    const now = Date.now();
+    const nowMs = now();
     return jobs.filter((j) => {
       const t = store.tasks.get(j.id);
-      return !t || !t.nextRunAt || new Date(t.nextRunAt).getTime() <= now;
+      return !t || !t.nextRunAt || new Date(t.nextRunAt).getTime() <= nowMs;
     });
   }
 
   /** DB 中 kind 在 executors 且到期的实例任务（v4）。 */
   function dueInstances(): TaskRow[] {
     if (Object.keys(executors).length === 0) return [];
-    const now = Date.now();
+    const nowMs = now();
     // iTunes Search 403 熔断：冷却期内不派发 hitsItunesSearch 执行器的到期实例
     //（保持到期态，解除后首个 tick 自然补跑）；显式 runNow 由 executeInstance
     // 前置检查拦下。非该 API 的实例照常派发。
-    const itunesBlocked = isItunesSearchBlockedStore(store, now);
+    const itunesBlocked = isItunesSearchBlockedStore(store, nowMs);
     return store.tasks
       .all()
       .filter((t) => {
         if (t.kind == null || !(t.kind in executors)) return false;
         const executor = executors[t.kind];
         if (executor.hitsItunesSearch === true && itunesBlocked) return false;
-        return !t.nextRunAt || new Date(t.nextRunAt).getTime() <= now;
+        return !t.nextRunAt || new Date(t.nextRunAt).getTime() <= nowMs;
       })
       .slice(0, accel ? (accelOpts.tickLimit ?? 100) : 20); // 单 tick 上限（加速放大）
   }
 
   /** 单次 tick：主 → 续租 + 跑到期任务；从 → 尝试抢占。 */
   function tick(): void {
+    // 休眠感知（sleep-window.ts）：tick 间隔异常大 = 进程刚被系统休眠冻结过。
+    // 唤醒后窗口只有 ~45s，用满它（加快节拍）并在窗口末尾停止派发，避免「发出
+    // 去就被冻结、下次唤醒才超时失败」——那正是成批 aborted 失败的来源。
+    const sleepNote = sleepTracker ? sleepTracker.noteTick(now()) : null;
+    if (sleepNote?.woke) {
+      log(
+        `[scheduler:${leaderId}] 检测到休眠唤醒（冻结 ${Math.round(sleepNote.frozenMs / 1000)}s）` +
+          `——按窗口节拍调度` + (sleepTracker ? `（估计窗口 ${Math.round((sleepTracker.snapshot().avgWindowMs ?? 0) / 1000)}s）` : ''),
+      );
+    }
     if (leader) {
       if (!store.lease.heartbeat(leaderId)) {
         leader = false;
@@ -509,13 +549,39 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     // （教训 B——全量到期时 tick 叠加曾把 iTunes 打到 IP 级 403）。
     for (const inst of dueInstances()) {
       if (running.size >= MAX_INFLIGHT_INSTANCES) break;
+      // 窗口末尾/系统休眠中：不再派发新请求（在途请求继续跑完）。
+      if (sleepTracker && !sleepTracker.canDispatch(now())) break;
       void executeInstance(inst);
     }
+    // 节拍自适应：加速 > 休眠窗口（用满短暂窗口）> 心跳。
+    syncTimerInterval();
+  }
+
+  /** 当前应有的 tick 节拍（毫秒）。 */
+  function desiredTickMs(): number {
+    if (accel) return accelOpts.tickMs ?? 2000;
+    if (sleepTracker && !sleepTracker.isSuspended() && sleepTracker.snapshot(now()).phase === 'window') {
+      const burst = sleepCfg.burstTickMs;
+      if (typeof burst === 'number' && burst > 0) return burst;
+    }
+    return heartbeatMs;
+  }
+
+  /** 节拍变化时才重建定时器（避免每 tick 重置）。 */
+  function syncTimerInterval(): void {
+    if (!timer) return;
+    const want = desiredTickMs();
+    if (timerMs === want) return;
+    clearInterval(timer);
+    timer = setInterval(tick, want);
+    timerMs = want;
   }
 
   function restartTimer(): void {
+    const ms = desiredTickMs();
     if (timer) clearInterval(timer);
-    timer = setInterval(tick, accel ? (accelOpts.tickMs ?? 2000) : heartbeatMs);
+    timer = setInterval(tick, ms);
+    timerMs = ms;
   }
 
   return {
@@ -566,6 +632,18 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     },
     stats() {
       return schedulerStats();
+    },
+    sleep() {
+      return sleepTracker ? sleepTracker.snapshot(now()) : null;
+    },
+    setSuspended(on) {
+      if (!sleepTracker) return;
+      sleepTracker.setSuspended(on);
+      log(`[scheduler:${leaderId}] 系统${on ? '即将休眠 → 暂停派发' : '已唤醒 → 恢复调度'}`);
+      if (!on) {
+        syncTimerInterval();
+        tick(); // 唤醒后立刻跑一轮（并让 tracker 进入窗口模式）
+      }
     },
     kick() {
       tick();
