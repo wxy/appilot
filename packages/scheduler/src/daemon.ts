@@ -6,7 +6,7 @@
  * - socket 服务（hello/ping/runNow + 任务事件广播）；
  * - 常驻：不因无客户端退出；SIGTERM/SIGINT 优雅退出（升级/关机让位）。
  */
-import { openStore, createLeaseScheduler, buildHeadlessExecutors, githubSyncInstancesFor, reconcileTaskInstances, type AppilotStore } from '@appilot-labs/appilot-headless';
+import { openStore, createLeaseScheduler, buildHeadlessExecutors, githubSyncInstancesFor, reconcileTaskInstances, createSleepHold, type AppilotStore } from '@appilot-labs/appilot-headless';
 import { dirname, join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { createSchedulerServer, type SchedulerServer } from './server.js';
@@ -78,6 +78,13 @@ export interface DaemonSelfStatus {
    * 在任务中心显示「休眠窗口 ~45s·打断 N」或「系统休眠中·已暂停」。
    */
   sleep: SleepWindowSnapshot | null;
+  /**
+   * 是否正持有「保持唤醒」（休眠窗口内尚有在途请求 → 短暂延迟空闲休眠，
+   * 把手上的活干完再睡；见 headless sleep-hold.ts）。非 macOS / 已关闭时为 false。
+   */
+  holdingSleep: boolean;
+  /** 本机是否具备保持唤醒能力（macOS 且有 caffeinate）。 */
+  sleepHoldAvailable: boolean;
 }
 
 /** 默认 socket 路径（与共享 DB 同目录：scheduler.sock）。 */
@@ -144,6 +151,13 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     // 合并回 electron-store（Electron 排名页新鲜），daemon 可执行 rank 实例。
     includeRank: process.env.APPILOT_SCHEDULER_INCLUDE_RANK !== '0',
   });
+  // 休眠保持（sleep-hold）：休眠窗口内尚有在途请求时短暂延迟空闲休眠，把手上的
+  // 活干完再睡——「发出即被冻结、下次唤醒才超时失败」的根治手段（见 headless）。
+  // APPILOT_SLEEP_HOLD=0 可关闭；非 macOS 自动 no-op。
+  const sleepHold = createSleepHold({
+    enabled: process.env.APPILOT_SLEEP_HOLD !== '0',
+    log,
+  });
   const scheduler = createLeaseScheduler({
     store,
     leaderId: SCHEDULER_LEADER_ID,
@@ -152,6 +166,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     ttlMs: opts.ttlMs ?? DEFAULT_TTL_MS,
     heartbeatMs: opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS,
     accel: { tickMs: 2000, tickLimit: 100 },
+    sleepHold,
     log,
   });
   let accelOffTimer: ReturnType<typeof setTimeout> | null = null;
@@ -180,6 +195,8 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       fingerprint: daemonFingerprint,
       leaderId: SCHEDULER_LEADER_ID,
       sleep: typeof (scheduler as { sleep?: unknown }).sleep === 'function' ? scheduler.sleep() : null,
+      holdingSleep: sleepHold.isHolding(),
+      sleepHoldAvailable: sleepHold.isAvailable(),
     };
   };
 
@@ -273,6 +290,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     clearInterval(reconcileTimer);
     if (updateTimer) clearInterval(updateTimer);
     scheduler.dispose();
+    sleepHold.dispose(); // 释放「保持唤醒」，避免残留断言阻止系统休眠
     await server.close().catch(() => {});
     try {
       rmSync(socketPath, { force: true });

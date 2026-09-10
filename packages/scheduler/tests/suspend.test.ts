@@ -41,7 +41,10 @@ async function main(): Promise<void> {
   assert.equal(typeof s0.avgWindowMs, 'number', 'avgWindowMs 数值');
   assert.equal(s0.sleepCycles, 0, '尚未观测到休眠周期');
   assert.equal(s0.sleepInterrupts, 0, '尚无休眠打断');
-  console.log('✓ status.sleep 字段齐全（phase/suspended/avgWindowMs/sleepCycles）');
+  const root0 = st0.result as any;
+  assert.equal(root0.holdingSleep, false, '初始未持有「保持唤醒」');
+  assert.equal(typeof root0.sleepHoldAvailable, 'boolean', 'sleepHoldAvailable 布尔（平台能力上报）');
+  console.log('✓ status.sleep 字段齐全（phase/suspended/avgWindowMs/sleepCycles/holdingSleep）');
 
   // 2. suspend → 暂停派发
   const sus = await sendSchedulerCommand(socketPath, 'suspend', {}, 3000);

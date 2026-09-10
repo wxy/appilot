@@ -21,6 +21,8 @@ export type {
   SchedulerAccelOptions,
   SchedulerStats,
 } from './scheduler.js';
+export { createSleepHold, supportsSleepHold } from './sleep-hold.js';
+export type { SleepHold, SleepHoldOptions } from './sleep-hold.js';
 export { createSleepWindowTracker, resolveSleepWindowOptions } from './sleep-window.js';
 export type {
   SleepWindowOptions,
