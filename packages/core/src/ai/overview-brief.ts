@@ -6,7 +6,6 @@ import type { AIProvider, ChatMessage } from "./ai-provider";
 import { parseJsonObject, requestJson, buildArchiveMessages } from "./ai-request";
 import type { OverviewBriefInput } from "../overview-summary";
 import type { ProjectProfile } from "../project-profile";
-import { EngineError } from "../errors";
 import { log } from "../logger";
 
 export type BriefAction = "keywords" | "release" | "trend";
@@ -40,6 +39,9 @@ export interface BriefSuggestion {
   action: BriefAction;
   target: string | null;
   proposedActions: BriefProposedAction[];
+  expectedOutcome?: string;
+  successMetric?: string;
+  evaluateAfterDays?: number;
 }
 
 export interface BriefFollowupExchange {
@@ -58,6 +60,7 @@ export function buildBriefFollowupMessages(args: {
   profile?: ProjectProfile;
   systemPrompt: string;
   evidenceContext?: string;
+  postActionEvidenceContext?: string;
   fallbackBriefContext: string;
   numberedSuggestionContext?: string;
   targetSuggestion?: BriefSuggestion | null;
@@ -95,6 +98,9 @@ export function buildBriefFollowupMessages(args: {
         action: args.targetSuggestion.action,
         target: args.targetSuggestion.target,
         proposedActions: args.targetSuggestion.proposedActions || [],
+        expectedOutcome: args.targetSuggestion.expectedOutcome || null,
+        successMetric: args.targetSuggestion.successMetric || null,
+        evaluateAfterDays: args.targetSuggestion.evaluateAfterDays || null,
       }, null, 2),
     });
   }
@@ -108,7 +114,15 @@ export function buildBriefFollowupMessages(args: {
       }, null, 2),
     });
   }
-  messages.push({ role: "user", content: args.question });
+  messages.push({
+    role: "user",
+    content: args.postActionEvidenceContext
+      ? [
+          `动作执行后的最新数据快照（用于与原始建议依据对比）：\n${args.postActionEvidenceContext}`,
+          `当前问题：${args.question}`,
+        ].join("\n\n")
+      : args.question,
+  });
   return messages;
 }
 
@@ -205,9 +219,28 @@ export function normalizeBriefSuggestions(data: any): BriefSuggestion[] {
       action,
       target,
       proposedActions: normalizeBriefProposedActions(item.proposedActions),
+      expectedOutcome: String(item.expectedOutcome || "").trim(),
+      successMetric: String(item.successMetric || "").trim(),
+      evaluateAfterDays: Number.isFinite(Number(item.evaluateAfterDays))
+        ? Math.max(1, Math.min(30, Math.round(Number(item.evaluateAfterDays))))
+        : undefined,
     });
   }
   return suggestions;
+}
+
+export function filterActionableBriefSuggestions(
+  suggestions: BriefSuggestion[],
+): BriefSuggestion[] {
+  return suggestions.filter((suggestion) => {
+    const changesState = suggestion.proposedActions.some((action) =>
+      !action.kind.endsWith(".open") && action.kind !== "rank.collect",
+    );
+    return changesState
+      && Boolean(suggestion.expectedOutcome)
+      && Boolean(suggestion.successMetric)
+      && Number.isFinite(suggestion.evaluateAfterDays);
+  });
 }
 
 export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
@@ -223,11 +256,14 @@ export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
       "总览页已经展示关键词数量、排名分布、发布进度、仓库活动、评价和竞品概况。不要复述这些状态，也不要把同一问题拆成多条建议。",
       "keywordInventory 和 keywordRankDetails 是数据库中的关键词级证据。涉及排名时先比较语言、商店和关键词差异；只有确实没有检查记录时，才能判断采集数据缺失。",
       "storefrontCoverage 是每种查询语言应覆盖的完整商店集合。checkedStorefronts 已等于对应集合数量时，覆盖已经完整；rank.collect 只能刷新已有目标商店，不能扩大覆盖，不得把刷新描述为补齐覆盖。",
-      "如果建议能由 Appilot 执行，请提供 proposedActions。允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、release.open。关键词动作必须填写真实存在的 language 和 keyword；rank.collect 必须填写 language，storefront 可选。不要根据不充分证据提出删除。",
+      "rankDataReadiness 描述任务中心的每日采集状态。排名证据过期时，不要基于它提出关键词改变；等待任务中心按 nextScheduledAt 到 scheduledCoverageCompleteAt 的现有排期更新即可，不要生成额外采集动作。",
+      "每条输出都必须至少包含一个会改变 Appilot 状态的 proposedAction。keyword.open、release.open 等查看动作只能作为补充，不能单独构成建议。rank.collect 属于数据准备而不是增长建议，不要把刷新排名作为建议；每日任务会自动采集。",
+      "允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、release.open。关键词动作必须填写真实存在的 language 和 keyword。不要根据不充分证据提出删除。",
       "关键词排名、掉榜或排名趋势一律使用 keyword.open，填写精确的 language、keyword 和 storefront；长期效果页目前不承接关键词分析。",
       "title 和 reason 必须使用自然中文。不得输出 detectedIssues、high、medium 等内部字段名；涉及具体词时必须明确写出关键词，不要用“该词”或“同一关键词”作为首次指代。",
-      "每条建议必须代表一个不同的决策：title 直接写下一步动作；reason 只解释为什么现在值得做，最多引用两个关键证据。若只有一个高价值动作，就只输出一条。",
-      "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\",\"proposedActions\":[{\"kind\":\"keyword.open\",\"label\":\"查看关键词\",\"language\":\"en\",\"keyword\":\"night walk\",\"storefront\":\"us\"}]}]}",
+      "每条建议必须代表一个不同的决策：title 直接写要改变什么；reason 只解释为什么现在值得做，最多引用两个关键证据；expectedOutcome 写预期正向变化；successMetric 写之后如何判断有效；evaluateAfterDays 写复核天数。",
+      "如果证据不足以支持改变，返回空 suggestions，不要用查看、检查、观察或刷新凑数。宁可没有建议，也不要输出没有明确收益和验证标准的建议。",
+      "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"expectedOutcome\":\"预期变化\",\"successMetric\":\"可验证指标\",\"evaluateAfterDays\":7,\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\",\"proposedActions\":[{\"kind\":\"keyword.pause\",\"label\":\"暂停关键词\",\"language\":\"en\",\"keyword\":\"weak term\"}]}]}",
       "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",
     ].join("\n"),
     [JSON.stringify(taskData, null, 2)],
@@ -246,9 +282,5 @@ export async function generateOverviewBrief(
     thinking: "disabled",
     onProgress,
   });
-  const suggestions = normalizeBriefSuggestions(data);
-  if (suggestions.length === 0) {
-    throw new EngineError("AI brief returned no suggestions", "BRIEF_EMPTY");
-  }
-  return suggestions;
+  return filterActionableBriefSuggestions(normalizeBriefSuggestions(data));
 }

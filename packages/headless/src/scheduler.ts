@@ -76,6 +76,17 @@ export function rateLimitBackoffMinutes(streak: number, intervalMinutes: number)
 /** 实例执行最大并发（网络型任务；超出留待下个 tick——任务仍到期不会丢）。 */
 export const MAX_INFLIGHT_INSTANCES = 10;
 
+/** Oldest due time first; task id is only a deterministic tie-breaker. */
+export function orderTaskRowsByDue<T extends { id: string; nextRunAt?: string | null }>(
+  rows: T[],
+): T[] {
+  return [...rows].sort((a, b) =>
+    (a.nextRunAt ? new Date(a.nextRunAt).getTime() : 0)
+    - (b.nextRunAt ? new Date(b.nextRunAt).getTime() : 0)
+    || a.id.localeCompare(b.id),
+  );
+}
+
 /** iTunes 熔断「自动跳过」日志节流（避免重复路径每 tick 刷屏）。 */
 const ITUNES_BLOCK_SKIP_LOG_INTERVAL_MS = 60_000;
 let lastItunesBlockSkipLogAt = 0;
@@ -536,14 +547,16 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     //（保持到期态，解除后首个 tick 自然补跑）；显式 runNow 由 executeInstance
     // 前置检查拦下。非该 API 的实例照常派发。
     const itunesBlocked = isItunesSearchBlockedStore(store, nowMs);
-    return store.tasks
+    return orderTaskRowsByDue(store.tasks
       .all()
       .filter((t) => {
         if (t.kind == null || !(t.kind in executors)) return false;
         const executor = executors[t.kind];
         if (executor.hitsItunesSearch === true && itunesBlocked) return false;
         return !t.nextRunAt || new Date(t.nextRunAt).getTime() <= nowMs;
-      })
+      }))
+      // Persisted queue order is expressed by nextRunAt. Without this sort the
+      // SQLite id order wins and older due work can be delayed unpredictably.
       .slice(0, accel ? (accelOpts.tickLimit ?? 100) : 20); // 单 tick 上限（加速放大）
   }
 

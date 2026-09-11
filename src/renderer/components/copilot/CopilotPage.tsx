@@ -27,6 +27,7 @@ type ActionRun = {
   status: "executed" | "failed";
   message: string;
   at: string;
+  resultContextId?: string | null;
 };
 
 type Session = {
@@ -43,7 +44,6 @@ type TaskFeedback = {
   action: BriefProposedAction;
   label: string;
   state: "running" | "success" | "failed";
-  completed: number;
   detail: string;
 };
 
@@ -150,6 +150,66 @@ function readableActionMessage(message: string): string {
   return message.replace(/^Error invoking remote method '[^']+': Error:\s*/i, "");
 }
 
+function completedRankRunSummary(run: ActionRun, snapshots: StoreProduct["rankSnapshots"]): string | null {
+  if (run.action.kind !== "rank.collect") return null;
+  const endedAt = new Date(run.at).getTime();
+  const startedAt = endedAt - 20 * 60_000;
+  const relevant = snapshots.filter((snapshot) => {
+    const checkedAt = new Date(snapshot.checkedAt).getTime();
+    return snapshot.language === run.action.language
+      && (!run.action.storefront || snapshot.storefront === run.action.storefront)
+      && checkedAt >= startedAt
+      && checkedAt <= endedAt + 2 * 60_000;
+  });
+  const latest = new Map<string, (typeof relevant)[number]>();
+  for (const snapshot of relevant) {
+    const key = `${snapshot.keyword}\u0000${snapshot.storefront}`;
+    const previous = latest.get(key);
+    if (!previous || new Date(snapshot.checkedAt).getTime() > new Date(previous.checkedAt).getTime()) {
+      latest.set(key, snapshot);
+    }
+  }
+  if (latest.size === 0) return "没有找到可归属于本次执行窗口的新快照，不能声称已经验证结果。";
+  const values = [...latest.values()];
+  const ranked = values.filter((snapshot) => snapshot.rank != null).length;
+  const top10 = values.filter((snapshot) => snapshot.rank != null && snapshot.rank <= 10).length;
+  const stores = new Set(values.map((snapshot) => snapshot.storefront)).size;
+  let comparable = 0;
+  let improved = 0;
+  let declined = 0;
+  let unchanged = 0;
+  let newlyRanked = 0;
+  let droppedOut = 0;
+  const previousByTarget = new Map<string, (typeof snapshots)[number]>();
+  for (const snapshot of snapshots) {
+    const checkedAt = new Date(snapshot.checkedAt).getTime();
+    if (snapshot.language !== run.action.language || checkedAt >= startedAt) continue;
+    const key = `${snapshot.keyword}\u0000${snapshot.storefront}`;
+    const previous = previousByTarget.get(key);
+    if (!previous || checkedAt > new Date(previous.checkedAt).getTime()) {
+      previousByTarget.set(key, snapshot);
+    }
+  }
+  for (const current of values) {
+    const previous = previousByTarget.get(`${current.keyword}\u0000${current.storefront}`);
+    if (!previous) continue;
+    comparable += 1;
+    if (previous.rank == null && current.rank != null) newlyRanked += 1;
+    else if (previous.rank != null && current.rank == null) droppedOut += 1;
+    else if (previous.rank != null && current.rank != null) {
+      if (current.rank < previous.rank) improved += 1;
+      else if (current.rank > previous.rank) declined += 1;
+      else unchanged += 1;
+    } else {
+      unchanged += 1;
+    }
+  }
+  const comparison = comparable > 0
+    ? `与执行前可比的 ${comparable} 个目标中，改善 ${improved}、下降 ${declined}、不变 ${unchanged}、新入榜 ${newlyRanked}、掉榜 ${droppedOut}。`
+    : "缺少同目标的执行前快照，无法比较变化。";
+  return `执行时间窗口内找到 ${values.length} 个关键词×商店快照，覆盖 ${stores} 个商店；${ranked} 个目标有排名，${top10} 个进入前 10。${comparison}旧执行记录没有保存批次标识和失败数，无法证明这些快照都来自本次动作；这次动作本身也没有产生增长效果。`;
+}
+
 function actionDescription(action: BriefProposedAction): string {
   const subject = [action.language, action.keyword].filter(Boolean).join(" · ");
   const store = action.storefront ? ` · ${action.storefront.toUpperCase()}` : "";
@@ -157,7 +217,7 @@ function actionDescription(action: BriefProposedAction): string {
   if (action.kind === "keyword.pause") return `暂停跟踪 ${subject}`;
   if (action.kind === "keyword.restore") return `恢复已移除关键词 ${subject}`;
   if (action.kind === "keyword.resume") return `恢复已暂停关键词 ${subject}`;
-  if (action.kind === "rank.collect") return `采集 ${action.language || "当前语言"}${store} 的最新排名`;
+  if (action.kind === "rank.collect") return `${action.language || "当前语言"}${store} 排名由任务中心每日自动更新`;
   if (action.kind === "keyword.open") return `查看 ${subject || "关键词"} 的相关数据`;
   if (action.kind === "trend.open") return "查看与建议有关的趋势信息";
   return "查看与建议有关的发布信息";
@@ -293,7 +353,6 @@ export function CopilotPage() {
     removeTrackedKeyword,
     restoreTrackedKeyword,
     resumePausedKeyword,
-    collectRanks,
   } = useProject();
   const navigate = useNavigate();
   const location = useLocation();
@@ -335,23 +394,6 @@ export function CopilotPage() {
   useEffect(() => {
     const off = (window as any).appilot?.projects?.onBriefProgress?.((value: any) => {
       setProgress(value || null);
-    });
-    return () => off?.();
-  }, []);
-
-  useEffect(() => {
-    const off = (window as any).appilot?.projects?.onRankProgress?.((value: any) => {
-      if (!value?.snapshot) return;
-      setTaskFeedback((current) => current?.state === "running"
-        && current.action.kind === "rank.collect"
-        && current.action.language === value.snapshot.language
-        && (!current.action.storefront || current.action.storefront === value.snapshot.storefront)
-        ? {
-            ...current,
-            completed: current.completed + 1,
-            detail: `已收到 ${current.completed + 1} 个排名结果，仍在继续采集…`,
-          }
-        : current);
     });
     return () => off?.();
   }, []);
@@ -484,8 +526,7 @@ export function CopilotPage() {
       action,
       label: action.label,
       state: "running",
-      completed: 0,
-      detail: action.kind === "rank.collect" ? "任务已提交，正在接收排名结果…" : "请求已提交，正在执行…",
+      detail: "请求已提交，正在执行…",
     });
     setError("");
     try {
@@ -497,13 +538,11 @@ export function CopilotPage() {
         await restoreTrackedKeyword(product.id, action.language, action.keyword);
       } else if (action.kind === "keyword.resume" && action.language && action.keyword) {
         await resumePausedKeyword(product.id, action.language, action.keyword);
-      } else if (action.kind === "rank.collect" && action.language) {
-        await collectRanks(product.id, action.language, action.storefront || "");
       } else {
         throw new Error("动作参数不完整，无法执行");
       }
       setTaskFeedback((current) => current?.actionId === action.id
-        ? { ...current, state: "success", detail: current.completed ? `已完成，共收到 ${current.completed} 个排名结果` : "动作已完成" }
+        ? { ...current, state: "success", detail: "动作已完成" }
         : current);
       let recorded = true;
       try {
@@ -629,7 +668,7 @@ export function CopilotPage() {
                   <div className="min-w-0">
                     <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">建议 {suggestionIndex + 1}</p>
                     <p className="line-clamp-2 text-xs font-medium leading-5 text-zinc-700 dark:text-zinc-200">{suggestion.title}</p>
-                    <p className="mt-1 text-[10px] text-zinc-400">{completed ? "已验证" : dismissed ? "已忽略" : superseded ? "历史建议" : "待决策"}{suggestion.generatedAt ? ` · ${formatHumanTime(suggestion.generatedAt)}生成` : ""}</p>
+                    <p className="mt-1 text-[10px] text-zinc-400">{completed ? "动作已完成，效果待复核" : dismissed ? "已忽略" : superseded ? "历史建议" : "待决策"}{suggestion.generatedAt ? ` · ${formatHumanTime(suggestion.generatedAt)}生成` : ""}</p>
                   </div>
                 </div>
               </button>
@@ -658,6 +697,25 @@ export function CopilotPage() {
                     )}
                   </div>
                   <div className="mt-3 text-sm text-zinc-600 dark:text-zinc-300"><Markdown>{readableSuggestionReason(selectedSuggestion)}</Markdown></div>
+                  {(selectedSuggestion.expectedOutcome || selectedSuggestion.successMetric) && (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {selectedSuggestion.expectedOutcome && (
+                        <div className="rounded-lg bg-emerald-50/70 px-3 py-2 dark:bg-emerald-500/10">
+                          <p className="text-[10px] font-medium text-emerald-700 dark:text-emerald-400">预期正向变化</p>
+                          <p className="mt-1 text-xs leading-5 text-emerald-800 dark:text-emerald-300">{selectedSuggestion.expectedOutcome}</p>
+                        </div>
+                      )}
+                      {selectedSuggestion.successMetric && (
+                        <div className="rounded-lg bg-sky-50/70 px-3 py-2 dark:bg-sky-500/10">
+                          <p className="text-[10px] font-medium text-sky-700 dark:text-sky-400">如何判断有效</p>
+                          <p className="mt-1 text-xs leading-5 text-sky-800 dark:text-sky-300">
+                            {selectedSuggestion.successMetric}
+                            {selectedSuggestion.evaluateAfterDays ? ` · ${selectedSuggestion.evaluateAfterDays} 天后复核` : ""}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {proposedActions.length > 0 && (
                   <div className="mb-5 rounded-xl border border-amber-200/70 dark:border-amber-500/20 bg-amber-50/50 dark:bg-amber-500/5 p-3">
@@ -687,10 +745,10 @@ export function CopilotPage() {
                               ) : (
                                 <button
                                   onClick={() => void execute(action)}
-                                  disabled={executed || runningActionId === action.id}
+                                  disabled={executed || action.kind === "rank.collect" || runningActionId === action.id}
                                   className={cn(btnSmSecondary, "disabled:opacity-50")}
                                 >
-                                  {executed ? "已执行" : action.kind.endsWith(".open") ? "查看" : action.requiresConfirmation ? "预览" : "执行"}
+                                  {executed ? "已执行" : action.kind === "rank.collect" ? "每日自动更新" : action.kind.endsWith(".open") ? "查看" : action.requiresConfirmation ? "预览" : "执行"}
                                 </button>
                               )}
                             </div>
@@ -708,20 +766,38 @@ export function CopilotPage() {
                                 {feedback.state !== "running" && <button onClick={() => setTaskFeedback(null)} className="opacity-60 hover:opacity-100">关闭</button>}
                               </div>
                             )}
-                            {actionRuns.map((run) => (
+                            {actionRuns.map((run, runIndex) => {
+                              const rankResult = completedRankRunSummary(run, product.rankSnapshots || []);
+                              return (
                               <div key={run.id} className={cn(
                                 "mt-2 border-t pt-2 text-[11px]",
                                 run.status === "executed"
                                   ? "border-emerald-100 text-emerald-700 dark:border-emerald-500/15 dark:text-emerald-400"
                                   : "border-red-100 text-red-600 dark:border-red-500/15 dark:text-red-400",
                               )}>
-                                {run.status === "executed" && run.action.kind.endsWith(".open")
-                                  ? "已查看"
-                                  : run.status === "executed"
-                                    ? (isActionVerified(run) ? "已执行并验证" : "已执行，等待数据验证")
-                                    : "执行失败"} · {readableActionMessage(run.message)} · {formatHumanTime(run.at)}
+                                <div>
+                                  {run.status === "executed" && run.action.kind.endsWith(".open")
+                                    ? "已查看"
+                                    : run.status === "executed"
+                                      ? (isActionVerified(run) ? "动作已完成，效果待复核" : "已执行，等待确认状态")
+                                      : "执行失败"}
+                                  <> · {readableActionMessage(run.message)} · {formatHumanTime(run.at)}</>
+                                </div>
+                                {rankResult && <p className="mt-1.5 leading-5 opacity-90">{rankResult}</p>}
+                                {runIndex === 0 && run.status === "executed" && (
+                                  <button
+                                    onClick={() => void ask(
+                                      `请比较动作 ${selectedSuggestionNumber}.${actionIndex + 1} 执行前后的数据，说明结果、是否达到预期，以及下一步应该做什么。`,
+                                    )}
+                                    disabled={asking}
+                                    className="mt-1.5 font-medium underline decoration-emerald-300 underline-offset-2 hover:text-emerald-800 disabled:opacity-50 dark:hover:text-emerald-300"
+                                  >
+                                    {run.resultContextId ? "重新分析执行结果" : "分析执行结果"}
+                                  </button>
+                                )}
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         );
                       })}
@@ -731,7 +807,9 @@ export function CopilotPage() {
               </>
             ) : (
               <div className="mb-5 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
-                这里用于讨论项目整体情况。选择左侧工作项，可以围绕具体证据继续深挖并执行动作。
+                {session && pendingCount === 0
+                  ? "当前没有证据充分、可直接执行并能复核效果的新建议。副驾驶不会用查看、检查或刷新数据来凑数。"
+                  : "这里用于讨论项目整体情况。选择左侧工作项，可以围绕具体证据继续深挖并执行动作。"}
               </div>
             )}
 

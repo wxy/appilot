@@ -13,6 +13,7 @@ import { openStore } from '../src/store';
 import {
   createLeaseScheduler,
   localDayKey,
+  orderTaskRowsByDue,
   type ScheduledJob,
   type SchedulerStats,
 } from '../src/scheduler';
@@ -32,6 +33,18 @@ function main(): void {
     pass('localDayKey 本地日期键');
   } catch (err) {
     fail('localDayKey 本地日期键', err);
+  }
+
+  try {
+    const ordered = orderTaskRowsByDue([
+      { id: 'a', nextRunAt: '2026-09-11T10:20:00.000Z' },
+      { id: 'z', nextRunAt: '2026-09-11T10:10:00.000Z' },
+      { id: 'b', nextRunAt: '2026-09-11T10:20:00.000Z' },
+    ]);
+    assert.deepEqual(ordered.map((row) => row.id), ['z', 'a', 'b']);
+    pass('任务按计划时间执行，id 只用于同时间排序');
+  } catch (err) {
+    fail('任务按计划时间执行', err);
   }
 
   const dir = mkdtempSync(join(tmpdir(), 'sched-stats-'));

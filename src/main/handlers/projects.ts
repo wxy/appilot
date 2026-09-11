@@ -91,6 +91,8 @@ type BriefActionRun = {
   action: BriefProposedAction;
   status: "executed" | "failed";
   message: string;
+  /** Snapshot captured when the user next asks to assess this completed action. */
+  resultContextId?: string | null;
   at: string;
 };
 
@@ -182,6 +184,7 @@ function buildBriefContextDigest(
         .join("；")
     : "";
   const inventory = input?.keywordInventory || {};
+  const readiness = input?.rankDataReadiness;
   const inventoryText = (items: any[]) => (Array.isArray(items) && items.length > 0
     ? items.map((item: any) => `${item.language || "?"}:${item.keyword || "?"}`).join("、")
     : "无");
@@ -215,6 +218,9 @@ function buildBriefContextDigest(
     `已删除关键词：${inventoryText(inventory.removed)}`,
     storefrontCoverageText ? `商店覆盖口径：${storefrontCoverageText}` : "",
     keywordDetailText ? `关键词当前排名摘要：\n${keywordDetailText}` : "关键词当前排名摘要：无",
+    readiness
+      ? `排名数据状态：${readiness.freshTargets}/${readiness.totalTargets} 个查询目标在 24 小时内更新，过期 ${readiness.staleTargets}，失败 ${readiness.failedTargets}${readiness.nextScheduledAt ? `，下一次计划 ${readiness.nextScheduledAt}` : ""}${readiness.scheduledCoverageCompleteAt ? `，当前排期预计最晚 ${readiness.scheduledCoverageCompleteAt}` : ""}`
+      : "",
     `14 天发布状态：${input?.release ? `tag=${input.release.tag || "unknown"}，语言 ${input.release.languageProgress || 0}/${input.release.languageTotal || 0}` : "无发布草稿"}`,
     `反馈主题：${feedbackCount} 个`,
     `竞品动态：${competitorCount} 条`,
@@ -362,6 +368,32 @@ async function buildOverviewBriefPayload(
     })(),
     profile,
   });
+
+  const db = sharedStore();
+  const rankTasks = ((s.get("scheduledTasks") || []) as any[]).filter(
+    (task) => task.kind === "rank" && task.enabled !== false && task.productId === product.id,
+  );
+  const freshnessCutoff = Date.now() - 24 * 60 * 60_000;
+  const rankTaskRows = rankTasks.map((task) => db.tasks.get(task.id));
+  const isFreshRankRow = (row: ReturnType<typeof db.tasks.get>) => Boolean(
+    row?.lastRunAt && new Date(row.lastRunAt).getTime() >= freshnessCutoff && row.lastStatus !== "error",
+  );
+  const nextScheduledTimes = rankTaskRows
+    .map((row) => row?.nextRunAt ? new Date(row.nextRunAt).getTime() : Number.NaN)
+    .filter(Number.isFinite);
+  (input as any).rankDataReadiness = {
+    totalTargets: rankTasks.length,
+    freshTargets: rankTaskRows.filter(isFreshRankRow).length,
+    staleTargets: rankTaskRows.filter((row) => !isFreshRankRow(row)).length,
+    failedTargets: rankTaskRows.filter((row) => row?.lastStatus === "error").length,
+    nextScheduledAt: nextScheduledTimes.length > 0
+      ? new Date(Math.min(...nextScheduledTimes)).toISOString()
+      : null,
+    scheduledCoverageCompleteAt: nextScheduledTimes.length > 0
+      ? new Date(Math.max(...nextScheduledTimes)).toISOString()
+      : null,
+    collectionPolicy: "task-center-daily",
+  };
 
   const { profile: _profile, ...taskData } = input;
   return {
@@ -2140,8 +2172,14 @@ export function registerProjectsHandlers(): void {
       action: item.action,
       target: item.target,
       proposedActions: item.proposedActions || [],
+      expectedOutcome: item.expectedOutcome || "",
+      successMetric: item.successMetric || "",
+      evaluateAfterDays: item.evaluateAfterDays,
     })), ...previousSuggestions].slice(0, 30);
-    const retainedContextIds = new Set(storedSuggestions.map((item) => item.contextId).filter(Boolean));
+    const retainedContextIds = new Set([
+      ...storedSuggestions.map((item) => item.contextId).filter(Boolean),
+      ...(previous?.actionRuns || []).map((run) => run.resultContextId).filter(Boolean),
+    ]);
     const contextSnapshots = Object.fromEntries(
       Object.entries(previous?.contextSnapshots || {})
         .filter(([id]) => retainedContextIds.has(id)),
@@ -2267,6 +2305,51 @@ export function registerProjectsHandlers(): void {
         ? session.suggestions.find((item) => item.id === suggestionId)
         : null;
 
+      // A command succeeding only proves that Appilot changed state. Capture one
+      // fresh evidence snapshot when the user asks what happened, then reuse it
+      // on later turns so the original evidence and post-action result stay a
+      // stable, cacheable prefix instead of rebuilding the whole context each time.
+      let postActionSnapshot: BriefContextSnapshot | undefined;
+      if (targetSuggestion) {
+        const successfulRuns = (session.actionRuns || []).filter(
+          (run) => run.suggestionId === targetSuggestion.id && run.status !== "failed",
+        );
+        let latestCompletedRun: BriefActionRun | undefined;
+        latestCompletedRun = successfulRuns.find((run) => run.status === "executed");
+        if (latestCompletedRun) {
+          if (!latestCompletedRun.resultContextId) {
+            const latestProjects: any[] = s.get("projects") || [];
+            const latestContext = findProductContext(latestProjects, productId);
+            if (latestContext) {
+              const { briefContext, profile, evidenceContext } = await buildOverviewBriefPayload(
+                s,
+                latestContext.project,
+                latestContext.product,
+              );
+              const resultContextId = `result-${latestCompletedRun.id}`;
+              postActionSnapshot = {
+                generatedAt: new Date().toISOString(),
+                profile,
+                evidenceContext,
+                briefContext,
+              };
+              session.contextSnapshots = {
+                ...(session.contextSnapshots || {}),
+                [resultContextId]: postActionSnapshot,
+              };
+              session.actionRuns = (session.actionRuns || []).map((run) =>
+                run.id === latestCompletedRun?.id ? { ...run, resultContextId } : run,
+              );
+              latestCompletedRun = session.actionRuns.find((run) => run.id === latestCompletedRun?.id);
+              saveBriefSession(s, key, session);
+            }
+          }
+          if (!postActionSnapshot && latestCompletedRun?.resultContextId) {
+            postActionSnapshot = session.contextSnapshots?.[latestCompletedRun.resultContextId];
+          }
+        }
+      }
+
       const followupSystem = [
         "你是 Appilot 的运营副驾驶，擅长围绕上文简报给出可执行的中文建议。",
         "请严格基于给定上下文回答，不要编造具体指标或事实；对不确定项明确标注。",
@@ -2274,7 +2357,8 @@ export function registerProjectsHandlers(): void {
         "用户对产品核心价值、功能主次和目标用户的补充具有最高优先级。若用户指出建议建立在错误产品假设上，必须重新评估并明确说明保留、修改或撤回原建议，不要机械维护原结论。",
         "只要下方上下文包含活跃关键词、已删除关键词或排名摘要，就不得声称没有关键词数据。若缺少的是相关性或产品定位证据，应准确说出缺少的证据类型。",
         "用户可以用“建议 2”或“动作 2.1”引用界面编号。请根据下方编号目录理解指代，并在回答中沿用编号。",
-        "answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。若动作可由 Appilot 完成，同时返回 proposedActions；允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、release.open。关键词动作必须填写上下文中真实存在的 language 和 keyword。关键词排名趋势使用 keyword.open，长期效果页目前不承接关键词分析。",
+        "answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。若动作可由 Appilot 完成，同时返回 proposedActions；允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、release.open。关键词动作必须填写上下文中真实存在的 language 和 keyword。关键词排名趋势使用 keyword.open，长期效果页目前不承接关键词分析。",
+        "排名由任务中心每日自动采集，不得返回 rank.collect，也不得把刷新数据当作建议。数据不足时说明需要等待任务中心更新；只有证据支持明确改变时才提出动作。",
         "使用自然中文，不要向用户暴露 detectedIssues、high、medium 等内部字段名。首次提到具体对象时必须说出关键词，避免无前文的“该词”或“同一关键词”。",
         "只输出 JSON：{\"answer\":\"Markdown 回答\",\"proposedActions\":[{\"kind\":\"keyword.open\",\"label\":\"查看关键词\",\"language\":\"en\",\"keyword\":\"night walk\",\"storefront\":\"us\"}]}",
       ];
@@ -2307,6 +2391,7 @@ export function registerProjectsHandlers(): void {
         profile: snapshot?.profile,
         systemPrompt: followupSystem.join("\n"),
         evidenceContext: snapshot?.evidenceContext,
+        postActionEvidenceContext: postActionSnapshot?.evidenceContext,
         fallbackBriefContext: snapshot?.briefContext || session.briefContext,
         numberedSuggestionContext,
         targetSuggestion,
@@ -2369,6 +2454,7 @@ export function registerProjectsHandlers(): void {
         action,
         status: payload?.status === "failed" ? "failed" : "executed",
         message: String(payload?.message || "").slice(0, 500),
+        resultContextId: null,
         at: new Date().toISOString(),
       };
       session.actionRuns = [run, ...(session.actionRuns || [])].slice(0, 100);

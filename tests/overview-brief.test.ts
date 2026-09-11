@@ -8,6 +8,7 @@ import {
   briefSuggestionId,
   buildBriefFollowupMessages,
   buildBriefMessages,
+  filterActionableBriefSuggestions,
   generateOverviewBrief,
   normalizeBriefFollowupResponse,
   normalizeBriefProposedActions,
@@ -104,6 +105,16 @@ assert(
     laterFollowup.slice(0, 3).map((message) => message.content).join("\u0000"),
   "follow-up: archive, evidence, and original suggestion form a reusable prefix",
 );
+const resultFollowup = buildBriefFollowupMessages({
+  ...followupArgs,
+  postActionEvidenceContext: JSON.stringify({ keywordStats: { tracked: 33 }, actionResult: "paused" }),
+  question: "执行结果怎么样？",
+});
+assert(
+  resultFollowup.at(-1)?.content.includes("动作执行后的最新数据快照") === true &&
+    resultFollowup.at(-1)?.content.includes("\"tracked\":33") === true,
+  "follow-up: completed action evidence is appended for before/after assessment",
+);
 assert(
   normalizeBriefProposedActions([{ kind: "trend.open", label: "查看长期效果" }]).length === 0,
   "parse: unfinished trend page is not proposed",
@@ -124,6 +135,55 @@ const deduped = parseBriefSuggestions(JSON.stringify({ suggestions: [
   { title: "补齐发布文案", reason: "3/8", action: "release", target: "v1.2.0" },
 ] }));
 assert(deduped.length === 2 && deduped[1].action === "release", "parse: duplicate actions for the same target are merged");
+const qualityCandidates = parseBriefSuggestions(JSON.stringify({ suggestions: [
+  {
+    title: "暂停弱相关词",
+    reason: "已检查 26 个商店且均未进入前 200",
+    expectedOutcome: "减少无效监控目标",
+    successMetric: "每日排名查询减少 26 次",
+    evaluateAfterDays: 1,
+    action: "keywords",
+    target: "weak term",
+    proposedActions: [{ kind: "keyword.pause", label: "暂停关键词", language: "en", keyword: "weak term" }],
+  },
+  {
+    title: "查看掉榜详情",
+    reason: "排名下降",
+    expectedOutcome: "了解详情",
+    successMetric: "打开页面",
+    evaluateAfterDays: 1,
+    action: "trend",
+    target: "night walk",
+    proposedActions: [{ kind: "keyword.open", label: "查看", language: "en", keyword: "night walk" }],
+  },
+  {
+    title: "重新全量刷新",
+    reason: "确认数据",
+    expectedOutcome: "更新数据",
+    successMetric: "收到快照",
+    evaluateAfterDays: 1,
+    action: "keywords",
+    target: null,
+    proposedActions: [{ kind: "rank.collect", label: "刷新", language: "en" }],
+  },
+] }));
+assert(
+  filterActionableBriefSuggestions(qualityCandidates).map((item) => item.title).join() === "暂停弱相关词",
+  "quality: view-only and collection-only observations are not recommendations",
+);
+const missingReviewWindow = parseBriefSuggestions(JSON.stringify({ suggestions: [{
+  title: "缺少复核时间",
+  reason: "词表需要整理",
+  expectedOutcome: "减少无效监控目标",
+  successMetric: "每日查询减少 26 次",
+  action: "keywords",
+  target: "another weak term",
+  proposedActions: [{ kind: "keyword.pause", label: "暂停", language: "en", keyword: "another weak term" }],
+}] }));
+assert(
+  filterActionableBriefSuggestions(missingReviewWindow).length === 0,
+  "quality: a measurable recommendation also needs a review window",
+);
 
 // 2. buildBriefMessages
 const input: any = {
@@ -197,14 +257,39 @@ assert(
 // 4. generateOverviewBrief with a stub provider
 void (async () => {
   let captured: any = null;
+  const actionableRaw = JSON.stringify({ suggestions: [
+    {
+      title: "暂停弱相关词",
+      reason: "26 个商店均未进入前 200",
+      expectedOutcome: "减少无效监控目标",
+      successMetric: "每日查询减少 26 次",
+      evaluateAfterDays: 1,
+      action: "keywords",
+      target: "weak term",
+      proposedActions: [{ kind: "keyword.pause", label: "暂停", language: "en", keyword: "weak term" }],
+    },
+  ] });
   const stubProvider: any = {
     chat: async (msgs: any, opts?: any) => {
       captured = { msgs, opts };
-      return raw;
+      return actionableRaw;
     },
   };
   const generated = await generateOverviewBrief(stubProvider, input);
-  assert(generated.length === 3, "generate: returns parsed suggestions");
+  assert(Boolean(generated.length === 1 && generated[0].successMetric), "generate: returns only measurable state-changing suggestions");
+  const noAdvice = await generateOverviewBrief({
+    chat: async () => JSON.stringify({ suggestions: [{
+      title: "查看排名",
+      reason: "排名变化",
+      expectedOutcome: "看见数据",
+      successMetric: "页面打开",
+      evaluateAfterDays: 1,
+      action: "trend",
+      target: "night walk",
+      proposedActions: [{ kind: "keyword.open", label: "查看", language: "en", keyword: "night walk" }],
+    }] }),
+  } as any, input);
+  assert(noAdvice.length === 0, "generate: returns no advice instead of padding with observations");
   assert(captured.opts.responseFormat === "json_object", "generate: requests json_object");
   assert(captured.opts.maxTokens === 2400, "generate: concise output token cap");
 
