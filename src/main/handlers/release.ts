@@ -24,11 +24,77 @@ import { notifyDataChanged } from "../data-sync";
 import { log } from "@appilot-labs/appilot-core/logger";
 import type { GitHubRepoCapabilities } from "@appilot-labs/appilot-core/github-api";
 import { cancelAiRequest, withAiOperation } from "../ai-cancel";
+import {
+  copyPlansForProduct,
+  copyPlanDuplicateKey,
+  createCopyPlanItem,
+  deleteCopyPlan,
+  markCopyPlansUsed,
+  normalizeCopyPlanInput,
+  upsertCopyPlan,
+} from "@appilot-labs/appilot-core/copy-plan";
 
 export function registerReleaseHandlers(): void {
   ipcMain.handle("ai:cancel", (_event, operationId: string) => {
     if (!operationId) return false;
     return cancelAiRequest(operationId);
+  });
+
+  ipcMain.handle("release:listCopyPlans", async (_event, projectId: string, productId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    const context = findProductContext(s.get("projects") || [], productId);
+    if (!context || context.project.id !== projectId) throw new Error("Store product does not belong to project");
+    return copyPlansForProduct(context.project, productId);
+  });
+
+  ipcMain.handle("release:saveCopyPlan", async (_event, projectId: string, productId: string, value: any) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context || context.project.id !== projectId) throw new Error("Store product does not belong to project");
+    const supported = (context.product.supportedLanguages || []).map((item: any) => String(item.code || ""));
+    const input = normalizeCopyPlanInput(value, supported);
+    if (!input) throw new Error("请填写标题、改进内容并至少选择一个目标字段");
+    const existing = copyPlansForProduct(context.project, productId)
+      .find((item) => item.id === String(value?.id || ""));
+    const duplicate = copyPlansForProduct(context.project, productId).find(
+      (item) => item.id !== existing?.id && copyPlanDuplicateKey(item) === copyPlanDuplicateKey(input),
+    );
+    if (duplicate) throw new Error("相同的文案计划已经存在");
+    const item = existing
+      ? {
+          ...existing,
+          ...input,
+          updatedAt: new Date().toISOString(),
+        }
+      : createCopyPlanItem({
+          projectId,
+          productId,
+          input,
+          source: "manual",
+        });
+    upsertCopyPlan(context.project, item);
+    s.set("projects", projects);
+    notifyDataChanged("releases");
+    return item;
+  });
+
+  ipcMain.handle("release:deleteCopyPlan", async (_event, projectId: string, productId: string, itemId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
+    itemId = assertNonEmptyString(itemId, "itemId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context || context.project.id !== projectId) throw new Error("Store product does not belong to project");
+    if (!deleteCopyPlan(context.project, productId, itemId)) return false;
+    s.set("projects", projects);
+    notifyDataChanged("releases");
+    return true;
   });
 
   async function githubReleaseCandidates(
@@ -195,6 +261,7 @@ export function registerReleaseHandlers(): void {
         previousDescription: previous?.description || "",
         previousUpdatedAt: previous?.updatedAt || "",
         copyGapKeywords: project.copyGapKeywords || [],
+        copyPlans: copyPlansForProduct(project, productId),
         release,
       };
     },
@@ -324,6 +391,7 @@ export function registerReleaseHandlers(): void {
           // （见 release:saveDraft），这里只把 release 的 commit 记到草案上。
           draft.releaseCommitSha = release.commitSha || undefined;
           upsertStoreSubmissionDraft(latestProject, draft);
+          markCopyPlansUsed(latestProject, productId, draft.id, [language || draft.localizations[0]?.language].filter(Boolean) as string[]);
           s.set("projects", latestProjects);
         }
         return { release, draft, actionable: true };
@@ -387,6 +455,7 @@ export function registerReleaseHandlers(): void {
         (copyGapKeywordsByLanguage[lang] =
           copyGapKeywordsByLanguage[lang] || []).push(String(g.keyword || ""));
       }
+      const copyPlanItems = copyPlansForProduct(project, productId);
       const translations = await withAiOperation(operationId, (signal) =>
         translateStoreSubmissionContent(
           provider,
@@ -397,6 +466,7 @@ export function registerReleaseHandlers(): void {
             profile: undefined,
             trackedKeywordsByLanguage,
             copyGapKeywordsByLanguage,
+            copyPlanItems,
           },
           source,
           targetLanguages,
@@ -439,6 +509,7 @@ export function registerReleaseHandlers(): void {
       }));
       latestDraft.updatedAt = new Date().toISOString();
       upsertStoreSubmissionDraft(latestProject, latestDraft);
+      markCopyPlansUsed(latestProject, productId, latestDraft.id, targetLanguages);
       s.set("projects", latestProjects);
       return latestDraft;
     },

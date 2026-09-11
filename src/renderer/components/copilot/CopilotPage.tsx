@@ -18,6 +18,11 @@ type Exchange = {
   question: string;
   answer: string;
   proposedActions?: BriefProposedAction[];
+  suggestionDecision?: {
+    disposition: "keep" | "withdraw" | "replace";
+    reason: string;
+    replacementSuggestionId?: string | null;
+  };
   at: string;
 };
 
@@ -83,6 +88,59 @@ const Markdown = memo(function Markdown({ children }: { children: string }) {
     >
       {children}
     </ReactMarkdown>
+  );
+});
+
+const SuggestionNavItem = memo(function SuggestionNavItem({
+  suggestion,
+  number,
+  selected,
+  completed,
+  archived,
+  historical,
+  onSelect,
+}: {
+  suggestion: BriefSuggestion;
+  number: number;
+  selected: boolean;
+  completed: boolean;
+  archived: boolean;
+  historical: boolean;
+  onSelect: () => void;
+}) {
+  const lifecycleState = suggestion.lifecycle?.state;
+  const historyLabel = lifecycleState === "withdrawn"
+    ? "讨论后已撤回"
+    : lifecycleState === "replaced"
+      ? "已由新建议替代"
+      : archived
+        ? "已归档"
+        : historical
+          ? "历史建议"
+          : null;
+  return (
+    <button
+      onClick={onSelect}
+      className={cn(
+        "mb-1 w-full rounded-xl px-3 py-2.5 text-left transition-colors",
+        selected ? "bg-white dark:bg-zinc-800 shadow-sm" : "hover:bg-white/70 dark:hover:bg-zinc-800/60",
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <span className={cn(
+          "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
+          completed ? "bg-emerald-500" : archived || historical ? "bg-zinc-300 dark:bg-zinc-600" : "bg-amber-500",
+        )} />
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">建议 {number}</p>
+          <p className="line-clamp-2 text-xs font-medium leading-5 text-zinc-700 dark:text-zinc-200">{suggestion.title}</p>
+          <p className="mt-1 text-[10px] text-zinc-400">
+            {historyLabel || (completed ? "动作已完成，效果待复核" : "待决策")}
+            {suggestion.generatedAt ? ` · ${formatHumanTime(suggestion.generatedAt)}生成` : ""}
+          </p>
+        </div>
+      </div>
+    </button>
   );
 });
 
@@ -203,7 +261,24 @@ function completedRankRunSummary(run: ActionRun, snapshots: StoreProduct["rankSn
   return `执行时间窗口内找到 ${values.length} 个关键词×商店快照，覆盖 ${stores} 个商店；${ranked} 个目标有排名，${top10} 个进入前 10。${comparison}旧执行记录没有保存批次标识和失败数，无法证明这些快照都来自本次动作；这次动作本身也没有产生增长效果。`;
 }
 
+function actionInput(action: BriefProposedAction): Record<string, unknown> {
+  if (action.input && typeof action.input === "object") return action.input;
+  return {
+    language: action.language,
+    keyword: action.keyword,
+    storefront: action.storefront,
+  };
+}
+
 function actionDescription(action: BriefProposedAction): string {
+  const input = actionInput(action);
+  if (action.kind === "copy-plan.add") {
+    const fields = Array.isArray(input.fields) ? input.fields.join("、") : "商店文案";
+    return `把“${String(input.title || action.label)}”加入文案计划 · ${fields}`;
+  }
+  if (action.kind === "keyword.track.add") {
+    return `把 ${action.language} · ${action.keyword} 加入跟踪池并纳入后续排名采集`;
+  }
   const subject = [action.language, action.keyword].filter(Boolean).join(" · ");
   const store = action.storefront ? ` · ${action.storefront.toUpperCase()}` : "";
   if (action.kind === "keyword.remove") return `从跟踪池移除 ${subject}，并保留可恢复记录`;
@@ -284,23 +359,45 @@ export function CopilotPage() {
   const orderedSuggestions = useMemo(() => [...(session?.suggestions || [])]
     .map((item, index) => ({ item, index }))
     .sort((a, b) => {
-      const time = new Date(b.item.generatedAt || session?.generatedAt || 0).getTime()
-        - new Date(a.item.generatedAt || session?.generatedAt || 0).getTime();
-      return time || a.index - b.index;
+      const number = (b.item.number || 0) - (a.item.number || 0);
+      return number || a.index - b.index;
     })
     .map(({ item }) => item), [session]);
   const suggestionNumberById = useMemo(
-    () => new Map(orderedSuggestions.map((item, index) => [item.id, index + 1])),
+    () => new Map(orderedSuggestions.map((item, index) => [item.id, item.number || index + 1])),
     [orderedSuggestions],
+  );
+  const currentSuggestions = useMemo(
+    () => orderedSuggestions.filter((item) =>
+      !dismissedSuggestionIds.has(item.id)
+      && !supersededSuggestionIds.has(item.id)
+      && item.lifecycle?.state !== "withdrawn"
+      && item.lifecycle?.state !== "replaced"),
+    [orderedSuggestions, dismissedSuggestionIds, supersededSuggestionIds],
+  );
+  const historicalSuggestions = useMemo(
+    () => orderedSuggestions.filter((item) =>
+      dismissedSuggestionIds.has(item.id)
+      || supersededSuggestionIds.has(item.id)
+      || item.lifecycle?.state === "withdrawn"
+      || item.lifecycle?.state === "replaced"),
+    [orderedSuggestions, dismissedSuggestionIds, supersededSuggestionIds],
   );
   const selectedSuggestion = session?.suggestions.find((item) => item.id === selectedId) || null;
   const selectedSuggestionNumber = selectedSuggestion
     ? suggestionNumberById.get(selectedSuggestion.id) || 0
     : 0;
+  const selectedSuggestionInactive = selectedSuggestion?.lifecycle?.state === "withdrawn"
+    || selectedSuggestion?.lifecycle?.state === "replaced";
+  const replacementSuggestion = selectedSuggestion?.lifecycle?.replacementSuggestionId
+    ? session?.suggestions.find((item) => item.id === selectedSuggestion.lifecycle?.replacementSuggestionId) || null
+    : null;
   const visibleExchanges = (session?.exchanges || []).filter(
     (item) => item.suggestionId === (selectedSuggestion?.id || null),
   );
   const proposedActions = useMemo(() => {
+    if (selectedSuggestion?.lifecycle?.state === "withdrawn"
+      || selectedSuggestion?.lifecycle?.state === "replaced") return [];
     const items = [
       ...(selectedSuggestion?.proposedActions || []),
       ...visibleExchanges.flatMap((item) => item.proposedActions || []),
@@ -370,6 +467,7 @@ export function CopilotPage() {
 
   const execute = async (action: BriefProposedAction) => {
     if (!project || !product || runningActionId) return;
+    if (selectedSuggestionInactive) return;
     if (!briefActionCapability(action.kind).recommendationEligible) return;
     if (action.requiresConfirmation && pendingAction?.action.id !== action.id) {
       try {
@@ -377,7 +475,7 @@ export function CopilotPage() {
           actionId: action.kind,
           projectId: project.id,
           productId: product.id,
-          input: { language: action.language, keyword: action.keyword },
+          input: actionInput(action),
           source: "copilot",
           suggestionId: selectedSuggestion?.id || null,
         });
@@ -419,7 +517,7 @@ export function CopilotPage() {
         actionId: action.kind,
         projectId: project.id,
         productId: product.id,
-        input: { language: action.language, keyword: action.keyword },
+        input: actionInput(action),
         source: "copilot",
         suggestionId: selectedSuggestion?.id || null,
       });
@@ -473,36 +571,63 @@ export function CopilotPage() {
     }
   };
 
-  const dismiss = async () => {
+  const setArchived = async (archived: boolean) => {
     if (!project || !product || !selectedSuggestion) return;
-    await (window as any).appilot?.projects?.dismissBriefSuggestion(
+    await (window as any).appilot?.projects?.setBriefSuggestionArchived(
+      project.id,
+      product.id,
+      selectedSuggestion.id,
+      archived,
+    );
+    await loadSession();
+    if (archived) setSelectedId("general");
+  };
+
+  const removeSuggestion = async () => {
+    if (!project || !product || !selectedSuggestion) return;
+    if (!window.confirm(`彻底删除建议“${selectedSuggestion.title}”？相关追问和副驾动作记录也会一并删除。`)) return;
+    const removed = await (window as any).appilot?.projects?.deleteBriefSuggestion(
       project.id,
       product.id,
       selectedSuggestion.id,
     );
+    if (!removed) return;
     await loadSession();
     setSelectedId("general");
   };
 
   if (!project || !product) {
-    return <EmptyState title="还没有项目" desc="添加项目后，副驾驶才能读取数据并提出行动。" />;
+    return <EmptyState title="还没有项目" desc="添加项目后，副驾才能读取数据并提出行动。" />;
   }
 
   const pendingCount = (session?.suggestions || []).filter(
-    (item) => !completedSuggestionIds.has(item.id) && !dismissedSuggestionIds.has(item.id) && !supersededSuggestionIds.has(item.id),
+    (item) => !completedSuggestionIds.has(item.id)
+      && !dismissedSuggestionIds.has(item.id)
+      && !supersededSuggestionIds.has(item.id)
+      && item.lifecycle?.state !== "withdrawn"
+      && item.lifecycle?.state !== "replaced",
   ).length;
 
   function isActionVerified(run: ActionRun): boolean {
     const action = run.action;
+    const input = actionInput(action);
     const tracked = project?.trackedKeywords || [];
     const removed = project?.removedKeywords || [];
     const keyword = tracked.find((item) => item.language === action.language && item.keyword === action.keyword);
+    if (action.kind === "keyword.track.add") return Boolean(keyword);
     if (action.kind === "keyword.remove") {
       return !keyword && removed.some((item) => item.language === action.language && item.keyword === action.keyword);
     }
     if (action.kind === "keyword.pause") return keyword?.status === "paused";
     if (action.kind === "keyword.restore") return Boolean(keyword);
     if (action.kind === "keyword.resume") return Boolean(keyword && keyword.status !== "paused");
+    if (action.kind === "copy-plan.add") {
+      return (project?.copyPlans || []).some((item) =>
+        item.productId === product?.id
+        && item.title === input.title
+        && item.instruction === input.instruction,
+      );
+    }
     if (action.kind === "rank.collect") {
       const threshold = new Date(run.at).getTime() - 5 * 60 * 1000;
       return (product?.rankSnapshots || []).some((snapshot) =>
@@ -519,7 +644,7 @@ export function CopilotPage() {
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">副驾驶</h1>
+            <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">副驾</h1>
             <span className="rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
               {platformLabel(product.platform)}
             </span>
@@ -546,33 +671,39 @@ export function CopilotPage() {
             <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">总体分析</p>
             <p className="mt-0.5 text-[11px] text-zinc-400">跨工作项继续讨论</p>
           </button>
-          {orderedSuggestions.map((suggestion, suggestionIndex) => {
-            const completed = completedSuggestionIds.has(suggestion.id);
-            const dismissed = dismissedSuggestionIds.has(suggestion.id);
-            const superseded = supersededSuggestionIds.has(suggestion.id);
-            return (
-              <button
-                key={suggestion.id}
-                onClick={() => setSelectedId(suggestion.id)}
-                className={cn(
-                  "mb-1 w-full rounded-xl px-3 py-2.5 text-left transition-colors",
-                  selectedId === suggestion.id ? "bg-white dark:bg-zinc-800 shadow-sm" : "hover:bg-white/70 dark:hover:bg-zinc-800/60",
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <span className={cn(
-                    "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
-                    completed ? "bg-emerald-500" : dismissed || superseded ? "bg-zinc-300 dark:bg-zinc-600" : "bg-amber-500",
-                  )} />
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">建议 {suggestionIndex + 1}</p>
-                    <p className="line-clamp-2 text-xs font-medium leading-5 text-zinc-700 dark:text-zinc-200">{suggestion.title}</p>
-                    <p className="mt-1 text-[10px] text-zinc-400">{completed ? "动作已完成，效果待复核" : dismissed ? "已忽略" : superseded ? "历史建议" : "待决策"}{suggestion.generatedAt ? ` · ${formatHumanTime(suggestion.generatedAt)}生成` : ""}</p>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
+          {currentSuggestions.map((suggestion) => (
+            <SuggestionNavItem
+              key={suggestion.id}
+              suggestion={suggestion}
+              number={suggestionNumberById.get(suggestion.id) || 0}
+              selected={selectedId === suggestion.id}
+              completed={completedSuggestionIds.has(suggestion.id)}
+              archived={false}
+              historical={false}
+              onSelect={() => setSelectedId(suggestion.id)}
+            />
+          ))}
+          {historicalSuggestions.length > 0 && (
+            <details className="mt-2 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+              <summary className="cursor-pointer select-none rounded-lg px-3 py-2 text-[11px] font-medium text-zinc-500 hover:bg-white/70 dark:text-zinc-400 dark:hover:bg-zinc-800/60">
+                历史与归档 · {historicalSuggestions.length}
+              </summary>
+              <div className="mt-1">
+                {historicalSuggestions.map((suggestion) => (
+                  <SuggestionNavItem
+                    key={suggestion.id}
+                    suggestion={suggestion}
+                    number={suggestionNumberById.get(suggestion.id) || 0}
+                    selected={selectedId === suggestion.id}
+                    completed={completedSuggestionIds.has(suggestion.id)}
+                    archived={dismissedSuggestionIds.has(suggestion.id)}
+                    historical={supersededSuggestionIds.has(suggestion.id)}
+                    onSelect={() => setSelectedId(suggestion.id)}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
         </aside>
 
         <main className="flex min-h-0 flex-col">
@@ -580,7 +711,7 @@ export function CopilotPage() {
             {!session && !loading ? (
               <div className="flex h-full flex-col items-center justify-center text-center">
                 <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500 text-base font-bold text-white">AI</div>
-                <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-100">让副驾驶检查当前项目</h2>
+                <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-100">让副驾检查当前项目</h2>
                 <p className="mt-1 max-w-md text-sm leading-6 text-zinc-500 dark:text-zinc-400">它会读取排名、关键词状态、发布和反馈数据，形成可追问、可执行的工作项。</p>
               </div>
             ) : selectedSuggestion ? (
@@ -590,11 +721,41 @@ export function CopilotPage() {
                     <div>
                       <p className="text-[10px] font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">建议 {selectedSuggestionNumber}</p>
                       <h2 className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">{selectedSuggestion.title}</h2>
+                      {selectedSuggestion.replacesSuggestionId && (
+                        <p className="mt-1 text-[11px] text-zinc-400">由讨论产生，替代一条已撤回建议</p>
+                      )}
                     </div>
-                    {!completedSuggestionIds.has(selectedSuggestion.id) && !dismissedSuggestionIds.has(selectedSuggestion.id) && (
-                      <button onClick={() => void dismiss()} className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">忽略</button>
-                    )}
+                    <div className="flex shrink-0 items-center gap-3">
+                      {selectedSuggestionInactive ? (
+                        <span className="text-xs font-medium text-zinc-400">
+                          {selectedSuggestion.lifecycle?.state === "replaced" ? "已替代" : "已撤回"}
+                        </span>
+                      ) : dismissedSuggestionIds.has(selectedSuggestion.id) ? (
+                        <button onClick={() => void setArchived(false)} className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">
+                          {supersededSuggestionIds.has(selectedSuggestion.id) ? "取消归档" : "移回待决策"}
+                        </button>
+                      ) : (
+                        <button onClick={() => void setArchived(true)} className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">归档</button>
+                      )}
+                      <button onClick={() => void removeSuggestion()} className="text-xs text-red-400 hover:text-red-600 dark:hover:text-red-300">删除</button>
+                    </div>
                   </div>
+                  {selectedSuggestionInactive && (
+                    <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-300">
+                      <p className="font-medium text-zinc-700 dark:text-zinc-200">
+                        {selectedSuggestion.lifecycle?.state === "replaced" ? "这条建议已被替代" : "这条建议已在讨论后撤回"}
+                      </p>
+                      {selectedSuggestion.lifecycle?.reason && <p className="mt-1">{selectedSuggestion.lifecycle.reason}</p>}
+                      {replacementSuggestion && (
+                        <button
+                          onClick={() => setSelectedId(replacementSuggestion.id)}
+                          className="mt-1.5 font-medium text-amber-600 underline decoration-amber-300 underline-offset-2 dark:text-amber-400"
+                        >
+                          查看替代建议：{replacementSuggestion.title}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-3 text-sm text-zinc-600 dark:text-zinc-300"><Markdown>{readableSuggestionReason(selectedSuggestion)}</Markdown></div>
                   {(selectedSuggestion.expectedOutcome || selectedSuggestion.successMetric) && (
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -713,7 +874,7 @@ export function CopilotPage() {
             ) : (
               <div className="mb-5 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
                 {session && pendingCount === 0
-                  ? "当前没有证据充分、可直接执行并能复核效果的新建议。副驾驶不会用查看、检查或刷新数据来凑数。"
+                  ? "当前没有证据充分、可直接执行并能复核效果的新建议。副驾不会用查看、检查或刷新数据来凑数。"
                   : "这里用于讨论项目整体情况。选择左侧工作项，可以围绕具体证据继续深挖并执行动作。"}
               </div>
             )}

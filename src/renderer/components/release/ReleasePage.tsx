@@ -24,6 +24,7 @@ import { FieldBlock } from "../ui/Fields";
 import { AppleIcon, GithubIcon } from "../ui/Icons";
 import { StatusChip } from "../ui/StatusChip";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
+import { CopyPlanPanel } from "./CopyPlanPanel";
 import { PreReleaseChecklistPanel } from "./PreReleaseChecklistPanel";
 import {
   btnPrimary,
@@ -61,7 +62,7 @@ export function ReleasePage() {
     contents?: "read" | "write" | null;
   } | null>(null);
   const [selectedTag, setSelectedTag] = useState("");
-  const [viewMode, setViewMode] = useState<"working" | "current" | "history">("working");
+  const [viewMode, setViewMode] = useState<"plans" | "working" | "current" | "history">("working");
   const [active, setActive] = useState<any>(null);
   const [checking, setChecking] = useState(false);
   const [releasesLoaded, setReleasesLoaded] = useState(false);
@@ -183,7 +184,7 @@ export function ReleasePage() {
             : null;
         const urlView = searchParams.get("view");
         setViewMode(
-          urlView === "working" || urlView === "current"
+          urlView === "plans" || urlView === "working" || urlView === "current"
             ? urlView
             : workTarget
               ? "working"
@@ -312,9 +313,9 @@ export function ReleasePage() {
   // so navigating away and back preserves the current draft. 历史视图是瞬态，
   // 不写 tag，避免刷新/返回时恢复到历史发布的旧 tag。
   useEffect(() => {
-    if (!project?.id || !selectedTag) return;
+    if (!project?.id) return;
     const next = new URLSearchParams(searchParams);
-    if (viewMode !== "history" && urlTag !== selectedTag) {
+    if (viewMode !== "history" && selectedTag && urlTag !== selectedTag) {
       next.set("tag", selectedTag);
     }
     if (viewMode !== "history" && next.get("view") !== viewMode) {
@@ -706,6 +707,13 @@ export function ReleasePage() {
     }
   };
 
+  const switchToPlans = () => {
+    saveCurrentDraftIfAny();
+    setShowChecklist(false);
+    setViewMode("plans");
+    setHistoryDraft(null);
+  };
+
   // 查看历史文案（只读）。
   const handleSelectHistory = (item: any) => {
     if (!item) return;
@@ -896,6 +904,11 @@ export function ReleasePage() {
     rows.push({
       label: "跟踪关键词与排名",
       meta: activeKeywordCount > 0 ? `${activeKeywordCount} 个关键词` : "无",
+    });
+    const copyPlans = releaseContext?.copyPlans || [];
+    rows.push({
+      label: "文案计划",
+      meta: copyPlans.length > 0 ? `${copyPlans.length} 条长期改进方向` : "无",
     });
     const copyGaps = releaseContext?.copyGapKeywords || [];
     if (copyGaps.length > 0) {
@@ -1186,7 +1199,7 @@ export function ReleasePage() {
   };
 
   useEffect(() => {
-    if (viewMode !== "history" && !draft && selectedExistingDraft && selectedRelease?.draft && project && selectedTag) {
+    if (viewMode !== "history" && viewMode !== "plans" && !draft && selectedExistingDraft && selectedRelease?.draft && project && selectedTag) {
       void handleLoad(false);
     } else if (!draft && (viewMode === "working" || viewMode === "current")) {
       // 视图切换后目标没有可加载的草案（如发布列表尚未包含新建草案）时，
@@ -1258,19 +1271,7 @@ export function ReleasePage() {
         </div>
       )}
 
-      {releases.length === 0 ? (
-        !releasesLoaded || checking ? (
-          <div className="py-16 text-center text-sm text-zinc-400 dark:text-zinc-500">
-            正在检查发布状态…
-          </div>
-        ) : (
-          <EmptyState
-            title="尚未检测到新的发布"
-            desc="有新提交、GitHub 发布草案（需配置 GitHub Token，Contents 只读权限）或创建新 tag 后，这里会自动生成发布文案素材。"
-          />
-        )
-      ) : (
-        <>
+      {releases.length > 0 && (
         <div className="mb-6">
           <ReleaseReadinessPanel
             projectId={project.id}
@@ -1295,7 +1296,8 @@ export function ReleasePage() {
             checklistOpen={showChecklist}
           />
         </div>
-        {alignment && (
+      )}
+      {releases.length > 0 && alignment && (
           <div className="mb-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
             <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -1373,9 +1375,24 @@ export function ReleasePage() {
               )}
             </div>
           </div>
-        )}
-        <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
+      )}
+      <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)] items-start">
           <aside className="min-w-0 space-y-4">
+            {/* 文案计划始终可用，并位于文案草案/最新文案导航之前。 */}
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
+              <div className="p-4">
+                <button
+                  type="button"
+                  onClick={switchToPlans}
+                  className={entryBtnActive(viewMode === "plans")}
+                >
+                  <span className={entryTextActive(viewMode === "plans")}>文案计划</span>
+                  <span className={entrySubActive(viewMode === "plans")}>
+                    提前记录之后发布时要改进的方向
+                  </span>
+                </button>
+              </div>
+            </div>
             {/* 区块1：最新文案草案（工作目标）。新建/打开与「最新文案」同级同风格。 */}
             {step <= 2 && releaseContext && hasWork && (
               <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
@@ -1678,7 +1695,25 @@ export function ReleasePage() {
           </aside>
 
           <div className="min-w-0 space-y-6">
-            {showChecklist ? (
+            {viewMode === "plans" ? (
+              <CopyPlanPanel
+                projectId={project.id}
+                productId={productId}
+                supportedLanguages={products.find((item) => item.id === productId)?.supportedLanguages || []}
+                busy={generating || translatingLanguages.size > 0}
+              />
+            ) : releases.length === 0 ? (
+              !releasesLoaded || checking ? (
+                <div className="py-16 text-center text-sm text-zinc-400 dark:text-zinc-500">
+                  正在检查发布状态…
+                </div>
+              ) : (
+                <EmptyState
+                  title="尚未检测到新的发布"
+                  desc="可从左侧进入文案计划提前记录改进方向；有新提交、GitHub 发布草案或新 tag 后，再据此生成发布文案。"
+                />
+              )
+            ) : showChecklist ? (
               <PreReleaseChecklistPanel
                 checklist={checklist}
                 running={generatingChecklist}
@@ -1915,8 +1950,6 @@ export function ReleasePage() {
             )}
           </div>
         </div>
-        </>
-      )}
     </div>
   );
 }

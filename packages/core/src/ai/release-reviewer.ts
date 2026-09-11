@@ -5,6 +5,7 @@ import { requestJson, buildArchiveMessages } from "./ai-request";
 import type { ProjectProfile } from "../project-profile";
 import { EngineError } from "../errors";
 import { log } from "../logger";
+import { copyPlanMaterial, type CopyPlanItem } from "../copy-plan";
 
 export interface ReleaseReview {
   summary: string;
@@ -231,6 +232,8 @@ export async function generateStoreSubmissionContent(
     includedChanges?: string[];
     /** 文案缺口关键词：排名不佳但产品相关、当前文案未覆盖，需自然融入。 */
     copyGapKeywords?: string[];
+    /** User-approved long-term copy directions. They are guidance, not evidence of shipped features. */
+    copyPlanItems?: CopyPlanItem[];
   },
   onProgress?: (event: { language: string; status: "started" | "completed" }) => void,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
@@ -279,6 +282,7 @@ export async function translateStoreSubmissionContent(
     /** 各语言的跟踪关键词（按语言注入目标语言的词，而不是翻译源词）。 */
     trackedKeywordsByLanguage?: Record<string, string[]>;
     copyGapKeywordsByLanguage?: Record<string, string[]>;
+    copyPlanItems?: CopyPlanItem[];
   },
   source: StoreSubmissionLocalization,
   targetLanguages: string[],
@@ -344,6 +348,7 @@ async function generateGlobalReleasePlan(
     previousLocalization?: StoreSubmissionLocalization;
     profile?: ProjectProfile;
     copyGapKeywords?: string[];
+    copyPlanItems?: CopyPlanItem[];
   },
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
   signal?: AbortSignal,
@@ -374,6 +379,12 @@ async function generateGlobalReleasePlan(
       context.copyGapKeywords && context.copyGapKeywords.length > 0
         ? `Copy-gap keywords (product-relevant but currently NOT covered by the store copy; weave them naturally into name/subtitle/promotional text/keywords/description where appropriate — do not stack): ${context.copyGapKeywords.join(", ")}`
         : "",
+      ...(copyPlanMaterial(context.copyPlanItems || []).length > 0
+        ? [
+            "User-approved copy plan (writing direction only; do not treat it as proof that a feature exists):",
+            ...copyPlanMaterial(context.copyPlanItems || []),
+          ]
+        : []),
       `Current submission keywords: ${context.currentSubmissionKeywords
         .map((item) => `${item.language}:${item.text}`)
         .join("; ") || "N/A"}`,
@@ -424,6 +435,7 @@ async function generateLocalizedStoreCopy(
     profile?: ProjectProfile;
     includedChanges?: string[];
     copyGapKeywords?: string[];
+    copyPlanItems?: CopyPlanItem[];
   },
   language: string,
   onChars?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
@@ -464,6 +476,7 @@ async function generateLocalizedStoreCopy(
         ? "whatsNew 必须严格只包含本次确认的变更项，不得添加未列出的内容，也不得加版本标题。"
         : "Use the release body primarily for whatsNew. For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
       "Keep promotionalText ≤170 characters, keywords ≤100 characters, and description/whatsNew ≤4000 characters.",
+      "The copy plan below is user-approved writing guidance, not product evidence. Apply it only when README/profile/release material supports the claim. Never use a copy plan to invent features. Copy-plan guidance must not add content to whatsNew unless the confirmed release changes independently support it.",
     ].join("\n"),
     [
       `Language: ${language}`,
@@ -492,6 +505,12 @@ async function generateLocalizedStoreCopy(
       context.copyGapKeywords && context.copyGapKeywords.length > 0
         ? `Copy-gap keywords for this language (ranked poorly because the copy does not cover them; weave the most important ones into name/subtitle/promotional text/keywords where natural — do not stack): ${context.copyGapKeywords.join(", ")}`
         : "",
+      ...(copyPlanMaterial(context.copyPlanItems || [], language).length > 0
+        ? [
+            `Copy plan for ${language}:`,
+            ...copyPlanMaterial(context.copyPlanItems || [], language),
+          ]
+        : []),
       `Current submission keywords: ${context.currentSubmissionKeywords
         .filter((item: { language: string; text: string }) => item.language === language)
         .map((item: { language: string; text: string }) => item.text)
@@ -539,6 +558,7 @@ async function generateTranslatedStoreCopy(
     profile?: ProjectProfile;
     trackedKeywordsByLanguage?: Record<string, string[]>;
     copyGapKeywordsByLanguage?: Record<string, string[]>;
+    copyPlanItems?: CopyPlanItem[];
   },
   primary: StoreSubmissionLocalization,
   language: string,
@@ -577,6 +597,7 @@ async function generateTranslatedStoreCopy(
       "If the target language has copy-gap keywords (ranked poorly because the current copy does not cover them), weave the most important 1-2 into the name/subtitle/promotional text where natural — do not stack or force them.",
       "After adapting keywords, re-polish the whole set so name + subtitle + keywords stay coherent and read naturally in the target language.",
       "Do not invent new product facts. Translate the provided copy faithfully.",
+      "Apply target-language copy-plan guidance only when it remains consistent with the source copy. It must never create new whatsNew claims.",
       "For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
     ].join("\n"),
     [
@@ -595,6 +616,12 @@ async function generateTranslatedStoreCopy(
       targetGapKeywords.length > 0
         ? `Copy-gap keywords (${language}, product-relevant but NOT covered by the current copy — incorporate into keywords, and where natural into name/subtitle/promotional text): ${targetGapKeywords.join(", ")}`
         : "",
+      ...(copyPlanMaterial(context.copyPlanItems || [], language).length > 0
+        ? [
+            `Copy plan for ${language}:`,
+            ...copyPlanMaterial(context.copyPlanItems || [], language),
+          ]
+        : []),
     ],
   );
 

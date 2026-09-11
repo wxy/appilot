@@ -37,6 +37,7 @@ const project = {
     {
       id: "product-1",
       platform: "ios",
+      supportedLanguages: [{ code: "en" }, { code: "zh-Hans" }],
       trackedKeywords: [
         { language: "en", keyword: "path of light", status: "active", rationale: "test" },
       ],
@@ -45,11 +46,14 @@ const project = {
   ],
 };
 const store = new MemoryStore([project]);
-const request = (actionId: AppActionRequest["actionId"]): AppActionRequest => ({
+const request = (
+  actionId: AppActionRequest["actionId"],
+  input: AppActionRequest["input"] = { language: "en", keyword: "path of light" },
+): AppActionRequest => ({
   actionId,
   projectId: "project-1",
   productId: "product-1",
-  input: { language: "en", keyword: "path of light" },
+  input,
   source: "copilot",
   suggestionId: "suggestion-2",
 });
@@ -59,8 +63,33 @@ assert.deepEqual(
   briefRecommendationCapabilities().map((item) => item.kind).sort(),
   "every AI-eligible capability must have a main-process executor",
 );
-assert.equal(listRegisteredActions().length, 4);
+assert.equal(listRegisteredActions().length, 6);
 assert.equal(recommendationActionCatalog().every((item) => item.recommendationEligible), true);
+assert.equal(recommendationActionCatalog().every((item) => item.inputSchema.type === "object"), true);
+
+const addKeywordRequest = request("keyword.track.add", {
+  language: "en",
+  keyword: "safe night walk",
+  rationale: "与产品定位一致，且尚未跟踪",
+});
+assert.equal(previewRegisteredAction(store, addKeywordRequest).available, true);
+const addedKeyword = executeRegisteredAction(store, addKeywordRequest);
+assert.equal(addedKeyword.execution.status, "verified");
+assert.equal(addedKeyword.updatedProject.trackedKeywords.some((item: any) => item.keyword === "safe night walk"), true);
+assert.equal(previewRegisteredAction(store, addKeywordRequest).available, false);
+
+const addPlanRequest = request("copy-plan.add", {
+  title: "突出离线安心感",
+  instruction: "在描述与宣传文本中更清楚地表达离线也能使用。",
+  reason: "用户反馈中反复询问网络依赖",
+  fields: ["promotionalText", "description"],
+  languages: ["en"],
+});
+assert.equal(previewRegisteredAction(store, addPlanRequest).available, true);
+const addedPlan = executeRegisteredAction(store, addPlanRequest);
+assert.equal(addedPlan.execution.status, "verified");
+assert.equal(addedPlan.updatedProject.copyPlans[0].source, "copilot");
+assert.equal(previewRegisteredAction(store, addPlanRequest).available, false);
 
 const pausePreview = previewRegisteredAction(store, request("keyword.pause"));
 assert.equal(pausePreview.available, true);
@@ -77,16 +106,16 @@ assert.equal(resumed.updatedProject.trackedKeywords[0].status, "active");
 
 const removed = executeRegisteredAction(store, request("keyword.remove"));
 assert.equal(removed.execution.status, "verified");
-assert.equal(removed.updatedProject.trackedKeywords.length, 0);
-assert.equal(removed.updatedProject.storeProducts[0].trackedKeywords.length, 0);
+assert.equal(removed.updatedProject.trackedKeywords.some((item: any) => item.keyword === "path of light"), false);
+assert.equal(removed.updatedProject.storeProducts[0].trackedKeywords.some((item: any) => item.keyword === "path of light"), false);
 assert.equal(removed.updatedProject.removedKeywords[0].keyword, "path of light");
 
 const restored = executeRegisteredAction(store, request("keyword.restore"));
 assert.equal(restored.execution.status, "verified");
-assert.equal(restored.updatedProject.trackedKeywords[0].keyword, "path of light");
+assert.equal(restored.updatedProject.trackedKeywords.some((item: any) => item.keyword === "path of light"), true);
 assert.equal(restored.updatedProject.removedKeywords.length, 0);
 
-assert.equal(store.get<any[]>("appActionExecutions").length, 4);
+assert.equal(store.get<any[]>("appActionExecutions").length, 6);
 assert.equal(findRecordedActionExecution(store, restored.execution.id)?.status, "verified");
 assert.throws(
   () => previewRegisteredAction(store, { ...request("keyword.pause"), projectId: "other" }),

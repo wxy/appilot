@@ -35,7 +35,7 @@ export function HomePage() {
   return (
     <div className="p-10 max-w-3xl mx-auto">
       <h2 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-        欢迎回来，副驾驶待命中
+        欢迎回来，副驾待命中
       </h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
         选择一个项目开始，或接入一个新的应用仓库。
@@ -158,7 +158,7 @@ export function HomePage() {
 
       <div className="mt-10 rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center">
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          接入一个本地应用仓库，让副驾驶识别产品并建立基础档案。
+          接入一个本地应用仓库，让副驾识别产品并建立基础档案。
         </p>
         <button onClick={handleAdd} disabled={adding} className={btnPrimary}>
           {adding ? "正在分析..." : "＋ 添加项目"}
