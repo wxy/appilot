@@ -10,7 +10,7 @@ import {
   fetchStoreCurrentVersion,
 } from '@appilot-labs/appilot-core/app-store-discovery';
 import { collectKeywordRankings, type RankTarget } from '@appilot-labs/appilot-core/rank-collector';
-import { storefrontsForLanguage } from '@appilot-labs/appilot-core/storefronts';
+import { ALL_STOREFRONT_CODES, storefrontsForLanguage } from '@appilot-labs/appilot-core/storefronts';
 import { listGitTags } from '@appilot-labs/appilot-core/release-watcher';
 import { listGitHubReleases } from '@appilot-labs/appilot-core/github-api';
 import { runReadinessChecks } from '@appilot-labs/appilot-core/readiness-check';
@@ -42,11 +42,17 @@ function buildBriefInput(ov: {
     paused: 0,
   };
   const rankMovers = computeRankMovers(ov.snapshots);
+  const storefrontCoverage = [...new Set(ov.snapshots.map((snapshot) => snapshot.language))]
+    .map((language) => ({
+      language,
+      storefronts: language === 'en' ? [...ALL_STOREFRONT_CODES] : storefrontsForLanguage(language),
+    }));
   return {
     name: ov.name,
     description: ov.description || '',
     platform: ov.platform || 'unknown',
     supportedLanguages: ov.languages,
+    storefrontCoverage,
     keywordStats,
     rankMovers,
     detectedIssues: detectOverviewIssues({

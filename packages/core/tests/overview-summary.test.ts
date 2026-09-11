@@ -55,6 +55,7 @@ assert(input.keywordStats.checked === 1, "buildBriefInput: null and ranked snaps
 assert(input.keywordStats.ranked === 1 && input.keywordStats.top10 === 1, "buildBriefInput: ranked/top10 from snapshots (night walk best #5 in window)");
 assert(input.keywordInventory?.active[0]?.keyword === "night walk" && input.keywordInventory?.paused[0]?.keyword === "paused now", "buildBriefInput: active and paused keyword inventory");
 assert(input.keywordInventory?.removed[0]?.keyword === "old removed", "buildBriefInput: removed keyword inventory");
+assert(input.storefrontCoverage.find((item) => item.language === "en")?.storefronts.length === 27, "buildBriefInput: English query coverage exposes all storefronts");
 assert(input.keywordRankDetails?.[0]?.rankedStorefronts === 1 && input.keywordRankDetails?.[0]?.bestRanks[0]?.rank === 12, "buildBriefInput: latest per-storefront rank detail");
 assert(!input.rankMovers.some((m) => m.keyword === "paused now" || m.keyword === "记账"), "buildBriefInput: movers only include active tracked keywords");
 assert(input.detectedIssues.some((issue) => issue.category === "ranking" && issue.target === "night walk"), "buildBriefInput: significant rank drop becomes a detected issue");

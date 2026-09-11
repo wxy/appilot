@@ -179,6 +179,11 @@ function buildBriefContextDigest(
         ].filter(Boolean).join("，");
       }).join("\n")
     : "";
+  const storefrontCoverageText = Array.isArray(input?.storefrontCoverage)
+    ? input.storefrontCoverage
+        .map((item: any) => `${item.language}:${(item.storefronts || []).join("/")}（共 ${(item.storefronts || []).length} 店）`)
+        .join("；")
+    : "";
   return [
     `项目：${input?.name || ""}`,
     `平台：${input?.platform || "unknown"}`,
@@ -186,6 +191,7 @@ function buildBriefContextDigest(
     `活跃关键词：${inventoryText(inventory.active)}`,
     `暂停关键词：${inventoryText(inventory.paused)}`,
     `已删除关键词：${inventoryText(inventory.removed)}`,
+    storefrontCoverageText ? `商店覆盖口径：${storefrontCoverageText}` : "",
     keywordDetailText ? `关键词当前排名摘要：\n${keywordDetailText}` : "关键词当前排名摘要：无",
     `14 天发布状态：${input?.release ? `tag=${input.release.tag || "unknown"}，语言 ${input.release.languageProgress || 0}/${input.release.languageTotal || 0}` : "无发布草稿"}`,
     `反馈主题：${feedbackCount} 个`,
@@ -2087,7 +2093,7 @@ export function registerProjectsHandlers(): void {
     const currentIds = new Set(suggestions.map((item: any) => item.id));
     const previousSuggestions = (previous?.suggestions || []).filter(
       (item) => !currentIds.has(item.id),
-    );
+    ).map((item) => ({ ...item, generatedAt: item.generatedAt || previous?.generatedAt }));
     const supersededSuggestionIds = [...new Set([
       ...(previous?.supersededSuggestionIds || []),
       ...previousSuggestions
@@ -2102,6 +2108,7 @@ export function registerProjectsHandlers(): void {
       briefContext,
       suggestions: [...suggestions.map((item: any) => ({
         id: item.id,
+        generatedAt,
         title: item.title,
         reason: item.reason,
         action: item.action,
@@ -2201,10 +2208,15 @@ export function registerProjectsHandlers(): void {
         "请严格基于给定上下文回答，不要编造具体指标或事实；对不确定项明确标注。",
         "上下文中的关键词状态和排名摘要来自 Appilot 数据库。用户询问具体关键词、暂停/删除状态或商店差异时，直接分析这些数据，不要要求用户再次导出或提供 Appilot 已持有的数据。",
         "用户可以用“建议 2”或“动作 2.1”引用界面编号。请根据下方编号目录理解指代，并在回答中沿用编号。",
-        "answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。若动作可由 Appilot 完成，同时返回 proposedActions；允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、trend.open、release.open。关键词动作必须填写上下文中真实存在的 language 和 keyword。",
+        "answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。若动作可由 Appilot 完成，同时返回 proposedActions；允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、release.open。关键词动作必须填写上下文中真实存在的 language 和 keyword。关键词排名趋势使用 keyword.open，长期效果页目前不承接关键词分析。",
+        "使用自然中文，不要向用户暴露 detectedIssues、high、medium 等内部字段名。首次提到具体对象时必须说出关键词，避免无前文的“该词”或“同一关键词”。",
         "只输出 JSON：{\"answer\":\"Markdown 回答\",\"proposedActions\":[{\"kind\":\"keyword.open\",\"label\":\"查看关键词\",\"language\":\"en\",\"keyword\":\"night walk\",\"storefront\":\"us\"}]}",
       ];
-      const numberedSuggestionContext = session.suggestions.slice(0, 10).map((suggestion, index) => {
+      const orderedSuggestions = [...session.suggestions].sort((a, b) =>
+        new Date(b.generatedAt || session.generatedAt).getTime()
+        - new Date(a.generatedAt || session.generatedAt).getTime(),
+      );
+      const numberedSuggestionContext = orderedSuggestions.slice(0, 10).map((suggestion, index) => {
         const actions = [
           ...(suggestion.proposedActions || []),
           ...session.exchanges
@@ -2223,7 +2235,7 @@ export function registerProjectsHandlers(): void {
         numberedSuggestionContext ? `界面编号目录：\n${numberedSuggestionContext}` : "",
       ].filter(Boolean).join("\n");
       const targetSuggestionNumber = targetSuggestion
-        ? session.suggestions.findIndex((item) => item.id === targetSuggestion.id) + 1
+        ? orderedSuggestions.findIndex((item) => item.id === targetSuggestion.id) + 1
         : 0;
       const suggestionContext = targetSuggestion
         ? [
@@ -2397,7 +2409,7 @@ export function registerProjectsHandlers(): void {
       ? storefront.toLowerCase()
       : null;
 
-    if (requestedStorefront && allowedStorefronts.length > 0 && !allowedStorefronts.includes(requestedStorefront)) {
+    if (requestedStorefront && language && !isStorefrontAllowedForQueryLanguage(language, requestedStorefront)) {
       throw new Error(`商店 ${requestedStorefront.toUpperCase()} 不属于语言 ${language}，请重新选择。`);
     }
 

@@ -3,6 +3,7 @@
  */
 
 import type { ProjectProfile } from "./project-profile";
+import { ALL_STOREFRONT_CODES, storefrontsForLanguage } from "./storefronts";
 
 export interface RankSnapshotLike {
   keyword: string;
@@ -195,6 +196,7 @@ export interface OverviewBriefInput {
   description: string;
   platform: string;
   supportedLanguages: string[];
+  storefrontCoverage: { language: string; storefronts: string[] }[];
   keywordStats: { tracked: number; checked?: number; ranked: number; top10: number; paused: number };
   /** Compact keyword-level evidence retained for concrete multi-turn follow-ups. */
   keywordInventory?: KeywordInventory;
@@ -353,12 +355,20 @@ export function buildBriefInput(args: {
       }
     : null;
   const feedbackThemes = args.feedbackThemes || [];
+  const storefrontCoverage = [...new Set(active.map((item) => item.language || "").filter(Boolean))]
+    .map((language) => ({
+      language,
+      storefronts: language === "en"
+        ? [...ALL_STOREFRONT_CODES]
+        : storefrontsForLanguage(language),
+    }));
 
   return {
     name: args.productName || args.projectName,
     description: args.description || "",
     platform: args.platform,
     supportedLanguages: args.supportedLanguages,
+    storefrontCoverage,
     keywordStats,
     keywordInventory,
     keywordRankDetails,

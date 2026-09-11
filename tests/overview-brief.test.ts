@@ -45,8 +45,12 @@ assert(
   "parse: specific keyword view without language is rejected",
 );
 assert(
-  normalizeBriefFollowupResponse({ answer: "**结论**", proposedActions: [{ kind: "trend.open", label: "查看趋势" }] }).proposedActions[0]?.kind === "trend.open",
+  normalizeBriefFollowupResponse({ answer: "**结论**", proposedActions: [{ kind: "release.open", label: "查看发布" }] }).proposedActions[0]?.kind === "release.open",
   "parse: follow-up markdown answer and actions",
+);
+assert(
+  normalizeBriefProposedActions([{ kind: "trend.open", label: "查看长期效果" }]).length === 0,
+  "parse: unfinished trend page is not proposed",
 );
 assert(parsed[1].action === "release", "parse: release action kept");
 assert(parsed[2].action === "keywords", "parse: unknown action falls back to keywords");
@@ -71,6 +75,7 @@ const input: any = {
   description: "Night walking app",
   platform: "ios",
   supportedLanguages: ["en", "zh-Hans"],
+  storefrontCoverage: [{ language: "en", storefronts: ["us", "es"] }],
   keywordStats: { tracked: 10, ranked: 4, top10: 2, paused: 1 },
   keywordInventory: { active: [{ keyword: "night walk", language: "en" }], paused: [], removed: [] },
   keywordRankDetails: [{ keyword: "night walk", language: "en", checkedStorefronts: 1, rankedStorefronts: 1, unrankedStorefronts: 0, top10Storefronts: 0, bestRanks: [{ storefront: "us", rank: 12 }], weakestRanks: [], latestCheckedAt: new Date().toISOString() }],
@@ -85,7 +90,9 @@ const joined = messages.map((m) => m.content).join("\n");
 assert(joined.includes("GloWalk") && joined.includes("night walk") && joined.includes("v1.2.0"), "buildBriefMessages: context embedded");
 assert(messages[0].role === "system", "buildBriefMessages: system prompt first");
 assert(joined.includes("detectedIssues") && joined.includes("优先处理 high"), "buildBriefMessages: deterministic issues drive prioritization");
+assert(joined.includes("storefrontCoverage") && joined.includes("不能扩大覆盖"), "buildBriefMessages: collection refresh is distinct from storefront coverage");
 assert(joined.includes("不要复述这些状态") && joined.includes("不同的决策"), "buildBriefMessages: avoids dashboard repetition and fragmented advice");
+assert(joined.includes("不得输出 detectedIssues") && joined.includes("一律使用 keyword.open"), "buildBriefMessages: internal fields stay out of user copy and keyword trends use ranking page");
 
 // 4. buildBriefMessages with feedback themes + competitor deltas
 const themedInput: any = {

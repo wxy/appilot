@@ -20,6 +20,7 @@ assert(defaultStorefrontForLanguage("de") === "de", "de defaults to de");
 assert(isStorefrontAllowedForQueryLanguage("zh-Hans", "cn"), "zh-Hans is allowed in cn");
 assert(!isStorefrontAllowedForQueryLanguage("zh-Hans", "us"), "zh-Hans is not allowed in us");
 assert(isStorefrontAllowedForQueryLanguage("en", "cn"), "English is allowed in cn");
+assert(isStorefrontAllowedForQueryLanguage("en", "es"), "English is allowed in es");
 
 console.log(`\n${errors === 0 ? "🎉 All storefront tests passed!" : `❌ ${errors} test(s) failed`}`);
 process.exit(errors > 0 ? 1 : 0);

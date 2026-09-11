@@ -31,6 +31,7 @@ export interface BriefProposedAction {
 
 export interface BriefSuggestion {
   id: string;
+  generatedAt?: string;
   title: string;
   reason: string;
   action: BriefAction;
@@ -55,7 +56,7 @@ export function briefSuggestionId(title: string, action: BriefAction, target: un
 const BRIEF_ACTIONS: BriefAction[] = ["keywords", "release", "trend"];
 const BRIEF_COMMANDS: BriefCommandKind[] = [
   "keyword.open", "keyword.pause", "keyword.remove", "keyword.restore",
-  "keyword.resume", "rank.collect", "trend.open", "release.open",
+  "keyword.resume", "rank.collect", "release.open",
 ];
 const CONFIRM_COMMANDS = new Set<BriefCommandKind>([
   "keyword.pause", "keyword.remove", "keyword.restore", "keyword.resume", "rank.collect",
@@ -148,7 +149,10 @@ export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
       "feedbackThemes 和 competitorDeltas 只作为补充依据；竞品更新本身不等于风险。",
       "总览页已经展示关键词数量、排名分布、发布进度、仓库活动、评价和竞品概况。不要复述这些状态，也不要把同一问题拆成多条建议。",
       "keywordInventory 和 keywordRankDetails 是数据库中的关键词级证据。涉及排名时先比较语言、商店和关键词差异；只有确实没有检查记录时，才能判断采集数据缺失。",
-      "如果建议能由 Appilot 执行，请提供 proposedActions。允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、trend.open、release.open。关键词动作必须填写真实存在的 language 和 keyword；rank.collect 必须填写 language，storefront 可选。不要根据不充分证据提出删除。",
+      "storefrontCoverage 是每种查询语言应覆盖的完整商店集合。checkedStorefronts 已等于对应集合数量时，覆盖已经完整；rank.collect 只能刷新已有目标商店，不能扩大覆盖，不得把刷新描述为补齐覆盖。",
+      "如果建议能由 Appilot 执行，请提供 proposedActions。允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、release.open。关键词动作必须填写真实存在的 language 和 keyword；rank.collect 必须填写 language，storefront 可选。不要根据不充分证据提出删除。",
+      "关键词排名、掉榜或排名趋势一律使用 keyword.open，填写精确的 language、keyword 和 storefront；长期效果页目前不承接关键词分析。",
+      "title 和 reason 必须使用自然中文。不得输出 detectedIssues、high、medium 等内部字段名；涉及具体词时必须明确写出关键词，不要用“该词”或“同一关键词”作为首次指代。",
       "每条建议必须代表一个不同的决策：title 直接写下一步动作；reason 只解释为什么现在值得做，最多引用两个关键证据。若只有一个高价值动作，就只输出一条。",
       "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\",\"proposedActions\":[{\"kind\":\"keyword.open\",\"label\":\"查看关键词\",\"language\":\"en\",\"keyword\":\"night walk\",\"storefront\":\"us\"}]}]}",
       "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",

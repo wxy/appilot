@@ -117,10 +117,11 @@ const CopilotComposer = memo(function CopilotComposer({
 
 function fallbackActions(suggestion: BriefSuggestion, language: string | null): BriefProposedAction[] {
   if (suggestion.proposedActions?.length) return suggestion.proposedActions;
+  if (suggestion.action === "trend" && (!language || !suggestion.target)) return [];
   const kind = suggestion.action === "release"
     ? "release.open"
     : suggestion.action === "trend"
-      ? "trend.open"
+      ? "keyword.open"
       : "keyword.open";
   return [{
     id: `fallback-${suggestion.id}`,
@@ -131,6 +132,22 @@ function fallbackActions(suggestion: BriefSuggestion, language: string | null): 
     storefront: null,
     requiresConfirmation: false,
   }];
+}
+
+function readableSuggestionReason(suggestion: BriefSuggestion): string {
+  const target = suggestion.target?.trim();
+  return suggestion.reason
+    .replace(
+      /detectedIssues\s*两条\s*high\s*都指向同一关键词[：:]/gi,
+      target ? `已确认的两项高优先级问题都来自关键词「${target}」：` : "已确认的两项高优先级问题：",
+    )
+    .replace(/\bdetectedIssues\b/gi, "已确认问题")
+    .replace(/\bhigh\b/gi, "高优先级")
+    .replace(/\bmedium\b/gi, "中优先级");
+}
+
+function readableActionMessage(message: string): string {
+  return message.replace(/^Error invoking remote method '[^']+': Error:\s*/i, "");
 }
 
 function actionDescription(action: BriefProposedAction): string {
@@ -191,7 +208,6 @@ function ActionDetailSheet({
     (item, index) => rankRows.findIndex((candidate) => candidate.storefront === item.storefront) === index,
   ).slice(0, 8);
   const isKeyword = action.kind === "keyword.open";
-  const isTrend = action.kind === "trend.open";
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-zinc-950/25 backdrop-blur-[1px]" onMouseDown={onClose}>
@@ -215,7 +231,7 @@ function ActionDetailSheet({
           {suggestion && (
             <div className="mb-5 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 px-4 py-3">
               <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">建议依据</p>
-              <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-300"><Markdown>{suggestion.reason}</Markdown></div>
+              <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-300"><Markdown>{readableSuggestionReason(suggestion)}</Markdown></div>
             </div>
           )}
 
@@ -253,17 +269,6 @@ function ActionDetailSheet({
                   <p className="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">{tracked?.rationale || removed?.rationale}</p>
                 </div>
               )}
-            </div>
-          ) : isTrend ? (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
-                <p className="text-[10px] text-zinc-400">历史快照</p>
-                <p className="mt-1 text-lg font-semibold text-zinc-800 dark:text-zinc-100">{product.rankSnapshots.length}</p>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
-                <p className="text-[10px] text-zinc-400">覆盖关键词</p>
-                <p className="mt-1 text-lg font-semibold text-zinc-800 dark:text-zinc-100">{new Set(product.rankSnapshots.map((item) => `${item.language}\u0000${item.keyword}`)).size}</p>
-              </div>
             </div>
           ) : (
             <p className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-4 text-sm leading-6 text-zinc-500 dark:text-zinc-400">发布包含版本、文案、检查项和商店状态等多个关联区域。这里保留建议依据，具体修改在完整发布工作台中进行。</p>
@@ -364,9 +369,17 @@ export function CopilotPage() {
     () => new Set(session?.supersededSuggestionIds || []),
     [session],
   );
+  const orderedSuggestions = useMemo(() => [...(session?.suggestions || [])]
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const time = new Date(b.item.generatedAt || session?.generatedAt || 0).getTime()
+        - new Date(a.item.generatedAt || session?.generatedAt || 0).getTime();
+      return time || a.index - b.index;
+    })
+    .map(({ item }) => item), [session]);
   const suggestionNumberById = useMemo(
-    () => new Map((session?.suggestions || []).map((item, index) => [item.id, index + 1])),
-    [session],
+    () => new Map(orderedSuggestions.map((item, index) => [item.id, index + 1])),
+    [orderedSuggestions],
   );
   const selectedSuggestion = session?.suggestions.find((item) => item.id === selectedId) || null;
   const selectedSuggestionNumber = selectedSuggestion
@@ -383,7 +396,15 @@ export function CopilotPage() {
     const items = [
       ...(selectedSuggestion ? fallbackActions(selectedSuggestion, activeKeyword?.language || null) : []),
       ...visibleExchanges.flatMap((item) => item.proposedActions || []),
-    ];
+    ].map((action) => action.kind === "trend.open" && activeKeyword && selectedSuggestion?.target
+      ? {
+          ...action,
+          kind: "keyword.open" as const,
+          label: "查看关键词排名",
+          language: activeKeyword.language,
+          keyword: selectedSuggestion.target,
+        }
+      : action).filter((action) => action.kind !== "trend.open");
     return [...new Map(items.map((item) => [item.id, item])).values()];
   }, [selectedSuggestion, activeKeyword?.language, visibleExchanges]);
   const actionReference = (action: BriefProposedAction) => {
@@ -491,7 +512,7 @@ export function CopilotPage() {
         ? { ...current, state: "success", detail: current.completed ? `已完成，共收到 ${current.completed} 个排名结果` : "动作已完成" }
         : current);
     } catch (err: any) {
-      const message = err?.message || "执行失败";
+      const message = readableActionMessage(err?.message || "执行失败");
       await recordExecution(action, "failed", message).catch(() => undefined);
       setError(message);
       setTaskFeedback((current) => current?.actionId === action.id
@@ -597,7 +618,7 @@ export function CopilotPage() {
             <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">总体分析</p>
             <p className="mt-0.5 text-[11px] text-zinc-400">跨工作项继续讨论</p>
           </button>
-          {(session?.suggestions || []).map((suggestion, suggestionIndex) => {
+          {orderedSuggestions.map((suggestion, suggestionIndex) => {
             const completed = completedSuggestionIds.has(suggestion.id);
             const dismissed = dismissedSuggestionIds.has(suggestion.id);
             const superseded = supersededSuggestionIds.has(suggestion.id);
@@ -618,7 +639,7 @@ export function CopilotPage() {
                   <div className="min-w-0">
                     <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">建议 {suggestionIndex + 1}</p>
                     <p className="line-clamp-2 text-xs font-medium leading-5 text-zinc-700 dark:text-zinc-200">{suggestion.title}</p>
-                    <p className="mt-1 text-[10px] text-zinc-400">{completed ? "已验证" : dismissed ? "已忽略" : superseded ? "历史建议" : "待决策"}</p>
+                    <p className="mt-1 text-[10px] text-zinc-400">{completed ? "已验证" : dismissed ? "已忽略" : superseded ? "历史建议" : "待决策"}{suggestion.generatedAt ? ` · ${formatHumanTime(suggestion.generatedAt)}生成` : ""}</p>
                   </div>
                 </div>
               </button>
@@ -646,7 +667,7 @@ export function CopilotPage() {
                       <button onClick={() => void dismiss()} className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">忽略</button>
                     )}
                   </div>
-                  <div className="mt-3 text-sm text-zinc-600 dark:text-zinc-300"><Markdown>{selectedSuggestion.reason}</Markdown></div>
+                  <div className="mt-3 text-sm text-zinc-600 dark:text-zinc-300"><Markdown>{readableSuggestionReason(selectedSuggestion)}</Markdown></div>
                 </div>
                 {proposedActions.length > 0 && (
                   <div className="mb-5 rounded-xl border border-amber-200/70 dark:border-amber-500/20 bg-amber-50/50 dark:bg-amber-500/5 p-3">
@@ -712,7 +733,11 @@ export function CopilotPage() {
                     ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/5 dark:text-emerald-400"
                     : "border-red-200 bg-red-50 text-red-600 dark:border-red-500/20 dark:bg-red-500/5 dark:text-red-400",
                 )}>
-                  {run.status === "executed" ? (isActionVerified(run) ? "已执行并验证" : "已执行，等待数据验证") : "执行失败"} · {run.message} · {formatHumanTime(run.at)}
+                  {run.status === "executed" && run.action.kind.endsWith(".open")
+                    ? "已查看"
+                    : run.status === "executed"
+                      ? (isActionVerified(run) ? "已执行并验证" : "已执行，等待数据验证")
+                      : "执行失败"} · {readableActionMessage(run.message)} · {formatHumanTime(run.at)}
                   <span className="ml-1 opacity-60">({actionReference(run.action)})</span>
                 </div>
               ))}
