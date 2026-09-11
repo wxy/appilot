@@ -548,7 +548,7 @@ export function TaskCenterPage() {
                   onClick={daemonStart}
                   aria-label="启动调度器"
                   className={cn(
-                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center h-7 w-7 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     "border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:border-emerald-600",
                   )}
                   title={
@@ -557,14 +557,9 @@ export function TaskCenterPage() {
                       : "启动调度器：拉起常驻 daemon，自动调度恢复"
                   }
                 >
-                  {ctrlAction === "start" ? (
-                    "…"
-                  ) : (
-                    <>
-                      <span aria-hidden="true" className="mr-1 text-[10px]">▶</span>
-                      启动
-                    </>
-                  )}
+                  <span aria-hidden="true" className="text-[11px]">
+                    {ctrlAction === "start" ? "…" : "▶"}
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -572,12 +567,12 @@ export function TaskCenterPage() {
                   onClick={daemonStop}
                   aria-label="停止调度器"
                   className={cn(
-                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center h-7 w-7 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600",
                   )}
                   title="停止调度器：关停常驻 daemon（手动「立即运行」仍可用；重启应用随启动恢复）"
                 >
-                  {ctrlAction === "stop" ? "…" : "停止"}
+                  <span aria-hidden="true">{ctrlAction === "stop" ? "…" : "■"}</span>
                 </button>
                 <button
                   type="button"
@@ -585,12 +580,12 @@ export function TaskCenterPage() {
                   onClick={restartScheduler}
                   aria-label="重启调度器"
                   className={cn(
-                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center h-7 w-7 rounded-lg border text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     "border-zinc-300 dark:border-zinc-600 bg-white dark:bg-transparent text-zinc-600 dark:text-zinc-300 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400",
                   )}
                   title="重启调度器：先停止再启动，加载磁盘最新代码——「版本不一致」提示时使用"
                 >
-                  {ctrlAction === "restart" ? "…" : "重启"}
+                  <span aria-hidden="true">{ctrlAction === "restart" ? "…" : "↻"}</span>
                 </button>
                 <button
                   type="button"
@@ -615,7 +610,7 @@ export function TaskCenterPage() {
                   }}
                   aria-label={accel ? "延长加速 5 分钟" : "开启加速模式"}
                   className={cn(
-                    "inline-flex items-center justify-center gap-1 h-7 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center h-7 w-7 rounded-lg border text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     accel
                       ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
                       : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
@@ -624,20 +619,11 @@ export function TaskCenterPage() {
                     !engineActive
                       ? "调度器未运行——先「启动调度器」再加速"
                       : accel
-                        ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
+                        ? `加速中${accelRemainingMs != null ? `，剩余 ${Math.ceil(accelRemainingMs / 1000)} 秒` : ""}；点击延长 5 分钟`
                         : "开启加速模式，以更快速度处理积压任务"
                   }
                 >
-                  {accel ? (
-                    <>
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                      {accelRemainingMs != null
-                        ? `加速 · ${Math.ceil(accelRemainingMs / 1000)}s`
-                        : "加速中"}
-                    </>
-                  ) : (
-                    "加速"
-                  )}
+                  <span aria-hidden="true" className={accel ? "animate-pulse" : undefined}>⚡</span>
                 </button>
               </div>
             </div>
