@@ -53,6 +53,8 @@ export interface AppilotStore {
     since(sinceIso: string, limit?: number): Record<string, unknown>[];
     /** 最近 limit 条（按 ts/id 升序返回；镜像 kv slice(-20000) 语义）。 */
     latest(limit?: number): Record<string, unknown>[];
+    /** 按任务聚合完整历史，不解析 entryJson；供任务中心恢复运行事实。 */
+    summaryByTask(): { taskId: string; firstRunAt: string; lastRunAt: string; count: number }[];
     /** 清理早于 beforeIso 的记录，返回删除行数。 */
     pruneBefore(beforeIso: string): number;
   };
@@ -402,6 +404,23 @@ export function openStore(dbPath: string): AppilotStore {
           )
           .all(n) as any[];
         return rows.reverse().map((r) => JSON.parse(r.entryJson) as Record<string, unknown>);
+      },
+      summaryByTask() {
+        const rows = db
+          .prepare(
+            `SELECT taskId, MIN(ts) AS firstRunAt, MAX(ts) AS lastRunAt, COUNT(*) AS count
+             FROM rank_executions
+             WHERE taskId IS NOT NULL AND taskId <> ''
+             GROUP BY taskId
+             ORDER BY taskId ASC`,
+          )
+          .all() as { taskId: string; firstRunAt: string; lastRunAt: string; count: number | bigint }[];
+        return rows.map((row) => ({
+          taskId: row.taskId,
+          firstRunAt: row.firstRunAt,
+          lastRunAt: row.lastRunAt,
+          count: Number(row.count),
+        }));
       },
       pruneBefore(beforeIso) {
         const res = db.prepare('DELETE FROM rank_executions WHERE ts < ?').run(beforeIso);

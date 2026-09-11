@@ -30,8 +30,14 @@ async function main() {
     // 未提列字段原样保留
     const full = store.executions.since('2026-09-04T00:00:00Z');
     assert.equal((full[0] as any).keyword, 'app');
+    const summaries = store.executions.summaryByTask();
+    assert.deepEqual(summaries, [
+      { taskId: 't1', firstRunAt: '2026-09-04T10:00:00Z', lastRunAt: '2026-09-04T10:00:00Z', count: 1 },
+      { taskId: 't2', firstRunAt: '2026-09-05T10:00:00Z', lastRunAt: '2026-09-05T10:00:00Z', count: 1 },
+      { taskId: 't3', firstRunAt: '2026-09-06T10:00:00Z', lastRunAt: '2026-09-06T10:00:00Z', count: 1 },
+    ]);
     store.close();
-    console.log('✅ add + since（窗口/升序/原字段保留）');
+    console.log('✅ add + since + summaryByTask（窗口/升序/原字段保留/完整聚合）');
   }
 
   // 2. pruneBefore

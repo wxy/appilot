@@ -1,7 +1,7 @@
 {
   "name": "appilot",
   "productName": "Appilot",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
@@ -17,9 +17,9 @@
     "build:plugins": "npm run build -w @appilot-labs/appilot-common && npm run build -w @appilot-labs/appilot-project && npm run build -w @appilot-labs/appilot-release && npm run build -w @appilot-labs/appilot"
   },
   "dependencies": {
-    "@appilot-labs/appilot-core": "^1.0.0",
-    "@appilot-labs/appilot-headless": "^1.0.0",
-    "@appilot-labs/appilot-scheduler": "^1.0.0",
+    "@appilot-labs/appilot-core": "^1.1.0",
+    "@appilot-labs/appilot-headless": "^1.1.0",
+    "@appilot-labs/appilot-scheduler": "^1.1.0",
     "@octokit/rest": "^22.0.1",
     "clsx": "^2.1.0",
     "electron-log": "^5.4.4",

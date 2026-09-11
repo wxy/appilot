@@ -27,6 +27,9 @@ async function main(): Promise<void> {
   store.tasks.upsert({ id: 'projX:macos:en:us:app', title: '排名采集', intervalMinutes: 720, lastRunAt: d(-1), nextRunAt: d(1), lastStatus: 'ok', lastSummary: 's', runCount: 3, source: 'electron', kind: 'rank', instance: { productId: 'projX:macos', keyword: 'app', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
   store.tasks.upsert({ id: 'projX:macos:en:us:kw2', title: '排名采集', intervalMinutes: 720, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron', kind: 'rank', instance: { productId: 'projX:macos', keyword: 'kw2', queryLanguage: 'en', storefront: 'us', platform: 'macos', groupKey: gA } });
   store.tasks.upsert({ id: 'github-sync:msszspx4', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: d(-2), nextRunAt: d(-1), lastStatus: 'error', lastSummary: 'e', runCount: 2, source: 'electron', kind: 'github-sync', instance: { projectId: 'msszspx4', projectName: 'GloWalk', path: '/x' } });
+  // reconcile/清除失败可能把任务行运行字段置空，但不可变执行历史仍在。
+  store.executions.add({ taskId: 'projX:macos:en:us:kw2', ts: '2026-08-20T08:00:00.000Z', status: 'failed', durationMs: 100 });
+  store.executions.add({ taskId: 'projX:macos:en:us:kw2', ts: '2026-08-21T08:00:00.000Z', status: 'success', durationMs: 80 });
 
   const tasks = taskCenterTasksFromDb(store);
   assert.equal(tasks.length, 3);
@@ -43,6 +46,11 @@ async function main(): Promise<void> {
   assert.equal(rank.platform, 'macos');
   assert.deepEqual(rank.round, { done: 1, total: 2 }, 'round 由 DB rankProgress 计算');
   assert.equal(rank.keyword, 'app');
+  const recovered = tasks.find((t) => t.id === 'projX:macos:en:us:kw2');
+  assert.equal(recovered?.firstRunAt, '2026-08-20T08:00:00.000Z');
+  assert.equal(recovered?.lastRunAt, '2026-08-21T08:00:00.000Z', '任务行为空时从执行事实恢复上次执行');
+  assert.equal(recovered?.executionCount, 2, '任务行计数为空时从执行事实恢复次数');
+  assert.equal(recovered?.lastStatus, undefined, '不从历史复活已清除的失败状态');
 
   // —— kv schedulerRounds（引擎轮次状态）接入：真实本轮进度 + 上轮完成时间 ——
   store.kv.set('schedulerRounds', JSON.stringify({
@@ -83,7 +91,7 @@ async function main(): Promise<void> {
   const ov = taskCenterOverviewFromDb(store);
   assert.equal(ov.total, 4);
   assert.equal(ov.overdue, 1, 'nextRunAt <= now');
-  assert.equal(ov.executed, 3);
+  assert.equal(ov.executed, 4, 'overview 使用执行事实补齐已执行任务');
   assert.equal(ov.byKind['rank'], 2);
   assert.equal(ov.byKind['ops-sync'], 1);
   assert.ok(ov.nextDueAt, '最近到期时间');
