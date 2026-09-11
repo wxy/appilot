@@ -10,13 +10,13 @@ import {
   fetchStoreCurrentVersion,
 } from '@appilot-labs/appilot-core/app-store-discovery';
 import { collectKeywordRankings, type RankTarget } from '@appilot-labs/appilot-core/rank-collector';
-import { storefrontsForLanguage } from '@appilot-labs/appilot-core/storefronts';
+import { ALL_STOREFRONT_CODES, storefrontsForLanguage } from '@appilot-labs/appilot-core/storefronts';
 import { listGitTags } from '@appilot-labs/appilot-core/release-watcher';
 import { listGitHubReleases } from '@appilot-labs/appilot-core/github-api';
 import { runReadinessChecks } from '@appilot-labs/appilot-core/readiness-check';
 import { fetchTrafficSnapshot } from '@appilot-labs/appilot-core/gh-traffic';
 import { createAscClient } from '@appilot-labs/appilot-core/asc-api';
-import { computeRankMovers, type OverviewBriefInput } from '@appilot-labs/appilot-core/overview-summary';
+import { computeRankMovers, detectOverviewIssues, type OverviewBriefInput } from '@appilot-labs/appilot-core/overview-summary';
 import { AIProvider } from '@appilot-labs/appilot-core/ai/ai-provider';
 import { generateOverviewBrief } from '@appilot-labs/appilot-core/ai/overview-brief';
 
@@ -35,18 +35,32 @@ function buildBriefInput(ov: {
   const top10 = new Set(
     ov.snapshots.filter((s) => s.rank != null && s.rank <= 10).map((s) => s.keyword),
   );
+  const keywordStats = {
+    tracked: keywords.size,
+    ranked: ranked.size,
+    top10: top10.size,
+    paused: 0,
+  };
+  const rankMovers = computeRankMovers(ov.snapshots);
+  const storefrontCoverage = [...new Set(ov.snapshots.map((snapshot) => snapshot.language))]
+    .map((language) => ({
+      language,
+      storefronts: language === 'en' ? [...ALL_STOREFRONT_CODES] : storefrontsForLanguage(language),
+    }));
   return {
     name: ov.name,
     description: ov.description || '',
     platform: ov.platform || 'unknown',
     supportedLanguages: ov.languages,
-    keywordStats: {
-      tracked: keywords.size,
-      ranked: ranked.size,
-      top10: top10.size,
-      paused: 0,
-    },
-    rankMovers: computeRankMovers(ov.snapshots),
+    storefrontCoverage,
+    keywordStats,
+    rankMovers,
+    detectedIssues: detectOverviewIssues({
+      keywordStats,
+      rankMovers,
+      release: null,
+      feedbackThemes: [],
+    }),
     release: null,
     submissionKeywordCount: 0,
     uiLanguage: 'zh',

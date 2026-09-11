@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld("appilot", {
   revealInFolder: (localPath: string): Promise<boolean> =>
     ipcRenderer.invoke("shell:revealInFolder", localPath),
 
+  actions: {
+    list: (): Promise<any[]> => ipcRenderer.invoke("actions:list"),
+    preview: (request: any): Promise<any> => ipcRenderer.invoke("actions:preview", request),
+    execute: (request: any): Promise<any> => ipcRenderer.invoke("actions:execute", request),
+  },
+
   menu: {
     onCommand: (callback: (command: any) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, command: any) => callback(command);
@@ -149,6 +155,8 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:removeTrackedKeyword", projectId, language, keyword),
     removeTrackedKeywords: (projectId: string, items: Array<{ language: string; keyword: string }>): Promise<any> =>
       ipcRenderer.invoke("projects:removeTrackedKeywords", projectId, items),
+    pauseTrackedKeyword: (productId: string, language: string, keyword: string): Promise<any> =>
+      ipcRenderer.invoke("projects:pauseTrackedKeyword", productId, language, keyword),
     pendingPauseList: (projectId: string): Promise<any[]> =>
       ipcRenderer.invoke("projects:pendingPauseList", projectId),
     translateKeyword: (
@@ -228,6 +236,10 @@ contextBridge.exposeInMainWorld("appilot", {
       suggestionId?: string,
     ): Promise<any> =>
       ipcRenderer.invoke("projects:askBriefQuestion", projectId, productId, question, suggestionId),
+    recordBriefExecution: (projectId: string, productId: string, payload: any): Promise<any> =>
+      ipcRenderer.invoke("projects:recordBriefExecution", projectId, productId, payload),
+    dismissBriefSuggestion: (projectId: string, productId: string, suggestionId: string): Promise<boolean> =>
+      ipcRenderer.invoke("projects:dismissBriefSuggestion", projectId, productId, suggestionId),
   },
 
   release: {

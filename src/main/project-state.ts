@@ -113,6 +113,33 @@ export function findProductContext(
   return null;
 }
 
+export function updateProjectInProjects(
+  projects: any[],
+  projectId: string,
+  updater: (project: any) => any,
+): any[] {
+  return projects.map((project) =>
+    project.id === projectId ? { ...project, ...updater(project) } : project,
+  );
+}
+
+/**
+ * Keep the project-level keyword pool and every persisted product copy in sync.
+ * Product records are the structured DB source used when the renderer reloads.
+ */
+export function syncKeywordPoolToProducts(project: any): any {
+  const pool = Array.isArray(project.trackedKeywords) ? project.trackedKeywords : [];
+  const removed = Array.isArray(project.removedKeywords) ? project.removedKeywords : [];
+  return {
+    ...project,
+    storeProducts: (project.storeProducts || []).map((product: any) => ({
+      ...product,
+      trackedKeywords: pool,
+      removedKeywords: removed,
+    })),
+  };
+}
+
 export function getStoreSubmissionDrafts(project: any): StoreSubmissionDraft[] {
   return Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [];
 }

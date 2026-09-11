@@ -29,6 +29,8 @@ import {
   findProductContext,
   getStoreSubmissionDrafts,
   migrateLegacyStoreProducts,
+  syncKeywordPoolToProducts as syncPoolToProducts,
+  updateProjectInProjects,
 } from "../project-state";
 import { buildProjectProfileFor } from "../release-service";
 import {
@@ -37,9 +39,21 @@ import {
   itunesSearchBlockState,
   schedulerTick,
 } from "../scheduler";
-import type { BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
-import { requestText, buildArchiveMessages } from "@appilot-labs/appilot-core/ai/ai-request";
+import {
+  briefActionCapability,
+  buildBriefFollowupMessages,
+  filterSupportedBriefActions,
+  type BriefProposedAction,
+  type BriefSuggestion,
+} from "@appilot-labs/appilot-core/ai/overview-brief";
+import { requestJson } from "@appilot-labs/appilot-core/ai/ai-request";
+import type { ProjectProfile } from "@appilot-labs/appilot-core/project-profile";
 import { getStore } from "../store";
+import {
+  executeRegisteredAction,
+  findRecordedActionExecution,
+  recommendationActionCatalog,
+} from "../action-registry";
 import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
   parsePlistVersion,
@@ -65,13 +79,39 @@ import {
 } from "../util";
 
 const BRIEF_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
-const BRIEF_SESSION_MAX_EXCHANGES = 4;
+const BRIEF_SESSION_MAX_EXCHANGES = 200;
+// A selected suggestion has its own branch. Keeping a deeper branch history is
+// affordable because unchanged earlier turns form a reusable prompt prefix.
+const BRIEF_CONTEXT_MAX_EXCHANGES = 24;
+const BRIEF_CONTEXT_VERSION = 3;
+const BRIEF_SESSIONS_STORE_KEY = "overviewBriefSessions";
 
 type BriefSessionExchange = {
   suggestionId: string | null;
   question: string;
   answer: string;
+  proposedActions?: BriefProposedAction[];
   at: string;
+};
+
+type BriefActionRun = {
+  id: string;
+  executionId?: string | null;
+  suggestionId: string | null;
+  action: BriefProposedAction;
+  status: "executed" | "failed";
+  message: string;
+  /** Snapshot captured when the user next asks to assess this completed action. */
+  resultContextId?: string | null;
+  at: string;
+};
+
+type BriefContextSnapshot = {
+  generatedAt: string;
+  profile: ProjectProfile;
+  /** Exact volatile task data sent when the suggestion was generated. */
+  evidenceContext: string;
+  briefContext: string;
 };
 
 type BriefQuestionSession = {
@@ -80,14 +120,14 @@ type BriefQuestionSession = {
   generatedAt: string;
   expiresAt: number;
   briefContext: string;
-  diagnostic: {
-    coverage: { tracked: number; ranked: number; top10: number; paused: number };
-    facts: string[];
-    anomalies: string[];
-    limitations: string[];
-  };
-  suggestions: Pick<BriefSuggestion, "id" | "title" | "reason" | "action" | "target">[];
+  contextVersion?: number;
+  currentContextId?: string;
+  contextSnapshots?: Record<string, BriefContextSnapshot>;
+  suggestions: BriefSuggestion[];
   exchanges: BriefSessionExchange[];
+  actionRuns: BriefActionRun[];
+  dismissedSuggestionIds: string[];
+  supersededSuggestionIds: string[];
 };
 
 const briefQuestionSessions = new Map<string, BriefQuestionSession>();
@@ -100,11 +140,39 @@ function trimBriefExchanges(exchanges: BriefSessionExchange[]): BriefSessionExch
   return exchanges.slice(-BRIEF_SESSION_MAX_EXCHANGES);
 }
 
+function readPersistedBriefSessions(s: any): Record<string, BriefQuestionSession> {
+  const value = s.get(BRIEF_SESSIONS_STORE_KEY);
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
 function pruneExpiredBriefSession(): void {
   const now = Date.now();
   for (const [key, session] of briefQuestionSessions.entries()) {
     if (session.expiresAt <= now) briefQuestionSessions.delete(key);
   }
+}
+
+function getBriefSession(s: any, key: string): BriefQuestionSession | undefined {
+  const memory = briefQuestionSessions.get(key);
+  if (memory) return memory;
+  const persisted = readPersistedBriefSessions(s)[key];
+  if (!persisted) return undefined;
+  const session = { ...persisted, exchanges: trimBriefExchanges(persisted.exchanges || []) };
+  session.actionRuns = Array.isArray(session.actionRuns) ? session.actionRuns : [];
+  session.dismissedSuggestionIds = Array.isArray(session.dismissedSuggestionIds)
+    ? session.dismissedSuggestionIds : [];
+  session.supersededSuggestionIds = Array.isArray(session.supersededSuggestionIds)
+    ? session.supersededSuggestionIds : [];
+  session.contextSnapshots = session.contextSnapshots && typeof session.contextSnapshots === "object"
+    ? session.contextSnapshots : {};
+  briefQuestionSessions.set(key, session);
+  return session;
+}
+
+function saveBriefSession(s: any, key: string, session: BriefQuestionSession): void {
+  briefQuestionSessions.set(key, session);
+  const persisted = readPersistedBriefSessions(s);
+  s.set(BRIEF_SESSIONS_STORE_KEY, { ...persisted, [key]: session });
 }
 
 function buildBriefContextDigest(
@@ -119,42 +187,56 @@ function buildBriefContextDigest(
     .join("；");
   const feedbackCount = Array.isArray(input?.feedbackThemes) ? input.feedbackThemes.length : 0;
   const competitorCount = Array.isArray(input?.competitorDeltas) ? input.competitorDeltas.length : 0;
+  const issueText = Array.isArray(input?.detectedIssues)
+    ? input.detectedIssues
+        .slice(0, 3)
+        .map((issue: any) => `[${issue.severity}] ${issue.title}：${issue.evidence}`)
+        .join("；")
+    : "";
+  const inventory = input?.keywordInventory || {};
+  const readiness = input?.rankDataReadiness;
+  const inventoryText = (items: any[]) => (Array.isArray(items) && items.length > 0
+    ? items.map((item: any) => `${item.language || "?"}:${item.keyword || "?"}`).join("、")
+    : "无");
+  const keywordDetailText = Array.isArray(input?.keywordRankDetails)
+    ? input.keywordRankDetails.map((detail: any) => {
+        const best = (detail.bestRanks || []).map((item: any) => `${item.storefront}#${item.rank}`).join("/");
+        const weak = (detail.weakestRanks || []).map((item: any) => `${item.storefront}#${item.rank}`).join("/");
+        return [
+          `${detail.language}:${detail.keyword}`,
+          `已查${detail.checkedStorefronts}店`,
+          `入榜${detail.rankedStorefronts}店`,
+          `Top10 ${detail.top10Storefronts}店`,
+          `未入榜${detail.unrankedStorefronts}店`,
+          best ? `最佳 ${best}` : "当前无入榜",
+          weak ? `较弱 ${weak}` : "",
+        ].filter(Boolean).join("，");
+      }).join("\n")
+    : "";
+  const storefrontCoverageText = Array.isArray(input?.storefrontCoverage)
+    ? input.storefrontCoverage
+        .map((item: any) => `${item.language}:${(item.storefronts || []).join("/")}（共 ${(item.storefronts || []).length} 店）`)
+        .join("；")
+    : "";
   return [
     `项目：${input?.name || ""}`,
     `平台：${input?.platform || "unknown"}`,
-    `关键词覆盖：跟踪 ${input?.keywordStats?.tracked || 0}，有快照 ${input?.keywordStats?.ranked || 0}，Top10 ${input?.keywordStats?.top10 || 0}，暂停 ${input?.keywordStats?.paused || 0}`,
+    `产品定位：${input?.description || "未提供"}`,
+    `关键词覆盖：跟踪 ${input?.keywordStats?.tracked || 0}，已检查 ${input?.keywordStats?.checked || 0}，曾入榜 ${input?.keywordStats?.ranked || 0}，Top10 ${input?.keywordStats?.top10 || 0}，暂停 ${input?.keywordStats?.paused || 0}`,
+    `活跃关键词：${inventoryText(inventory.active)}`,
+    `暂停关键词：${inventoryText(inventory.paused)}`,
+    `已删除关键词：${inventoryText(inventory.removed)}`,
+    storefrontCoverageText ? `商店覆盖口径：${storefrontCoverageText}` : "",
+    keywordDetailText ? `关键词当前排名摘要：\n${keywordDetailText}` : "关键词当前排名摘要：无",
+    readiness
+      ? `排名数据状态：${readiness.freshTargets}/${readiness.totalTargets} 个查询目标在 24 小时内更新，过期 ${readiness.staleTargets}，失败 ${readiness.failedTargets}${readiness.nextScheduledAt ? `，下一次计划 ${readiness.nextScheduledAt}` : ""}${readiness.scheduledCoverageCompleteAt ? `，当前排期预计最晚 ${readiness.scheduledCoverageCompleteAt}` : ""}`
+      : "",
     `14 天发布状态：${input?.release ? `tag=${input.release.tag || "unknown"}，语言 ${input.release.languageProgress || 0}/${input.release.languageTotal || 0}` : "无发布草稿"}`,
     `反馈主题：${feedbackCount} 个`,
     `竞品动态：${competitorCount} 条`,
     topMoverText ? `近期变动：${topMoverText}` : "近期无可对比排名变动",
+    issueText ? `已确认问题：${issueText}` : "确定性检查未发现明确问题",
   ].join("\n");
-}
-
-function updateProjectInProjects(projects: any[], projectId: string, updater: (project: any) => any): any[] {
-  return projects.map((project) =>
-    project.id === projectId ? { ...project, ...updater(project) } : project,
-  );
-}
-
-/**
- * 项目级关键词池（top-level trackedKeywords/removedKeywords）变更后，把池镜像进
- * 每个产品的副本（storeProducts[].trackedKeywords/removedKeywords）。
- *
- * DB product_records 以产品副本为源（toProductRows），而 UI 刷新（DB 源 projects:list）
- * 在顶层池缺失时从产品副本重新合并出池——若删除/恢复只改顶层池，DB 产品副本不更新，
- * 刷新后关键词会“复活”（删除不生效）。所有池变更必须同时落两层。
- */
-function syncPoolToProducts(project: any): any {
-  const pool = Array.isArray(project.trackedKeywords) ? project.trackedKeywords : [];
-  const removed = Array.isArray(project.removedKeywords) ? project.removedKeywords : [];
-  return {
-    ...project,
-    storeProducts: (project.storeProducts || []).map((sp: any) => ({
-      ...sp,
-      trackedKeywords: pool,
-      removedKeywords: removed,
-    })),
-  };
 }
 
 function submissionReferenceFor(product: any, project: any, language: string) {
@@ -203,18 +285,9 @@ async function buildOverviewBriefPayload(
   product: any,
 ): Promise<{
   input: any;
-  rankDiagnostic: {
-    coverage: {
-      tracked: number;
-      ranked: number;
-      top10: number;
-      paused: number;
-    };
-    facts: string[];
-    anomalies: string[];
-    limitations: string[];
-  };
   briefContext: string;
+  profile: ProjectProfile;
+  evidenceContext: string;
 }> {
   const { buildBriefInput } = await import("@appilot-labs/appilot-core/overview-summary");
   const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
@@ -241,14 +314,25 @@ async function buildOverviewBriefPayload(
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const submissionDraft = drafts[0] || null;
 
+  let rankSnapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
+  try {
+    // getStore('projects') intentionally returns a lightweight DB view without snapshots.
+    // Brief generation needs the same rich rank history shown by the Overview page.
+    rankSnapshots = sharedStore().snapshots.history(project.name, { productId: product.id });
+  } catch (err: any) {
+    log.warn(`overview brief: DB rank snapshots unavailable, using product fallback: ${err.message}`);
+  }
+  const keywordPool = ensureProjectKeywordPool(project);
+
   const input = buildBriefInput({
     projectName: project.name,
     productName: product.trackName || project.name,
     description,
     platform: product.platform || "unknown",
     supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
-    trackedKeywords: ensureProjectKeywordPool(project).trackedKeywords || [],
-    rankSnapshots: product.rankSnapshots || [],
+    trackedKeywords: keywordPool.trackedKeywords || [],
+    removedKeywords: keywordPool.removedKeywords || [],
+    rankSnapshots,
     releaseDraft: releaseResult.latest
       ? { name: releaseResult.latest.name, tag: releaseResult.latest.tag }
       : null,
@@ -268,35 +352,39 @@ async function buildOverviewBriefPayload(
     profile,
   });
 
-  const rankDiagnostic = {
-    coverage: {
-      tracked: input.keywordStats.tracked,
-      ranked: input.keywordStats.ranked,
-      top10: input.keywordStats.top10,
-      paused: input.keywordStats.paused,
-    },
-    facts: [
-      `已采集 ${input.keywordStats.tracked} 个跟踪关键词；其中 ${input.keywordStats.ranked} 个有近 14 天内排名快照。`,
-      `在采样窗口内，Top10 关键词覆盖：${input.keywordStats.top10} 个。`,
-    ],
-    anomalies: [
-      ...(input.keywordStats.tracked > 0 && input.keywordStats.ranked === 0
-        ? ["当前无已采集排名数据，建议检查关键词采集任务状态与时区覆盖。"]
-        : []),
-      ...(input.keywordStats.tracked > 0 && input.keywordStats.ranked < input.keywordStats.tracked
-        ? ["部分关键词未形成近 14 天有效快照，建议补齐采集后再复盘。"]
-        : []),
-      ...(!releaseResult.latest
-        ? ["未检测到最近发布草稿，发布相关建议将偏保守。"]
-        : []),
-    ],
-    limitations: [
-      "建议仅基于最近 14 天的排名快照与已存在的历史反馈进行推断。",
-      "未覆盖未跟踪关键词与外部市场波动导致的短期异常。",
-    ],
+  const db = sharedStore();
+  const rankTasks = ((s.get("scheduledTasks") || []) as any[]).filter(
+    (task) => task.kind === "rank" && task.enabled !== false && task.productId === product.id,
+  );
+  const freshnessCutoff = Date.now() - 24 * 60 * 60_000;
+  const rankTaskRows = rankTasks.map((task) => db.tasks.get(task.id));
+  const isFreshRankRow = (row: ReturnType<typeof db.tasks.get>) => Boolean(
+    row?.lastRunAt && new Date(row.lastRunAt).getTime() >= freshnessCutoff && row.lastStatus !== "error",
+  );
+  const nextScheduledTimes = rankTaskRows
+    .map((row) => row?.nextRunAt ? new Date(row.nextRunAt).getTime() : Number.NaN)
+    .filter(Number.isFinite);
+  (input as any).rankDataReadiness = {
+    totalTargets: rankTasks.length,
+    freshTargets: rankTaskRows.filter(isFreshRankRow).length,
+    staleTargets: rankTaskRows.filter((row) => !isFreshRankRow(row)).length,
+    failedTargets: rankTaskRows.filter((row) => row?.lastStatus === "error").length,
+    nextScheduledAt: nextScheduledTimes.length > 0
+      ? new Date(Math.min(...nextScheduledTimes)).toISOString()
+      : null,
+    scheduledCoverageCompleteAt: nextScheduledTimes.length > 0
+      ? new Date(Math.max(...nextScheduledTimes)).toISOString()
+      : null,
+    collectionPolicy: "task-center-daily",
   };
 
-  return { input, rankDiagnostic, briefContext: buildBriefContextDigest(input) };
+  const { profile: _profile, ...taskData } = input;
+  return {
+    input,
+    profile,
+    briefContext: buildBriefContextDigest(input),
+    evidenceContext: JSON.stringify(taskData, null, 2),
+  };
 }
 
 export function registerProjectsHandlers(): void {
@@ -1130,29 +1218,16 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
-      const removedKeyword = (project.trackedKeywords || []).find(
-        (item: any) => item.language === language && item.keyword === keyword,
-      );
-      const trackedKeywords = (project.trackedKeywords || []).filter(
-        (item: any) => !(item.language === language && item.keyword === keyword),
-      );
-      const removedKeywords = Array.isArray(project.removedKeywords) ? [...project.removedKeywords] : [];
-      if (!removedKeywords.some((item: any) => item.language === language && item.keyword === keyword)) {
-        removedKeywords.push({
-          language,
-          keyword,
-          rationale: removedKeyword?.rationale || "",
-          translation: removedKeyword?.translation || "",
-          removedAt: new Date().toISOString(),
-        });
-      }
-      return syncPoolToProducts({ ...project, trackedKeywords, removedKeywords });
+    const result = executeRegisteredAction(s, {
+      actionId: "keyword.remove",
+      projectId: context.project.id,
+      productId,
+      input: { language, keyword },
+      source: "ui",
     });
-    s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
-    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+    return result.updatedProject;
   });
 
   ipcMain.handle("projects:removeTrackedKeywords", async (_event, productId: string, items: Array<{ language: string; keyword: string }>) => {
@@ -1187,6 +1262,23 @@ export function registerProjectsHandlers(): void {
     void schedulerTick();
     notifyDataChanged("projects");
     return nextProjects.find((project) => project.id === context.project.id) || context.project;
+  });
+
+  ipcMain.handle("projects:pauseTrackedKeyword", async (_event, productId: string, language: string, keyword: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const result = executeRegisteredAction(s, {
+      actionId: "keyword.pause",
+      projectId: context.project.id,
+      productId,
+      input: { language, keyword },
+      source: "ui",
+    });
+    void schedulerTick();
+    notifyDataChanged("projects");
+    return result.updatedProject;
   });
 
   // 待处理暂停复核队列：列出命中“连续未在榜”但等待人工分类的关键词
@@ -1906,29 +1998,16 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
-      const removedItem = (project.removedKeywords || []).find(
-        (item: any) => item.language === language && item.keyword === keyword,
-      );
-      if (!removedItem) throw new Error("Keyword is not in removed list");
-      const trackedKeywords = [...(project.trackedKeywords || [])];
-      if (!trackedKeywords.some((item: any) => item.language === language && item.keyword === keyword)) {
-        trackedKeywords.push({
-          language,
-          keyword,
-          rationale: removedItem.rationale || "",
-          translation: removedItem.translation || "",
-        });
-      }
-      const removedKeywords = (project.removedKeywords || []).filter(
-        (item: any) => !(item.language === language && item.keyword === keyword),
-      );
-      return syncPoolToProducts({ ...project, trackedKeywords, removedKeywords });
+    const result = executeRegisteredAction(s, {
+      actionId: "keyword.restore",
+      projectId: context.project.id,
+      productId,
+      input: { language, keyword },
+      source: "ui",
     });
-    s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
-    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+    return result.updatedProject;
   });
 
   ipcMain.handle("projects:resumePausedKeyword", async (_event, productId: string, language: string, keyword: string) => {
@@ -1936,35 +2015,16 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
-      const paused = (project.trackedKeywords || []).find(
-        (item: any) => item.language === language && item.keyword === keyword,
-      );
-      if (!paused) throw new Error("Keyword is not paused");
-      const platformKey = context.product.platform || "unknown";
-      const pausedPlatforms = Array.isArray(paused.pausedPlatforms)
-        ? paused.pausedPlatforms.filter((item: string) => item !== platformKey)
-        : [];
-      const manualPause = paused.status === "paused";
-      return syncPoolToProducts({
-        ...project,
-        trackedKeywords: (project.trackedKeywords || []).map((item: any) =>
-          item.language === language && item.keyword === keyword
-            ? {
-                ...item,
-                status: manualPause ? "active" : item.status,
-                pausedAt: manualPause ? null : item.pausedAt,
-                pausedReason: manualPause || pausedPlatforms.length === 0 ? null : item.pausedReason,
-                pausedPlatforms,
-              }
-            : item,
-        ),
-      });
+    const result = executeRegisteredAction(s, {
+      actionId: "keyword.resume",
+      projectId: context.project.id,
+      productId,
+      input: { language, keyword },
+      source: "ui",
     });
-    s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
-    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+    return result.updatedProject;
   });
 
   ipcMain.handle("projects:clearRemovedKeywords", async (_event, productId: string, languages: string[]) => {
@@ -1999,7 +2059,7 @@ export function registerProjectsHandlers(): void {
 
     const provider = await createAiProvider(s);
     const { generateOverviewBrief } = await import("@appilot-labs/appilot-core/ai/overview-brief");
-    const { input, rankDiagnostic, briefContext } =
+    const { input, briefContext, profile, evidenceContext } =
       await buildOverviewBriefPayload(s, project, product);
     if (!input) throw new Error("生成简报输入失败");
 
@@ -2010,31 +2070,64 @@ export function registerProjectsHandlers(): void {
           phase: received.phase,
         });
       }
-    });
+    }, recommendationActionCatalog());
 
     pruneExpiredBriefSession();
     const key = briefSessionKey(project.id, product.id);
-    briefQuestionSessions.set(key, {
+    const generatedAt = new Date().toISOString();
+    const contextId = generatedAt;
+    const previous = getBriefSession(s, key);
+    const currentIds = new Set(suggestions.map((item: any) => item.id));
+    const previousSuggestions = (previous?.suggestions || []).filter(
+      (item) => !currentIds.has(item.id),
+    ).map((item) => ({ ...item, generatedAt: item.generatedAt || previous?.generatedAt }));
+    const supersededSuggestionIds = [...new Set([
+      ...(previous?.supersededSuggestionIds || []),
+      ...previousSuggestions
+        .filter((item) => !(previous?.dismissedSuggestionIds || []).includes(item.id))
+        .map((item) => item.id),
+    ])].filter((id) => !currentIds.has(id));
+    const storedSuggestions = [...suggestions.map((item: any) => ({
+      id: item.id,
+      generatedAt,
+      contextId,
+      title: item.title,
+      reason: item.reason,
+      action: item.action,
+      target: item.target,
+      proposedActions: item.proposedActions || [],
+      expectedOutcome: item.expectedOutcome || "",
+      successMetric: item.successMetric || "",
+      evaluateAfterDays: item.evaluateAfterDays,
+    })), ...previousSuggestions].slice(0, 30);
+    const retainedContextIds = new Set([
+      ...storedSuggestions.map((item) => item.contextId).filter(Boolean),
+      ...(previous?.actionRuns || []).map((run) => run.resultContextId).filter(Boolean),
+    ]);
+    const contextSnapshots = Object.fromEntries(
+      Object.entries(previous?.contextSnapshots || {})
+        .filter(([id]) => retainedContextIds.has(id)),
+    );
+    contextSnapshots[contextId] = { generatedAt, profile, evidenceContext, briefContext };
+    saveBriefSession(s, key, {
       projectId: project.id,
       productId: product.id,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
       briefContext,
-      diagnostic: rankDiagnostic,
-      suggestions: suggestions.map((item: any) => ({
-        id: item.id,
-        title: item.title,
-        reason: item.reason,
-        action: item.action,
-        target: item.target,
-      })),
-      exchanges: [],
+      contextVersion: BRIEF_CONTEXT_VERSION,
+      currentContextId: contextId,
+      contextSnapshots,
+      suggestions: storedSuggestions,
+      exchanges: previous?.exchanges || [],
+      actionRuns: previous?.actionRuns || [],
+      dismissedSuggestionIds: previous?.dismissedSuggestionIds || [],
+      supersededSuggestionIds,
     });
 
     return {
       suggestions,
-      rankDiagnostic,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
     };
   });
 
@@ -2048,13 +2141,15 @@ export function registerProjectsHandlers(): void {
       const context = findProductContext(projects, productId);
       if (!context || context.project.id !== projectId) return null;
       pruneExpiredBriefSession();
-      const session = briefQuestionSessions.get(briefSessionKey(projectId, productId));
+      const session = getBriefSession(s, briefSessionKey(projectId, productId));
       if (!session) return null;
       return {
         suggestions: session.suggestions,
-        rankDiagnostic: session.diagnostic,
         generatedAt: session.generatedAt,
         exchanges: session.exchanges,
+        actionRuns: session.actionRuns || [],
+        dismissedSuggestionIds: session.dismissedSuggestionIds || [],
+        supersededSuggestionIds: session.supersededSuggestionIds || [],
       };
     },
   );
@@ -2080,21 +2175,47 @@ export function registerProjectsHandlers(): void {
 
       pruneExpiredBriefSession();
       const key = briefSessionKey(project.id, product.id);
-      let session = briefQuestionSessions.get(key);
-      if (!session || session.expiresAt <= Date.now()) {
-        const { briefContext, rankDiagnostic } =
+      let session = getBriefSession(s, key);
+      if (!session || session.expiresAt <= Date.now() || session.contextVersion !== BRIEF_CONTEXT_VERSION) {
+        const { briefContext, profile, evidenceContext } =
           await buildOverviewBriefPayload(s, project, product);
-        session = {
-          projectId: project.id,
-          productId: product.id,
-          generatedAt: new Date().toISOString(),
-          expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
-          briefContext,
-          diagnostic: rankDiagnostic,
-          suggestions: [],
-          exchanges: [],
-        };
-        briefQuestionSessions.set(key, session);
+        const contextId = new Date().toISOString();
+        const contextSnapshot = { generatedAt: contextId, profile, evidenceContext, briefContext };
+        session = session
+          ? {
+              ...session,
+              briefContext,
+              contextVersion: BRIEF_CONTEXT_VERSION,
+              currentContextId: contextId,
+              contextSnapshots: {
+                ...(session.contextSnapshots || {}),
+                [contextId]: contextSnapshot,
+              },
+              // Sessions created before context snapshots cannot recover the exact
+              // old request. Attach a current full snapshot so their next turn is
+              // still grounded; newly generated suggestions retain exact evidence.
+              suggestions: session.suggestions.map((suggestion) => ({
+                ...suggestion,
+                contextId: suggestion.contextId || contextId,
+              })),
+              expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
+            }
+          : {
+              projectId: project.id,
+              productId: product.id,
+              generatedAt: new Date().toISOString(),
+              expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
+              briefContext,
+              contextVersion: BRIEF_CONTEXT_VERSION,
+              currentContextId: contextId,
+              contextSnapshots: { [contextId]: contextSnapshot },
+              suggestions: [],
+              exchanges: [],
+              actionRuns: [],
+              dismissedSuggestionIds: [],
+              supersededSuggestionIds: [],
+            };
+        saveBriefSession(s, key, session);
       }
 
       const trimmedQuestion = questionText.trim();
@@ -2108,47 +2229,102 @@ export function registerProjectsHandlers(): void {
         ? session.suggestions.find((item) => item.id === suggestionId)
         : null;
 
+      // A command succeeding only proves that Appilot changed state. Capture one
+      // fresh evidence snapshot when the user asks what happened, then reuse it
+      // on later turns so the original evidence and post-action result stay a
+      // stable, cacheable prefix instead of rebuilding the whole context each time.
+      let postActionSnapshot: BriefContextSnapshot | undefined;
+      if (targetSuggestion) {
+        const successfulRuns = (session.actionRuns || []).filter(
+          (run) => run.suggestionId === targetSuggestion.id && run.status !== "failed",
+        );
+        let latestCompletedRun: BriefActionRun | undefined;
+        latestCompletedRun = successfulRuns.find((run) => run.status === "executed");
+        if (latestCompletedRun) {
+          if (!latestCompletedRun.resultContextId) {
+            const latestProjects: any[] = s.get("projects") || [];
+            const latestContext = findProductContext(latestProjects, productId);
+            if (latestContext) {
+              const { briefContext, profile, evidenceContext } = await buildOverviewBriefPayload(
+                s,
+                latestContext.project,
+                latestContext.product,
+              );
+              const resultContextId = `result-${latestCompletedRun.id}`;
+              postActionSnapshot = {
+                generatedAt: new Date().toISOString(),
+                profile,
+                evidenceContext,
+                briefContext,
+              };
+              session.contextSnapshots = {
+                ...(session.contextSnapshots || {}),
+                [resultContextId]: postActionSnapshot,
+              };
+              session.actionRuns = (session.actionRuns || []).map((run) =>
+                run.id === latestCompletedRun?.id ? { ...run, resultContextId } : run,
+              );
+              latestCompletedRun = session.actionRuns.find((run) => run.id === latestCompletedRun?.id);
+              saveBriefSession(s, key, session);
+            }
+          }
+          if (!postActionSnapshot && latestCompletedRun?.resultContextId) {
+            postActionSnapshot = session.contextSnapshots?.[latestCompletedRun.resultContextId];
+          }
+        }
+      }
+
       const followupSystem = [
         "你是 Appilot 的运营副驾驶，擅长围绕上文简报给出可执行的中文建议。",
         "请严格基于给定上下文回答，不要编造具体指标或事实；对不确定项明确标注。",
-        "回答应可直接执行，结构化输出：先给结论，再给 2~3 条可执行动作（每条 <=1 句）。",
+        "上下文中的关键词状态和排名摘要来自 Appilot 数据库。用户询问具体关键词、暂停/删除状态或商店差异时，直接分析这些数据，不要要求用户再次导出或提供 Appilot 已持有的数据。",
+        "用户对产品核心价值、功能主次和目标用户的补充具有最高优先级。若用户指出建议建立在错误产品假设上，必须重新评估并明确说明保留、修改或撤回原建议，不要机械维护原结论。",
+        "只要下方上下文包含活跃关键词、已删除关键词或排名摘要，就不得声称没有关键词数据。若缺少的是相关性或产品定位证据，应准确说出缺少的证据类型。",
+        "用户可以用“建议 2”或“动作 2.1”引用界面编号。请根据下方编号目录理解指代，并在回答中沿用编号。",
+        `answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。proposedActions 只能从 Appilot 有效动作目录选择：${JSON.stringify(recommendationActionCatalog())}。查看页面、刷新数据和跳转不是有效动作。`,
+        "动作对象的 language 和 keyword 必须与上下文中符合 appliesTo 的关键词精确匹配。排名由任务中心每日自动采集；数据不足时说明需要等待，不要制造采集动作。",
+        "使用自然中文，不要向用户暴露 detectedIssues、high、medium 等内部字段名。首次提到具体对象时必须说出关键词，避免无前文的“该词”或“同一关键词”。",
+        "只输出 JSON：{\"answer\":\"Markdown 回答\",\"proposedActions\":[{\"kind\":\"keyword.pause\",\"label\":\"暂停关键词\",\"language\":\"en\",\"keyword\":\"weak term\"}]}",
       ];
-      const baseContext = [
-        `项目/平台：${project.name} / ${product.platform || "unknown"}`,
-        session.briefContext,
-      ].join("\n");
-      const suggestionContext = targetSuggestion
-        ? [
-            `追问聚焦到建议：${targetSuggestion.title}`,
-            `依据：${targetSuggestion.reason}`,
-            `建议动作：${targetSuggestion.action}`,
-            targetSuggestion.target ? `动作目标：${targetSuggestion.target}` : "",
-          ].filter(Boolean).join("\n")
-        : "";
-      // 追问阶段只发送已压缩的简报摘要和有限轮次历史，避免每轮重复注入完整项目档案。
-      const messages = buildArchiveMessages(
-        undefined,
-        followupSystem.join("\n"),
-        [baseContext, suggestionContext].filter(Boolean),
+      const orderedSuggestions = [...session.suggestions].sort((a, b) =>
+        new Date(b.generatedAt || session.generatedAt).getTime()
+        - new Date(a.generatedAt || session.generatedAt).getTime(),
       );
-      const history = session.exchanges.flatMap((exchange) => [
-        {
-          role: "user" as const,
-          content: exchange.suggestionId
-            ? `围绕建议追问：${exchange.question}`
-            : `追问问题：${exchange.question}`,
-        },
-        { role: "assistant" as const, content: exchange.answer },
-      ]);
-      const userMessage = targetSuggestion
-        ? `围绕建议「${targetSuggestion.title}」追问：${trimmedQuestion}`
-        : `追问问题：${trimmedQuestion}`;
-      const requestMessages = [
-        ...messages,
-        ...history,
-        { role: "user" as const, content: userMessage },
-      ];
-      const answer = await requestText(
+      const numberedSuggestionContext = orderedSuggestions.slice(0, 10).map((suggestion, index) => {
+        const actions = [
+          ...(suggestion.proposedActions || []),
+          ...session.exchanges
+            .filter((exchange) => exchange.suggestionId === suggestion.id)
+            .flatMap((exchange) => exchange.proposedActions || []),
+        ];
+        const uniqueActions = [...new Map(actions.map((action) => [action.id, action])).values()];
+        const actionText = uniqueActions.map((action, actionIndex) =>
+          `动作 ${index + 1}.${actionIndex + 1}=${action.label} [${action.kind}${action.language ? `, ${action.language}` : ""}${action.keyword ? `, ${action.keyword}` : ""}]`,
+        ).join("；");
+        return `建议 ${index + 1}=${suggestion.title}${actionText ? `；${actionText}` : ""}`;
+      }).join("\n");
+      const targetSuggestionNumber = targetSuggestion
+        ? orderedSuggestions.findIndex((item) => item.id === targetSuggestion.id) + 1
+        : 0;
+      const snapshotId = targetSuggestion?.contextId || session.currentContextId;
+      const snapshot = snapshotId ? session.contextSnapshots?.[snapshotId] : undefined;
+      // The archive and original evidence/suggestion form a byte-stable prefix.
+      // Only this suggestion's own conversation is appended, so unrelated work
+      // items cannot displace its context window or pollute the cache prefix.
+      const requestMessages = buildBriefFollowupMessages({
+        profile: snapshot?.profile,
+        systemPrompt: followupSystem.join("\n"),
+        evidenceContext: snapshot?.evidenceContext,
+        postActionEvidenceContext: postActionSnapshot?.evidenceContext,
+        fallbackBriefContext: snapshot?.briefContext || session.briefContext,
+        numberedSuggestionContext,
+        targetSuggestion,
+        targetSuggestionNumber,
+        exchanges: session.exchanges,
+        maxExchanges: BRIEF_CONTEXT_MAX_EXCHANGES,
+        question: trimmedQuestion,
+      });
+      const responseData = await requestJson(
         await createAiProvider(s),
         requestMessages,
         {
@@ -2157,20 +2333,121 @@ export function registerProjectsHandlers(): void {
           thinking: "disabled",
         },
       );
+      const { normalizeBriefFollowupResponse } = await import("@appilot-labs/appilot-core/ai/overview-brief");
+      const response = normalizeBriefFollowupResponse(responseData);
+      const latestProjectsForActions: any[] = s.get("projects") || [];
+      const latestActionContext = findProductContext(latestProjectsForActions, productId);
+      const keywordPool = ensureProjectKeywordPool(latestActionContext?.project || project);
+      const keywordInventory = {
+        active: (keywordPool.trackedKeywords || [])
+          .filter((item: any) => item.status !== "paused")
+          .map((item: any) => ({ language: item.language, keyword: item.keyword })),
+        paused: (keywordPool.trackedKeywords || [])
+          .filter((item: any) => item.status === "paused")
+          .map((item: any) => ({ language: item.language, keyword: item.keyword })),
+        removed: (keywordPool.removedKeywords || [])
+          .map((item: any) => ({ language: item.language, keyword: item.keyword, removedAt: item.removedAt || null })),
+      };
+      response.proposedActions = filterSupportedBriefActions(
+        response.proposedActions,
+        keywordInventory,
+      );
+      if (!response.answer) throw new Error("AI 未返回有效回答");
       const now = new Date().toISOString();
       session.exchanges = trimBriefExchanges([
         ...session.exchanges,
         {
           suggestionId: targetSuggestion?.id || null,
           question: trimmedQuestion,
-          answer,
+          answer: response.answer,
+          proposedActions: response.proposedActions,
           at: now,
         },
       ]);
       session.expiresAt = Date.now() + BRIEF_SESSION_TTL_MS;
-      briefQuestionSessions.set(key, { ...session, exchanges: session.exchanges });
+      saveBriefSession(s, key, { ...session, exchanges: session.exchanges });
 
-      return { answer };
+      return response;
+    },
+  );
+
+  ipcMain.handle(
+    "projects:recordBriefExecution",
+    async (_event, projectId: string, productId: string, payload: any) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context || context.project.id !== projectId) {
+        throw new Error("Store product does not belong to project");
+      }
+      pruneExpiredBriefSession();
+      const key = briefSessionKey(projectId, productId);
+      const session = getBriefSession(s, key);
+      if (!session) throw new Error("副驾驶会话已失效，请重新生成分析");
+      const { normalizeBriefProposedActions } = await import("@appilot-labs/appilot-core/ai/overview-brief");
+      const action = normalizeBriefProposedActions([payload?.action])[0];
+      if (!action) throw new Error("不支持的副驾驶动作");
+      if (!briefActionCapability(action.kind).recommendationEligible) {
+        throw new Error("该操作不是可执行的副驾驶建议动作");
+      }
+      const executionId = typeof payload?.executionId === "string" ? payload.executionId : "";
+      const execution = executionId ? findRecordedActionExecution(s, executionId) : null;
+      if (
+        !execution
+        || execution.source !== "copilot"
+        || execution.projectId !== projectId
+        || execution.productId !== productId
+        || execution.actionId !== action.kind
+        || execution.input.language !== action.language
+        || execution.input.keyword !== action.keyword
+      ) {
+        throw new Error("找不到与该建议匹配的注册动作执行记录");
+      }
+      const requestedStatus = payload?.status === "failed" ? "failed" : "executed";
+      if (
+        (requestedStatus === "executed" && execution.status !== "verified")
+        || (requestedStatus === "failed" && execution.status !== "failed")
+      ) {
+        throw new Error("建议记录与动作校验状态不一致");
+      }
+      const run: BriefActionRun = {
+        id: execution.id,
+        executionId: execution.id,
+        suggestionId: typeof payload?.suggestionId === "string" ? payload.suggestionId : null,
+        action,
+        status: payload?.status === "failed" ? "failed" : "executed",
+        message: String(payload?.message || "").slice(0, 500),
+        resultContextId: null,
+        at: new Date().toISOString(),
+      };
+      session.actionRuns = [run, ...(session.actionRuns || [])].slice(0, 100);
+      session.expiresAt = Date.now() + BRIEF_SESSION_TTL_MS;
+      saveBriefSession(s, key, session);
+      return run;
+    },
+  );
+
+  ipcMain.handle(
+    "projects:dismissBriefSuggestion",
+    async (_event, projectId: string, productId: string, suggestionId: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      suggestionId = assertNonEmptyString(suggestionId, "suggestionId");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context || context.project.id !== projectId) {
+        throw new Error("Store product does not belong to project");
+      }
+      const key = briefSessionKey(projectId, productId);
+      const session = getBriefSession(s, key);
+      if (!session) return false;
+      session.dismissedSuggestionIds = [...new Set([...(session.dismissedSuggestionIds || []), suggestionId])];
+      session.expiresAt = Date.now() + BRIEF_SESSION_TTL_MS;
+      saveBriefSession(s, key, session);
+      return true;
     },
   );
 
@@ -2230,7 +2507,7 @@ export function registerProjectsHandlers(): void {
       ? storefront.toLowerCase()
       : null;
 
-    if (requestedStorefront && allowedStorefronts.length > 0 && !allowedStorefronts.includes(requestedStorefront)) {
+    if (requestedStorefront && language && !isStorefrontAllowedForQueryLanguage(language, requestedStorefront)) {
       throw new Error(`商店 ${requestedStorefront.toUpperCase()} 不属于语言 ${language}，请重新选择。`);
     }
 
