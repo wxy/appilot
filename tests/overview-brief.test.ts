@@ -48,6 +48,7 @@ const input: any = {
   supportedLanguages: ["en", "zh-Hans"],
   keywordStats: { tracked: 10, ranked: 4, top10: 2, paused: 1 },
   rankMovers: [{ keyword: "night walk", language: "en", storefront: "us", previousRank: 5, currentRank: 12, delta: -7 }],
+  detectedIssues: [{ id: "rank-drop", category: "ranking", severity: "medium", title: "night walk 显著掉榜", evidence: "美区从第 5 名降至第 12 名", action: "trend", target: "night walk" }],
   release: { tag: "v1.2.0", languageProgress: 3, languageTotal: 8, masterConfirmed: true, batchConfirmed: false, storeStatus: "prepared" },
   submissionKeywordCount: 12,
   uiLanguage: "zh-Hans",
@@ -56,6 +57,7 @@ const messages = buildBriefMessages(input);
 const joined = messages.map((m) => m.content).join("\n");
 assert(joined.includes("GloWalk") && joined.includes("night walk") && joined.includes("v1.2.0"), "buildBriefMessages: context embedded");
 assert(messages[0].role === "system", "buildBriefMessages: system prompt first");
+assert(joined.includes("detectedIssues") && joined.includes("优先处理 high"), "buildBriefMessages: deterministic issues drive prioritization");
 
 // 4. buildBriefMessages with feedback themes + competitor deltas
 const themedInput: any = {
@@ -66,6 +68,7 @@ const themedInput: any = {
 const themedMessages = buildBriefMessages(themedInput);
 const themedJoined = themedMessages.map((m) => m.content).join("\n");
 assert(themedJoined.includes("夜间模式") && themedJoined.includes("Comp"), "buildBriefMessages: 反馈主题与竞品动态嵌入上下文");
+assert(!themedMessages[0].content.includes("夜间模式") && themedMessages[1].content.includes("夜间模式"), "buildBriefMessages: volatile evidence stays out of cacheable system prefix");
 
 // 3. Renderer rule signals
 const signals = briefRuleSignals({

@@ -74,18 +74,29 @@ type BriefSessionExchange = {
   at: string;
 };
 
+type BriefDiagnostic = {
+  coverage: { tracked: number; ranked: number; top10: number; paused: number };
+  facts: string[];
+  anomalies: string[];
+  limitations: string[];
+  issues: {
+    id: string;
+    category: string;
+    severity: "high" | "medium" | "low";
+    title: string;
+    evidence: string;
+    action: "keywords" | "release" | "trend";
+    target: string | null;
+  }[];
+};
+
 type BriefQuestionSession = {
   projectId: string;
   productId: string;
   generatedAt: string;
   expiresAt: number;
   briefContext: string;
-  diagnostic: {
-    coverage: { tracked: number; ranked: number; top10: number; paused: number };
-    facts: string[];
-    anomalies: string[];
-    limitations: string[];
-  };
+  diagnostic: BriefDiagnostic;
   suggestions: Pick<BriefSuggestion, "id" | "title" | "reason" | "action" | "target">[];
   exchanges: BriefSessionExchange[];
 };
@@ -119,6 +130,12 @@ function buildBriefContextDigest(
     .join("；");
   const feedbackCount = Array.isArray(input?.feedbackThemes) ? input.feedbackThemes.length : 0;
   const competitorCount = Array.isArray(input?.competitorDeltas) ? input.competitorDeltas.length : 0;
+  const issueText = Array.isArray(input?.detectedIssues)
+    ? input.detectedIssues
+        .slice(0, 3)
+        .map((issue: any) => `[${issue.severity}] ${issue.title}：${issue.evidence}`)
+        .join("；")
+    : "";
   return [
     `项目：${input?.name || ""}`,
     `平台：${input?.platform || "unknown"}`,
@@ -127,6 +144,7 @@ function buildBriefContextDigest(
     `反馈主题：${feedbackCount} 个`,
     `竞品动态：${competitorCount} 条`,
     topMoverText ? `近期变动：${topMoverText}` : "近期无可对比排名变动",
+    issueText ? `已确认问题：${issueText}` : "确定性检查未发现明确问题",
   ].join("\n");
 }
 
@@ -203,17 +221,7 @@ async function buildOverviewBriefPayload(
   product: any,
 ): Promise<{
   input: any;
-  rankDiagnostic: {
-    coverage: {
-      tracked: number;
-      ranked: number;
-      top10: number;
-      paused: number;
-    };
-    facts: string[];
-    anomalies: string[];
-    limitations: string[];
-  };
+  rankDiagnostic: BriefDiagnostic;
   briefContext: string;
 }> {
   const { buildBriefInput } = await import("@appilot-labs/appilot-core/overview-summary");
@@ -280,20 +288,14 @@ async function buildOverviewBriefPayload(
       `在采样窗口内，Top10 关键词覆盖：${input.keywordStats.top10} 个。`,
     ],
     anomalies: [
-      ...(input.keywordStats.tracked > 0 && input.keywordStats.ranked === 0
-        ? ["当前无已采集排名数据，建议检查关键词采集任务状态与时区覆盖。"]
-        : []),
-      ...(input.keywordStats.tracked > 0 && input.keywordStats.ranked < input.keywordStats.tracked
-        ? ["部分关键词未形成近 14 天有效快照，建议补齐采集后再复盘。"]
-        : []),
-      ...(!releaseResult.latest
-        ? ["未检测到最近发布草稿，发布相关建议将偏保守。"]
-        : []),
+      ...input.detectedIssues.map((issue: any) => issue.evidence),
     ],
     limitations: [
       "建议仅基于最近 14 天的排名快照与已存在的历史反馈进行推断。",
       "未覆盖未跟踪关键词与外部市场波动导致的短期异常。",
+      ...(!releaseResult.latest ? ["未检测到最近发布草稿，无法检查发布完整度。"] : []),
     ],
+    issues: input.detectedIssues,
   };
 
   return { input, rankDiagnostic, briefContext: buildBriefContextDigest(input) };

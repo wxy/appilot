@@ -53,26 +53,17 @@ export function normalizeBriefSuggestions(data: any): BriefSuggestion[] {
 
 export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
   const { profile, ...taskData } = input;
-  const contextLines: string[] = [];
-  if (input.feedbackThemes?.length) {
-    contextLines.push(`用户反馈主题（${input.feedbackThemes.length} 个）：${JSON.stringify(input.feedbackThemes)}`);
-  }
-  if (input.competitorDeltas?.length) {
-    contextLines.push(`竞品动态：${JSON.stringify(input.competitorDeltas)}`);
-  }
-  const instruction = contextLines.length > 0
-    ? "可在建议中引用用户反馈主题或竞品动态作为依据。"
-    : "";
   return buildArchiveMessages(
     profile,
     [
       "你是 Appilot 的运营副驾驶，为独立开发者的 App Store 增长给出简短、可执行的建议。",
       "你只能基于下面给定的真实数据输出建议，reason 必须引用数据，不得编造。",
+      "detectedIssues 是确定性规则从现有数据中发现的问题。优先处理 high，其次 medium；不要用低价值建议挤占更高优先级问题。",
+      "如果 detectedIssues 为空，不要假装发现缺陷；可基于其余数据给出优化建议，并明确这是机会而非已确认问题。",
+      "feedbackThemes 和 competitorDeltas 只作为补充依据；竞品更新本身不等于风险。",
       "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\"}]}",
       "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",
-      instruction,
-      ...contextLines,
-    ].filter(Boolean).join("\n"),
+    ].join("\n"),
     [JSON.stringify(taskData, null, 2)],
   );
 }

@@ -27,6 +27,15 @@ interface BriefDiagnosticOverview {
   facts: string[];
   anomalies: string[];
   limitations: string[];
+  issues: {
+    id: string;
+    category: string;
+    severity: "high" | "medium" | "low";
+    title: string;
+    evidence: string;
+    action: "keywords" | "release" | "trend";
+    target: string | null;
+  }[];
 };
 
 interface BriefSessionExchange {

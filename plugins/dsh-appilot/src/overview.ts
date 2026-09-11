@@ -16,7 +16,7 @@ import { listGitHubReleases } from '@appilot-labs/appilot-core/github-api';
 import { runReadinessChecks } from '@appilot-labs/appilot-core/readiness-check';
 import { fetchTrafficSnapshot } from '@appilot-labs/appilot-core/gh-traffic';
 import { createAscClient } from '@appilot-labs/appilot-core/asc-api';
-import { computeRankMovers, type OverviewBriefInput } from '@appilot-labs/appilot-core/overview-summary';
+import { computeRankMovers, detectOverviewIssues, type OverviewBriefInput } from '@appilot-labs/appilot-core/overview-summary';
 import { AIProvider } from '@appilot-labs/appilot-core/ai/ai-provider';
 import { generateOverviewBrief } from '@appilot-labs/appilot-core/ai/overview-brief';
 
@@ -35,18 +35,26 @@ function buildBriefInput(ov: {
   const top10 = new Set(
     ov.snapshots.filter((s) => s.rank != null && s.rank <= 10).map((s) => s.keyword),
   );
+  const keywordStats = {
+    tracked: keywords.size,
+    ranked: ranked.size,
+    top10: top10.size,
+    paused: 0,
+  };
+  const rankMovers = computeRankMovers(ov.snapshots);
   return {
     name: ov.name,
     description: ov.description || '',
     platform: ov.platform || 'unknown',
     supportedLanguages: ov.languages,
-    keywordStats: {
-      tracked: keywords.size,
-      ranked: ranked.size,
-      top10: top10.size,
-      paused: 0,
-    },
-    rankMovers: computeRankMovers(ov.snapshots),
+    keywordStats,
+    rankMovers,
+    detectedIssues: detectOverviewIssues({
+      keywordStats,
+      rankMovers,
+      release: null,
+      feedbackThemes: [],
+    }),
     release: null,
     submissionKeywordCount: 0,
     uiLanguage: 'zh',

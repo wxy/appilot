@@ -118,6 +118,15 @@ type BriefDiagnosticOverview = {
   facts: string[];
   anomalies: string[];
   limitations: string[];
+  issues: {
+    id: string;
+    category: string;
+    severity: "high" | "medium" | "low";
+    title: string;
+    evidence: string;
+    action: "keywords" | "release" | "trend";
+    target: string | null;
+  }[];
 };
 
 type BriefConversationEntry = {
@@ -1066,6 +1075,38 @@ export function OverviewContent(props: OverviewContentProps) {
                 <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">当前未纳入建议池</p>
               </div>
             </div>
+            {(briefDiagnostic.issues || []).length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                  已确认问题 · {briefDiagnostic.issues.length}
+                </p>
+                {briefDiagnostic.issues.slice(0, 3).map((issue) => (
+                  <div
+                    key={issue.id}
+                    className="flex items-start gap-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 px-2.5 py-2"
+                  >
+                    <span
+                      className={cn(
+                        "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                        issue.severity === "high"
+                          ? "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400"
+                          : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+                      )}
+                    >
+                      {issue.severity === "high" ? "高" : "中"}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
+                        {issue.title}
+                      </p>
+                      <p className="mt-0.5 text-[10px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+                        {issue.evidence}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {(briefDiagnostic.facts.length > 0 || briefDiagnostic.anomalies.length > 0) && (
               <div className="mt-2 space-y-2">
                 {briefDiagnostic.facts.length > 0 && (
@@ -1078,7 +1119,7 @@ export function OverviewContent(props: OverviewContentProps) {
                     {briefDiagnostic.facts[1]}
                   </p>
                 )}
-                {briefDiagnostic.anomalies.length > 0 && (
+                {(briefDiagnostic.issues || []).length === 0 && briefDiagnostic.anomalies.length > 0 && (
                   <p className="text-[11px] leading-relaxed text-amber-600 dark:text-amber-300">
                     异常：{briefDiagnostic.anomalies[0]}
                   </p>

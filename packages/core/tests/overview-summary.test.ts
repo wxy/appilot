@@ -52,6 +52,8 @@ assert(input.name === "GloWalk", "buildBriefInput: name");
 assert(input.keywordStats.tracked === 1 && input.keywordStats.paused === 1, "buildBriefInput: keyword stats");
 assert(input.keywordStats.ranked === 1 && input.keywordStats.top10 === 1, "buildBriefInput: ranked/top10 from snapshots (night walk best #5 in window)");
 assert(!input.rankMovers.some((m) => m.keyword === "paused now" || m.keyword === "记账"), "buildBriefInput: movers only include active tracked keywords");
+assert(input.detectedIssues.some((issue) => issue.category === "ranking" && issue.target === "night walk"), "buildBriefInput: significant rank drop becomes a detected issue");
+assert(input.detectedIssues.some((issue) => issue.category === "release" && issue.target === "v1.2.0"), "buildBriefInput: incomplete localization becomes a detected issue");
 assert(input.release?.tag === "v1.2.0", "buildBriefInput: release tag");
 assert(input.submissionKeywordCount === 2, "buildBriefInput: submission keyword count");
 
@@ -63,6 +65,8 @@ const themed = buildBriefInput({
   competitorDeltas: [{ name: "Comp", change: "v1.0 → v1.1" }],
 });
 assert(themed.feedbackThemes?.length === 1 && themed.competitorDeltas?.[0]?.name === "Comp", "buildBriefInput: 反馈主题与竞品动态透传");
+assert(themed.detectedIssues.some((issue) => issue.category === "data-quality" && issue.severity === "high"), "buildBriefInput: empty keyword coverage becomes a high severity issue");
+assert(themed.detectedIssues.some((issue) => issue.category === "feedback" && issue.evidence.includes("3 条")), "buildBriefInput: repeated feedback becomes an evidence-backed issue");
 
 if (errors === 0) console.log("\nAll overview-summary tests passed ✅");
 else { console.error(`\n${errors} test(s) failed ❌`); process.exit(1); }
