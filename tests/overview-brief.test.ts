@@ -53,6 +53,8 @@ const input: any = {
   platform: "ios",
   supportedLanguages: ["en", "zh-Hans"],
   keywordStats: { tracked: 10, ranked: 4, top10: 2, paused: 1 },
+  keywordInventory: { active: [{ keyword: "night walk", language: "en" }], paused: [], removed: [] },
+  keywordRankDetails: [{ keyword: "night walk", language: "en", checkedStorefronts: 1, rankedStorefronts: 1, unrankedStorefronts: 0, top10Storefronts: 0, bestRanks: [{ storefront: "us", rank: 12 }], weakestRanks: [], latestCheckedAt: new Date().toISOString() }],
   rankMovers: [{ keyword: "night walk", language: "en", storefront: "us", previousRank: 5, currentRank: 12, delta: -7 }],
   detectedIssues: [{ id: "rank-drop", category: "ranking", severity: "medium", title: "night walk 显著掉榜", evidence: "美区从第 5 名降至第 12 名", action: "trend", target: "night walk" }],
   release: { tag: "v1.2.0", languageProgress: 3, languageTotal: 8, masterConfirmed: true, batchConfirmed: false, storeStatus: "prepared" },

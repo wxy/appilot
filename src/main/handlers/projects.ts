@@ -66,6 +66,7 @@ import {
 
 const BRIEF_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const BRIEF_SESSION_MAX_EXCHANGES = 4;
+const BRIEF_SESSIONS_STORE_KEY = "overviewBriefSessions";
 
 type BriefSessionExchange = {
   suggestionId: string | null;
@@ -94,11 +95,41 @@ function trimBriefExchanges(exchanges: BriefSessionExchange[]): BriefSessionExch
   return exchanges.slice(-BRIEF_SESSION_MAX_EXCHANGES);
 }
 
-function pruneExpiredBriefSession(): void {
+function readPersistedBriefSessions(s: any): Record<string, BriefQuestionSession> {
+  const value = s.get(BRIEF_SESSIONS_STORE_KEY);
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function pruneExpiredBriefSession(s?: any): void {
   const now = Date.now();
   for (const [key, session] of briefQuestionSessions.entries()) {
     if (session.expiresAt <= now) briefQuestionSessions.delete(key);
   }
+  if (s) {
+    const persisted = readPersistedBriefSessions(s);
+    const next = Object.fromEntries(
+      Object.entries(persisted).filter(([, session]) => session?.expiresAt > now),
+    );
+    if (Object.keys(next).length !== Object.keys(persisted).length) {
+      s.set(BRIEF_SESSIONS_STORE_KEY, next);
+    }
+  }
+}
+
+function getBriefSession(s: any, key: string): BriefQuestionSession | undefined {
+  const memory = briefQuestionSessions.get(key);
+  if (memory) return memory;
+  const persisted = readPersistedBriefSessions(s)[key];
+  if (!persisted || persisted.expiresAt <= Date.now()) return undefined;
+  const session = { ...persisted, exchanges: trimBriefExchanges(persisted.exchanges || []) };
+  briefQuestionSessions.set(key, session);
+  return session;
+}
+
+function saveBriefSession(s: any, key: string, session: BriefQuestionSession): void {
+  briefQuestionSessions.set(key, session);
+  const persisted = readPersistedBriefSessions(s);
+  s.set(BRIEF_SESSIONS_STORE_KEY, { ...persisted, [key]: session });
 }
 
 function buildBriefContextDigest(
@@ -119,10 +150,33 @@ function buildBriefContextDigest(
         .map((issue: any) => `[${issue.severity}] ${issue.title}：${issue.evidence}`)
         .join("；")
     : "";
+  const inventory = input?.keywordInventory || {};
+  const inventoryText = (items: any[]) => (Array.isArray(items) && items.length > 0
+    ? items.map((item: any) => `${item.language || "?"}:${item.keyword || "?"}`).join("、")
+    : "无");
+  const keywordDetailText = Array.isArray(input?.keywordRankDetails)
+    ? input.keywordRankDetails.map((detail: any) => {
+        const best = (detail.bestRanks || []).map((item: any) => `${item.storefront}#${item.rank}`).join("/");
+        const weak = (detail.weakestRanks || []).map((item: any) => `${item.storefront}#${item.rank}`).join("/");
+        return [
+          `${detail.language}:${detail.keyword}`,
+          `已查${detail.checkedStorefronts}店`,
+          `入榜${detail.rankedStorefronts}店`,
+          `Top10 ${detail.top10Storefronts}店`,
+          `未入榜${detail.unrankedStorefronts}店`,
+          best ? `最佳 ${best}` : "当前无入榜",
+          weak ? `较弱 ${weak}` : "",
+        ].filter(Boolean).join("，");
+      }).join("\n")
+    : "";
   return [
     `项目：${input?.name || ""}`,
     `平台：${input?.platform || "unknown"}`,
-    `关键词覆盖：跟踪 ${input?.keywordStats?.tracked || 0}，有快照 ${input?.keywordStats?.ranked || 0}，Top10 ${input?.keywordStats?.top10 || 0}，暂停 ${input?.keywordStats?.paused || 0}`,
+    `关键词覆盖：跟踪 ${input?.keywordStats?.tracked || 0}，已检查 ${input?.keywordStats?.checked || 0}，曾入榜 ${input?.keywordStats?.ranked || 0}，Top10 ${input?.keywordStats?.top10 || 0}，暂停 ${input?.keywordStats?.paused || 0}`,
+    `活跃关键词：${inventoryText(inventory.active)}`,
+    `暂停关键词：${inventoryText(inventory.paused)}`,
+    `已删除关键词：${inventoryText(inventory.removed)}`,
+    keywordDetailText ? `关键词当前排名摘要：\n${keywordDetailText}` : "关键词当前排名摘要：无",
     `14 天发布状态：${input?.release ? `tag=${input.release.tag || "unknown"}，语言 ${input.release.languageProgress || 0}/${input.release.languageTotal || 0}` : "无发布草稿"}`,
     `反馈主题：${feedbackCount} 个`,
     `竞品动态：${competitorCount} 条`,
@@ -231,14 +285,25 @@ async function buildOverviewBriefPayload(
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const submissionDraft = drafts[0] || null;
 
+  let rankSnapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
+  try {
+    // getStore('projects') intentionally returns a lightweight DB view without snapshots.
+    // Brief generation needs the same rich rank history shown by the Overview page.
+    rankSnapshots = sharedStore().snapshots.history(project.name, { productId: product.id });
+  } catch (err: any) {
+    log.warn(`overview brief: DB rank snapshots unavailable, using product fallback: ${err.message}`);
+  }
+  const keywordPool = ensureProjectKeywordPool(project);
+
   const input = buildBriefInput({
     projectName: project.name,
     productName: product.trackName || project.name,
     description,
     platform: product.platform || "unknown",
     supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
-    trackedKeywords: ensureProjectKeywordPool(project).trackedKeywords || [],
-    rankSnapshots: product.rankSnapshots || [],
+    trackedKeywords: keywordPool.trackedKeywords || [],
+    removedKeywords: keywordPool.removedKeywords || [],
+    rankSnapshots,
     releaseDraft: releaseResult.latest
       ? { name: releaseResult.latest.name, tag: releaseResult.latest.tag }
       : null,
@@ -1974,12 +2039,13 @@ export function registerProjectsHandlers(): void {
       }
     });
 
-    pruneExpiredBriefSession();
+    pruneExpiredBriefSession(s);
     const key = briefSessionKey(project.id, product.id);
-    briefQuestionSessions.set(key, {
+    const generatedAt = new Date().toISOString();
+    saveBriefSession(s, key, {
       projectId: project.id,
       productId: product.id,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
       briefContext,
       suggestions: suggestions.map((item: any) => ({
@@ -1994,7 +2060,7 @@ export function registerProjectsHandlers(): void {
 
     return {
       suggestions,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
     };
   });
 
@@ -2007,8 +2073,8 @@ export function registerProjectsHandlers(): void {
       const projects: any[] = s.get("projects") || [];
       const context = findProductContext(projects, productId);
       if (!context || context.project.id !== projectId) return null;
-      pruneExpiredBriefSession();
-      const session = briefQuestionSessions.get(briefSessionKey(projectId, productId));
+      pruneExpiredBriefSession(s);
+      const session = getBriefSession(s, briefSessionKey(projectId, productId));
       if (!session) return null;
       return {
         suggestions: session.suggestions,
@@ -2037,9 +2103,9 @@ export function registerProjectsHandlers(): void {
       const { project, product } = context;
       if (project.id !== projectId) throw new Error("Store product does not belong to project");
 
-      pruneExpiredBriefSession();
+      pruneExpiredBriefSession(s);
       const key = briefSessionKey(project.id, product.id);
-      let session = briefQuestionSessions.get(key);
+      let session = getBriefSession(s, key);
       if (!session || session.expiresAt <= Date.now()) {
         const { briefContext } =
           await buildOverviewBriefPayload(s, project, product);
@@ -2052,7 +2118,7 @@ export function registerProjectsHandlers(): void {
           suggestions: [],
           exchanges: [],
         };
-        briefQuestionSessions.set(key, session);
+        saveBriefSession(s, key, session);
       }
 
       const trimmedQuestion = questionText.trim();
@@ -2069,6 +2135,7 @@ export function registerProjectsHandlers(): void {
       const followupSystem = [
         "你是 Appilot 的运营副驾驶，擅长围绕上文简报给出可执行的中文建议。",
         "请严格基于给定上下文回答，不要编造具体指标或事实；对不确定项明确标注。",
+        "上下文中的关键词状态和排名摘要来自 Appilot 数据库。用户询问具体关键词、暂停/删除状态或商店差异时，直接分析这些数据，不要要求用户再次导出或提供 Appilot 已持有的数据。",
         "回答应可直接执行，结构化输出：先给结论，再给 2~3 条可执行动作（每条 <=1 句）。",
       ];
       const baseContext = [
@@ -2126,7 +2193,7 @@ export function registerProjectsHandlers(): void {
         },
       ]);
       session.expiresAt = Date.now() + BRIEF_SESSION_TTL_MS;
-      briefQuestionSessions.set(key, { ...session, exchanges: session.exchanges });
+      saveBriefSession(s, key, { ...session, exchanges: session.exchanges });
 
       return { answer };
     },

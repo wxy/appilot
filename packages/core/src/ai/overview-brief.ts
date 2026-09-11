@@ -68,6 +68,7 @@ export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
       "如果 detectedIssues 为空，不要假装发现缺陷；可基于其余数据给出优化建议，并明确这是机会而非已确认问题。",
       "feedbackThemes 和 competitorDeltas 只作为补充依据；竞品更新本身不等于风险。",
       "总览页已经展示关键词数量、排名分布、发布进度、仓库活动、评价和竞品概况。不要复述这些状态，也不要把同一问题拆成多条建议。",
+      "keywordInventory 和 keywordRankDetails 是数据库中的关键词级证据。涉及排名时先比较语言、商店和关键词差异；只有确实没有检查记录时，才能判断采集数据缺失。",
       "每条建议必须代表一个不同的决策：title 直接写下一步动作；reason 只解释为什么现在值得做，最多引用两个关键证据。若只有一个高价值动作，就只输出一条。",
       "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\"}]}",
       "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",

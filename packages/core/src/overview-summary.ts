@@ -21,6 +21,24 @@ export interface RankMover {
   delta: number | null; // positive = improved
 }
 
+export interface KeywordRankDetail {
+  keyword: string;
+  language: string;
+  checkedStorefronts: number;
+  rankedStorefronts: number;
+  unrankedStorefronts: number;
+  top10Storefronts: number;
+  bestRanks: { storefront: string; rank: number }[];
+  weakestRanks: { storefront: string; rank: number }[];
+  latestCheckedAt: string | null;
+}
+
+export interface KeywordInventory {
+  active: { keyword: string; language: string }[];
+  paused: { keyword: string; language: string }[];
+  removed: { keyword: string; language: string; removedAt: string | null }[];
+}
+
 export type OverviewIssueSeverity = "high" | "medium" | "low";
 export type OverviewIssueCategory = "data-quality" | "ranking" | "release" | "feedback";
 
@@ -71,13 +89,14 @@ export function computeRankMovers(snapshots: RankSnapshotLike[], days = 14): Ran
 }
 
 export function detectOverviewIssues(input: {
-  keywordStats: { tracked: number; ranked: number; top10: number; paused: number };
+  keywordStats: { tracked: number; checked?: number; ranked: number; top10: number; paused: number };
   rankMovers: RankMover[];
   release: OverviewBriefInput["release"];
   feedbackThemes: { title: string; evidenceCount: number; topQuotes: string[] }[];
 }): OverviewDetectedIssue[] {
   const issues: OverviewDetectedIssue[] = [];
   const { tracked, ranked } = input.keywordStats;
+  const checked = input.keywordStats.checked ?? ranked;
 
   if (tracked === 0) {
     issues.push({
@@ -89,23 +108,33 @@ export function detectOverviewIssues(input: {
       action: "keywords",
       target: null,
     });
-  } else if (ranked === 0) {
+  } else if (checked === 0) {
     issues.push({
       id: "rank-snapshots-empty",
       category: "data-quality",
       severity: "high",
       title: "关键词排名数据缺失",
-      evidence: `${tracked} 个跟踪关键词中，没有关键词形成近 14 天有效排名快照。`,
+      evidence: `${tracked} 个跟踪关键词中，没有关键词形成近 14 天排名检查记录。`,
       action: "keywords",
       target: null,
     });
-  } else if (ranked / tracked < 0.6) {
+  } else if (checked / tracked < 0.6) {
     issues.push({
       id: "rank-snapshots-partial",
       category: "data-quality",
       severity: "medium",
       title: "关键词排名覆盖不足",
-      evidence: `${tracked} 个跟踪关键词中仅 ${ranked} 个形成近 14 天有效快照。`,
+      evidence: `${tracked} 个跟踪关键词中仅 ${checked} 个形成近 14 天排名检查记录。`,
+      action: "keywords",
+      target: null,
+    });
+  } else if (ranked === 0) {
+    issues.push({
+      id: "rank-visibility-empty",
+      category: "ranking",
+      severity: "medium",
+      title: "跟踪关键词均未进入可见排名",
+      evidence: `${checked} 个关键词已有近 14 天检查记录，但没有记录到可见排名。`,
       action: "keywords",
       target: null,
     });
@@ -166,7 +195,10 @@ export interface OverviewBriefInput {
   description: string;
   platform: string;
   supportedLanguages: string[];
-  keywordStats: { tracked: number; ranked: number; top10: number; paused: number };
+  keywordStats: { tracked: number; checked?: number; ranked: number; top10: number; paused: number };
+  /** Compact keyword-level evidence retained for concrete multi-turn follow-ups. */
+  keywordInventory?: KeywordInventory;
+  keywordRankDetails?: KeywordRankDetail[];
   rankMovers: RankMover[];
   detectedIssues: OverviewDetectedIssue[];
   release: {
@@ -194,6 +226,7 @@ export function buildBriefInput(args: {
   platform: string;
   supportedLanguages: string[];
   trackedKeywords: { keyword?: string; language?: string; status?: string }[];
+  removedKeywords?: { keyword?: string; language?: string; removedAt?: string }[];
   rankSnapshots: RankSnapshotLike[];
   days?: number;
   releaseDraft: { name?: string | null; tag: string } | null;
@@ -218,10 +251,13 @@ export function buildBriefInput(args: {
   );
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   const bestByKeyword = new Map<string, number>();
+  const checkedKeywords = new Set<string>();
   for (const snapshot of args.rankSnapshots) {
-    if (snapshot.rank == null || new Date(snapshot.checkedAt).getTime() < cutoff) continue;
+    if (new Date(snapshot.checkedAt).getTime() < cutoff) continue;
     const key = `${snapshot.keyword}\u0000${snapshot.language}`;
     if (!activeKeys.has(key)) continue;
+    checkedKeywords.add(key);
+    if (snapshot.rank == null) continue;
     const prev = bestByKeyword.get(key);
     if (prev === undefined || snapshot.rank < prev) bestByKeyword.set(key, snapshot.rank);
   }
@@ -240,9 +276,65 @@ export function buildBriefInput(args: {
 
   const keywordStats = {
     tracked: active.length,
+    checked: checkedKeywords.size,
     ranked,
     top10,
     paused: args.trackedKeywords.length - active.length,
+  };
+  const latestByStorefront = new Map<string, RankSnapshotLike>();
+  for (const snapshot of args.rankSnapshots) {
+    if (new Date(snapshot.checkedAt).getTime() < cutoff) continue;
+    const keywordKey = `${snapshot.keyword}\u0000${snapshot.language}`;
+    if (!activeKeys.has(keywordKey)) continue;
+    const key = `${keywordKey}\u0000${snapshot.storefront}`;
+    const previous = latestByStorefront.get(key);
+    if (!previous || new Date(snapshot.checkedAt).getTime() > new Date(previous.checkedAt).getTime()) {
+      latestByStorefront.set(key, snapshot);
+    }
+  }
+  const keywordRankDetails: KeywordRankDetail[] = active.map((item) => {
+    const keyword = item.keyword ?? "";
+    const language = item.language ?? "";
+    const prefix = `${keyword}\u0000${language}\u0000`;
+    const latest = [...latestByStorefront.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, snapshot]) => snapshot);
+    const rankedLatest = latest
+      .filter((snapshot): snapshot is RankSnapshotLike & { rank: number } => snapshot.rank != null)
+      .sort((a, b) => a.rank - b.rank || a.storefront.localeCompare(b.storefront));
+    const bestRanks = rankedLatest.slice(0, 3).map(({ storefront, rank }) => ({ storefront, rank }));
+    const bestKeys = new Set(bestRanks.map((item) => item.storefront));
+    const weakestRanks = [...rankedLatest]
+      .reverse()
+      .filter((snapshot) => !bestKeys.has(snapshot.storefront))
+      .slice(0, 3)
+      .map(({ storefront, rank }) => ({ storefront, rank }));
+    const latestCheckedAt = latest.reduce<string | null>(
+      (value, snapshot) => !value || snapshot.checkedAt > value ? snapshot.checkedAt : value,
+      null,
+    );
+    return {
+      keyword,
+      language,
+      checkedStorefronts: latest.length,
+      rankedStorefronts: rankedLatest.length,
+      unrankedStorefronts: latest.length - rankedLatest.length,
+      top10Storefronts: rankedLatest.filter((snapshot) => snapshot.rank <= 10).length,
+      bestRanks,
+      weakestRanks,
+      latestCheckedAt,
+    };
+  });
+  const keywordInventory: KeywordInventory = {
+    active: active.map((item) => ({ keyword: item.keyword ?? "", language: item.language ?? "" })),
+    paused: args.trackedKeywords
+      .filter((item) => item.status === "paused")
+      .map((item) => ({ keyword: item.keyword ?? "", language: item.language ?? "" })),
+    removed: (args.removedKeywords || []).map((item) => ({
+      keyword: item.keyword ?? "",
+      language: item.language ?? "",
+      removedAt: item.removedAt ?? null,
+    })),
   };
   const rankMovers = computeRankMovers(
     args.rankSnapshots.filter((snapshot) =>
@@ -268,6 +360,8 @@ export function buildBriefInput(args: {
     platform: args.platform,
     supportedLanguages: args.supportedLanguages,
     keywordStats,
+    keywordInventory,
+    keywordRankDetails,
     rankMovers,
     detectedIssues: detectOverviewIssues({ keywordStats, rankMovers, release, feedbackThemes }),
     release,

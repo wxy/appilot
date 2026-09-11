@@ -40,6 +40,7 @@ const input = buildBriefInput({
     { keyword: "night walk", language: "en", status: "active" },
     { keyword: "paused now", language: "en", status: "paused" },
   ],
+  removedKeywords: [{ keyword: "old removed", language: "en", removedAt: iso(5) }],
   rankSnapshots: snapshots as any,
   releaseDraft: { name: "v1.2.0", tag: "v1.2.0" },
   submissionDraft: {
@@ -50,7 +51,11 @@ const input = buildBriefInput({
 });
 assert(input.name === "GloWalk", "buildBriefInput: name");
 assert(input.keywordStats.tracked === 1 && input.keywordStats.paused === 1, "buildBriefInput: keyword stats");
+assert(input.keywordStats.checked === 1, "buildBriefInput: null and ranked snapshots both count as completed checks");
 assert(input.keywordStats.ranked === 1 && input.keywordStats.top10 === 1, "buildBriefInput: ranked/top10 from snapshots (night walk best #5 in window)");
+assert(input.keywordInventory?.active[0]?.keyword === "night walk" && input.keywordInventory?.paused[0]?.keyword === "paused now", "buildBriefInput: active and paused keyword inventory");
+assert(input.keywordInventory?.removed[0]?.keyword === "old removed", "buildBriefInput: removed keyword inventory");
+assert(input.keywordRankDetails?.[0]?.rankedStorefronts === 1 && input.keywordRankDetails?.[0]?.bestRanks[0]?.rank === 12, "buildBriefInput: latest per-storefront rank detail");
 assert(!input.rankMovers.some((m) => m.keyword === "paused now" || m.keyword === "记账"), "buildBriefInput: movers only include active tracked keywords");
 assert(input.detectedIssues.some((issue) => issue.category === "ranking" && issue.target === "night walk"), "buildBriefInput: significant rank drop becomes a detected issue");
 assert(input.detectedIssues.some((issue) => issue.category === "release" && issue.target === "v1.2.0"), "buildBriefInput: incomplete localization becomes a detected issue");
@@ -67,6 +72,17 @@ const themed = buildBriefInput({
 assert(themed.feedbackThemes?.length === 1 && themed.competitorDeltas?.[0]?.name === "Comp", "buildBriefInput: 反馈主题与竞品动态透传");
 assert(themed.detectedIssues.some((issue) => issue.category === "data-quality" && issue.severity === "high"), "buildBriefInput: empty keyword coverage becomes a high severity issue");
 assert(themed.detectedIssues.some((issue) => issue.category === "feedback" && issue.evidence.includes("3 条")), "buildBriefInput: repeated feedback becomes an evidence-backed issue");
+
+const checkedButUnranked = buildBriefInput({
+  projectName: "P", productName: "P", description: "", platform: "ios",
+  supportedLanguages: ["en"],
+  trackedKeywords: [{ keyword: "hard term", language: "en", status: "active" }],
+  rankSnapshots: [{ keyword: "hard term", language: "en", storefront: "us", rank: null, checkedAt: iso(1) }],
+  releaseDraft: null, submissionDraft: null, submissionKeywords: [],
+});
+assert(checkedButUnranked.keywordStats.checked === 1 && checkedButUnranked.keywordStats.ranked === 0, "buildBriefInput: distinguishes checked-but-unranked from missing collection");
+assert(checkedButUnranked.detectedIssues.some((issue) => issue.id === "rank-visibility-empty"), "buildBriefInput: checked-but-unranked becomes a ranking issue");
+assert(!checkedButUnranked.detectedIssues.some((issue) => issue.id === "rank-snapshots-empty"), "buildBriefInput: checked-but-unranked is not labeled a broken data pipeline");
 
 if (errors === 0) console.log("\nAll overview-summary tests passed ✅");
 else { console.error(`\n${errors} test(s) failed ❌`); process.exit(1); }
