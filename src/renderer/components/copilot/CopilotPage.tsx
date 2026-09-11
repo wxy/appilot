@@ -502,23 +502,34 @@ export function CopilotPage() {
       } else {
         throw new Error("动作参数不完整，无法执行");
       }
-      try {
-        await recordExecution(action, "executed", actionDescription(action));
-      } catch {
-        setError("动作已完成，但执行记录保存失败");
-      }
-      await loadSession();
       setTaskFeedback((current) => current?.actionId === action.id
         ? { ...current, state: "success", detail: current.completed ? `已完成，共收到 ${current.completed} 个排名结果` : "动作已完成" }
         : current);
+      let recorded = true;
+      try {
+        await recordExecution(action, "executed", actionDescription(action));
+      } catch {
+        recorded = false;
+        setTaskFeedback((current) => current?.actionId === action.id
+          ? { ...current, state: "success", detail: "动作已完成，但执行记录保存失败" }
+          : current);
+      }
+      if (recorded) {
+        await loadSession();
+        setTaskFeedback((current) => current?.actionId === action.id ? null : current);
+      }
     } catch (err: any) {
       const message = readableActionMessage(err?.message || "执行失败");
-      await recordExecution(action, "failed", message).catch(() => undefined);
-      setError(message);
       setTaskFeedback((current) => current?.actionId === action.id
         ? { ...current, state: "failed", detail: message }
         : current);
-      await loadSession().catch(() => undefined);
+      const recorded = await recordExecution(action, "failed", message)
+        .then(() => true)
+        .catch(() => false);
+      if (recorded) {
+        await loadSession().catch(() => undefined);
+        setTaskFeedback((current) => current?.actionId === action.id ? null : current);
+      }
     } finally {
       setRunningActionId(null);
     }
@@ -584,27 +595,6 @@ export function CopilotPage() {
           {loading ? `${progress?.phase === "content" ? "生成中" : "分析中"}${progress?.chars ? ` · ${progress.chars} 字` : ""}` : session ? "重新分析" : "开始分析"}
         </button>
       </div>
-
-      {taskFeedback && (
-        <div className={cn(
-          "mb-4 flex items-center gap-3 rounded-xl border px-4 py-3 text-sm",
-          taskFeedback.state === "running"
-            ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"
-            : taskFeedback.state === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
-              : "border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300",
-        )}>
-          <span className={cn(
-            "h-2.5 w-2.5 shrink-0 rounded-full",
-            taskFeedback.state === "running" ? "animate-pulse bg-amber-500" : taskFeedback.state === "success" ? "bg-emerald-500" : "bg-red-500",
-          )} />
-          <div className="min-w-0 flex-1">
-            <p className="font-medium">{taskFeedback.state === "running" ? `正在执行：${taskFeedback.label}` : taskFeedback.state === "success" ? `已完成：${taskFeedback.label}` : `执行失败：${taskFeedback.label}`}</p>
-            <p className="mt-0.5 text-xs opacity-75">{taskFeedback.detail}</p>
-          </div>
-          {taskFeedback.state !== "running" && <button onClick={() => setTaskFeedback(null)} className="text-xs opacity-60 hover:opacity-100">关闭</button>}
-        </div>
-      )}
 
       <div className="grid min-h-0 flex-1 grid-cols-[280px_minmax(0,1fr)] overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm">
         <aside className="overflow-y-auto border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/30 p-2">
@@ -674,32 +664,64 @@ export function CopilotPage() {
                     <p className="mb-2 text-[11px] font-medium text-amber-700 dark:text-amber-400">可执行动作</p>
                     <div className="space-y-2">
                       {proposedActions.map((action, actionIndex) => {
-                        const executed = !action.kind.endsWith(".open") && (session?.actionRuns || []).some((run) => run.action.id === action.id && run.status === "executed");
+                        const actionRuns = (session?.actionRuns || []).filter((run) => run.action.id === action.id);
+                        const executed = !action.kind.endsWith(".open") && actionRuns.some((run) => run.status === "executed");
                         const confirming = pendingAction?.id === action.id;
+                        const feedback = taskFeedback?.actionId === action.id ? taskFeedback : null;
                         return (
-                          <div key={action.id} className="flex items-center gap-3 rounded-lg bg-white/80 dark:bg-zinc-900/70 px-3 py-2">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">动作 {selectedSuggestionNumber}.{actionIndex + 1}</p>
-                              <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">{action.label}</p>
-                              <p className="mt-0.5 truncate text-[10px] text-zinc-400" title={actionDescription(action)}>{actionDescription(action)}</p>
-                            </div>
-                            {runningActionId === action.id ? (
-                              <button disabled className={cn(btnSmSecondary, "disabled:opacity-60")}>执行中…</button>
-                            ) : confirming ? (
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] text-amber-700 dark:text-amber-400">确认执行？</span>
-                                <button onClick={() => void execute(action)} className={btnSmPrimary}>确认</button>
-                                <button onClick={() => setPendingAction(null)} className={btnSmSecondary}>取消</button>
+                          <div key={action.id} className="rounded-lg bg-white/80 dark:bg-zinc-900/70 px-3 py-2.5">
+                            <div className="flex items-center gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">动作 {selectedSuggestionNumber}.{actionIndex + 1}</p>
+                                <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">{action.label}</p>
+                                <p className="mt-0.5 truncate text-[10px] text-zinc-400" title={actionDescription(action)}>{actionDescription(action)}</p>
                               </div>
-                            ) : (
-                              <button
-                                onClick={() => void execute(action)}
-                                disabled={executed || runningActionId === action.id}
-                                className={cn(btnSmSecondary, "disabled:opacity-50")}
-                              >
-                                {executed ? "已执行" : action.kind.endsWith(".open") ? "查看" : action.requiresConfirmation ? "预览" : "执行"}
-                              </button>
+                              {runningActionId === action.id ? (
+                                <button disabled className={cn(btnSmSecondary, "disabled:opacity-60")}>执行中…</button>
+                              ) : confirming ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[10px] text-amber-700 dark:text-amber-400">确认执行？</span>
+                                  <button onClick={() => void execute(action)} className={btnSmPrimary}>确认</button>
+                                  <button onClick={() => setPendingAction(null)} className={btnSmSecondary}>取消</button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => void execute(action)}
+                                  disabled={executed || runningActionId === action.id}
+                                  className={cn(btnSmSecondary, "disabled:opacity-50")}
+                                >
+                                  {executed ? "已执行" : action.kind.endsWith(".open") ? "查看" : action.requiresConfirmation ? "预览" : "执行"}
+                                </button>
+                              )}
+                            </div>
+                            {feedback && (
+                              <div className={cn(
+                                "mt-2 flex items-start gap-2 border-t pt-2 text-[11px]",
+                                feedback.state === "running"
+                                  ? "border-amber-100 text-amber-700 dark:border-amber-500/15 dark:text-amber-400"
+                                  : feedback.state === "success"
+                                    ? "border-emerald-100 text-emerald-700 dark:border-emerald-500/15 dark:text-emerald-400"
+                                    : "border-red-100 text-red-600 dark:border-red-500/15 dark:text-red-400",
+                              )}>
+                                <span className={cn("mt-1 h-1.5 w-1.5 shrink-0 rounded-full", feedback.state === "running" ? "animate-pulse bg-amber-500" : feedback.state === "success" ? "bg-emerald-500" : "bg-red-500")} />
+                                <span className="flex-1">{feedback.detail}</span>
+                                {feedback.state !== "running" && <button onClick={() => setTaskFeedback(null)} className="opacity-60 hover:opacity-100">关闭</button>}
+                              </div>
                             )}
+                            {actionRuns.map((run) => (
+                              <div key={run.id} className={cn(
+                                "mt-2 border-t pt-2 text-[11px]",
+                                run.status === "executed"
+                                  ? "border-emerald-100 text-emerald-700 dark:border-emerald-500/15 dark:text-emerald-400"
+                                  : "border-red-100 text-red-600 dark:border-red-500/15 dark:text-red-400",
+                              )}>
+                                {run.status === "executed" && run.action.kind.endsWith(".open")
+                                  ? "已查看"
+                                  : run.status === "executed"
+                                    ? (isActionVerified(run) ? "已执行并验证" : "已执行，等待数据验证")
+                                    : "执行失败"} · {readableActionMessage(run.message)} · {formatHumanTime(run.at)}
+                              </div>
+                            ))}
                           </div>
                         );
                       })}
@@ -724,23 +746,6 @@ export function CopilotPage() {
               </div>
             ))}
 
-            {(session?.actionRuns || [])
-              .filter((run) => run.suggestionId === (selectedSuggestion?.id || null))
-              .map((run) => (
-                <div key={run.id} className={cn(
-                  "mb-2 rounded-lg border px-3 py-2 text-xs",
-                  run.status === "executed"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/5 dark:text-emerald-400"
-                    : "border-red-200 bg-red-50 text-red-600 dark:border-red-500/20 dark:bg-red-500/5 dark:text-red-400",
-                )}>
-                  {run.status === "executed" && run.action.kind.endsWith(".open")
-                    ? "已查看"
-                    : run.status === "executed"
-                      ? (isActionVerified(run) ? "已执行并验证" : "已执行，等待数据验证")
-                      : "执行失败"} · {readableActionMessage(run.message)} · {formatHumanTime(run.at)}
-                  <span className="ml-1 opacity-60">({actionReference(run.action)})</span>
-                </div>
-              ))}
           </div>
 
           <div className="border-t border-zinc-200 dark:border-zinc-800 p-4">

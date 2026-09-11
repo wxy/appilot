@@ -67,6 +67,7 @@ import {
 const BRIEF_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const BRIEF_SESSION_MAX_EXCHANGES = 200;
 const BRIEF_CONTEXT_MAX_EXCHANGES = 6;
+const BRIEF_CONTEXT_VERSION = 2;
 const BRIEF_SESSIONS_STORE_KEY = "overviewBriefSessions";
 
 type BriefSessionExchange = {
@@ -92,6 +93,7 @@ type BriefQuestionSession = {
   generatedAt: string;
   expiresAt: number;
   briefContext: string;
+  contextVersion?: number;
   suggestions: BriefSuggestion[];
   exchanges: BriefSessionExchange[];
   actionRuns: BriefActionRun[];
@@ -187,6 +189,7 @@ function buildBriefContextDigest(
   return [
     `项目：${input?.name || ""}`,
     `平台：${input?.platform || "unknown"}`,
+    `产品定位：${input?.description || "未提供"}`,
     `关键词覆盖：跟踪 ${input?.keywordStats?.tracked || 0}，已检查 ${input?.keywordStats?.checked || 0}，曾入榜 ${input?.keywordStats?.ranked || 0}，Top10 ${input?.keywordStats?.top10 || 0}，暂停 ${input?.keywordStats?.paused || 0}`,
     `活跃关键词：${inventoryText(inventory.active)}`,
     `暂停关键词：${inventoryText(inventory.paused)}`,
@@ -2106,6 +2109,7 @@ export function registerProjectsHandlers(): void {
       generatedAt,
       expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
       briefContext,
+      contextVersion: BRIEF_CONTEXT_VERSION,
       suggestions: [...suggestions.map((item: any) => ({
         id: item.id,
         generatedAt,
@@ -2172,17 +2176,23 @@ export function registerProjectsHandlers(): void {
       pruneExpiredBriefSession();
       const key = briefSessionKey(project.id, product.id);
       let session = getBriefSession(s, key);
-      if (!session || session.expiresAt <= Date.now()) {
+      if (!session || session.expiresAt <= Date.now() || session.contextVersion !== BRIEF_CONTEXT_VERSION) {
         const { briefContext } =
           await buildOverviewBriefPayload(s, project, product);
         session = session
-          ? { ...session, briefContext, expiresAt: Date.now() + BRIEF_SESSION_TTL_MS }
+          ? {
+              ...session,
+              briefContext,
+              contextVersion: BRIEF_CONTEXT_VERSION,
+              expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
+            }
           : {
               projectId: project.id,
               productId: product.id,
               generatedAt: new Date().toISOString(),
               expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
               briefContext,
+              contextVersion: BRIEF_CONTEXT_VERSION,
               suggestions: [],
               exchanges: [],
               actionRuns: [],
@@ -2207,6 +2217,8 @@ export function registerProjectsHandlers(): void {
         "你是 Appilot 的运营副驾驶，擅长围绕上文简报给出可执行的中文建议。",
         "请严格基于给定上下文回答，不要编造具体指标或事实；对不确定项明确标注。",
         "上下文中的关键词状态和排名摘要来自 Appilot 数据库。用户询问具体关键词、暂停/删除状态或商店差异时，直接分析这些数据，不要要求用户再次导出或提供 Appilot 已持有的数据。",
+        "用户对产品核心价值、功能主次和目标用户的补充具有最高优先级。若用户指出建议建立在错误产品假设上，必须重新评估并明确说明保留、修改或撤回原建议，不要机械维护原结论。",
+        "只要下方上下文包含活跃关键词、已删除关键词或排名摘要，就不得声称没有关键词数据。若缺少的是相关性或产品定位证据，应准确说出缺少的证据类型。",
         "用户可以用“建议 2”或“动作 2.1”引用界面编号。请根据下方编号目录理解指代，并在回答中沿用编号。",
         "answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。若动作可由 Appilot 完成，同时返回 proposedActions；允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、release.open。关键词动作必须填写上下文中真实存在的 language 和 keyword。关键词排名趋势使用 keyword.open，长期效果页目前不承接关键词分析。",
         "使用自然中文，不要向用户暴露 detectedIssues、high、medium 等内部字段名。首次提到具体对象时必须说出关键词，避免无前文的“该词”或“同一关键词”。",
