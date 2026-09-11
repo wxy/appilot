@@ -1,7 +1,7 @@
 /**
  * daemon 库级测试：单例仲裁、reconcile→实例执行闭环、socket hello/ping/runNow。
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connect } from 'node:net';
@@ -18,6 +18,9 @@ async function main(): Promise<void> {
   const socketPath = join(dir, 'scheduler.sock');
   const logs: string[] = [];
   const log = (m: string) => logs.push(m);
+
+  // 模拟上个进程被强杀后遗留的 Unix socket 路径；新主取得租约后必须自愈。
+  if (process.platform !== 'win32') writeFileSync(socketPath, 'stale socket');
 
   // 预注册一个真实 git 仓库项目（github-sync 实例可立即执行成功）
   const store = openStore(dbPath);
@@ -40,6 +43,7 @@ async function main(): Promise<void> {
     log,
   });
   assert.equal(d1.store.lease.leader(), SCHEDULER_LEADER_ID, 'daemon 应持租约');
+  assert.ok(logs.some((l) => l.includes('socket listening')), '残留 socket 路径应被替换并成功监听');
   console.log('✓ daemon 启动并持租约');
 
   // 2. 第二 daemon 同 DB → acquire 失败抛错（单例仲裁）
