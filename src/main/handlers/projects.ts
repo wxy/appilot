@@ -29,6 +29,8 @@ import {
   findProductContext,
   getStoreSubmissionDrafts,
   migrateLegacyStoreProducts,
+  syncKeywordPoolToProducts as syncPoolToProducts,
+  updateProjectInProjects,
 } from "../project-state";
 import { buildProjectProfileFor } from "../release-service";
 import {
@@ -39,7 +41,6 @@ import {
 } from "../scheduler";
 import {
   briefActionCapability,
-  briefRecommendationCapabilities,
   buildBriefFollowupMessages,
   filterSupportedBriefActions,
   type BriefProposedAction,
@@ -48,6 +49,11 @@ import {
 import { requestJson } from "@appilot-labs/appilot-core/ai/ai-request";
 import type { ProjectProfile } from "@appilot-labs/appilot-core/project-profile";
 import { getStore } from "../store";
+import {
+  executeRegisteredAction,
+  findRecordedActionExecution,
+  recommendationActionCatalog,
+} from "../action-registry";
 import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
   parsePlistVersion,
@@ -90,6 +96,7 @@ type BriefSessionExchange = {
 
 type BriefActionRun = {
   id: string;
+  executionId?: string | null;
   suggestionId: string | null;
   action: BriefProposedAction;
   status: "executed" | "failed";
@@ -230,33 +237,6 @@ function buildBriefContextDigest(
     topMoverText ? `近期变动：${topMoverText}` : "近期无可对比排名变动",
     issueText ? `已确认问题：${issueText}` : "确定性检查未发现明确问题",
   ].join("\n");
-}
-
-function updateProjectInProjects(projects: any[], projectId: string, updater: (project: any) => any): any[] {
-  return projects.map((project) =>
-    project.id === projectId ? { ...project, ...updater(project) } : project,
-  );
-}
-
-/**
- * 项目级关键词池（top-level trackedKeywords/removedKeywords）变更后，把池镜像进
- * 每个产品的副本（storeProducts[].trackedKeywords/removedKeywords）。
- *
- * DB product_records 以产品副本为源（toProductRows），而 UI 刷新（DB 源 projects:list）
- * 在顶层池缺失时从产品副本重新合并出池——若删除/恢复只改顶层池，DB 产品副本不更新，
- * 刷新后关键词会“复活”（删除不生效）。所有池变更必须同时落两层。
- */
-function syncPoolToProducts(project: any): any {
-  const pool = Array.isArray(project.trackedKeywords) ? project.trackedKeywords : [];
-  const removed = Array.isArray(project.removedKeywords) ? project.removedKeywords : [];
-  return {
-    ...project,
-    storeProducts: (project.storeProducts || []).map((sp: any) => ({
-      ...sp,
-      trackedKeywords: pool,
-      removedKeywords: removed,
-    })),
-  };
 }
 
 function submissionReferenceFor(product: any, project: any, language: string) {
@@ -1238,30 +1218,16 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
-      const removedKeyword = (project.trackedKeywords || []).find(
-        (item: any) => item.language === language && item.keyword === keyword,
-      );
-      if (!removedKeyword) throw new Error("Keyword not found");
-      const trackedKeywords = (project.trackedKeywords || []).filter(
-        (item: any) => !(item.language === language && item.keyword === keyword),
-      );
-      const removedKeywords = Array.isArray(project.removedKeywords) ? [...project.removedKeywords] : [];
-      if (!removedKeywords.some((item: any) => item.language === language && item.keyword === keyword)) {
-        removedKeywords.push({
-          language,
-          keyword,
-          rationale: removedKeyword?.rationale || "",
-          translation: removedKeyword?.translation || "",
-          removedAt: new Date().toISOString(),
-        });
-      }
-      return syncPoolToProducts({ ...project, trackedKeywords, removedKeywords });
+    const result = executeRegisteredAction(s, {
+      actionId: "keyword.remove",
+      projectId: context.project.id,
+      productId,
+      input: { language, keyword },
+      source: "ui",
     });
-    s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
-    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+    return result.updatedProject;
   });
 
   ipcMain.handle("projects:removeTrackedKeywords", async (_event, productId: string, items: Array<{ language: string; keyword: string }>) => {
@@ -1303,29 +1269,16 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
-      const exists = (project.trackedKeywords || []).some(
-        (item: any) => item.language === language && item.keyword === keyword,
-      );
-      if (!exists) throw new Error("Keyword not found");
-      return syncPoolToProducts({
-        ...project,
-        trackedKeywords: (project.trackedKeywords || []).map((item: any) =>
-          item.language === language && item.keyword === keyword
-            ? {
-                ...item,
-                status: "paused",
-                pausedAt: new Date().toISOString(),
-                pausedReason: "由副驾驶建议并经用户确认暂停",
-              }
-            : item,
-        ),
-      });
+    const result = executeRegisteredAction(s, {
+      actionId: "keyword.pause",
+      projectId: context.project.id,
+      productId,
+      input: { language, keyword },
+      source: "ui",
     });
-    s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
-    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+    return result.updatedProject;
   });
 
   // 待处理暂停复核队列：列出命中“连续未在榜”但等待人工分类的关键词
@@ -2045,29 +1998,16 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
-      const removedItem = (project.removedKeywords || []).find(
-        (item: any) => item.language === language && item.keyword === keyword,
-      );
-      if (!removedItem) throw new Error("Keyword is not in removed list");
-      const trackedKeywords = [...(project.trackedKeywords || [])];
-      if (!trackedKeywords.some((item: any) => item.language === language && item.keyword === keyword)) {
-        trackedKeywords.push({
-          language,
-          keyword,
-          rationale: removedItem.rationale || "",
-          translation: removedItem.translation || "",
-        });
-      }
-      const removedKeywords = (project.removedKeywords || []).filter(
-        (item: any) => !(item.language === language && item.keyword === keyword),
-      );
-      return syncPoolToProducts({ ...project, trackedKeywords, removedKeywords });
+    const result = executeRegisteredAction(s, {
+      actionId: "keyword.restore",
+      projectId: context.project.id,
+      productId,
+      input: { language, keyword },
+      source: "ui",
     });
-    s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
-    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+    return result.updatedProject;
   });
 
   ipcMain.handle("projects:resumePausedKeyword", async (_event, productId: string, language: string, keyword: string) => {
@@ -2075,35 +2015,16 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
-      const paused = (project.trackedKeywords || []).find(
-        (item: any) => item.language === language && item.keyword === keyword,
-      );
-      if (!paused) throw new Error("Keyword is not paused");
-      const platformKey = context.product.platform || "unknown";
-      const pausedPlatforms = Array.isArray(paused.pausedPlatforms)
-        ? paused.pausedPlatforms.filter((item: string) => item !== platformKey)
-        : [];
-      const manualPause = paused.status === "paused";
-      return syncPoolToProducts({
-        ...project,
-        trackedKeywords: (project.trackedKeywords || []).map((item: any) =>
-          item.language === language && item.keyword === keyword
-            ? {
-                ...item,
-                status: manualPause ? "active" : item.status,
-                pausedAt: manualPause ? null : item.pausedAt,
-                pausedReason: manualPause || pausedPlatforms.length === 0 ? null : item.pausedReason,
-                pausedPlatforms,
-              }
-            : item,
-        ),
-      });
+    const result = executeRegisteredAction(s, {
+      actionId: "keyword.resume",
+      projectId: context.project.id,
+      productId,
+      input: { language, keyword },
+      source: "ui",
     });
-    s.set("projects", nextProjects);
     void schedulerTick();
     notifyDataChanged("projects");
-    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+    return result.updatedProject;
   });
 
   ipcMain.handle("projects:clearRemovedKeywords", async (_event, productId: string, languages: string[]) => {
@@ -2149,7 +2070,7 @@ export function registerProjectsHandlers(): void {
           phase: received.phase,
         });
       }
-    });
+    }, recommendationActionCatalog());
 
     pruneExpiredBriefSession();
     const key = briefSessionKey(project.id, product.id);
@@ -2360,7 +2281,7 @@ export function registerProjectsHandlers(): void {
         "用户对产品核心价值、功能主次和目标用户的补充具有最高优先级。若用户指出建议建立在错误产品假设上，必须重新评估并明确说明保留、修改或撤回原建议，不要机械维护原结论。",
         "只要下方上下文包含活跃关键词、已删除关键词或排名摘要，就不得声称没有关键词数据。若缺少的是相关性或产品定位证据，应准确说出缺少的证据类型。",
         "用户可以用“建议 2”或“动作 2.1”引用界面编号。请根据下方编号目录理解指代，并在回答中沿用编号。",
-        `answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。proposedActions 只能从 Appilot 有效动作目录选择：${JSON.stringify(briefRecommendationCapabilities())}。查看页面、刷新数据和跳转不是有效动作。`,
+        `answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。proposedActions 只能从 Appilot 有效动作目录选择：${JSON.stringify(recommendationActionCatalog())}。查看页面、刷新数据和跳转不是有效动作。`,
         "动作对象的 language 和 keyword 必须与上下文中符合 appliesTo 的关键词精确匹配。排名由任务中心每日自动采集；数据不足时说明需要等待，不要制造采集动作。",
         "使用自然中文，不要向用户暴露 detectedIssues、high、medium 等内部字段名。首次提到具体对象时必须说出关键词，避免无前文的“该词”或“同一关键词”。",
         "只输出 JSON：{\"answer\":\"Markdown 回答\",\"proposedActions\":[{\"kind\":\"keyword.pause\",\"label\":\"暂停关键词\",\"language\":\"en\",\"keyword\":\"weak term\"}]}",
@@ -2471,8 +2392,29 @@ export function registerProjectsHandlers(): void {
       if (!briefActionCapability(action.kind).recommendationEligible) {
         throw new Error("该操作不是可执行的副驾驶建议动作");
       }
+      const executionId = typeof payload?.executionId === "string" ? payload.executionId : "";
+      const execution = executionId ? findRecordedActionExecution(s, executionId) : null;
+      if (
+        !execution
+        || execution.source !== "copilot"
+        || execution.projectId !== projectId
+        || execution.productId !== productId
+        || execution.actionId !== action.kind
+        || execution.input.language !== action.language
+        || execution.input.keyword !== action.keyword
+      ) {
+        throw new Error("找不到与该建议匹配的注册动作执行记录");
+      }
+      const requestedStatus = payload?.status === "failed" ? "failed" : "executed";
+      if (
+        (requestedStatus === "executed" && execution.status !== "verified")
+        || (requestedStatus === "failed" && execution.status !== "failed")
+      ) {
+        throw new Error("建议记录与动作校验状态不一致");
+      }
       const run: BriefActionRun = {
-        id: `${action.id}-${Date.now()}`,
+        id: execution.id,
+        executionId: execution.id,
         suggestionId: typeof payload?.suggestionId === "string" ? payload.suggestionId : null,
         action,
         status: payload?.status === "failed" ? "failed" : "executed",

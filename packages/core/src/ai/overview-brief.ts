@@ -369,9 +369,11 @@ export function filterActionableBriefSuggestions(
   });
 }
 
-export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
+export function buildBriefMessages(
+  input: OverviewBriefInput,
+  actionCatalog: BriefActionCapability[] = briefRecommendationCapabilities(),
+): ChatMessage[] {
   const { profile, ...taskData } = input;
-  const actionCatalog = briefRecommendationCapabilities();
   return buildArchiveMessages(
     profile,
     [
@@ -401,9 +403,10 @@ export async function generateOverviewBrief(
   provider: AIProvider,
   input: OverviewBriefInput,
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  actionCatalog: BriefActionCapability[] = briefRecommendationCapabilities(),
 ): Promise<BriefSuggestion[]> {
   log.info(`Generating overview brief for ${input.name}`);
-  const data = await requestJson(provider, buildBriefMessages(input), {
+  const data = await requestJson(provider, buildBriefMessages(input, actionCatalog), {
     temperature: 0.3,
     maxTokens: 2400,
     thinking: "disabled",

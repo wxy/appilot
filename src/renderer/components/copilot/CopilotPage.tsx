@@ -23,12 +23,23 @@ type Exchange = {
 
 type ActionRun = {
   id: string;
+  executionId?: string | null;
   suggestionId: string | null;
   action: BriefProposedAction;
   status: "executed" | "failed";
   message: string;
   at: string;
   resultContextId?: string | null;
+};
+
+type ActionPreview = {
+  actionId: string;
+  title: string;
+  target: string;
+  immediateEffect: string;
+  verification: string;
+  available: boolean;
+  unavailableReason: string | null;
 };
 
 type Session = {
@@ -210,10 +221,7 @@ export function CopilotPage() {
     projects,
     currentProjectId,
     currentProductId,
-    pauseTrackedKeyword,
-    removeTrackedKeyword,
-    restoreTrackedKeyword,
-    resumePausedKeyword,
+    load: loadProjects,
   } = useProject();
   const location = useLocation();
   const project = projects.find((item) => item.id === currentProjectId) || null;
@@ -225,7 +233,10 @@ export function CopilotPage() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<{ chars: number; phase: string } | null>(null);
   const [asking, setAsking] = useState(false);
-  const [pendingAction, setPendingAction] = useState<BriefProposedAction | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    action: BriefProposedAction;
+    preview: ActionPreview;
+  } | null>(null);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const [taskFeedback, setTaskFeedback] = useState<TaskFeedback | null>(null);
   const [error, setError] = useState("");
@@ -345,6 +356,7 @@ export function CopilotPage() {
     action: BriefProposedAction,
     status: "executed" | "failed",
     message: string,
+    executionId?: string,
   ) => {
     if (!project || !product) return;
     await (window as any).appilot?.projects?.recordBriefExecution(project.id, product.id, {
@@ -352,14 +364,43 @@ export function CopilotPage() {
       action,
       status,
       message,
+      executionId: executionId || null,
     });
   };
 
   const execute = async (action: BriefProposedAction) => {
     if (!project || !product || runningActionId) return;
     if (!briefActionCapability(action.kind).recommendationEligible) return;
-    if (action.requiresConfirmation && pendingAction?.id !== action.id) {
-      setPendingAction(action);
+    if (action.requiresConfirmation && pendingAction?.action.id !== action.id) {
+      try {
+        const preview = await (window as any).appilot?.actions?.preview({
+          actionId: action.kind,
+          projectId: project.id,
+          productId: product.id,
+          input: { language: action.language, keyword: action.keyword },
+          source: "copilot",
+          suggestionId: selectedSuggestion?.id || null,
+        });
+        if (!preview?.available) {
+          setTaskFeedback({
+            actionId: action.id,
+            action,
+            label: action.label,
+            state: "failed",
+            detail: preview?.unavailableReason || "当前状态无法执行此动作",
+          });
+          return;
+        }
+        setPendingAction({ action, preview });
+      } catch (err: any) {
+        setTaskFeedback({
+          actionId: action.id,
+          action,
+          label: action.label,
+          state: "failed",
+          detail: readableActionMessage(err?.message || "无法预览动作"),
+        });
+      }
       return;
     }
     setPendingAction(null);
@@ -372,24 +413,39 @@ export function CopilotPage() {
       detail: "请求已提交，正在执行…",
     });
     setError("");
+    let recordedFailure = false;
     try {
-      if (action.kind === "keyword.pause" && action.language && action.keyword) {
-        await pauseTrackedKeyword(product.id, action.language, action.keyword);
-      } else if (action.kind === "keyword.remove" && action.language && action.keyword) {
-        await removeTrackedKeyword(product.id, action.language, action.keyword);
-      } else if (action.kind === "keyword.restore" && action.language && action.keyword) {
-        await restoreTrackedKeyword(product.id, action.language, action.keyword);
-      } else if (action.kind === "keyword.resume" && action.language && action.keyword) {
-        await resumePausedKeyword(product.id, action.language, action.keyword);
-      } else {
-        throw new Error("动作参数不完整，无法执行");
+      const result = await (window as any).appilot?.actions?.execute({
+        actionId: action.kind,
+        projectId: project.id,
+        productId: product.id,
+        input: { language: action.language, keyword: action.keyword },
+        source: "copilot",
+        suggestionId: selectedSuggestion?.id || null,
+      });
+      if (!result?.execution) throw new Error("动作中心未返回执行记录");
+      if (result.execution.status !== "verified") {
+        await recordExecution(
+          action,
+          "failed",
+          result.execution.message,
+          result.execution.id,
+        );
+        recordedFailure = true;
+        throw new Error(result.execution.message);
       }
+      await loadProjects();
       setTaskFeedback((current) => current?.actionId === action.id
-        ? { ...current, state: "success", detail: "动作已完成" }
+        ? { ...current, state: "success", detail: result.execution.message }
         : current);
       let recorded = true;
       try {
-        await recordExecution(action, "executed", actionDescription(action));
+        await recordExecution(
+          action,
+          "executed",
+          `${result.execution.message}；${result.execution.verification}`,
+          result.execution.id,
+        );
       } catch {
         recorded = false;
         setTaskFeedback((current) => current?.actionId === action.id
@@ -405,7 +461,7 @@ export function CopilotPage() {
       setTaskFeedback((current) => current?.actionId === action.id
         ? { ...current, state: "failed", detail: message }
         : current);
-      const recorded = await recordExecution(action, "failed", message)
+      const recorded = recordedFailure || await recordExecution(action, "failed", message)
         .then(() => true)
         .catch(() => false);
       if (recorded) {
@@ -568,7 +624,7 @@ export function CopilotPage() {
                         const capability = briefActionCapability(action.kind);
                         const actionRuns = (session?.actionRuns || []).filter((run) => run.action.id === action.id);
                         const executed = !action.kind.endsWith(".open") && actionRuns.some((run) => run.status === "executed");
-                        const confirming = pendingAction?.id === action.id;
+                        const confirming = pendingAction?.action.id === action.id;
                         const feedback = taskFeedback?.actionId === action.id ? taskFeedback : null;
                         return (
                           <div key={action.id} className="rounded-lg bg-white/80 dark:bg-zinc-900/70 px-3 py-2.5">
@@ -584,8 +640,10 @@ export function CopilotPage() {
                               {runningActionId === action.id ? (
                                 <button disabled className={cn(btnSmSecondary, "disabled:opacity-60")}>执行中…</button>
                               ) : confirming ? (
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[10px] text-amber-700 dark:text-amber-400">确认执行？</span>
+                                <div className="flex max-w-sm items-center gap-1.5">
+                                  <span className="text-[10px] text-amber-700 dark:text-amber-400" title={pendingAction.preview.immediateEffect}>
+                                    将执行：{pendingAction.preview.immediateEffect}
+                                  </span>
                                   <button onClick={() => void execute(action)} className={btnSmPrimary}>确认</button>
                                   <button onClick={() => setPendingAction(null)} className={btnSmSecondary}>取消</button>
                                 </div>

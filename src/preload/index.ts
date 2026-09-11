@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld("appilot", {
   revealInFolder: (localPath: string): Promise<boolean> =>
     ipcRenderer.invoke("shell:revealInFolder", localPath),
 
+  actions: {
+    list: (): Promise<any[]> => ipcRenderer.invoke("actions:list"),
+    preview: (request: any): Promise<any> => ipcRenderer.invoke("actions:preview", request),
+    execute: (request: any): Promise<any> => ipcRenderer.invoke("actions:execute", request),
+  },
+
   menu: {
     onCommand: (callback: (command: any) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, command: any) => callback(command);
