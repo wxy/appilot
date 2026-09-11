@@ -15,6 +15,8 @@ shell reads/writes the same DB and executes the same task instances.
   (override with `APPILOT_DB_FILE`); WAL + busy_timeout for multi-process safety
 - **Store namespaces** — `projects`, `products`, `snapshots`, `tasks`, `lease`,
   `meta` (repo state), `releaseCache`
+- **Stable project identity** — schema v14 uses `projects.id` as the primary key;
+  names remain unique display labels, so renaming does not rewrite related rows
 - **Lease single-leader** — `acquire / heartbeat / release`; heartbeat freshness decides
   takeover; same-id exclusivity prevents double daemons; TTL window is caller-supplied
   (all shells use 60s)
@@ -38,14 +40,14 @@ const store = openStore(process.env.APPILOT_DB_FILE || defaultDbPath());
 
 store.lease.acquire('worker', 60_000);           // become leader
 store.lease.heartbeat('worker');                 // renew while leader
-store.projects.save({ name: 'demo', path: '/x', githubUrl: null, platform: 'ios',
+store.projects.save({ id: 'demo-id', name: 'demo', path: '/x', githubUrl: null, platform: 'ios',
   languages: ['en'], lastResolvedAt: new Date().toISOString(), artworkUrl: null,
   updatedAt: new Date().toISOString() });
-store.tasks.upsert({ id: 'github-sync:demo', title: 'GitHub 发布同步', intervalMinutes: 60,
+store.tasks.upsert({ id: 'github-sync:demo-id', title: 'GitHub 发布同步', intervalMinutes: 60,
   lastRunAt: null, nextRunAt: new Date().toISOString(), lastStatus: 'never',
   lastSummary: null, runCount: 0, source: 'worker', kind: 'github-sync',
-  instance: { projectName: 'demo', path: '/x' } });
-store.snapshots.add([{ projectName: 'demo', productId: 'x:ios', keyword: 'kw',
+  instance: { projectId: 'demo-id', projectName: 'demo', path: '/x' } });
+store.snapshots.add([{ projectId: 'demo-id', projectName: 'demo', productId: 'x:ios', keyword: 'kw',
   language: 'en', storefront: 'us', rank: 1, totalResults: 9,
   checkedAt: new Date().toISOString() }]);
 store.lease.release('worker');

@@ -17,6 +17,7 @@ import {
 
 function product(over: Partial<ProductRecordRow> = {}): ProductRecordRow {
   return {
+    projectId: 'project-stable-id',
     projectName: 'ai-pulse-macos',
     productId: 'projX:macos',
     platform: 'macos',
@@ -44,6 +45,7 @@ async function main(): Promise<void> {
   assert.ok(specs.length > 0, '应有实例');
   assert.ok(specs.every((s) => s.id.startsWith('projX:macos:en:us:') || s.id.startsWith('projX:macos:en:')), `id 格式: ${specs[0].id}`);
   assert.ok(specs.every((s) => s.kind === RANK_KIND));
+  assert.ok(specs.every((s) => (s.instance as any).projectId === 'project-stable-id'));
   assert.ok(specs.some((s) => (s.instance as any).keyword === 'app'), '应含 active 关键词');
   assert.ok(!specs.some((s) => (s.instance as any).keyword === 'paused-word'), 'paused 关键词应跳过');
   assert.ok(!specs.some((s) => (s.instance as any).queryLanguage === 'zh-Hans'), 'en 产品不展开其他语言');

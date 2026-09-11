@@ -9,6 +9,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { migrate, type ProjectRow, type RankSnapshotRow, type TaskRow, type ProjectMetaRow, type ProductRecordRow, type ReleaseCacheRow } from './schema.js';
 
 /** 等待写锁的毫秒数（并发进程写竞争时避免立刻报 busy）。 */
@@ -27,8 +28,8 @@ export interface AppilotStore {
      * 把共享 DB 里残留的注册表行重新水合回 electron-store（项目“复活”）。
      */
     removeDeep(name: string): boolean;
-    /** 原子迁移以项目名为外键/缓存键的全部共享数据。 */
-    renameDeep(oldName: string, newName: string): boolean;
+    /** v14：只修改展示名；所有关联关系均由稳定 id 维持。 */
+    rename(oldName: string, newName: string): boolean;
   };
   /** 通用键值（v7）：electron-store 全量迁入 SQLite 的落地表；值为原始字符串（JSON 文本）。 */
   kv: {
@@ -172,17 +173,32 @@ export function openStore(dbPath: string): AppilotStore {
     }
   }
 
+  function projectIdentity(ref: string): { id: string; name: string; path: string } | undefined {
+    const row = db
+      .prepare('SELECT id, name, path FROM projects WHERE name = ? OR id = ? ORDER BY name = ? DESC LIMIT 1')
+      .get(ref, ref, ref) as { id?: string; name?: string; path?: string } | undefined;
+    return row?.id && row?.name ? { id: row.id, name: row.name, path: row.path ?? '' } : undefined;
+  }
+
+  function requireProjectIdentity(ref: string): { id: string; name: string; path: string } {
+    const identity = projectIdentity(ref);
+    if (!identity) throw new Error(`项目不存在：${ref}`);
+    return identity;
+  }
+
   return {
     path: dbPath,
 
     projects: {
       save(row) {
         tx(() => {
+          const existingByName = projectIdentity(row.name);
+          const id = String(row.id ?? '').trim() || existingByName?.id || randomUUID();
           db.prepare(
             `INSERT INTO projects (name, id, path, githubUrl, platform, languages, lastResolvedAt, artworkUrl, updatedAt)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(name) DO UPDATE SET
-               id = excluded.id,
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
                path = excluded.path,
                githubUrl = excluded.githubUrl,
                platform = excluded.platform,
@@ -192,7 +208,7 @@ export function openStore(dbPath: string): AppilotStore {
                updatedAt = excluded.updatedAt`,
           ).run(
             row.name,
-            row.id ?? null,
+            id,
             row.path,
             row.githubUrl,
             row.platform,
@@ -220,7 +236,7 @@ export function openStore(dbPath: string): AppilotStore {
         }));
       },
       get(name) {
-        const r = db.prepare('SELECT * FROM projects WHERE name = ?').get(name) as any;
+        const r = db.prepare('SELECT * FROM projects WHERE name = ? OR id = ? ORDER BY name = ? DESC LIMIT 1').get(name, name, name) as any;
         if (!r) return undefined;
         return {
           name: r.name,
@@ -235,86 +251,69 @@ export function openStore(dbPath: string): AppilotStore {
         };
       },
       remove(name) {
-        const res = db.prepare('DELETE FROM projects WHERE name = ?').run(name);
+        const identity = projectIdentity(name);
+        if (!identity) return false;
+        const res = db.prepare('DELETE FROM projects WHERE id = ?').run(identity.id);
         return Number(res.changes) > 0;
       },
       removeDeep(name) {
         return tx(() => {
-          db.prepare('DELETE FROM product_records WHERE projectName = ?').run(name);
-          db.prepare('DELETE FROM project_meta WHERE projectName = ?').run(name);
-          db.prepare('DELETE FROM rank_snapshots WHERE projectName = ?').run(name);
-          db.prepare('DELETE FROM project_release_cache WHERE projectName = ?').run(name);
-          const res = db.prepare('DELETE FROM projects WHERE name = ?').run(name);
+          const identity = projectIdentity(name);
+          if (!identity) return false;
+          db.prepare("DELETE FROM project_blobs WHERE domain = 'storeSubmissionDrafts' AND projectKey = ?").run(identity.id);
+          // 关联表由 FK ON DELETE CASCADE 清理；任务表是跨来源队列，按实例身份清理。
+          const productIds = new Set(
+            (db.prepare('SELECT productId FROM product_records WHERE projectId = ?').all(identity.id) as any[])
+              .map((row) => String(row.productId)),
+          );
+          for (const task of db.prepare('SELECT id, instance, electronJson FROM tasks').all() as any[]) {
+            const parseObject = (raw: unknown): Record<string, unknown> => {
+              try {
+                const parsed = JSON.parse(String(raw ?? '{}'));
+                return parsed && typeof parsed === 'object' ? parsed : {};
+              } catch {
+                return {};
+              }
+            };
+            const instance = parseObject(task.instance);
+            const mirror = parseObject(task.electronJson);
+            const taskId = String(task.id ?? '');
+            const matchesProject =
+              instance.projectId === identity.id ||
+              mirror.projectId === identity.id ||
+              taskId === `github-sync:${identity.id}` ||
+              // v13 及更早的兼容清理。
+              instance.projectName === identity.name ||
+              mirror.projectName === identity.name ||
+              taskId === `github-sync:${identity.name}` ||
+              (identity.path && (instance.path === identity.path || mirror.path === identity.path));
+            const matchesProduct = [...productIds].some(
+              (productId) =>
+                instance.productId === productId ||
+                mirror.productId === productId ||
+                taskId.startsWith(`${productId}:`),
+            );
+            if (matchesProject || matchesProduct) {
+              db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
+            }
+          }
+          const res = db.prepare('DELETE FROM projects WHERE id = ?').run(identity.id);
           return Number(res.changes) > 0;
         });
       },
-      renameDeep(oldName, newName) {
+      rename(oldName, newName) {
         const from = oldName.trim();
         const to = newName.trim();
         if (!from || !to) throw new Error('项目名不能为空');
         if (from === to) return Boolean(db.prepare('SELECT 1 FROM projects WHERE name = ?').get(from));
         return tx(() => {
-          const existing = db.prepare('SELECT 1 FROM projects WHERE name = ?').get(from);
+          const existing = projectIdentity(from);
           if (!existing) return false;
           if (db.prepare('SELECT 1 FROM projects WHERE name = ?').get(to)) {
             throw new Error(`项目名已存在：${to}`);
           }
-
           db.prepare('UPDATE projects SET name = ?, updatedAt = ? WHERE name = ?')
             .run(to, new Date().toISOString(), from);
-          db.prepare('UPDATE project_meta SET projectName = ? WHERE projectName = ?').run(to, from);
-          db.prepare('UPDATE product_records SET projectName = ? WHERE projectName = ?').run(to, from);
-          db.prepare('UPDATE rank_snapshots SET projectName = ? WHERE projectName = ?').run(to, from);
-          db.prepare('UPDATE project_release_cache SET projectName = ? WHERE projectName = ?').run(to, from);
-          db.prepare(
-            `UPDATE project_blobs SET projectKey = ?, updatedAt = ?
-             WHERE domain = 'storeSubmissionDrafts' AND projectKey = ?`,
-          ).run(to, new Date().toISOString(), from);
-
-          // github-sync 的稳定实例 id 与 instance 都含项目名；改名必须同步迁移，
-          // 否则旧任务会残留到下一轮 reconcile，期间可能重复执行或写回旧缓存键。
-          const taskRows = db.prepare('SELECT * FROM tasks').all() as any[];
-          for (const row of taskRows) {
-            let nextId = row.id;
-            let nextInstance = row.instance;
-            let nextElectronJson = row.electronJson;
-            let changed = false;
-            if (row.id === `github-sync:${from}`) {
-              nextId = `github-sync:${to}`;
-              changed = true;
-            }
-            if (typeof row.instance === 'string' && row.instance) {
-              try {
-                const parsed = JSON.parse(row.instance);
-                if (parsed?.projectName === from) {
-                  parsed.projectName = to;
-                  nextInstance = JSON.stringify(parsed);
-                  changed = true;
-                }
-              } catch {
-                // 损坏的可选 instance 保持原样；不阻断项目主体改名。
-              }
-            }
-            if (typeof row.electronJson === 'string' && row.electronJson) {
-              try {
-                const parsed = JSON.parse(row.electronJson);
-                if (nextId !== row.id) parsed.id = nextId;
-                if (parsed?.projectName === from) {
-                  parsed.projectName = to;
-                  nextElectronJson = JSON.stringify(parsed);
-                  changed = true;
-                }
-              } catch {
-                // 同上：旧的诊断副本损坏时不扩大失败面。
-              }
-            }
-            if (!changed) continue;
-            if (nextId !== row.id && db.prepare('SELECT 1 FROM tasks WHERE id = ?').get(nextId)) {
-              throw new Error(`项目改名后的任务已存在：${nextId}`);
-            }
-            db.prepare('UPDATE tasks SET id = ?, instance = ?, electronJson = ? WHERE id = ?')
-              .run(nextId, nextInstance, nextElectronJson, row.id);
-          }
           return true;
         });
       },
@@ -415,23 +414,29 @@ export function openStore(dbPath: string): AppilotStore {
         if (rows.length === 0) return;
         tx(() => {
           const stmt = db.prepare(
-            `INSERT INTO rank_snapshots (projectName, productId, keyword, language, storefront, rank, totalResults, checkedAt)
+            `INSERT INTO rank_snapshots (projectId, productId, keyword, language, storefront, rank, totalResults, checkedAt)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           );
           for (const row of rows) {
-            stmt.run(row.projectName, row.productId ?? null, row.keyword, row.language, row.storefront, row.rank, row.totalResults, row.checkedAt);
+            const identity = row.projectId
+              ? requireProjectIdentity(row.projectId)
+              : requireProjectIdentity(row.projectName);
+            stmt.run(identity.id, row.productId ?? null, row.keyword, row.language, row.storefront, row.rank, row.totalResults, row.checkedAt);
           }
         });
       },
       latestByKey(projectName: string, productId?: string | null) {
+        const identity = projectIdentity(projectName);
+        if (!identity) return [];
         // 每组 (keyword, language, storefront) 取最新（checkedAt 降序，同刻按 id 兜底）
         const rows = db
           .prepare(
-            `SELECT s.* FROM rank_snapshots s
-             WHERE s.projectName = ? AND s.productId IS ?
+            `SELECT s.*, p.name AS projectName FROM rank_snapshots s
+             JOIN projects p ON p.id = s.projectId
+             WHERE s.projectId = ? AND s.productId IS ?
                AND s.id = (
                  SELECT s2.id FROM rank_snapshots s2
-                 WHERE s2.projectName = s.projectName
+                 WHERE s2.projectId = s.projectId
                    AND s2.productId IS s.productId
                    AND s2.keyword = s.keyword
                    AND s2.language = s.language
@@ -439,13 +444,15 @@ export function openStore(dbPath: string): AppilotStore {
                  ORDER BY s2.checkedAt DESC, s2.id DESC LIMIT 1)
              ORDER BY s.keyword, s.language, s.storefront`,
           )
-          .all(projectName, productId ?? null) as any[];
+          .all(identity.id, productId ?? null) as any[];
         return rows.map(stripId);
       },
       pruneOlderThan(projectName, beforeIso) {
+        const identity = projectIdentity(projectName);
+        if (!identity) return 0;
         const res = db
-          .prepare('DELETE FROM rank_snapshots WHERE projectName = ? AND checkedAt < ?')
-          .run(projectName, beforeIso);
+          .prepare('DELETE FROM rank_snapshots WHERE projectId = ? AND checkedAt < ?')
+          .run(identity.id, beforeIso);
         return Number(res.changes);
       },
       /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
@@ -477,40 +484,48 @@ export function openStore(dbPath: string): AppilotStore {
         return out;
       },
       recent(projectName, opts = {}) {
+        const identity = projectIdentity(projectName);
+        if (!identity) return [];
         const limit = Math.min(Math.max(opts.limit ?? 200, 1), 2000);
         const productId = opts.productId ?? null;
         const rows = opts.keyword
           ? (db
               .prepare(
-                `SELECT * FROM rank_snapshots
-                 WHERE projectName = ? AND productId IS ? AND keyword = ?
-                 ORDER BY checkedAt DESC, id DESC LIMIT ?`,
+                `SELECT s.*, p.name AS projectName FROM rank_snapshots s
+                 JOIN projects p ON p.id = s.projectId
+                 WHERE s.projectId = ? AND s.productId IS ? AND s.keyword = ?
+                 ORDER BY s.checkedAt DESC, s.id DESC LIMIT ?`,
               )
-              .all(projectName, productId, opts.keyword, limit) as any[])
+              .all(identity.id, productId, opts.keyword, limit) as any[])
           : (db
               .prepare(
-                `SELECT * FROM rank_snapshots
-                 WHERE projectName = ? AND productId IS ?
-                 ORDER BY checkedAt DESC, id DESC LIMIT ?`,
+                `SELECT s.*, p.name AS projectName FROM rank_snapshots s
+                 JOIN projects p ON p.id = s.projectId
+                 WHERE s.projectId = ? AND s.productId IS ?
+                 ORDER BY s.checkedAt DESC, s.id DESC LIMIT ?`,
               )
-              .all(projectName, productId, limit) as any[]);
+              .all(identity.id, productId, limit) as any[]);
         return rows.map(stripId);
       },
       history(projectName, opts = {}) {
+        const identity = projectIdentity(projectName);
+        if (!identity) return [];
         const productId = opts.productId ?? null;
         const windowMs = 90 * 24 * 60 * 60 * 1000; // 与 core RANK_SNAPSHOT_WINDOW_MS 一致
         const maxPerKey = 120; // 与 core RANK_SNAPSHOT_MAX_PER_KEY 一致
         const since = new Date(Date.now() - windowMs).toISOString();
         const sql = opts.keyword
-          ? `SELECT * FROM rank_snapshots
-             WHERE projectName = ? AND productId IS ? AND keyword = ? AND checkedAt >= ?
-             ORDER BY checkedAt ASC, id ASC`
-          : `SELECT * FROM rank_snapshots
-             WHERE projectName = ? AND productId IS ? AND checkedAt >= ?
-             ORDER BY checkedAt ASC, id ASC`;
+          ? `SELECT s.*, p.name AS projectName FROM rank_snapshots s
+             JOIN projects p ON p.id = s.projectId
+             WHERE s.projectId = ? AND s.productId IS ? AND s.keyword = ? AND s.checkedAt >= ?
+             ORDER BY s.checkedAt ASC, s.id ASC`
+          : `SELECT s.*, p.name AS projectName FROM rank_snapshots s
+             JOIN projects p ON p.id = s.projectId
+             WHERE s.projectId = ? AND s.productId IS ? AND s.checkedAt >= ?
+             ORDER BY s.checkedAt ASC, s.id ASC`;
         const params = opts.keyword
-          ? [projectName, productId, opts.keyword, since]
-          : [projectName, productId, since];
+          ? [identity.id, productId, opts.keyword, since]
+          : [identity.id, productId, since];
         const rows = db.prepare(sql).all(...params) as any[];
         // 按 (keyword, language, storefront) 分组，每 key 保留最近 maxPerKey 条
         const byKey = new Map<string, any[]>();
@@ -644,10 +659,13 @@ export function openStore(dbPath: string): AppilotStore {
     meta: {
       save(row) {
         tx(() => {
+          const identity = row.projectId
+            ? requireProjectIdentity(row.projectId)
+            : requireProjectIdentity(row.projectName);
           db.prepare(
-            `INSERT INTO project_meta (projectName, githubUrl, headSha, headDate, lastReleaseSha, branch, headMessage, dirty, description, updatedAt)
+            `INSERT INTO project_meta (projectId, githubUrl, headSha, headDate, lastReleaseSha, branch, headMessage, dirty, description, updatedAt)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(projectName) DO UPDATE SET
+             ON CONFLICT(projectId) DO UPDATE SET
                githubUrl = excluded.githubUrl,
                headSha = excluded.headSha,
                headDate = excluded.headDate,
@@ -658,7 +676,7 @@ export function openStore(dbPath: string): AppilotStore {
                description = excluded.description,
                updatedAt = excluded.updatedAt`,
           ).run(
-            row.projectName,
+            identity.id,
             row.githubUrl,
             row.headSha,
             row.headDate,
@@ -672,10 +690,13 @@ export function openStore(dbPath: string): AppilotStore {
         });
       },
       get(projectName) {
-        const r = db.prepare('SELECT * FROM project_meta WHERE projectName = ?').get(projectName) as any;
+        const identity = projectIdentity(projectName);
+        if (!identity) return undefined;
+        const r = db.prepare('SELECT * FROM project_meta WHERE projectId = ?').get(identity.id) as any;
         if (!r) return undefined;
         return {
-          projectName: r.projectName,
+          projectName: identity.name,
+          projectId: identity.id,
           githubUrl: r.githubUrl,
           headSha: r.headSha,
           headDate: r.headDate,
@@ -692,10 +713,13 @@ export function openStore(dbPath: string): AppilotStore {
     products: {
       upsert(row) {
         tx(() => {
+          const identity = row.projectId
+            ? requireProjectIdentity(row.projectId)
+            : requireProjectIdentity(row.projectName);
           db.prepare(
-            `INSERT INTO product_records (projectName, productId, platform, trackId, bundleId, trackName, artworkUrl, supportedLanguages, trackedKeywords, storeLinks, submissionKeywords, removedKeywords, updatedAt)
+            `INSERT INTO product_records (projectId, productId, platform, trackId, bundleId, trackName, artworkUrl, supportedLanguages, trackedKeywords, storeLinks, submissionKeywords, removedKeywords, updatedAt)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(projectName, productId) DO UPDATE SET
+             ON CONFLICT(projectId, productId) DO UPDATE SET
                platform = excluded.platform,
                trackId = excluded.trackId,
                bundleId = excluded.bundleId,
@@ -708,7 +732,7 @@ export function openStore(dbPath: string): AppilotStore {
                removedKeywords = excluded.removedKeywords,
                updatedAt = excluded.updatedAt`,
           ).run(
-            row.projectName,
+            identity.id,
             row.productId,
             row.platform,
             row.trackId,
@@ -725,11 +749,14 @@ export function openStore(dbPath: string): AppilotStore {
         });
       },
       listByProject(projectName) {
+        const identity = projectIdentity(projectName);
+        if (!identity) return [];
         const rows = db
-          .prepare('SELECT * FROM product_records WHERE projectName = ? ORDER BY productId')
-          .all(projectName) as any[];
+          .prepare('SELECT * FROM product_records WHERE projectId = ? ORDER BY productId')
+          .all(identity.id) as any[];
         return rows.map((r) => ({
-          projectName: r.projectName,
+          projectName: identity.name,
+          projectId: identity.id,
           productId: r.productId,
           platform: r.platform,
           trackId: r.trackId,
@@ -749,19 +776,22 @@ export function openStore(dbPath: string): AppilotStore {
     releaseCache: {
       save(projectName, cache, syncedAt) {
         tx(() => {
+          const identity = requireProjectIdentity(projectName);
           db.prepare(
-            `INSERT INTO project_release_cache (projectName, cacheJson, syncedAt)
+            `INSERT INTO project_release_cache (projectId, cacheJson, syncedAt)
              VALUES (?, ?, ?)
-             ON CONFLICT(projectName) DO UPDATE SET
+             ON CONFLICT(projectId) DO UPDATE SET
                cacheJson = excluded.cacheJson,
                syncedAt = excluded.syncedAt`,
-          ).run(projectName, JSON.stringify(cache ?? {}), syncedAt ?? new Date().toISOString());
+          ).run(identity.id, JSON.stringify(cache ?? {}), syncedAt ?? new Date().toISOString());
         });
       },
       get(projectName) {
+        const identity = projectIdentity(projectName);
+        if (!identity) return undefined;
         const r = db
-          .prepare('SELECT * FROM project_release_cache WHERE projectName = ?')
-          .get(projectName) as any;
+          .prepare('SELECT * FROM project_release_cache WHERE projectId = ?')
+          .get(identity.id) as any;
         if (!r) return undefined;
         let cache: Record<string, unknown> = {};
         try {
@@ -769,7 +799,7 @@ export function openStore(dbPath: string): AppilotStore {
         } catch {
           cache = {};
         }
-        return { projectName: r.projectName, cache, syncedAt: r.syncedAt };
+        return { projectName: identity.name, projectId: identity.id, cache, syncedAt: r.syncedAt };
       },
     },
 
@@ -782,6 +812,7 @@ export function openStore(dbPath: string): AppilotStore {
 function stripId(r: any): RankSnapshotRow {
   return {
     projectName: r.projectName,
+    projectId: r.projectId,
     productId: r.productId ?? null,
     keyword: r.keyword,
     language: r.language,

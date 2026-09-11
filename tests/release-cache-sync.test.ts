@@ -23,6 +23,7 @@ async function main(): Promise<void> {
     INSERT INTO meta (key, value) VALUES ('schemaVersion', '5');`);
   v5.close();
   const migrated = openStore(dbPath);
+  migrated.projects.save({ id: 'p-id', name: 'p', path: '/p', githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
   migrated.releaseCache.save('p', { tag: 'v1' });
   assert.equal(migrated.releaseCache.get('p')?.cache.tag, 'v1', 'v5→v6 后 releaseCache 可写');
   migrated.close();
@@ -35,6 +36,9 @@ async function main(): Promise<void> {
     { id: 'projB-id', name: 'GloWalk' },
     { name: 'no-id' }, // 缺 id → 跳过
   ];
+  for (const project of projects.filter((p) => p.id)) {
+    store.projects.save({ id: project.id, name: project.name, path: `/${project.name}`, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
+  }
   const cacheByProjectId = {
     'projA-id': { tag: 'v1.2.8', releases: [{ tag: 'v1.2.8', draft: false }], pullRequests: [], repoCapabilities: { push: true }, lastSeenSha: 'abc', syncedAt: '2026-09-02T00:00:00Z' },
     'projB-id': { tag: 'v0.4.4', releases: [], pullRequests: [], repoCapabilities: null, lastSeenSha: null, syncedAt: '2026-09-02T00:00:00Z' },

@@ -288,11 +288,17 @@ export async function main(argv: string[]): Promise<void> {
       case 'run': {
         const id = argv[1];
         if (!id) return usage();
+        let effectiveId = id;
+        if (id.startsWith('github-sync:')) {
+          const ref = id.slice('github-sync:'.length);
+          const project = store.projects.get(ref);
+          if (project?.id) effectiveId = `github-sync:${project.id}`;
+        }
         // 统一控制路由：daemon 主 → daemon 执行（可跑 github-sync/rank 等 daemon
         // executor 覆盖的任务）；daemon 不可达 → 本地 scheduler 回退（github-sync）。
-        const daemonRes = await controlRunNow(id, { dbPath: store.path });
+        const daemonRes = await controlRunNow(effectiveId, { dbPath: store.path });
         if (daemonRes.routed === 'daemon' && daemonRes.ok) {
-          process.stdout.write(JSON.stringify({ taskId: id, via: 'daemon', result: daemonRes.result }, null, 2) + '\n');
+          process.stdout.write(JSON.stringify({ taskId: effectiveId, via: 'daemon', result: daemonRes.result }, null, 2) + '\n');
           return;
         }
         const scheduler = createLeaseScheduler({
@@ -303,16 +309,16 @@ export async function main(argv: string[]): Promise<void> {
           heartbeatMs: 60_000,
         });
         try {
-          // 实例任务（github-sync:<project>）：DB 无该行时按注册项目现场 seed（source=cli）
-          if (!store.tasks.get(id) && id.startsWith('github-sync:')) {
-            const name = id.slice('github-sync:'.length);
+          // 兼容命令行按名称输入；落库与执行统一使用 github-sync:<projectId>。
+          if (!store.tasks.get(effectiveId) && id.startsWith('github-sync:')) {
+            const ref = id.slice('github-sync:'.length);
             const projects = store.projects
               .list()
-              .filter((p) => p.name === name)
-              .map((p) => ({ name: p.name, path: p.path }));
+              .filter((p) => p.name === ref || p.id === ref)
+              .map((p) => ({ id: p.id, name: p.name, path: p.path }));
             reconcileTaskInstances(store, githubSyncInstancesFor(projects), 'cli');
           }
-          const result = await scheduler.runNow(id);
+          const result = await scheduler.runNow(effectiveId);
           if (!result) {
             process.stderr.write(
               `未知任务或无法在本端执行: ${id}${daemonRes.routed === 'none' ? '（daemon 未运行，本地仅支持 github-sync）' : ''}\n`,

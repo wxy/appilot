@@ -21,6 +21,7 @@ function electronProject(rankSnapshots: any[]): any {
 async function main(): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'rank-backfill-'));
   const store = openStore(join(dir, 'appilot.db'));
+  store.projects.save({ id: 'project-stable-id', name: 'ai-pulse-macos', path: '/ai-pulse-macos', githubUrl: null, platform: 'macos', languages: [], lastResolvedAt: '2026-09-01T00:00:00Z', artworkUrl: null, updatedAt: '2026-09-01T00:00:00Z' });
 
   const addRow = (keyword: string, rank: number | null, checkedAt: string) =>
     store.snapshots.add([

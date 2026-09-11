@@ -92,7 +92,8 @@ headless（SQLite 单库 + 实例任务引擎 + 租约调度 + daemon 常驻）�
 
 ## 5. 保留不动的地基（不随壳收缩回退）
 
-- headless：schema v13、tasks 实例引擎、lease 单例、reconcile（seed/参数刷新/prune）；
+- headless：schema v14（稳定 `projects.id` 主键、关联表使用 `projectId`）、tasks 实例引擎、
+  lease 单例、reconcile（seed/参数刷新/prune）；
 - scheduler daemon：常驻、socket 控制面、**代码自更新**（部署后自动重启，2026-09-04 落成）；
 - Electron 侧 DB 直读（任务中心 DB 视图、rankProgress、release cache 双写与 hydrate 反向同步）；
 - core 纯函数包分层。

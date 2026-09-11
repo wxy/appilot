@@ -1,7 +1,7 @@
 /**
- * 阶段二「双写补齐」单测：schema v8 扩展列与 id 的持久化、映射与回读。
+ * 阶段二「双写补齐」单测：扩展列与稳定 id 的持久化、映射与回读。
  *
- * 覆盖：v8 建表（projects.id / product_records 扩展列）、headless store 的
+ * 覆盖：v14 建表（projects.id 主键 / product_records 扩展列）、headless store 的
  * projects(id)/products(扩展列) 往返、registry-sync-core 的 id 写读映射、
  * rich-data-sync 把 electron 富数据（含扩展列）双写进 DB。纯 node（不 import electron）。
  */
@@ -42,6 +42,7 @@ async function main() {
   // 2. product_records 扩展列往返
   {
     const store = tempDb();
+    store.projects.save({ id: 'proj-1', name: 'p1', path: '/x/p1', githubUrl: null, platform: 'ios', languages: ['en'], lastResolvedAt: '2026-09-06T00:00:00Z', artworkUrl: null, updatedAt: '2026-09-06T00:00:00Z' });
     store.products.upsert({
       projectName: 'p1',
       productId: 'x:ios',
@@ -153,7 +154,7 @@ async function main() {
     assert.equal(row.productId, 'g:ios');
     assert.deepEqual(row.submissionKeywords, [{ language: 'en', text: 's' }]);
     assert.deepEqual(row.removedKeywords, [{ keyword: 'r' }]);
-    assert.equal(store.projects.list()[0].id, null, 'electron 项目未传 id 时为 null（双写期由项目级同步补充）');
+    assert.ok(store.projects.list()[0].id, '未传 id 时由 Store 生成稳定主键');
     store.close();
     console.log('✅ rich-data-sync 扩展列双写入库');
   }

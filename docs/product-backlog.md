@@ -7,8 +7,9 @@
 ## 1. 项目管理：删除与改名——✅ 完成
 - 删除入口包含二次确认，并级联清理 tasks / product_records / project_meta /
   release_cache / 快照，避免共享 DB hydration 后项目“复活”。
-- 2026-09-10 补齐原子改名：同步迁移产品、repo 元数据、排名历史、发布缓存、草稿和
-  `github-sync:<projectName>` 实例；重名会拒绝并回滚。
+- 2026-09-11 schema v14 将 `projects.id` 升为稳定主键、`name` 仅保留唯一展示名；
+  产品、repo 元数据、排名历史、发布缓存和任务均引用 `projectId`。改名只更新一行，
+  不再搬迁关联数据；重名会拒绝并回滚。
 - 归属：Electron 项目管理（按收敛决策，DSH 不再做项目管理 GUI）
 
 ## 2. 失败任务批量处理——✅ 主体完成（2026-09-04）
@@ -35,7 +36,8 @@
 - 历史结论：该视图受宿主约束无法常驻跨端刷新；「任务数据在 DB 直读」由 Electron/daemon 承担。
 
 ## 观察记录
-- 2026-09-03：真实库出现 `github-sync:<name>` 与旧 `github-sync:<projectId>` 双实例 → 统一 name 命名，旧行 prune
+- 2026-09-03：真实库曾出现 name/id 双实例；schema v14 最终统一为
+  `github-sync:<projectId>`，升级时自动迁移名称型旧行，名称只用于展示。
 - 2026-09-04 运行事故复盘（rank 83→954 参数错误蔓延）：根因 = daemon 内存旧 executors（部署未重启），
   教训 A 已落成 daemon 代码自更新（PR #164）；教训 B/C 见 #2（限速摊铺 + 403/429 退避）
 - 2026-09-04 架构收敛决策：Electron 唯一完整壳 + DSH 轻量工具插件（见 docs/architecture-convergence.md，

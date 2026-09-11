@@ -116,7 +116,11 @@ export function electronTaskFromRow(row: any): any | null {
         // electronJson 只保存任务的富参数；调度状态列由 daemon/CLI 持续更新，
         // 必须以列为准合并回来，否则 Electron 周期 reconcile 会用旧 JSON 覆盖新状态。
         parsed.id = row.id;
-        parsed.title = String(row.title || parsed.title || '').replace(/（已停用）$/, '');
+        // title 是可选富字段；原任务没有时不要把 DB 的派生展示标题注入回去，
+        // 否则所谓“无损重建”会凭空改变 electron-store 对象形状。
+        if (Object.prototype.hasOwnProperty.call(parsed, 'title')) {
+          parsed.title = String(row.title || parsed.title || '').replace(/（已停用）$/, '');
+        }
         parsed.intervalMinutes = row.intervalMinutes;
         parsed.lastRunAt = row.lastRunAt;
         parsed.nextRunAt = row.nextRunAt;
@@ -183,7 +187,7 @@ export function mirrorTasksToDb(store: AppilotStore, tasks: ElectronTaskLike[]):
   for (const row of store.tasks.all()) {
     const reconciledGithub =
       row.kind === 'github-sync' &&
-      typeof row.instance?.projectName === 'string' &&
+      typeof row.instance?.projectId === 'string' &&
       typeof row.instance?.path === 'string';
     if (
       row.source === 'electron' &&

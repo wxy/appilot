@@ -45,7 +45,7 @@ export function buildLightProjects(store: AppilotStore): LightProject[] {
     const meta = store.meta.get(rec.name);
     const drafts = (() => {
       try {
-        const v = store.blobs.get(DRAFT_BLOB_DOMAIN, rec.name);
+        const v = store.blobs.get(DRAFT_BLOB_DOMAIN, rec.id ?? rec.name);
         return Array.isArray(v) ? v : [];
       } catch {
         return [];

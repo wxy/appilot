@@ -38,6 +38,9 @@ async function main(): Promise<void> {
     },
     { name: 'proj-b', storeProducts: [{ id: 'proj-b:macos', rankSnapshots: [{ keyword: 'x', language: 'en', storefront: 'us', rank: 1, totalResults: 5, checkedAt: '2026-08-04T00:00:00Z' }] }] },
   ];
+  for (const project of projects) {
+    store.projects.save({ id: `${project.name}-id`, name: project.name, path: `/${project.name}`, githubUrl: null, platform: null, languages: [], lastResolvedAt: '2026-08-01T00:00:00Z', artworkUrl: null, updatedAt: '2026-08-01T00:00:00Z' });
+  }
 
   // 1. toRankRows 过滤畸形行
   const rows0 = toRankRows('p', 'prod', projects[0].storeProducts[0].rankSnapshots);

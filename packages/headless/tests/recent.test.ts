@@ -14,6 +14,7 @@ function mk(projectName: string, productId: string | null, keyword: string, rank
 async function main(): Promise<void> {
   const dbPath = join(mkdtempSync(join(tmpdir(), 'recent-test-')), 'appilot.db');
   const store = openStore(dbPath);
+  store.projects.save({ id: 'proj-id', name: 'proj', path: '/proj', githubUrl: null, platform: null, languages: [], lastResolvedAt: '2026-08-01T00:00:00Z', artworkUrl: null, updatedAt: '2026-08-01T00:00:00Z' });
   store.snapshots.add([
     // DSH 维度（productId null）
     mk('proj', null, 'app', 5, '2026-08-01T00:00:00Z'),

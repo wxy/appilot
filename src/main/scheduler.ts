@@ -418,15 +418,14 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
  */
 function syncRankInstancesToDb(store: AppStore, tasks: ScheduledTask[]): void {
   try {
-    // productId（Electron `${projId}:${platform}`）→ 所属项目（projectName/platform），
-    // 补进 instance——daemon/DSH 执行 rank 需要 projectName 归快照与产品上下文。
+    // productId（Electron `${projId}:${platform}`）→ 所属项目（稳定 id + 展示名/platform）。
     const projects: any[] = store.get("projects") || [];
-    const projectOf = (productId: string): { name: string; platform: string } | null => {
+    const projectOf = (productId: string): { id: string; name: string; platform: string } | null => {
       const projId = String(productId).split(":")[0];
       const project = projects.find((p: any) => p?.id === projId);
       if (!project) return null;
       const platform = String(productId).slice(projId.length + 1) || project.productType || "unknown";
-      return { name: project.name, platform };
+      return { id: project.id, name: project.name, platform };
     };
     const specs: TaskInstanceSpec[] = tasks
       .filter((t): t is RankScheduledTask => t.kind === "rank")
@@ -443,6 +442,7 @@ function syncRankInstancesToDb(store: AppStore, tasks: ScheduledTask[]): void {
             queryLanguage: t.queryLanguage,
             storefront: t.storefront,
             groupKey: t.groupKey,
+            projectId: ctx?.id ?? null,
             projectName: ctx?.name ?? null,
             platform: ctx?.platform ?? null,
           },
@@ -501,9 +501,8 @@ async function reconcileGithubSyncTasks(store: AppStore): Promise<void> {
   const specs: TaskInstanceSpec[] = projects
     .filter((p: any) => p?.id && p?.name && p?.repo?.githubUrl && p?.localPath)
     .map((p: any) => ({
-      // id 用 projectName（与 DSH/daemon 的 githubSyncInstancesFor 一致——同一
-      // 项目只有一个 github-sync 实例；旧 projectId id 行由 reconcile prune 清理）。
-      id: `github-sync:${p.name}`,
+      // v14：任务身份只使用稳定 projectId，改名不再重建或搬迁任务。
+      id: `github-sync:${p.id}`,
       kind: "github-sync",
       title: "GitHub 发布同步",
       intervalMinutes: 60,

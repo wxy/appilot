@@ -12,6 +12,7 @@ import type { AppilotStore, ProductRecordRow, ProjectMetaRow } from '@appilot-la
 
 /** electron-store project 的最小形状。 */
 export interface ElectronProjectRich {
+  id?: string | null;
   name?: string | null;
   localPath?: string | null;
   productType?: string | null;
@@ -52,6 +53,7 @@ function langCodes(list?: Array<{ code?: string } | string>): string[] {
 export function toProjectMeta(p: ElectronProjectRich): ProjectMetaRow | null {
   if (!p?.name || !p?.localPath) return null;
   return {
+    projectId: p.id ?? undefined,
     projectName: p.name,
     githubUrl: p.repo?.githubUrl ?? null,
     headSha: p.repo?.headSha ?? null,
@@ -72,6 +74,7 @@ export function toProductRows(p: ElectronProjectRich): ProductRecordRow[] {
   return (p.storeProducts ?? [])
     .filter((sp) => sp && sp.id)
     .map((sp) => ({
+      projectId: p.id ?? undefined,
       projectName: p.name as string,
       productId: sp.id as string,
       platform: sp.platform ?? null,

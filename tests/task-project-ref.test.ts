@@ -15,7 +15,14 @@ const demoTask = {
 async function main() {
   // 1. demo 残留：按 projectName / id 前缀 / path 命中
   assert.equal(
-    taskReferencesProject(demoTask as any, { name: 'demo', path: '/path/to/git-repo', productIds: [] }),
+    taskReferencesProject(demoTask as any, { id: 'demo-id', name: 'demo', path: '/path/to/git-repo', productIds: [] }),
+    true,
+  );
+  assert.equal(
+    taskReferencesProject(
+      { id: 'github-sync:demo-id', kind: 'github-sync', instance: { projectId: 'demo-id', projectName: 'renamed' } },
+      { id: 'demo-id', name: 'demo' },
+    ),
     true,
   );
   assert.equal(
@@ -27,6 +34,13 @@ async function main() {
     taskReferencesProject(
       { id: 'github-sync:glo', kind: 'github-sync', instance: { projectName: 'glo', path: '/x/glo' } },
       { name: 'demo', path: '/path/to/git-repo', productIds: [] },
+    ),
+    false,
+  );
+  assert.equal(
+    taskReferencesProject(
+      { id: 'github-sync:other', kind: 'github-sync', instance: { projectId: 'other', projectName: 'demo-copy' } },
+      { id: 'demo-id', name: 'demo', path: '/path/to/git-repo' },
     ),
     false,
   );

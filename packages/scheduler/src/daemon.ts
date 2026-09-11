@@ -203,7 +203,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   // reconcile：共享 DB 注册项目 → github-sync 实例（DSH 同一推导）。
   const reconcile = () => {
     try {
-      const projects = store.projects.list().map((p) => ({ name: p.name, path: p.path }));
+      const projects = store.projects.list().map((p) => ({ id: p.id, name: p.name, path: p.path }));
       reconcileTaskInstances(store, githubSyncInstancesFor(projects), SCHEDULER_LEADER_ID);
     } catch (err: any) {
       log(`reconcile failed: ${err?.message || String(err)}`);

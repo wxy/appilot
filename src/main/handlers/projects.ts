@@ -154,7 +154,7 @@ export function registerProjectsHandlers(): void {
           const hasDrafts = Array.isArray(p.storeSubmissionDrafts) && p.storeSubmissionDrafts.length > 0;
           if (hasDrafts) continue;
           try {
-            const d = shared.blobs.get(DRAFT_BLOB_DOMAIN, p.name);
+            const d = shared.blobs.get(DRAFT_BLOB_DOMAIN, String(p.id));
             if (Array.isArray(d) && d.length > 0) p.storeSubmissionDrafts = d;
           } catch {
             // 忽略单条草稿注入失败
@@ -301,7 +301,7 @@ export function registerProjectsHandlers(): void {
         const nextName = String(project.name || "").trim();
         let renamedSharedDb = false;
         if (previousName && nextName && previousName !== nextName) {
-          const renamed = sharedStore().projects.renameDeep(previousName, nextName);
+          const renamed = sharedStore().projects.rename(previousName, nextName);
           if (!renamed) throw new Error(`共享数据库中找不到待改名项目：${previousName}`);
           renamedSharedDb = true;
         }
@@ -311,7 +311,7 @@ export function registerProjectsHandlers(): void {
         } catch (err) {
           // app_kv 与结构化表共用 SQLite，但当前适配器仍是两个短事务；第二步失败时
           // 立即反向改名，避免留下半迁移状态。
-          if (renamedSharedDb) sharedStore().projects.renameDeep(nextName, previousName);
+          if (renamedSharedDb) sharedStore().projects.rename(nextName, previousName);
           throw err;
         }
       }
@@ -742,6 +742,7 @@ export function registerProjectsHandlers(): void {
           .all()
           .filter((task) =>
             taskReferencesProject(task as any, {
+              id: removed?.id,
               name: projectName,
               path: removed?.localPath,
               productIds: [...removedProductIds],
