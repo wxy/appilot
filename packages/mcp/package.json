@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "description": "Appilot MCP stdio server — 把 headless 服务 API（项目/快照/任务）暴露为标准 MCP 工具，供 Claude Desktop / Cursor 等客户端调用。",
   "bin": {
-    "appilot-mcp": "./dist/mcp.js"
+    "appilot-mcp": "dist/mcp.js"
   },
   "main": "./dist/mcp.js",
   "types": "./dist/mcp.d.ts",
