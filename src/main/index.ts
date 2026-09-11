@@ -22,6 +22,7 @@ app.setName("Appilot");
 if (process.platform === "win32") {
   app.setAppUserModelId("com.appilot.app");
 }
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 function createWindow() {
   const iconPath = path.join(__dirname, "../../resources/icon_1024.png");
@@ -78,6 +79,17 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 }
+
+if (!hasSingleInstanceLock) {
+  // 次实例不注册任何退出清理，避免误停主实例使用的调度 daemon/租约。
+  app.quit();
+} else {
+app.on("second-instance", () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
 
 app.whenReady().then(async () => {
   setupLogger();
@@ -164,3 +176,4 @@ app.on("will-quit", () => {
     /* 退出路径静默 */
   }
 });
+}

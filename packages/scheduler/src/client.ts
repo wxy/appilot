@@ -45,5 +45,8 @@ export function sendSchedulerCommand(
     });
     rl.on('error', () => finish({ ok: false, error: 'daemon 连接失败' }));
     socket.on('error', () => finish({ ok: false, error: 'daemon 未在运行（socket 不存在）' }));
+    socket.on('close', () => {
+      if (!settled) finish({ ok: false, error: 'daemon 已断开但未返回响应' });
+    });
   });
 }

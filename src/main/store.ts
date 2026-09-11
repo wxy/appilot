@@ -5,7 +5,7 @@ import { sharedStore } from "./registry-sync";
 import { migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
-import { mirrorTasksToDb, electronTaskFromRow, backfillTaskHistoryOnce, purgeOrphanProjectTasks } from "./task-db-sync";
+import { mirrorTasksToDb, electronTasksFromRows, backfillTaskHistoryOnce, purgeOrphanProjectTasks } from "./task-db-sync";
 import { buildLightProjects } from "./projects-db-light";
 
 /** Minimal shape of the persisted app store used across main-process modules. */
@@ -163,15 +163,8 @@ export async function getStore(): Promise<AppStore> {
           // 因此两源一致；全部引擎与状态读取点经此单点生效。
           try {
             const rows = shared.tasks.all();
-            const electron = rows.filter(
-              (r) => r.source === "electron" && typeof r.electronJson === "string" && r.electronJson,
-            );
-            if (electron.length > 0) {
-              const rebuilt = electron
-                .map((r) => electronTaskFromRow(r))
-                .filter((t) => t && typeof t.id === "string");
-              if (rebuilt.length > 0) return rebuilt;
-            }
+            const rebuilt = electronTasksFromRows(rows);
+            if (rebuilt.length > 0) return rebuilt;
           } catch (err: any) {
             log.warn(`scheduledTasks DB 读取失败，回退 kv: ${err.message}`);
           }

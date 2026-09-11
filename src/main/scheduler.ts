@@ -25,6 +25,7 @@ import {
 import {
   buildStatusTaskId,
   bootstrapRoundState,
+  initialRankRunAt,
   markRoundTaskDone,
   nextRunAt,
   nextRankRunAt,
@@ -366,7 +367,7 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
               storefront,
               groupKey: rankGroupKey(product.id, product.platform, keyword.language, storefront),
               intervalMinutes: Math.floor((24 * 60) / runsPerDay),
-              nextRunAt: previous?.nextRunAt || nextRankRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), runsPerDay),
+              nextRunAt: previous?.nextRunAt || initialRankRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), runsPerDay),
               lastRunAt: previous?.lastRunAt ?? null,
               firstRunAt: previous?.firstRunAt ?? null,
               executionCount: previous?.executionCount || 0,

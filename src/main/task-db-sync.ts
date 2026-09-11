@@ -153,6 +153,20 @@ export function electronTaskFromRow(row: any): any | null {
   };
 }
 
+/**
+ * 从共享 DB 恢复 Electron 调度任务。
+ *
+ * electronJson 是富字段快照，不是任务存在性的标志。早期迁移生成的任务行可能
+ * 没有该列；这些行仍必须由列字段恢复，否则应用重启会把它们误判为“新任务”，
+ * 继而重置排期和“上次执行”状态。
+ */
+export function electronTasksFromRows(rows: any[]): any[] {
+  return (rows ?? [])
+    .filter((row) => row?.source === 'electron')
+    .map((row) => electronTaskFromRow(row))
+    .filter((task) => task && typeof task.id === 'string');
+}
+
 export interface MirrorResult {
   mirrored: number;
   /** 清理掉的幽灵行（源里已不存在的 Electron 镜像行）。 */
