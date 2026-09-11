@@ -8,6 +8,7 @@ import { HomePage } from "./components/home/HomePage";
 import { TaskCenterPage } from "./components/tasks/TaskCenterPage";
 import { ManageProjectsPage } from "./components/projects/ManageProjectsPage";
 import { OverviewPage } from "./components/overview/OverviewPage";
+import { CopilotPage } from "./components/copilot/CopilotPage";
 import { ReleasePage } from "./components/release/ReleasePage";
 import { ReviewsPage } from "./components/reviews/ReviewsPage";
 import { KeywordsPage } from "./components/keywords/KeywordsPage";
@@ -20,6 +21,7 @@ import { DataSyncLayer } from "./components/ui/DataSyncLayer";
 
 const PROJECT_NAV_ITEMS = [
   { to: "/overview", label: "总览", title: "项目总览" },
+  { to: "/copilot", label: "副驾驶", title: "AI 副驾驶工作台" },
   { to: "/release", label: "发布", title: "发布工作台" },
   { to: "/keywords", label: "排名", title: "关键词排名" },
   { to: "/reviews", label: "评论", title: "评论" },
@@ -387,6 +389,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/overview" element={<OverviewPage />} />
+        <Route path="/copilot" element={<CopilotPage />} />
         <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/tasks" element={<TaskCenterPage />} />
         <Route path="/release" element={<ReleasePage />} />

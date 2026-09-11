@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
 import type { Review } from "@appilot-labs/appilot-core/review-collector";
 import { useProject } from "../../stores/project";
 import { reviewStats } from "../../lib/review-stats";
@@ -17,13 +16,6 @@ import type {
   SubmissionDraftRow,
 } from "./overviewData";
 
-interface BriefSessionExchange {
-  suggestionId: string | null;
-  question: string;
-  answer: string;
-  at: string;
-}
-
 /**
  * 总览页（Electron 侧壳）：负责取数（IPC + zustand + 路由），渲染共享内容组件
  * `OverviewContent`（纯 props，Electron 与 DSH 客户端共用同一套 UI）。
@@ -39,7 +31,7 @@ interface BriefSessionExchange {
  *   （能力②：占优商店/优势劣势词）→ competitorAdvantage prop。
  */
 export function OverviewPage() {
-  const { projects, currentProjectId, currentProductId, selectProduct, recordBriefAction } = useProject();
+  const { projects, currentProjectId, currentProductId, selectProduct } = useProject();
   const navigate = useNavigate();
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
@@ -77,33 +69,30 @@ export function OverviewPage() {
   >([]);
   // ③上架 的商店评价摘要（reviews:list → reviewStats 聚合）；null = 无数据。
   const [storeReviews, setStoreReviews] = useState<StoreReviewSummary | null>(null);
-  const [briefState, setBriefState] = useState<{
-    status: "idle" | "loading" | "ready" | "error";
-    suggestions: BriefSuggestion[];
-    progress: { chars: number; phase: "reasoning" | "content" } | null;
-    error: string;
-    exchanges: BriefSessionExchange[];
-  }>({
-    status: "idle",
-    suggestions: [],
-    progress: null,
-    error: "",
-    exchanges: [],
-  });
+  const [copilotSummary, setCopilotSummary] = useState<{
+    pending: number;
+    completed: number;
+    generatedAt: string | null;
+  } | null>(null);
 
   useEffect(() => {
+    setCopilotSummary(null);
     if (!project?.id || !product?.id) return;
     let cancelled = false;
     void (window as any).appilot?.projects?.getBriefSession(project.id, product.id)
       ?.then((session: any) => {
-        if (cancelled || !session?.suggestions?.length) return;
-        setBriefState({
-          status: "ready",
-          suggestions: session.suggestions,
-          progress: null,
-          error: "",
-          exchanges: session.exchanges || [],
-        });
+        if (cancelled || !session) return;
+        const completedIds = new Set(
+          (session.actionRuns || [])
+            .filter((run: any) => run.status === "executed" && run.suggestionId && !String(run.action?.kind || "").endsWith(".open"))
+            .map((run: any) => run.suggestionId),
+        );
+        const dismissedIds = new Set(session.dismissedSuggestionIds || []);
+        const supersededIds = new Set(session.supersededSuggestionIds || []);
+        const pending = (session.suggestions || []).filter(
+          (item: any) => !completedIds.has(item.id) && !dismissedIds.has(item.id) && !supersededIds.has(item.id),
+        ).length;
+        setCopilotSummary({ pending, completed: completedIds.size, generatedAt: session.generatedAt || null });
       })
       .catch(() => undefined);
     return () => {
@@ -375,96 +364,6 @@ export function OverviewPage() {
     releaseSince?.tag,
   ]);
 
-  const handleGenerateBrief = useCallback(async () => {
-    if (!project || !product) return;
-    setBriefState({
-      status: "loading",
-      suggestions: [],
-      progress: null,
-      error: "",
-      exchanges: [],
-    });
-    try {
-      const result = await (window as any).appilot?.projects?.generateBrief(
-        project.id,
-        product.id,
-      );
-      setBriefState({
-        status: "ready",
-        suggestions: result?.suggestions || [],
-        progress: null,
-        error: "",
-        exchanges: [],
-      });
-    } catch (err: any) {
-      setBriefState({
-        status: "error",
-        suggestions: [],
-        progress: null,
-        error: err?.message || "生成失败",
-        exchanges: [],
-      });
-    }
-  }, [project?.id, product?.id]);
-
-  useEffect(() => {
-    const off = (window as any).appilot?.projects?.onBriefProgress?.((progress: any) => {
-      if (progress && typeof progress.chars === "number") {
-        setBriefState((prev) => ({
-          ...prev,
-          progress: {
-            chars: progress.chars,
-            phase: progress.phase === "content" ? "content" : "reasoning",
-          },
-        }));
-      }
-    });
-    return () => off?.();
-  }, []);
-
-  const handleBriefAction = useCallback(
-    async (suggestion: BriefSuggestion, status: "adopted" | "ignored") => {
-      if (!project) return;
-      await recordBriefAction(project.id, {
-        id: suggestion.id,
-        action: suggestion.action,
-        status,
-      });
-      if (status === "adopted") {
-        if (suggestion.action === "release") {
-          navigate(
-            releaseOverview?.draft?.tag
-              ? `/release?tag=${encodeURIComponent(releaseOverview.draft.tag)}`
-              : "/release",
-          );
-        } else if (suggestion.action === "trend") {
-          navigate("/trend");
-        } else {
-          navigate(
-            suggestion.target
-              ? `/keywords?keyword=${encodeURIComponent(suggestion.target)}`
-              : "/keywords",
-          );
-        }
-      }
-    },
-    [project?.id, recordBriefAction, navigate, releaseOverview?.draft?.tag],
-  );
-
-  const handleBriefQuestion = useCallback(
-    async (suggestion: BriefSuggestion, question: string) => {
-      if (!project || !product) return { answer: "" };
-      const result = await (window as any).appilot?.projects?.askBriefQuestion(
-        project.id,
-        product.id,
-        question,
-        suggestion.id,
-      );
-      return { answer: result?.answer || "" };
-    },
-    [project?.id, product?.id],
-  );
-
   // 活跃数据 = commits（activity:commits）∪ releases（release:list 发布日标注）。
   // commits 未取到（null，如无 window.appilot）→ 整体 undefined，组件侧隐藏活跃块。
   const activityData =
@@ -486,14 +385,11 @@ export function OverviewPage() {
       competitorSummary={competitorSummary}
       competitorAdvantage={competitorAdvantage}
       competitorHref="/keywords"
-      briefState={briefState}
+      copilotSummary={copilotSummary}
       onSelectProduct={selectProduct}
       onOpenExternal={(url) => (window as any).appilot?.openExternal(url)}
       onRevealInFolder={(path) => (window as any).appilot?.revealInFolder?.(path)}
       onOpenSettings={(id) => navigate(`/projects/${id}/settings`)}
-      onGenerateBrief={handleGenerateBrief}
-      onBriefAction={handleBriefAction}
-      onAskBriefQuestion={handleBriefQuestion}
     />
   );
 }

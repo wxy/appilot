@@ -7,7 +7,7 @@
  *   （映射成 Project/StoreProduct 形状），回调为简单跳转/无操作。
  *
  * 布局（自上而下）：
- * 标题/产品选择 → 副驾驶简报（置顶宽条）
+ * 标题/产品选择 → 副驾驶入口（置顶宽条）
  * → 第一行：三张卡 md 三列（窄屏堆叠）：① 开发 → ② 发布 → ③ 上架
  * → 第二行：④ 竞品与表现独占一整行（宽卡，卡内 md 两栏分区）
  * → 排名分布（保留）→ 用户反馈（保持现状，置于页尾不强调）。
@@ -42,7 +42,6 @@
  * 注入，repo 指标经 repoMetrics、② 文案行经 drafts、GitHub 活跃经 activityData
  * 注入；DSH 缺数据传 null/空即可（本组件不调用 window）。
  */
-import { memo, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -54,17 +53,14 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
 import type { FeedbackTheme } from "@appilot-labs/appilot-core/feedback-inbox";
 import { storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
 import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
-import { briefRuleSignals } from "../../lib/overview-brief";
 import { matrixCellState, STALE_MS } from "../../lib/matrix";
 import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
 import { cn } from "../../lib/utils";
-import { KeywordRuby } from "../ui/KeywordRuby";
 import { AppleIcon } from "../ui/Icons";
 import { EmptyState } from "../ui/EmptyState";
 import { StatusChip } from "../ui/StatusChip";
@@ -108,16 +104,6 @@ export interface StoreReviewSummary {
   lastSyncedAt: string | null;
 }
 
-type BriefConversationEntry = {
-  question: string;
-  answer: string;
-};
-
-type BriefSessionExchange = BriefConversationEntry & {
-  suggestionId: string | null;
-  at: string;
-};
-
 export interface OverviewContentProps {
   project: Project | null;
   product: StoreProduct | null;
@@ -143,25 +129,13 @@ export interface OverviewContentProps {
   competitorAdvantage?: CompetitorAdvantage | null;
   /** 可选注入：去竞品页的跳转地址（宿主约定）；缺省/空则竞品卡只展示文字入口。 */
   competitorHref?: string;
-  briefState: {
-    status: "idle" | "loading" | "ready" | "error";
-    suggestions: BriefSuggestion[];
-    progress: { chars: number; phase: "reasoning" | "content" } | null;
-    error: string;
-    exchanges: BriefSessionExchange[];
-  };
+  copilotSummary?: { pending: number; completed: number; generatedAt: string | null } | null;
   /** 默认 react-router Link；DSH 侧传入无路由依赖的实现。 */
   LinkComponent?: OverviewLink;
   onSelectProduct: (id: string) => void;
   onOpenExternal: (url: string) => void;
   onRevealInFolder: (path: string) => void;
   onOpenSettings: (projectId: string) => void;
-  onGenerateBrief: () => void;
-  onBriefAction: (suggestion: BriefSuggestion, status: "adopted" | "ignored") => void;
-  onAskBriefQuestion: (
-    suggestion: BriefSuggestion,
-    question: string,
-  ) => Promise<{ answer: string }>;
 }
 
 const CHIP_BASE =
@@ -464,76 +438,6 @@ function compareVersion(a: string, b: string): number {
   return 0;
 }
 
-const BriefQuestionThread = memo(function BriefQuestionThread({
-  suggestion,
-  initialEntries,
-  onAsk,
-}: {
-  suggestion: BriefSuggestion;
-  initialEntries: BriefConversationEntry[];
-  onAsk: (suggestion: BriefSuggestion, question: string) => Promise<{ answer: string }>;
-}) {
-  const [draft, setDraft] = useState("");
-  const [entries, setEntries] = useState(initialEntries);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  const submit = async () => {
-    const question = draft.trim();
-    if (question.length < 2 || loading) return;
-    setLoading(true);
-    setError("");
-    try {
-      const result = await onAsk(suggestion, question);
-      const answer = result.answer.trim();
-      if (!answer) throw new Error("AI 未返回内容，请稍后重试");
-      setEntries((current) => [...current, { question, answer }]);
-      setDraft("");
-    } catch (err: any) {
-      setError(err?.message || "追问失败，请稍后重试");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="ml-7 mt-2">
-      {entries.map((entry, turnIndex) => (
-        <div key={`${suggestion.id}-${turnIndex}`} className="mb-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 px-3 py-2 text-xs">
-          <p className="font-medium text-zinc-600 dark:text-zinc-300">你：{entry.question}</p>
-          <p className="mt-1 whitespace-pre-wrap leading-relaxed text-zinc-500 dark:text-zinc-400">
-            {entry.answer}
-          </p>
-        </div>
-      ))}
-      <div className="flex items-end gap-2">
-        <textarea
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-          maxLength={1000}
-          rows={1}
-          placeholder="追问具体做法、优先级或验证标准…"
-          className="min-h-8 flex-1 resize-y rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none transition-colors placeholder:text-zinc-400 focus:border-amber-400 dark:focus:border-amber-500"
-        />
-        <button
-          onClick={() => void submit()}
-          disabled={draft.trim().length < 2 || loading}
-          className={cn(btnSmSecondary, "!h-8 !px-3 disabled:cursor-not-allowed disabled:opacity-50")}
-        >
-          {loading ? "思考中…" : "追问"}
-        </button>
-      </div>
-      {error && <p className="mt-1.5 text-[11px] text-red-500 dark:text-red-400">{error}</p>}
-    </div>
-  );
-});
-
 export function OverviewContent(props: OverviewContentProps) {
   const {
     project,
@@ -549,15 +453,12 @@ export function OverviewContent(props: OverviewContentProps) {
     competitorSummary,
     competitorAdvantage,
     competitorHref,
-    briefState,
+    copilotSummary,
     LinkComponent = Link,
     onSelectProduct,
     onOpenExternal,
     onRevealInFolder,
     onOpenSettings,
-    onGenerateBrief,
-    onBriefAction,
-    onAskBriefQuestion,
   } = props;
 
   if (!project || !product) {
@@ -568,10 +469,6 @@ export function OverviewContent(props: OverviewContentProps) {
   const storeLinks = product.storeLinks || [];
   const trackedKeywords = project.trackedKeywords || [];
   const trackedActive = trackedKeywords.filter((k) => k.status !== "paused");
-  const pausedCount = trackedKeywords.length - trackedActive.length;
-  const pendingPauseCount = trackedKeywords.filter((k) =>
-    (k.pendingPausePlatforms || []).includes(product.platform),
-  ).length;
   const rankSnapshots = product.rankSnapshots || [];
   const rankRows = overviewRankRows(trackedActive, rankSnapshots);
   const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
@@ -667,10 +564,6 @@ export function OverviewContent(props: OverviewContentProps) {
   const releaseDraft = releaseOverview?.draft ?? null;
   const submissionDraft = releaseOverview?.submission ?? null;
   const submissionLanguages = submissionDraft ? localizationList(submissionDraft) : [];
-  const generatedLanguageCount = submissionLanguages.filter((loc: any) =>
-    [loc.name, loc.subtitle, loc.promotionalText, loc.description, loc.whatsNew, loc.keywords]
-      .some((value) => value && String(value).trim()),
-  ).length;
   const languageTotal = languages.length || submissionLanguages.length;
   const versionStatus = submissionDraft
     ? deriveVersionStatus({
@@ -770,31 +663,6 @@ export function OverviewContent(props: OverviewContentProps) {
     );
     return (match as any)?.translation || null;
   };
-
-  const handledBriefIds = new Set(
-    (project.briefActions || []).map((item) => item.id),
-  );
-  const rankRowsWithTranslation = rankRows.map((row) => ({
-    ...row,
-    translation:
-      trackedKeywords.find(
-        (k: any) => k.language === row.language && k.keyword === row.keyword,
-      )?.translation || null,
-  }));
-  const ruleSignals = briefRuleSignals({
-    rankRows: rankRowsWithTranslation,
-    trackedActiveCount: trackedActive.length,
-    pausedCount,
-    pendingPauseCount,
-    languageTotal,
-    generatedLanguageCount,
-  }).filter((signal) => !handledBriefIds.has(signal.id));
-  const briefSuggestions = briefState.suggestions.filter(
-    (item) => !handledBriefIds.has(item.id),
-  );
-  const showRuleSignals =
-    briefState.status === "idle" || briefState.status === "error";
-  const visibleBriefItems = showRuleSignals ? ruleSignals : briefSuggestions;
 
   const hasCompetitorData = Boolean(competitorSummary) && competitorEntries.length > 0;
 
@@ -1028,102 +896,23 @@ export function OverviewContent(props: OverviewContentProps) {
         </div>
       </div>
 
-      {/* Copilot brief */}
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-4">
-        <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">副驾驶简报</h3>
-            <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
-              只保留当前最值得处理的行动
-            </p>
-          </div>
-          {briefState.status === "loading" ? (
-            <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
-              {briefState.progress?.phase === "content" ? "生成中" : "思考中"} · {briefState.progress?.chars ?? 0} 字
-            </span>
-          ) : (
-            <button onClick={onGenerateBrief} className={btnSmSecondary}>
-              生成简报
-            </button>
-          )}
-        </div>
-        {briefState.status === "error" && (
-          <p className="px-5 py-2 text-[11px] text-red-500 dark:text-red-400 border-b border-zinc-100 dark:border-zinc-800">
-            {briefState.error}（已显示规则信号）
+      {/* Copilot stays visible as a compact project signal; conversation lives on its own page. */}
+      <div className="rounded-2xl border border-amber-200/70 dark:border-amber-500/20 bg-gradient-to-r from-amber-50/80 to-white dark:from-amber-500/10 dark:to-zinc-900 px-5 py-3.5 shadow-sm mb-4 flex items-center gap-4">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-sm font-bold text-white shadow-sm">AI</div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">副驾驶</h3>
+          <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+            {copilotSummary?.generatedAt
+              ? `${copilotSummary.pending} 项待决策 · ${copilotSummary.completed} 项已执行 · 更新于 ${formatHumanTime(copilotSummary.generatedAt)}`
+              : "分析项目数据、持续追问，并将建议转成可执行动作"}
           </p>
-        )}
-        {briefState.status === "loading" ? (
-          <div className="px-5 py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
-            AI 正在分析排名与发布状态…
-          </div>
-        ) : visibleBriefItems.length === 0 ? (
-          <div className="px-5 py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
-            {briefState.status === "ready" ? "本周事项已清空" : "暂无建议，点「生成简报」让副驾驶看路"}
-          </div>
-        ) : (
-          <ul>
-            {visibleBriefItems.map((item, index) => (
-              <li
-                key={item.id}
-                className="px-5 py-2.5 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-4 shrink-0 text-xs font-mono text-zinc-400 dark:text-zinc-500">{index + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
-                    {(() => {
-                      // 规则信号标题里嵌入的关键词，用 ruby 标注译文。
-                      const brief = item as any;
-                      if (!brief.keyword) return item.title;
-                      const title = String(item.title || "");
-                      const idx = title.indexOf(brief.keyword);
-                      if (idx < 0) return title;
-                      return (
-                        <>
-                          {title.slice(0, idx)}
-                          <KeywordRuby
-                            keyword={brief.keyword}
-                            translation={brief.translation}
-                            annotate={
-                              brief.keywordLanguage !== "zh-Hans" &&
-                              brief.keywordLanguage !== "zh-Hant"
-                            }
-                          />
-                          {title.slice(idx + brief.keyword.length)}
-                        </>
-                      );
-                    })()}
-                    </p>
-                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 truncate" title={item.reason}>
-                      {item.reason}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => onBriefAction(item, "adopted")}
-                    className={cn(btnSmSecondary, "!px-2.5 !py-1")}
-                  >
-                    采纳
-                  </button>
-                  <button
-                    onClick={() => onBriefAction(item, "ignored")}
-                    className="px-2.5 py-1 text-xs text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
-                  >
-                    忽略
-                  </button>
-                </div>
-                {briefState.status === "ready" && (
-                  <BriefQuestionThread
-                    suggestion={item}
-                    initialEntries={briefState.exchanges
-                      .filter((exchange) => exchange.suggestionId === item.id)
-                      .map(({ question, answer }) => ({ question, answer }))}
-                    onAsk={onAskBriefQuestion}
-                  />
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+        </div>
+        <LinkComponent
+          to="/copilot"
+          className={cn(btnSmPrimary, "shrink-0")}
+        >
+          {copilotSummary?.generatedAt ? "打开工作台" : "开始分析"}
+        </LinkComponent>
       </div>
 
       {/* 第一行：三张卡（① 开发 / ② 发布 / ③ 上架；md 三列，窄屏堆叠） */}

@@ -8,6 +8,8 @@ import {
   briefSuggestionId,
   buildBriefMessages,
   generateOverviewBrief,
+  normalizeBriefFollowupResponse,
+  normalizeBriefProposedActions,
 } from "@appilot-labs/appilot-core/ai/overview-brief";
 import { briefRuleSignals } from "../src/renderer/lib/overview-brief";
 
@@ -20,7 +22,7 @@ function assert(condition: boolean, msg: string) {
 // 1. parseBriefSuggestions
 const raw = JSON.stringify({
   suggestions: [
-    { title: "把 night walk 加入跟踪", reason: "美区 #5 → #12", action: "keywords", target: "night walk" },
+    { title: "把 night walk 加入跟踪", reason: "美区 #5 → #12", action: "keywords", target: "night walk", proposedActions: [{ kind: "keyword.open", label: "查看关键词", language: "en", keyword: "night walk", storefront: "us" }] },
     { title: "补齐英文文案", reason: "3/8 语言未完成", action: "release", target: null },
     { title: "坏条目", reason: "x", action: "bogus", target: "" },
     { title: "多余的第 4 条", reason: "x", action: "keywords", target: null },
@@ -29,6 +31,19 @@ const raw = JSON.stringify({
 const parsed = parseBriefSuggestions(raw);
 assert(parsed.length === 3, "parse: caps at 3 suggestions");
 assert(parsed[0].action === "keywords" && parsed[0].target === "night walk", "parse: fields preserved");
+assert(parsed[0].proposedActions[0]?.kind === "keyword.open", "parse: structured proposed action preserved");
+assert(
+  normalizeBriefProposedActions([{ kind: "keyword.remove", label: "移除", language: "en", keyword: "night walk" }])[0]?.requiresConfirmation === true,
+  "parse: mutating keyword action requires confirmation",
+);
+assert(
+  normalizeBriefProposedActions([{ kind: "keyword.remove", label: "移除", keyword: "night walk" }]).length === 0,
+  "parse: keyword mutation without language is rejected",
+);
+assert(
+  normalizeBriefFollowupResponse({ answer: "**结论**", proposedActions: [{ kind: "trend.open", label: "查看趋势" }] }).proposedActions[0]?.kind === "trend.open",
+  "parse: follow-up markdown answer and actions",
+);
 assert(parsed[1].action === "release", "parse: release action kept");
 assert(parsed[2].action === "keywords", "parse: unknown action falls back to keywords");
 assert(

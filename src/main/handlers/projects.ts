@@ -37,8 +37,8 @@ import {
   itunesSearchBlockState,
   schedulerTick,
 } from "../scheduler";
-import type { BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
-import { requestText, buildArchiveMessages } from "@appilot-labs/appilot-core/ai/ai-request";
+import type { BriefProposedAction, BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
+import { requestJson, buildArchiveMessages } from "@appilot-labs/appilot-core/ai/ai-request";
 import { getStore } from "../store";
 import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
@@ -65,13 +65,24 @@ import {
 } from "../util";
 
 const BRIEF_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
-const BRIEF_SESSION_MAX_EXCHANGES = 4;
+const BRIEF_SESSION_MAX_EXCHANGES = 200;
+const BRIEF_CONTEXT_MAX_EXCHANGES = 6;
 const BRIEF_SESSIONS_STORE_KEY = "overviewBriefSessions";
 
 type BriefSessionExchange = {
   suggestionId: string | null;
   question: string;
   answer: string;
+  proposedActions?: BriefProposedAction[];
+  at: string;
+};
+
+type BriefActionRun = {
+  id: string;
+  suggestionId: string | null;
+  action: BriefProposedAction;
+  status: "executed" | "failed";
+  message: string;
   at: string;
 };
 
@@ -81,8 +92,11 @@ type BriefQuestionSession = {
   generatedAt: string;
   expiresAt: number;
   briefContext: string;
-  suggestions: Pick<BriefSuggestion, "id" | "title" | "reason" | "action" | "target">[];
+  suggestions: BriefSuggestion[];
   exchanges: BriefSessionExchange[];
+  actionRuns: BriefActionRun[];
+  dismissedSuggestionIds: string[];
+  supersededSuggestionIds: string[];
 };
 
 const briefQuestionSessions = new Map<string, BriefQuestionSession>();
@@ -100,19 +114,10 @@ function readPersistedBriefSessions(s: any): Record<string, BriefQuestionSession
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function pruneExpiredBriefSession(s?: any): void {
+function pruneExpiredBriefSession(): void {
   const now = Date.now();
   for (const [key, session] of briefQuestionSessions.entries()) {
     if (session.expiresAt <= now) briefQuestionSessions.delete(key);
-  }
-  if (s) {
-    const persisted = readPersistedBriefSessions(s);
-    const next = Object.fromEntries(
-      Object.entries(persisted).filter(([, session]) => session?.expiresAt > now),
-    );
-    if (Object.keys(next).length !== Object.keys(persisted).length) {
-      s.set(BRIEF_SESSIONS_STORE_KEY, next);
-    }
   }
 }
 
@@ -120,8 +125,13 @@ function getBriefSession(s: any, key: string): BriefQuestionSession | undefined 
   const memory = briefQuestionSessions.get(key);
   if (memory) return memory;
   const persisted = readPersistedBriefSessions(s)[key];
-  if (!persisted || persisted.expiresAt <= Date.now()) return undefined;
+  if (!persisted) return undefined;
   const session = { ...persisted, exchanges: trimBriefExchanges(persisted.exchanges || []) };
+  session.actionRuns = Array.isArray(session.actionRuns) ? session.actionRuns : [];
+  session.dismissedSuggestionIds = Array.isArray(session.dismissedSuggestionIds)
+    ? session.dismissedSuggestionIds : [];
+  session.supersededSuggestionIds = Array.isArray(session.supersededSuggestionIds)
+    ? session.supersededSuggestionIds : [];
   briefQuestionSessions.set(key, session);
   return session;
 }
@@ -1161,6 +1171,7 @@ export function registerProjectsHandlers(): void {
       const removedKeyword = (project.trackedKeywords || []).find(
         (item: any) => item.language === language && item.keyword === keyword,
       );
+      if (!removedKeyword) throw new Error("Keyword not found");
       const trackedKeywords = (project.trackedKeywords || []).filter(
         (item: any) => !(item.language === language && item.keyword === keyword),
       );
@@ -1209,6 +1220,36 @@ export function registerProjectsHandlers(): void {
         }
       }
       return syncPoolToProducts({ ...project, trackedKeywords, removedKeywords });
+    });
+    s.set("projects", nextProjects);
+    void schedulerTick();
+    notifyDataChanged("projects");
+    return nextProjects.find((project) => project.id === context.project.id) || context.project;
+  });
+
+  ipcMain.handle("projects:pauseTrackedKeyword", async (_event, productId: string, language: string, keyword: string) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
+      const exists = (project.trackedKeywords || []).some(
+        (item: any) => item.language === language && item.keyword === keyword,
+      );
+      if (!exists) throw new Error("Keyword not found");
+      return syncPoolToProducts({
+        ...project,
+        trackedKeywords: (project.trackedKeywords || []).map((item: any) =>
+          item.language === language && item.keyword === keyword
+            ? {
+                ...item,
+                status: "paused",
+                pausedAt: new Date().toISOString(),
+                pausedReason: "由副驾驶建议并经用户确认暂停",
+              }
+            : item,
+        ),
+      });
     });
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -2039,23 +2080,38 @@ export function registerProjectsHandlers(): void {
       }
     });
 
-    pruneExpiredBriefSession(s);
+    pruneExpiredBriefSession();
     const key = briefSessionKey(project.id, product.id);
     const generatedAt = new Date().toISOString();
+    const previous = getBriefSession(s, key);
+    const currentIds = new Set(suggestions.map((item: any) => item.id));
+    const previousSuggestions = (previous?.suggestions || []).filter(
+      (item) => !currentIds.has(item.id),
+    );
+    const supersededSuggestionIds = [...new Set([
+      ...(previous?.supersededSuggestionIds || []),
+      ...previousSuggestions
+        .filter((item) => !(previous?.dismissedSuggestionIds || []).includes(item.id))
+        .map((item) => item.id),
+    ])].filter((id) => !currentIds.has(id));
     saveBriefSession(s, key, {
       projectId: project.id,
       productId: product.id,
       generatedAt,
       expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
       briefContext,
-      suggestions: suggestions.map((item: any) => ({
+      suggestions: [...suggestions.map((item: any) => ({
         id: item.id,
         title: item.title,
         reason: item.reason,
         action: item.action,
         target: item.target,
-      })),
-      exchanges: [],
+        proposedActions: item.proposedActions || [],
+      })), ...previousSuggestions].slice(0, 30),
+      exchanges: previous?.exchanges || [],
+      actionRuns: previous?.actionRuns || [],
+      dismissedSuggestionIds: previous?.dismissedSuggestionIds || [],
+      supersededSuggestionIds,
     });
 
     return {
@@ -2073,13 +2129,16 @@ export function registerProjectsHandlers(): void {
       const projects: any[] = s.get("projects") || [];
       const context = findProductContext(projects, productId);
       if (!context || context.project.id !== projectId) return null;
-      pruneExpiredBriefSession(s);
+      pruneExpiredBriefSession();
       const session = getBriefSession(s, briefSessionKey(projectId, productId));
       if (!session) return null;
       return {
         suggestions: session.suggestions,
         generatedAt: session.generatedAt,
         exchanges: session.exchanges,
+        actionRuns: session.actionRuns || [],
+        dismissedSuggestionIds: session.dismissedSuggestionIds || [],
+        supersededSuggestionIds: session.supersededSuggestionIds || [],
       };
     },
   );
@@ -2103,21 +2162,26 @@ export function registerProjectsHandlers(): void {
       const { project, product } = context;
       if (project.id !== projectId) throw new Error("Store product does not belong to project");
 
-      pruneExpiredBriefSession(s);
+      pruneExpiredBriefSession();
       const key = briefSessionKey(project.id, product.id);
       let session = getBriefSession(s, key);
       if (!session || session.expiresAt <= Date.now()) {
         const { briefContext } =
           await buildOverviewBriefPayload(s, project, product);
-        session = {
-          projectId: project.id,
-          productId: product.id,
-          generatedAt: new Date().toISOString(),
-          expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
-          briefContext,
-          suggestions: [],
-          exchanges: [],
-        };
+        session = session
+          ? { ...session, briefContext, expiresAt: Date.now() + BRIEF_SESSION_TTL_MS }
+          : {
+              projectId: project.id,
+              productId: product.id,
+              generatedAt: new Date().toISOString(),
+              expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
+              briefContext,
+              suggestions: [],
+              exchanges: [],
+              actionRuns: [],
+              dismissedSuggestionIds: [],
+              supersededSuggestionIds: [],
+            };
         saveBriefSession(s, key, session);
       }
 
@@ -2136,7 +2200,8 @@ export function registerProjectsHandlers(): void {
         "你是 Appilot 的运营副驾驶，擅长围绕上文简报给出可执行的中文建议。",
         "请严格基于给定上下文回答，不要编造具体指标或事实；对不确定项明确标注。",
         "上下文中的关键词状态和排名摘要来自 Appilot 数据库。用户询问具体关键词、暂停/删除状态或商店差异时，直接分析这些数据，不要要求用户再次导出或提供 Appilot 已持有的数据。",
-        "回答应可直接执行，结构化输出：先给结论，再给 2~3 条可执行动作（每条 <=1 句）。",
+        "answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。若动作可由 Appilot 完成，同时返回 proposedActions；允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、trend.open、release.open。关键词动作必须填写上下文中真实存在的 language 和 keyword。",
+        "只输出 JSON：{\"answer\":\"Markdown 回答\",\"proposedActions\":[{\"kind\":\"keyword.open\",\"label\":\"查看关键词\",\"language\":\"en\",\"keyword\":\"night walk\",\"storefront\":\"us\"}]}",
       ];
       const baseContext = [
         `项目/平台：${project.name} / ${product.platform || "unknown"}`,
@@ -2156,7 +2221,7 @@ export function registerProjectsHandlers(): void {
         followupSystem.join("\n"),
         [baseContext, suggestionContext].filter(Boolean),
       );
-      const history = session.exchanges.flatMap((exchange) => [
+      const history = session.exchanges.slice(-BRIEF_CONTEXT_MAX_EXCHANGES).flatMap((exchange) => [
         {
           role: "user" as const,
           content: exchange.suggestionId
@@ -2173,7 +2238,7 @@ export function registerProjectsHandlers(): void {
         ...history,
         { role: "user" as const, content: userMessage },
       ];
-      const answer = await requestText(
+      const responseData = await requestJson(
         await createAiProvider(s),
         requestMessages,
         {
@@ -2182,20 +2247,79 @@ export function registerProjectsHandlers(): void {
           thinking: "disabled",
         },
       );
+      const { normalizeBriefFollowupResponse } = await import("@appilot-labs/appilot-core/ai/overview-brief");
+      const response = normalizeBriefFollowupResponse(responseData);
+      if (!response.answer) throw new Error("AI 未返回有效回答");
       const now = new Date().toISOString();
       session.exchanges = trimBriefExchanges([
         ...session.exchanges,
         {
           suggestionId: targetSuggestion?.id || null,
           question: trimmedQuestion,
-          answer,
+          answer: response.answer,
+          proposedActions: response.proposedActions,
           at: now,
         },
       ]);
       session.expiresAt = Date.now() + BRIEF_SESSION_TTL_MS;
       saveBriefSession(s, key, { ...session, exchanges: session.exchanges });
 
-      return { answer };
+      return response;
+    },
+  );
+
+  ipcMain.handle(
+    "projects:recordBriefExecution",
+    async (_event, projectId: string, productId: string, payload: any) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context || context.project.id !== projectId) {
+        throw new Error("Store product does not belong to project");
+      }
+      pruneExpiredBriefSession();
+      const key = briefSessionKey(projectId, productId);
+      const session = getBriefSession(s, key);
+      if (!session) throw new Error("副驾驶会话已失效，请重新生成分析");
+      const { normalizeBriefProposedActions } = await import("@appilot-labs/appilot-core/ai/overview-brief");
+      const action = normalizeBriefProposedActions([payload?.action])[0];
+      if (!action) throw new Error("不支持的副驾驶动作");
+      const run: BriefActionRun = {
+        id: `${action.id}-${Date.now()}`,
+        suggestionId: typeof payload?.suggestionId === "string" ? payload.suggestionId : null,
+        action,
+        status: payload?.status === "failed" ? "failed" : "executed",
+        message: String(payload?.message || "").slice(0, 500),
+        at: new Date().toISOString(),
+      };
+      session.actionRuns = [run, ...(session.actionRuns || [])].slice(0, 100);
+      session.expiresAt = Date.now() + BRIEF_SESSION_TTL_MS;
+      saveBriefSession(s, key, session);
+      return run;
+    },
+  );
+
+  ipcMain.handle(
+    "projects:dismissBriefSuggestion",
+    async (_event, projectId: string, productId: string, suggestionId: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      suggestionId = assertNonEmptyString(suggestionId, "suggestionId");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context || context.project.id !== projectId) {
+        throw new Error("Store product does not belong to project");
+      }
+      const key = briefSessionKey(projectId, productId);
+      const session = getBriefSession(s, key);
+      if (!session) return false;
+      session.dismissedSuggestionIds = [...new Set([...(session.dismissedSuggestionIds || []), suggestionId])];
+      session.expiresAt = Date.now() + BRIEF_SESSION_TTL_MS;
+      saveBriefSession(s, key, session);
+      return true;
     },
   );
 
