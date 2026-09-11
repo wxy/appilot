@@ -6,11 +6,13 @@
 import {
   parseBriefSuggestions,
   briefSuggestionId,
+  buildBriefFollowupMessages,
   buildBriefMessages,
   generateOverviewBrief,
   normalizeBriefFollowupResponse,
   normalizeBriefProposedActions,
 } from "@appilot-labs/appilot-core/ai/overview-brief";
+import { buildProjectProfile } from "@appilot-labs/appilot-core/project-profile";
 import { briefRuleSignals } from "../src/renderer/lib/overview-brief";
 
 let errors = 0;
@@ -47,6 +49,60 @@ assert(
 assert(
   normalizeBriefFollowupResponse({ answer: "**结论**", proposedActions: [{ kind: "release.open", label: "查看发布" }] }).proposedActions[0]?.kind === "release.open",
   "parse: follow-up markdown answer and actions",
+);
+
+const followupProfile = buildProjectProfile({
+  name: "GloWalk",
+  platform: "ios",
+  supportedLanguages: ["en"],
+  description: "A night walking companion.",
+  readme: "# GloWalk\n\nWalk safely and record a path of light.",
+});
+const followupSuggestion = parsed[0];
+const followupArgs = {
+  profile: followupProfile,
+  systemPrompt: "Follow up on the prior suggestion and output JSON.",
+  evidenceContext: JSON.stringify({ keywordStats: { tracked: 34 }, keywordInventory: { active: ["night walk"] } }),
+  fallbackBriefContext: "fallback",
+  numberedSuggestionContext: "建议 1=把 night walk 加入跟踪",
+  targetSuggestion: followupSuggestion,
+  targetSuggestionNumber: 1,
+  exchanges: [
+    { suggestionId: "another", question: "unrelated question", answer: "unrelated answer" },
+    { suggestionId: followupSuggestion.id, question: "为什么？", answer: "因为排名下滑", proposedActions: followupSuggestion.proposedActions },
+  ],
+  maxExchanges: 6,
+  question: "应该等待吗？",
+};
+const followupMessages = buildBriefFollowupMessages(followupArgs);
+assert(
+  followupMessages[0].content.startsWith("Appilot project archive") &&
+    followupMessages[1].content.includes("\"tracked\":34"),
+  "follow-up: stable project archive and original evidence are restored",
+);
+assert(
+  followupMessages[2].role === "assistant" &&
+    followupMessages[2].content.includes(followupSuggestion.reason) &&
+    followupMessages[2].content.includes("proposedActions"),
+  "follow-up: complete original suggestion is restored as assistant context",
+);
+assert(
+  !followupMessages.some((message) => message.content.includes("unrelated question")) &&
+    followupMessages.some((message) => message.content === "为什么？"),
+  "follow-up: history is scoped to the selected suggestion",
+);
+const laterFollowup = buildBriefFollowupMessages({
+  ...followupArgs,
+  exchanges: [
+    ...followupArgs.exchanges,
+    { suggestionId: followupSuggestion.id, question: "应该等待吗？", answer: "先验证" },
+  ],
+  question: "下一步呢？",
+});
+assert(
+  followupMessages.slice(0, 3).map((message) => message.content).join("\u0000") ===
+    laterFollowup.slice(0, 3).map((message) => message.content).join("\u0000"),
+  "follow-up: archive, evidence, and original suggestion form a reusable prefix",
 );
 assert(
   normalizeBriefProposedActions([{ kind: "trend.open", label: "查看长期效果" }]).length === 0,

@@ -37,8 +37,13 @@ import {
   itunesSearchBlockState,
   schedulerTick,
 } from "../scheduler";
-import type { BriefProposedAction, BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
-import { requestJson, buildArchiveMessages } from "@appilot-labs/appilot-core/ai/ai-request";
+import {
+  buildBriefFollowupMessages,
+  type BriefProposedAction,
+  type BriefSuggestion,
+} from "@appilot-labs/appilot-core/ai/overview-brief";
+import { requestJson } from "@appilot-labs/appilot-core/ai/ai-request";
+import type { ProjectProfile } from "@appilot-labs/appilot-core/project-profile";
 import { getStore } from "../store";
 import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
@@ -66,8 +71,10 @@ import {
 
 const BRIEF_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const BRIEF_SESSION_MAX_EXCHANGES = 200;
-const BRIEF_CONTEXT_MAX_EXCHANGES = 6;
-const BRIEF_CONTEXT_VERSION = 2;
+// A selected suggestion has its own branch. Keeping a deeper branch history is
+// affordable because unchanged earlier turns form a reusable prompt prefix.
+const BRIEF_CONTEXT_MAX_EXCHANGES = 24;
+const BRIEF_CONTEXT_VERSION = 3;
 const BRIEF_SESSIONS_STORE_KEY = "overviewBriefSessions";
 
 type BriefSessionExchange = {
@@ -87,6 +94,14 @@ type BriefActionRun = {
   at: string;
 };
 
+type BriefContextSnapshot = {
+  generatedAt: string;
+  profile: ProjectProfile;
+  /** Exact volatile task data sent when the suggestion was generated. */
+  evidenceContext: string;
+  briefContext: string;
+};
+
 type BriefQuestionSession = {
   projectId: string;
   productId: string;
@@ -94,6 +109,8 @@ type BriefQuestionSession = {
   expiresAt: number;
   briefContext: string;
   contextVersion?: number;
+  currentContextId?: string;
+  contextSnapshots?: Record<string, BriefContextSnapshot>;
   suggestions: BriefSuggestion[];
   exchanges: BriefSessionExchange[];
   actionRuns: BriefActionRun[];
@@ -134,6 +151,8 @@ function getBriefSession(s: any, key: string): BriefQuestionSession | undefined 
     ? session.dismissedSuggestionIds : [];
   session.supersededSuggestionIds = Array.isArray(session.supersededSuggestionIds)
     ? session.supersededSuggestionIds : [];
+  session.contextSnapshots = session.contextSnapshots && typeof session.contextSnapshots === "object"
+    ? session.contextSnapshots : {};
   briefQuestionSessions.set(key, session);
   return session;
 }
@@ -278,6 +297,8 @@ async function buildOverviewBriefPayload(
 ): Promise<{
   input: any;
   briefContext: string;
+  profile: ProjectProfile;
+  evidenceContext: string;
 }> {
   const { buildBriefInput } = await import("@appilot-labs/appilot-core/overview-summary");
   const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
@@ -342,7 +363,13 @@ async function buildOverviewBriefPayload(
     profile,
   });
 
-  return { input, briefContext: buildBriefContextDigest(input) };
+  const { profile: _profile, ...taskData } = input;
+  return {
+    input,
+    profile,
+    briefContext: buildBriefContextDigest(input),
+    evidenceContext: JSON.stringify(taskData, null, 2),
+  };
 }
 
 export function registerProjectsHandlers(): void {
@@ -2076,7 +2103,7 @@ export function registerProjectsHandlers(): void {
 
     const provider = await createAiProvider(s);
     const { generateOverviewBrief } = await import("@appilot-labs/appilot-core/ai/overview-brief");
-    const { input, briefContext } =
+    const { input, briefContext, profile, evidenceContext } =
       await buildOverviewBriefPayload(s, project, product);
     if (!input) throw new Error("生成简报输入失败");
 
@@ -2092,6 +2119,7 @@ export function registerProjectsHandlers(): void {
     pruneExpiredBriefSession();
     const key = briefSessionKey(project.id, product.id);
     const generatedAt = new Date().toISOString();
+    const contextId = generatedAt;
     const previous = getBriefSession(s, key);
     const currentIds = new Set(suggestions.map((item: any) => item.id));
     const previousSuggestions = (previous?.suggestions || []).filter(
@@ -2103,6 +2131,22 @@ export function registerProjectsHandlers(): void {
         .filter((item) => !(previous?.dismissedSuggestionIds || []).includes(item.id))
         .map((item) => item.id),
     ])].filter((id) => !currentIds.has(id));
+    const storedSuggestions = [...suggestions.map((item: any) => ({
+      id: item.id,
+      generatedAt,
+      contextId,
+      title: item.title,
+      reason: item.reason,
+      action: item.action,
+      target: item.target,
+      proposedActions: item.proposedActions || [],
+    })), ...previousSuggestions].slice(0, 30);
+    const retainedContextIds = new Set(storedSuggestions.map((item) => item.contextId).filter(Boolean));
+    const contextSnapshots = Object.fromEntries(
+      Object.entries(previous?.contextSnapshots || {})
+        .filter(([id]) => retainedContextIds.has(id)),
+    );
+    contextSnapshots[contextId] = { generatedAt, profile, evidenceContext, briefContext };
     saveBriefSession(s, key, {
       projectId: project.id,
       productId: product.id,
@@ -2110,15 +2154,9 @@ export function registerProjectsHandlers(): void {
       expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
       briefContext,
       contextVersion: BRIEF_CONTEXT_VERSION,
-      suggestions: [...suggestions.map((item: any) => ({
-        id: item.id,
-        generatedAt,
-        title: item.title,
-        reason: item.reason,
-        action: item.action,
-        target: item.target,
-        proposedActions: item.proposedActions || [],
-      })), ...previousSuggestions].slice(0, 30),
+      currentContextId: contextId,
+      contextSnapshots,
+      suggestions: storedSuggestions,
       exchanges: previous?.exchanges || [],
       actionRuns: previous?.actionRuns || [],
       dismissedSuggestionIds: previous?.dismissedSuggestionIds || [],
@@ -2177,13 +2215,27 @@ export function registerProjectsHandlers(): void {
       const key = briefSessionKey(project.id, product.id);
       let session = getBriefSession(s, key);
       if (!session || session.expiresAt <= Date.now() || session.contextVersion !== BRIEF_CONTEXT_VERSION) {
-        const { briefContext } =
+        const { briefContext, profile, evidenceContext } =
           await buildOverviewBriefPayload(s, project, product);
+        const contextId = new Date().toISOString();
+        const contextSnapshot = { generatedAt: contextId, profile, evidenceContext, briefContext };
         session = session
           ? {
               ...session,
               briefContext,
               contextVersion: BRIEF_CONTEXT_VERSION,
+              currentContextId: contextId,
+              contextSnapshots: {
+                ...(session.contextSnapshots || {}),
+                [contextId]: contextSnapshot,
+              },
+              // Sessions created before context snapshots cannot recover the exact
+              // old request. Attach a current full snapshot so their next turn is
+              // still grounded; newly generated suggestions retain exact evidence.
+              suggestions: session.suggestions.map((suggestion) => ({
+                ...suggestion,
+                contextId: suggestion.contextId || contextId,
+              })),
               expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
             }
           : {
@@ -2193,6 +2245,8 @@ export function registerProjectsHandlers(): void {
               expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
               briefContext,
               contextVersion: BRIEF_CONTEXT_VERSION,
+              currentContextId: contextId,
+              contextSnapshots: { [contextId]: contextSnapshot },
               suggestions: [],
               exchanges: [],
               actionRuns: [],
@@ -2241,45 +2295,26 @@ export function registerProjectsHandlers(): void {
         ).join("；");
         return `建议 ${index + 1}=${suggestion.title}${actionText ? `；${actionText}` : ""}`;
       }).join("\n");
-      const baseContext = [
-        `项目/平台：${project.name} / ${product.platform || "unknown"}`,
-        session.briefContext,
-        numberedSuggestionContext ? `界面编号目录：\n${numberedSuggestionContext}` : "",
-      ].filter(Boolean).join("\n");
       const targetSuggestionNumber = targetSuggestion
         ? orderedSuggestions.findIndex((item) => item.id === targetSuggestion.id) + 1
         : 0;
-      const suggestionContext = targetSuggestion
-        ? [
-            `追问聚焦到建议 ${targetSuggestionNumber}：${targetSuggestion.title}`,
-            `依据：${targetSuggestion.reason}`,
-            `建议动作：${targetSuggestion.action}`,
-            targetSuggestion.target ? `动作目标：${targetSuggestion.target}` : "",
-          ].filter(Boolean).join("\n")
-        : "";
-      // 追问阶段只发送已压缩的简报摘要和有限轮次历史，避免每轮重复注入完整项目档案。
-      const messages = buildArchiveMessages(
-        undefined,
-        followupSystem.join("\n"),
-        [baseContext, suggestionContext].filter(Boolean),
-      );
-      const history = session.exchanges.slice(-BRIEF_CONTEXT_MAX_EXCHANGES).flatMap((exchange) => [
-        {
-          role: "user" as const,
-          content: exchange.suggestionId
-            ? `围绕建议追问：${exchange.question}`
-            : `追问问题：${exchange.question}`,
-        },
-        { role: "assistant" as const, content: exchange.answer },
-      ]);
-      const userMessage = targetSuggestion
-        ? `围绕建议「${targetSuggestion.title}」追问：${trimmedQuestion}`
-        : `追问问题：${trimmedQuestion}`;
-      const requestMessages = [
-        ...messages,
-        ...history,
-        { role: "user" as const, content: userMessage },
-      ];
+      const snapshotId = targetSuggestion?.contextId || session.currentContextId;
+      const snapshot = snapshotId ? session.contextSnapshots?.[snapshotId] : undefined;
+      // The archive and original evidence/suggestion form a byte-stable prefix.
+      // Only this suggestion's own conversation is appended, so unrelated work
+      // items cannot displace its context window or pollute the cache prefix.
+      const requestMessages = buildBriefFollowupMessages({
+        profile: snapshot?.profile,
+        systemPrompt: followupSystem.join("\n"),
+        evidenceContext: snapshot?.evidenceContext,
+        fallbackBriefContext: snapshot?.briefContext || session.briefContext,
+        numberedSuggestionContext,
+        targetSuggestion,
+        targetSuggestionNumber,
+        exchanges: session.exchanges,
+        maxExchanges: BRIEF_CONTEXT_MAX_EXCHANGES,
+        question: trimmedQuestion,
+      });
       const responseData = await requestJson(
         await createAiProvider(s),
         requestMessages,

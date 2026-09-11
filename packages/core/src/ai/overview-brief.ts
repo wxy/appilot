@@ -5,6 +5,7 @@
 import type { AIProvider, ChatMessage } from "./ai-provider";
 import { parseJsonObject, requestJson, buildArchiveMessages } from "./ai-request";
 import type { OverviewBriefInput } from "../overview-summary";
+import type { ProjectProfile } from "../project-profile";
 import { EngineError } from "../errors";
 import { log } from "../logger";
 
@@ -32,11 +33,83 @@ export interface BriefProposedAction {
 export interface BriefSuggestion {
   id: string;
   generatedAt?: string;
+  /** Snapshot that contains the exact evidence/profile used to generate this suggestion. */
+  contextId?: string;
   title: string;
   reason: string;
   action: BriefAction;
   target: string | null;
   proposedActions: BriefProposedAction[];
+}
+
+export interface BriefFollowupExchange {
+  suggestionId: string | null;
+  question: string;
+  answer: string;
+  proposedActions?: BriefProposedAction[];
+}
+
+/**
+ * Reconstruct a suggestion conversation without losing its origin:
+ * stable project archive -> original generation evidence -> original assistant
+ * suggestion -> this suggestion's own exchanges -> current question.
+ */
+export function buildBriefFollowupMessages(args: {
+  profile?: ProjectProfile;
+  systemPrompt: string;
+  evidenceContext?: string;
+  fallbackBriefContext: string;
+  numberedSuggestionContext?: string;
+  targetSuggestion?: BriefSuggestion | null;
+  targetSuggestionNumber?: number;
+  exchanges: BriefFollowupExchange[];
+  maxExchanges?: number;
+  question: string;
+}): ChatMessage[] {
+  const targetId = args.targetSuggestion?.id || null;
+  const scopedHistory = args.exchanges
+    .filter((exchange) => exchange.suggestionId === targetId)
+    .slice(-(args.maxExchanges ?? 6));
+  const context = args.evidenceContext
+    ? `生成当前建议时使用的完整数据快照：\n${args.evidenceContext}`
+    : `当前可用的简报摘要：\n${args.fallbackBriefContext}`;
+  const messages = buildArchiveMessages(
+    args.profile,
+    args.systemPrompt,
+    [
+      context,
+      args.numberedSuggestionContext
+        ? `界面编号目录：\n${args.numberedSuggestionContext}`
+        : "",
+    ].filter(Boolean),
+  );
+  if (args.targetSuggestion) {
+    messages.push({
+      role: "assistant",
+      content: JSON.stringify({
+        reference: args.targetSuggestionNumber
+          ? `建议 ${args.targetSuggestionNumber}`
+          : "当前建议",
+        title: args.targetSuggestion.title,
+        reason: args.targetSuggestion.reason,
+        action: args.targetSuggestion.action,
+        target: args.targetSuggestion.target,
+        proposedActions: args.targetSuggestion.proposedActions || [],
+      }, null, 2),
+    });
+  }
+  for (const exchange of scopedHistory) {
+    messages.push({ role: "user", content: exchange.question });
+    messages.push({
+      role: "assistant",
+      content: JSON.stringify({
+        answer: exchange.answer,
+        proposedActions: exchange.proposedActions || [],
+      }, null, 2),
+    });
+  }
+  messages.push({ role: "user", content: args.question });
+  return messages;
 }
 
 export interface BriefFollowupResponse {
