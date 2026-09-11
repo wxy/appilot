@@ -18,6 +18,7 @@ const snapshots = [
   { keyword: "night walk", language: "en", storefront: "us", rank: 12, totalResults: 1, checkedAt: iso(2) },
   { keyword: "记账", language: "zh-Hans", storefront: "hk", rank: null, totalResults: 1, checkedAt: iso(3) },
   { keyword: "记账", language: "zh-Hans", storefront: "hk", rank: 8, totalResults: 1, checkedAt: iso(1) },
+  { keyword: "paused now", language: "en", storefront: "us", rank: 4, totalResults: 1, checkedAt: iso(1) },
   { keyword: "old", language: "en", storefront: "us", rank: 1, totalResults: 1, checkedAt: iso(20 * 24) },
 ];
 
@@ -37,7 +38,7 @@ const input = buildBriefInput({
   supportedLanguages: ["en", "zh-Hans"],
   trackedKeywords: [
     { keyword: "night walk", language: "en", status: "active" },
-    { keyword: "old", language: "en", status: "paused" },
+    { keyword: "paused now", language: "en", status: "paused" },
   ],
   rankSnapshots: snapshots as any,
   releaseDraft: { name: "v1.2.0", tag: "v1.2.0" },
@@ -50,6 +51,7 @@ const input = buildBriefInput({
 assert(input.name === "GloWalk", "buildBriefInput: name");
 assert(input.keywordStats.tracked === 1 && input.keywordStats.paused === 1, "buildBriefInput: keyword stats");
 assert(input.keywordStats.ranked === 1 && input.keywordStats.top10 === 1, "buildBriefInput: ranked/top10 from snapshots (night walk best #5 in window)");
+assert(!input.rankMovers.some((m) => m.keyword === "paused now" || m.keyword === "记账"), "buildBriefInput: movers only include active tracked keywords");
 assert(input.release?.tag === "v1.2.0", "buildBriefInput: release tag");
 assert(input.submissionKeywordCount === 2, "buildBriefInput: submission keyword count");
 

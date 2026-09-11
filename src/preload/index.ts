@@ -212,6 +212,8 @@ contextBridge.exposeInMainWorld("appilot", {
     },
     generateBrief: (projectId: string, productId: string): Promise<any> =>
       ipcRenderer.invoke("projects:generateBrief", projectId, productId),
+    getBriefSession: (projectId: string, productId: string): Promise<any> =>
+      ipcRenderer.invoke("projects:getBriefSession", projectId, productId),
     recordBriefAction: (projectId: string, payload: any): Promise<any> =>
       ipcRenderer.invoke("projects:recordBriefAction", projectId, payload),
     onBriefProgress: (callback: (progress: any) => void): (() => void) => {
@@ -219,6 +221,13 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.on("projects:briefProgress", listener);
       return () => ipcRenderer.removeListener("projects:briefProgress", listener);
     },
+    askBriefQuestion: (
+      projectId: string,
+      productId: string,
+      question: string,
+      suggestionId?: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke("projects:askBriefQuestion", projectId, productId, question, suggestionId),
   },
 
   release: {
