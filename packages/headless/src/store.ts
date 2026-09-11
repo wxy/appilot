@@ -262,7 +262,7 @@ export function openStore(dbPath: string): AppilotStore {
         return tx(() => {
           const identity = projectIdentity(name);
           if (!identity) return false;
-          db.prepare("DELETE FROM project_blobs WHERE domain = 'storeSubmissionDrafts' AND projectKey = ?").run(identity.id);
+          db.prepare("DELETE FROM project_blobs WHERE domain IN ('storeSubmissionDrafts', 'copyPlans') AND projectKey = ?").run(identity.id);
           // 关联表由 FK ON DELETE CASCADE 清理；任务表是跨来源队列，按实例身份清理。
           const productIds = new Set(
             (db.prepare('SELECT productId FROM product_records WHERE projectId = ?').all(identity.id) as any[])

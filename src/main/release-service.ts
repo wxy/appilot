@@ -4,6 +4,7 @@ import { createAiProvider } from "./ai-service";
 import { ensureProjectKeywordPool, getStoreSubmissionDrafts } from "./project-state";
 import type { AppStore } from "./store";
 import type { ReleaseInfo } from "@appilot-labs/appilot-core/release-watcher";
+import { copyPlansForProduct } from "@appilot-labs/appilot-core/copy-plan";
 
 export interface ProjectLike {
   id: string;
@@ -12,6 +13,7 @@ export interface ProjectLike {
   trackedKeywords?: any[];
   submissionKeywords?: any[];
   storeSubmissionDrafts?: any[];
+  copyPlans?: any[];
 }
 
 export interface ProductLike {
@@ -166,6 +168,7 @@ export async function generateStoreSubmissionDraft(
       copyGapKeywords: ((project as any).copyGapKeywords || [])
         .filter((gap: any) => gap.language === language)
         .map((gap: any) => gap.keyword),
+      copyPlanItems: copyPlansForProduct(project, product.id),
     },
     onProgress,
     onChars,

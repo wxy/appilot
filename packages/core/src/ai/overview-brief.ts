@@ -7,17 +7,22 @@ import { parseJsonObject, requestJson, buildArchiveMessages } from "./ai-request
 import type { OverviewBriefInput } from "../overview-summary";
 import type { ProjectProfile } from "../project-profile";
 import { log } from "../logger";
+import { normalizeCopyPlanInput } from "../copy-plan";
 
 export type BriefAction = "keywords" | "release" | "trend";
 export type BriefCommandKind =
   | "keyword.open"
+  | "keyword.track.add"
   | "keyword.pause"
   | "keyword.remove"
   | "keyword.restore"
   | "keyword.resume"
   | "rank.collect"
   | "trend.open"
-  | "release.open";
+  | "release.open"
+  | "copy-plan.add";
+
+export type BriefActionInput = Record<string, unknown>;
 
 export interface BriefProposedAction {
   id: string;
@@ -26,23 +31,42 @@ export interface BriefProposedAction {
   language: string | null;
   keyword: string | null;
   storefront: string | null;
+  input: BriefActionInput;
   requiresConfirmation: boolean;
 }
 
 export type EffectiveBriefCommandKind =
+  | "keyword.track.add"
   | "keyword.pause"
   | "keyword.remove"
   | "keyword.restore"
-  | "keyword.resume";
+  | "keyword.resume"
+  | "copy-plan.add";
+
+export interface BriefActionInputSchema {
+  type: "object";
+  required: string[];
+  properties: Record<string, Record<string, unknown>>;
+}
 
 export interface BriefActionCapability {
   kind: BriefCommandKind;
   recommendationEligible: boolean;
   execution: "detail" | "confirm" | "task-center";
-  appliesTo: "active" | "active-or-paused" | "paused" | "removed" | null;
+  appliesTo: "missing" | "active" | "active-or-paused" | "paused" | "removed" | null;
   immediateEffect: string;
   verification: string;
+  inputSchema: BriefActionInputSchema;
 }
+
+const keywordTargetSchema: BriefActionInputSchema = {
+  type: "object",
+  required: ["language", "keyword"],
+  properties: {
+    language: { type: "string", minLength: 1 },
+    keyword: { type: "string", minLength: 1 },
+  },
+};
 
 /**
  * Appilot owns this catalog. AI may select an eligible capability, but cannot
@@ -56,6 +80,24 @@ export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapa
     appliesTo: null,
     immediateEffect: "只显示关键词信息，不改变任何状态",
     verification: "无需验证",
+    inputSchema: keywordTargetSchema,
+  },
+  "keyword.track.add": {
+    kind: "keyword.track.add",
+    recommendationEligible: true,
+    execution: "confirm",
+    appliesTo: "missing",
+    immediateEffect: "把新关键词加入跟踪池并纳入后续定时排名采集",
+    verification: "关键词出现在活跃跟踪池中，且不存在于已移除记录中",
+    inputSchema: {
+      type: "object",
+      required: ["language", "keyword", "rationale"],
+      properties: {
+        language: { type: "string", minLength: 1 },
+        keyword: { type: "string", minLength: 1 },
+        rationale: { type: "string", minLength: 1, maxLength: 500 },
+      },
+    },
   },
   "keyword.pause": {
     kind: "keyword.pause",
@@ -64,6 +106,7 @@ export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapa
     appliesTo: "active",
     immediateEffect: "暂停该关键词及其后续定时排名采集",
     verification: "关键词状态变为已暂停，相关排名任务停止调度",
+    inputSchema: keywordTargetSchema,
   },
   "keyword.remove": {
     kind: "keyword.remove",
@@ -72,6 +115,7 @@ export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapa
     appliesTo: "active-or-paused",
     immediateEffect: "从跟踪池移出该关键词，并保留可恢复记录",
     verification: "关键词离开跟踪池并出现在已移除记录中",
+    inputSchema: keywordTargetSchema,
   },
   "keyword.restore": {
     kind: "keyword.restore",
@@ -80,6 +124,7 @@ export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapa
     appliesTo: "removed",
     immediateEffect: "把已移除关键词恢复到跟踪池",
     verification: "关键词重新出现在跟踪池中，排名任务恢复调度",
+    inputSchema: keywordTargetSchema,
   },
   "keyword.resume": {
     kind: "keyword.resume",
@@ -88,6 +133,7 @@ export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapa
     appliesTo: "paused",
     immediateEffect: "恢复已暂停关键词的定时排名采集",
     verification: "关键词状态变为活跃，相关排名任务恢复调度",
+    inputSchema: keywordTargetSchema,
   },
   "rank.collect": {
     kind: "rank.collect",
@@ -96,6 +142,14 @@ export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapa
     appliesTo: null,
     immediateEffect: "更新证据，不改变运营状态",
     verification: "由任务中心记录采集结果",
+    inputSchema: {
+      type: "object",
+      required: ["language"],
+      properties: {
+        language: { type: "string", minLength: 1 },
+        storefront: { type: "string", minLength: 1 },
+      },
+    },
   },
   "trend.open": {
     kind: "trend.open",
@@ -104,6 +158,7 @@ export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapa
     appliesTo: null,
     immediateEffect: "只显示趋势信息，不改变任何状态",
     verification: "无需验证",
+    inputSchema: { type: "object", required: [], properties: {} },
   },
   "release.open": {
     kind: "release.open",
@@ -112,6 +167,30 @@ export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapa
     appliesTo: null,
     immediateEffect: "只显示发布信息，不改变任何状态",
     verification: "无需验证",
+    inputSchema: { type: "object", required: [], properties: {} },
+  },
+  "copy-plan.add": {
+    kind: "copy-plan.add",
+    recommendationEligible: true,
+    execution: "confirm",
+    appliesTo: null,
+    immediateEffect: "把一条长期文案改进方向加入当前产品的文案计划",
+    verification: "文案计划中存在内容一致且可在发布工作台查看的记录",
+    inputSchema: {
+      type: "object",
+      required: ["title", "instruction", "reason", "fields", "languages"],
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 80 },
+        instruction: { type: "string", minLength: 1, maxLength: 1000 },
+        reason: { type: "string", minLength: 1, maxLength: 500 },
+        fields: {
+          type: "array",
+          minItems: 1,
+          items: { enum: ["name", "subtitle", "promotionalText", "description", "keywords"] },
+        },
+        languages: { type: "array", items: { type: "string" } },
+      },
+    },
   },
 };
 
@@ -127,6 +206,8 @@ export function briefRecommendationCapabilities(): BriefActionCapability[] {
 
 export interface BriefSuggestion {
   id: string;
+  /** Monotonic, persisted user-facing number. Never reused or renumbered. */
+  number?: number;
   generatedAt?: string;
   /** Snapshot that contains the exact evidence/profile used to generate this suggestion. */
   contextId?: string;
@@ -138,6 +219,21 @@ export interface BriefSuggestion {
   expectedOutcome?: string;
   successMetric?: string;
   evaluateAfterDays?: number;
+  lifecycle?: {
+    state: "active" | "withdrawn" | "replaced";
+    reason: string;
+    changedAt: string;
+    replacementSuggestionId?: string | null;
+  };
+  replacesSuggestionId?: string | null;
+}
+
+export type BriefSuggestionDisposition = "keep" | "withdraw" | "replace";
+
+export interface BriefSuggestionDecision {
+  disposition: BriefSuggestionDisposition;
+  reason: string;
+  replacementSuggestionId?: string | null;
 }
 
 export interface BriefFollowupExchange {
@@ -145,6 +241,7 @@ export interface BriefFollowupExchange {
   question: string;
   answer: string;
   proposedActions?: BriefProposedAction[];
+  suggestionDecision?: BriefSuggestionDecision;
 }
 
 /**
@@ -166,8 +263,12 @@ export function buildBriefFollowupMessages(args: {
   question: string;
 }): ChatMessage[] {
   const targetId = args.targetSuggestion?.id || null;
+  const historyIds = new Set([
+    targetId,
+    args.targetSuggestion?.replacesSuggestionId || null,
+  ]);
   const scopedHistory = args.exchanges
-    .filter((exchange) => exchange.suggestionId === targetId)
+    .filter((exchange) => historyIds.has(exchange.suggestionId))
     .slice(-(args.maxExchanges ?? 6));
   const context = args.evidenceContext
     ? `生成当前建议时使用的完整数据快照：\n${args.evidenceContext}`
@@ -197,6 +298,8 @@ export function buildBriefFollowupMessages(args: {
         expectedOutcome: args.targetSuggestion.expectedOutcome || null,
         successMetric: args.targetSuggestion.successMetric || null,
         evaluateAfterDays: args.targetSuggestion.evaluateAfterDays || null,
+        lifecycle: args.targetSuggestion.lifecycle || { state: "active" },
+        replacesSuggestionId: args.targetSuggestion.replacesSuggestionId || null,
       }, null, 2),
     });
   }
@@ -207,6 +310,7 @@ export function buildBriefFollowupMessages(args: {
       content: JSON.stringify({
         answer: exchange.answer,
         proposedActions: exchange.proposedActions || [],
+        suggestionDecision: exchange.suggestionDecision || null,
       }, null, 2),
     });
   }
@@ -225,6 +329,8 @@ export function buildBriefFollowupMessages(args: {
 export interface BriefFollowupResponse {
   answer: string;
   proposedActions: BriefProposedAction[];
+  suggestionDecision: BriefSuggestionDecision;
+  replacementSuggestion: BriefSuggestion | null;
 }
 
 export function briefSuggestionId(title: string, action: BriefAction, target: unknown): string {
@@ -238,11 +344,12 @@ export function briefSuggestionId(title: string, action: BriefAction, target: un
 
 const BRIEF_ACTIONS: BriefAction[] = ["keywords", "release", "trend"];
 const BRIEF_COMMANDS: BriefCommandKind[] = [
-  "keyword.open", "keyword.pause", "keyword.remove", "keyword.restore",
-  "keyword.resume", "rank.collect", "release.open",
+  "keyword.open", "keyword.track.add", "keyword.pause", "keyword.remove", "keyword.restore",
+  "keyword.resume", "rank.collect", "release.open", "copy-plan.add",
 ];
-function proposedActionId(kind: BriefCommandKind, language: string | null, keyword: string | null, storefront: string | null): string {
-  return briefSuggestionId(kind, "keywords", `${language || ""}\u0000${keyword || ""}\u0000${storefront || ""}`);
+function proposedActionId(kind: BriefCommandKind, input: BriefActionInput): string {
+  const stableInput = Object.fromEntries(Object.entries(input).sort(([a], [b]) => a.localeCompare(b)));
+  return briefSuggestionId(kind, "keywords", JSON.stringify(stableInput));
 }
 
 export function normalizeBriefProposedActions(value: unknown): BriefProposedAction[] {
@@ -252,16 +359,35 @@ export function normalizeBriefProposedActions(value: unknown): BriefProposedActi
   for (const raw of value) {
     if (!raw || typeof raw !== "object" || !BRIEF_COMMANDS.includes((raw as any).kind)) continue;
     const kind = (raw as any).kind as BriefCommandKind;
-    const language = typeof (raw as any).language === "string" && (raw as any).language.trim()
-      ? (raw as any).language.trim() : null;
-    const keyword = typeof (raw as any).keyword === "string" && (raw as any).keyword.trim()
-      ? (raw as any).keyword.trim() : null;
-    const storefront = typeof (raw as any).storefront === "string" && (raw as any).storefront.trim()
-      ? (raw as any).storefront.trim().toLowerCase() : null;
+    const rawInput = (raw as any).input && typeof (raw as any).input === "object"
+      ? (raw as any).input as Record<string, unknown>
+      : raw as Record<string, unknown>;
+    const language = typeof rawInput.language === "string" && rawInput.language.trim()
+      ? rawInput.language.trim() : null;
+    const keyword = typeof rawInput.keyword === "string" && rawInput.keyword.trim()
+      ? rawInput.keyword.trim() : null;
+    const storefront = typeof rawInput.storefront === "string" && rawInput.storefront.trim()
+      ? rawInput.storefront.trim().toLowerCase() : null;
     if (kind === "keyword.open" && Boolean(language) !== Boolean(keyword)) continue;
     if (kind.startsWith("keyword.") && kind !== "keyword.open" && (!language || !keyword)) continue;
     if (kind === "rank.collect" && !language) continue;
-    const id = proposedActionId(kind, language, keyword, storefront);
+    let input: BriefActionInput = {};
+    if (kind === "copy-plan.add") {
+      const plan = normalizeCopyPlanInput(rawInput);
+      if (!plan || !plan.reason) continue;
+      input = { ...plan };
+    } else if (kind === "keyword.track.add") {
+      const rationale = String(rawInput.rationale || "").trim().slice(0, 500);
+      if (!rationale) continue;
+      input = { language, keyword, rationale };
+    } else {
+      input = {
+        ...(language ? { language } : {}),
+        ...(keyword ? { keyword } : {}),
+        ...(storefront ? { storefront } : {}),
+      };
+    }
+    const id = proposedActionId(kind, input);
     if (seen.has(id)) continue;
     seen.add(id);
     result.push({
@@ -273,6 +399,7 @@ export function normalizeBriefProposedActions(value: unknown): BriefProposedActi
       language,
       keyword,
       storefront,
+      input,
       requiresConfirmation: briefActionCapability(kind).execution === "confirm",
     });
     if (result.length >= 5) break;
@@ -281,9 +408,20 @@ export function normalizeBriefProposedActions(value: unknown): BriefProposedActi
 }
 
 export function normalizeBriefFollowupResponse(data: any): BriefFollowupResponse {
+  const disposition = (["keep", "withdraw", "replace"] as const).includes(
+    data?.suggestionDecision?.disposition,
+  ) ? data.suggestionDecision.disposition as BriefSuggestionDisposition : "keep";
+  const replacementSuggestion = normalizeBriefSuggestions({
+    suggestions: data?.replacementSuggestion ? [data.replacementSuggestion] : [],
+  })[0] || null;
   return {
     answer: String(data?.answer || "").trim(),
     proposedActions: normalizeBriefProposedActions(data?.proposedActions),
+    suggestionDecision: {
+      disposition,
+      reason: String(data?.suggestionDecision?.reason || "").trim().slice(0, 500),
+    },
+    replacementSuggestion,
   };
 }
 
@@ -346,7 +484,12 @@ export function filterSupportedBriefActions(
     }
     if (capability.appliesTo === "removed") return inventoryHas(inventory.removed, action);
     if (capability.appliesTo === "paused") return inventoryHas(inventory.paused, action);
-    return false;
+    if (capability.appliesTo === "missing") {
+      return !inventoryHas(inventory.active, action)
+        && !inventoryHas(inventory.paused, action)
+        && !inventoryHas(inventory.removed, action);
+    }
+    return true;
   });
 }
 
@@ -377,7 +520,7 @@ export function buildBriefMessages(
   return buildArchiveMessages(
     profile,
     [
-      "你是 Appilot 的运营副驾驶，为独立开发者的 App Store 增长给出简短、可执行的建议。",
+      "你是 Appilot 的运营副驾，为独立开发者的 App Store 增长给出简短、可执行的建议。",
       "你只能基于下面给定的真实数据输出建议，reason 必须引用数据，不得编造。",
       "detectedIssues 是确定性规则从现有数据中发现的问题。优先处理 high，其次 medium；不要用低价值建议挤占更高优先级问题。",
       "如果 detectedIssues 为空，不要假装发现缺陷；可基于其余数据给出优化建议，并明确这是机会而非已确认问题。",
@@ -392,7 +535,7 @@ export function buildBriefMessages(
       "title 和 reason 必须使用自然中文。不得输出 detectedIssues、high、medium 等内部字段名；涉及具体词时必须明确写出关键词，不要用“该词”或“同一关键词”作为首次指代。",
       "每条建议必须代表一个不同的决策：title 直接写要改变什么；reason 只解释为什么现在值得做，最多引用两个关键证据；expectedOutcome 写预期正向变化；successMetric 写之后如何判断有效；evaluateAfterDays 写复核天数。",
       "如果证据不足以支持改变，返回空 suggestions，不要用查看、检查、观察或刷新凑数。宁可没有建议，也不要输出没有明确收益和验证标准的建议。",
-      "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"expectedOutcome\":\"预期变化\",\"successMetric\":\"可验证指标\",\"evaluateAfterDays\":7,\"action\":\"keywords\",\"target\":\"关键词\",\"proposedActions\":[{\"kind\":\"keyword.pause\",\"label\":\"暂停关键词\",\"language\":\"en\",\"keyword\":\"weak term\"}]}]}",
+      "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"expectedOutcome\":\"预期变化\",\"successMetric\":\"可验证指标\",\"evaluateAfterDays\":7,\"action\":\"keywords\",\"target\":\"关键词或文案方向\",\"proposedActions\":[{\"kind\":\"keyword.track.add\",\"label\":\"添加跟踪关键词\",\"input\":{\"language\":\"en\",\"keyword\":\"walking light\",\"rationale\":\"与产品核心能力相关\"}}]}]}",
       "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",
     ].join("\n"),
     [JSON.stringify(taskData, null, 2)],

@@ -238,11 +238,24 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("projects:askBriefQuestion", projectId, productId, question, suggestionId),
     recordBriefExecution: (projectId: string, productId: string, payload: any): Promise<any> =>
       ipcRenderer.invoke("projects:recordBriefExecution", projectId, productId, payload),
-    dismissBriefSuggestion: (projectId: string, productId: string, suggestionId: string): Promise<boolean> =>
-      ipcRenderer.invoke("projects:dismissBriefSuggestion", projectId, productId, suggestionId),
+    setBriefSuggestionArchived: (
+      projectId: string,
+      productId: string,
+      suggestionId: string,
+      archived: boolean,
+    ): Promise<boolean> =>
+      ipcRenderer.invoke("projects:setBriefSuggestionArchived", projectId, productId, suggestionId, archived),
+    deleteBriefSuggestion: (projectId: string, productId: string, suggestionId: string): Promise<boolean> =>
+      ipcRenderer.invoke("projects:deleteBriefSuggestion", projectId, productId, suggestionId),
   },
 
   release: {
+    listCopyPlans: (projectId: string, productId: string): Promise<any[]> =>
+      ipcRenderer.invoke("release:listCopyPlans", projectId, productId),
+    saveCopyPlan: (projectId: string, productId: string, value: any): Promise<any> =>
+      ipcRenderer.invoke("release:saveCopyPlan", projectId, productId, value),
+    deleteCopyPlan: (projectId: string, productId: string, itemId: string): Promise<boolean> =>
+      ipcRenderer.invoke("release:deleteCopyPlan", projectId, productId, itemId),
     list: (projectId: string, force = false): Promise<any> =>
       ipcRenderer.invoke("release:list", projectId, force),
     context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
