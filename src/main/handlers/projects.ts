@@ -38,7 +38,10 @@ import {
   schedulerTick,
 } from "../scheduler";
 import {
+  briefActionCapability,
+  briefRecommendationCapabilities,
   buildBriefFollowupMessages,
+  filterSupportedBriefActions,
   type BriefProposedAction,
   type BriefSuggestion,
 } from "@appilot-labs/appilot-core/ai/overview-brief";
@@ -2357,10 +2360,10 @@ export function registerProjectsHandlers(): void {
         "用户对产品核心价值、功能主次和目标用户的补充具有最高优先级。若用户指出建议建立在错误产品假设上，必须重新评估并明确说明保留、修改或撤回原建议，不要机械维护原结论。",
         "只要下方上下文包含活跃关键词、已删除关键词或排名摘要，就不得声称没有关键词数据。若缺少的是相关性或产品定位证据，应准确说出缺少的证据类型。",
         "用户可以用“建议 2”或“动作 2.1”引用界面编号。请根据下方编号目录理解指代，并在回答中沿用编号。",
-        "answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。若动作可由 Appilot 完成，同时返回 proposedActions；允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、release.open。关键词动作必须填写上下文中真实存在的 language 和 keyword。关键词排名趋势使用 keyword.open，长期效果页目前不承接关键词分析。",
-        "排名由任务中心每日自动采集，不得返回 rank.collect，也不得把刷新数据当作建议。数据不足时说明需要等待任务中心更新；只有证据支持明确改变时才提出动作。",
+        `answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。proposedActions 只能从 Appilot 有效动作目录选择：${JSON.stringify(briefRecommendationCapabilities())}。查看页面、刷新数据和跳转不是有效动作。`,
+        "动作对象的 language 和 keyword 必须与上下文中符合 appliesTo 的关键词精确匹配。排名由任务中心每日自动采集；数据不足时说明需要等待，不要制造采集动作。",
         "使用自然中文，不要向用户暴露 detectedIssues、high、medium 等内部字段名。首次提到具体对象时必须说出关键词，避免无前文的“该词”或“同一关键词”。",
-        "只输出 JSON：{\"answer\":\"Markdown 回答\",\"proposedActions\":[{\"kind\":\"keyword.open\",\"label\":\"查看关键词\",\"language\":\"en\",\"keyword\":\"night walk\",\"storefront\":\"us\"}]}",
+        "只输出 JSON：{\"answer\":\"Markdown 回答\",\"proposedActions\":[{\"kind\":\"keyword.pause\",\"label\":\"暂停关键词\",\"language\":\"en\",\"keyword\":\"weak term\"}]}",
       ];
       const orderedSuggestions = [...session.suggestions].sort((a, b) =>
         new Date(b.generatedAt || session.generatedAt).getTime()
@@ -2411,6 +2414,23 @@ export function registerProjectsHandlers(): void {
       );
       const { normalizeBriefFollowupResponse } = await import("@appilot-labs/appilot-core/ai/overview-brief");
       const response = normalizeBriefFollowupResponse(responseData);
+      const latestProjectsForActions: any[] = s.get("projects") || [];
+      const latestActionContext = findProductContext(latestProjectsForActions, productId);
+      const keywordPool = ensureProjectKeywordPool(latestActionContext?.project || project);
+      const keywordInventory = {
+        active: (keywordPool.trackedKeywords || [])
+          .filter((item: any) => item.status !== "paused")
+          .map((item: any) => ({ language: item.language, keyword: item.keyword })),
+        paused: (keywordPool.trackedKeywords || [])
+          .filter((item: any) => item.status === "paused")
+          .map((item: any) => ({ language: item.language, keyword: item.keyword })),
+        removed: (keywordPool.removedKeywords || [])
+          .map((item: any) => ({ language: item.language, keyword: item.keyword, removedAt: item.removedAt || null })),
+      };
+      response.proposedActions = filterSupportedBriefActions(
+        response.proposedActions,
+        keywordInventory,
+      );
       if (!response.answer) throw new Error("AI 未返回有效回答");
       const now = new Date().toISOString();
       session.exchanges = trimBriefExchanges([
@@ -2448,6 +2468,9 @@ export function registerProjectsHandlers(): void {
       const { normalizeBriefProposedActions } = await import("@appilot-labs/appilot-core/ai/overview-brief");
       const action = normalizeBriefProposedActions([payload?.action])[0];
       if (!action) throw new Error("不支持的副驾驶动作");
+      if (!briefActionCapability(action.kind).recommendationEligible) {
+        throw new Error("该操作不是可执行的副驾驶建议动作");
+      }
       const run: BriefActionRun = {
         id: `${action.id}-${Date.now()}`,
         suggestionId: typeof payload?.suggestionId === "string" ? payload.suggestionId : null,

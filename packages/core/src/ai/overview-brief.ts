@@ -29,6 +29,102 @@ export interface BriefProposedAction {
   requiresConfirmation: boolean;
 }
 
+export type EffectiveBriefCommandKind =
+  | "keyword.pause"
+  | "keyword.remove"
+  | "keyword.restore"
+  | "keyword.resume";
+
+export interface BriefActionCapability {
+  kind: BriefCommandKind;
+  recommendationEligible: boolean;
+  execution: "detail" | "confirm" | "task-center";
+  appliesTo: "active" | "active-or-paused" | "paused" | "removed" | null;
+  immediateEffect: string;
+  verification: string;
+}
+
+/**
+ * Appilot owns this catalog. AI may select an eligible capability, but cannot
+ * invent how it executes or how completion is verified.
+ */
+export const BRIEF_ACTION_CAPABILITIES: Record<BriefCommandKind, BriefActionCapability> = {
+  "keyword.open": {
+    kind: "keyword.open",
+    recommendationEligible: false,
+    execution: "detail",
+    appliesTo: null,
+    immediateEffect: "只显示关键词信息，不改变任何状态",
+    verification: "无需验证",
+  },
+  "keyword.pause": {
+    kind: "keyword.pause",
+    recommendationEligible: true,
+    execution: "confirm",
+    appliesTo: "active",
+    immediateEffect: "暂停该关键词及其后续定时排名采集",
+    verification: "关键词状态变为已暂停，相关排名任务停止调度",
+  },
+  "keyword.remove": {
+    kind: "keyword.remove",
+    recommendationEligible: true,
+    execution: "confirm",
+    appliesTo: "active-or-paused",
+    immediateEffect: "从跟踪池移出该关键词，并保留可恢复记录",
+    verification: "关键词离开跟踪池并出现在已移除记录中",
+  },
+  "keyword.restore": {
+    kind: "keyword.restore",
+    recommendationEligible: true,
+    execution: "confirm",
+    appliesTo: "removed",
+    immediateEffect: "把已移除关键词恢复到跟踪池",
+    verification: "关键词重新出现在跟踪池中，排名任务恢复调度",
+  },
+  "keyword.resume": {
+    kind: "keyword.resume",
+    recommendationEligible: true,
+    execution: "confirm",
+    appliesTo: "paused",
+    immediateEffect: "恢复已暂停关键词的定时排名采集",
+    verification: "关键词状态变为活跃，相关排名任务恢复调度",
+  },
+  "rank.collect": {
+    kind: "rank.collect",
+    recommendationEligible: false,
+    execution: "task-center",
+    appliesTo: null,
+    immediateEffect: "更新证据，不改变运营状态",
+    verification: "由任务中心记录采集结果",
+  },
+  "trend.open": {
+    kind: "trend.open",
+    recommendationEligible: false,
+    execution: "detail",
+    appliesTo: null,
+    immediateEffect: "只显示趋势信息，不改变任何状态",
+    verification: "无需验证",
+  },
+  "release.open": {
+    kind: "release.open",
+    recommendationEligible: false,
+    execution: "detail",
+    appliesTo: null,
+    immediateEffect: "只显示发布信息，不改变任何状态",
+    verification: "无需验证",
+  },
+};
+
+export function briefActionCapability(kind: BriefCommandKind): BriefActionCapability {
+  return BRIEF_ACTION_CAPABILITIES[kind];
+}
+
+export function briefRecommendationCapabilities(): BriefActionCapability[] {
+  return Object.values(BRIEF_ACTION_CAPABILITIES).filter(
+    (capability) => capability.recommendationEligible,
+  );
+}
+
 export interface BriefSuggestion {
   id: string;
   generatedAt?: string;
@@ -145,10 +241,6 @@ const BRIEF_COMMANDS: BriefCommandKind[] = [
   "keyword.open", "keyword.pause", "keyword.remove", "keyword.restore",
   "keyword.resume", "rank.collect", "release.open",
 ];
-const CONFIRM_COMMANDS = new Set<BriefCommandKind>([
-  "keyword.pause", "keyword.remove", "keyword.restore", "keyword.resume", "rank.collect",
-]);
-
 function proposedActionId(kind: BriefCommandKind, language: string | null, keyword: string | null, storefront: string | null): string {
   return briefSuggestionId(kind, "keywords", `${language || ""}\u0000${keyword || ""}\u0000${storefront || ""}`);
 }
@@ -181,7 +273,7 @@ export function normalizeBriefProposedActions(value: unknown): BriefProposedActi
       language,
       keyword,
       storefront,
-      requiresConfirmation: CONFIRM_COMMANDS.has(kind),
+      requiresConfirmation: briefActionCapability(kind).execution === "confirm",
     });
     if (result.length >= 5) break;
   }
@@ -229,22 +321,57 @@ export function normalizeBriefSuggestions(data: any): BriefSuggestion[] {
   return suggestions;
 }
 
+type BriefKeywordInventory = NonNullable<OverviewBriefInput["keywordInventory"]>;
+
+function inventoryHas(
+  entries: BriefKeywordInventory["active"],
+  action: BriefProposedAction,
+): boolean {
+  return entries.some((entry) =>
+    entry.language === action.language && entry.keyword === action.keyword,
+  );
+}
+
+export function filterSupportedBriefActions(
+  actions: BriefProposedAction[],
+  inventory?: BriefKeywordInventory,
+): BriefProposedAction[] {
+  return actions.filter((action) => {
+    const capability = briefActionCapability(action.kind);
+    if (!capability.recommendationEligible) return false;
+    if (!inventory) return true;
+    if (capability.appliesTo === "active") return inventoryHas(inventory.active, action);
+    if (capability.appliesTo === "active-or-paused") {
+      return inventoryHas(inventory.active, action) || inventoryHas(inventory.paused, action);
+    }
+    if (capability.appliesTo === "removed") return inventoryHas(inventory.removed, action);
+    if (capability.appliesTo === "paused") return inventoryHas(inventory.paused, action);
+    return false;
+  });
+}
+
 export function filterActionableBriefSuggestions(
   suggestions: BriefSuggestion[],
+  input?: Pick<OverviewBriefInput, "keywordInventory">,
 ): BriefSuggestion[] {
-  return suggestions.filter((suggestion) => {
-    const changesState = suggestion.proposedActions.some((action) =>
-      !action.kind.endsWith(".open") && action.kind !== "rank.collect",
+  return suggestions.flatMap((suggestion) => {
+    const proposedActions = filterSupportedBriefActions(
+      suggestion.proposedActions,
+      input?.keywordInventory,
     );
-    return changesState
-      && Boolean(suggestion.expectedOutcome)
-      && Boolean(suggestion.successMetric)
-      && Number.isFinite(suggestion.evaluateAfterDays);
+    if (
+      proposedActions.length === 0
+      || !suggestion.expectedOutcome
+      || !suggestion.successMetric
+      || !Number.isFinite(suggestion.evaluateAfterDays)
+    ) return [];
+    return [{ ...suggestion, proposedActions }];
   });
 }
 
 export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
   const { profile, ...taskData } = input;
+  const actionCatalog = briefRecommendationCapabilities();
   return buildArchiveMessages(
     profile,
     [
@@ -257,13 +384,13 @@ export function buildBriefMessages(input: OverviewBriefInput): ChatMessage[] {
       "keywordInventory 和 keywordRankDetails 是数据库中的关键词级证据。涉及排名时先比较语言、商店和关键词差异；只有确实没有检查记录时，才能判断采集数据缺失。",
       "storefrontCoverage 是每种查询语言应覆盖的完整商店集合。checkedStorefronts 已等于对应集合数量时，覆盖已经完整；rank.collect 只能刷新已有目标商店，不能扩大覆盖，不得把刷新描述为补齐覆盖。",
       "rankDataReadiness 描述任务中心的每日采集状态。排名证据过期时，不要基于它提出关键词改变；等待任务中心按 nextScheduledAt 到 scheduledCoverageCompleteAt 的现有排期更新即可，不要生成额外采集动作。",
-      "每条输出都必须至少包含一个会改变 Appilot 状态的 proposedAction。keyword.open、release.open 等查看动作只能作为补充，不能单独构成建议。rank.collect 属于数据准备而不是增长建议，不要把刷新排名作为建议；每日任务会自动采集。",
-      "允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、release.open。关键词动作必须填写真实存在的 language 和 keyword。不要根据不充分证据提出删除。",
-      "关键词排名、掉榜或排名趋势一律使用 keyword.open，填写精确的 language、keyword 和 storefront；长期效果页目前不承接关键词分析。",
+      `每条输出都必须从 Appilot 有效动作目录选择 proposedActions：${JSON.stringify(actionCatalog)}。查看页面、刷新数据和跳转不在目录中，不得作为建议动作。`,
+      "动作对象的 language 和 keyword 必须与 keywordInventory 中符合 appliesTo 的条目精确匹配。不要根据不充分证据提出删除。",
+      "当前有效动作只覆盖关键词跟踪管理；如果证据指向发布、文案或产品修改，但 Appilot 尚无对应执行动作，则不要把它包装成建议。",
       "title 和 reason 必须使用自然中文。不得输出 detectedIssues、high、medium 等内部字段名；涉及具体词时必须明确写出关键词，不要用“该词”或“同一关键词”作为首次指代。",
       "每条建议必须代表一个不同的决策：title 直接写要改变什么；reason 只解释为什么现在值得做，最多引用两个关键证据；expectedOutcome 写预期正向变化；successMetric 写之后如何判断有效；evaluateAfterDays 写复核天数。",
       "如果证据不足以支持改变，返回空 suggestions，不要用查看、检查、观察或刷新凑数。宁可没有建议，也不要输出没有明确收益和验证标准的建议。",
-      "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"expectedOutcome\":\"预期变化\",\"successMetric\":\"可验证指标\",\"evaluateAfterDays\":7,\"action\":\"keywords|release|trend\",\"target\":\"可选辅助信息或 null\",\"proposedActions\":[{\"kind\":\"keyword.pause\",\"label\":\"暂停关键词\",\"language\":\"en\",\"keyword\":\"weak term\"}]}]}",
+      "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"expectedOutcome\":\"预期变化\",\"successMetric\":\"可验证指标\",\"evaluateAfterDays\":7,\"action\":\"keywords\",\"target\":\"关键词\",\"proposedActions\":[{\"kind\":\"keyword.pause\",\"label\":\"暂停关键词\",\"language\":\"en\",\"keyword\":\"weak term\"}]}]}",
       "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",
     ].join("\n"),
     [JSON.stringify(taskData, null, 2)],
@@ -282,5 +409,5 @@ export async function generateOverviewBrief(
     thinking: "disabled",
     onProgress,
   });
-  return filterActionableBriefSuggestions(normalizeBriefSuggestions(data));
+  return filterActionableBriefSuggestions(normalizeBriefSuggestions(data), input);
 }

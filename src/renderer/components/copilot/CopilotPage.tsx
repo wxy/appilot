@@ -1,12 +1,13 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
   BriefProposedAction,
   BriefSuggestion,
 } from "@appilot-labs/appilot-core/ai/overview-brief";
-import { useProject, type Project, type StoreProduct } from "../../stores/project";
+import { briefActionCapability } from "@appilot-labs/appilot-core/ai/overview-brief";
+import { useProject, type StoreProduct } from "../../stores/project";
 import { formatHumanTime, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
@@ -115,25 +116,6 @@ const CopilotComposer = memo(function CopilotComposer({
   );
 });
 
-function fallbackActions(suggestion: BriefSuggestion, language: string | null): BriefProposedAction[] {
-  if (suggestion.proposedActions?.length) return suggestion.proposedActions;
-  if (suggestion.action === "trend" && (!language || !suggestion.target)) return [];
-  const kind = suggestion.action === "release"
-    ? "release.open"
-    : suggestion.action === "trend"
-      ? "keyword.open"
-      : "keyword.open";
-  return [{
-    id: `fallback-${suggestion.id}`,
-    kind,
-    label: suggestion.action === "release" ? "打开发布" : suggestion.action === "trend" ? "查看趋势" : "查看关键词",
-    language,
-    keyword: kind === "keyword.open" && !language ? null : suggestion.target,
-    storefront: null,
-    requiresConfirmation: false,
-  }];
-}
-
 function readableSuggestionReason(suggestion: BriefSuggestion): string {
   const target = suggestion.target?.trim();
   return suggestion.reason
@@ -223,127 +205,6 @@ function actionDescription(action: BriefProposedAction): string {
   return "查看与建议有关的发布信息";
 }
 
-function fullActionPath(action: BriefProposedAction): string {
-  if (action.kind === "keyword.open") {
-    const params = new URLSearchParams();
-    if (action.language) params.set("lang", action.language);
-    if (action.keyword) params.set("keyword", action.keyword);
-    return `/keywords${params.size ? `?${params.toString()}` : ""}`;
-  }
-  if (action.kind === "trend.open") return "/trend";
-  return "/release";
-}
-
-function ActionDetailSheet({
-  action,
-  reference,
-  suggestion,
-  project,
-  product,
-  onClose,
-  onOpenFull,
-}: {
-  action: BriefProposedAction;
-  reference: string;
-  suggestion: BriefSuggestion | null;
-  project: Project;
-  product: StoreProduct;
-  onClose: () => void;
-  onOpenFull: () => void;
-}) {
-  const tracked = project.trackedKeywords.find((item) =>
-    item.language === action.language && item.keyword === action.keyword,
-  );
-  const removed = project.removedKeywords.find((item) =>
-    item.language === action.language && item.keyword === action.keyword,
-  );
-  const rankRows = [...product.rankSnapshots]
-    .filter((item) =>
-      (!action.language || item.language === action.language)
-      && (!action.keyword || item.keyword === action.keyword)
-      && (!action.storefront || item.storefront === action.storefront),
-    )
-    .sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime());
-  const latestByStore = rankRows.filter(
-    (item, index) => rankRows.findIndex((candidate) => candidate.storefront === item.storefront) === index,
-  ).slice(0, 8);
-  const isKeyword = action.kind === "keyword.open";
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-zinc-950/25 backdrop-blur-[1px]" onMouseDown={onClose}>
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-label={`${reference} 相关信息`}
-        className="flex h-full w-full max-w-lg flex-col border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header className="flex items-start gap-3 border-b border-zinc-200 dark:border-zinc-800 px-5 py-4">
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">{reference} · 相关信息</p>
-            <h2 className="mt-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">{action.label}</h2>
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{actionDescription(action)}</p>
-          </div>
-          <button onClick={onClose} className="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800">关闭</button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {suggestion && (
-            <div className="mb-5 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 px-4 py-3">
-              <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">建议依据</p>
-              <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-300"><Markdown>{readableSuggestionReason(suggestion)}</Markdown></div>
-            </div>
-          )}
-
-          {isKeyword ? (
-            <div className="space-y-5">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
-                  <p className="text-[10px] text-zinc-400">关键词</p>
-                  <p className="mt-1 text-sm font-medium text-zinc-800 dark:text-zinc-100">{action.keyword || "未指定"}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{tracked?.translation || removed?.translation || "暂无译文"}</p>
-                </div>
-                <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
-                  <p className="text-[10px] text-zinc-400">语言与状态</p>
-                  <p className="mt-1 text-sm font-medium text-zinc-800 dark:text-zinc-100">{action.language || "未指定语言"}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{tracked ? (tracked.status === "paused" ? "已暂停" : "跟踪中") : removed ? "已移除，可恢复" : "当前词库中未找到"}</p>
-                </div>
-              </div>
-              <div>
-                <p className="mb-2 text-xs font-medium text-zinc-700 dark:text-zinc-200">最新商店排名</p>
-                {latestByStore.length ? (
-                  <div className="divide-y divide-zinc-100 dark:divide-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-800">
-                    {latestByStore.map((row) => (
-                      <div key={row.storefront} className="flex items-center gap-3 px-3 py-2 text-xs">
-                        <span className="w-12 font-medium uppercase text-zinc-600 dark:text-zinc-300">{row.storefront}</span>
-                        <span className="flex-1 text-zinc-500">{formatHumanTime(row.checkedAt)}采集</span>
-                        <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-100">{row.rank ? `#${row.rank}` : "未进入前 200"}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : <p className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 px-3 py-5 text-center text-xs text-zinc-400">没有与该语言和关键词精确匹配的排名快照</p>}
-              </div>
-              {(tracked?.rationale || removed?.rationale) && (
-                <div>
-                  <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">收录依据</p>
-                  <p className="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">{tracked?.rationale || removed?.rationale}</p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-4 text-sm leading-6 text-zinc-500 dark:text-zinc-400">发布包含版本、文案、检查项和商店状态等多个关联区域。这里保留建议依据，具体修改在完整发布工作台中进行。</p>
-          )}
-        </div>
-
-        <footer className="flex items-center justify-between gap-3 border-t border-zinc-200 dark:border-zinc-800 px-5 py-4">
-          <p className="text-[11px] text-zinc-400">详情层只读取当前动作所需数据</p>
-          <button onClick={onOpenFull} className={btnSmPrimary}>打开完整页面</button>
-        </footer>
-      </section>
-    </div>
-  );
-}
-
 export function CopilotPage() {
   const {
     projects,
@@ -354,7 +215,6 @@ export function CopilotPage() {
     restoreTrackedKeyword,
     resumePausedKeyword,
   } = useProject();
-  const navigate = useNavigate();
   const location = useLocation();
   const project = projects.find((item) => item.id === currentProjectId) || null;
   const product = project?.storeProducts.find((item) => item.id === currentProductId)
@@ -366,7 +226,6 @@ export function CopilotPage() {
   const [progress, setProgress] = useState<{ chars: number; phase: string } | null>(null);
   const [asking, setAsking] = useState(false);
   const [pendingAction, setPendingAction] = useState<BriefProposedAction | null>(null);
-  const [detailAction, setDetailAction] = useState<BriefProposedAction | null>(null);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const [taskFeedback, setTaskFeedback] = useState<TaskFeedback | null>(null);
   const [error, setError] = useState("");
@@ -430,31 +289,18 @@ export function CopilotPage() {
   const visibleExchanges = (session?.exchanges || []).filter(
     (item) => item.suggestionId === (selectedSuggestion?.id || null),
   );
-  const matchingKeywords = selectedSuggestion?.target
-    ? project?.trackedKeywords.filter((item) => item.keyword === selectedSuggestion.target) || []
-    : [];
-  const activeKeyword = matchingKeywords.length === 1 ? matchingKeywords[0] : null;
   const proposedActions = useMemo(() => {
     const items = [
-      ...(selectedSuggestion ? fallbackActions(selectedSuggestion, activeKeyword?.language || null) : []),
+      ...(selectedSuggestion?.proposedActions || []),
       ...visibleExchanges.flatMap((item) => item.proposedActions || []),
-    ].map((action) => action.kind === "trend.open" && activeKeyword && selectedSuggestion?.target
-      ? {
-          ...action,
-          kind: "keyword.open" as const,
-          label: "查看关键词排名",
-          language: activeKeyword.language,
-          keyword: selectedSuggestion.target,
-        }
-      : action).filter((action) => action.kind !== "trend.open");
+    ].filter((action) =>
+      action.kind !== "trend.open" && (
+        briefActionCapability(action.kind).recommendationEligible
+        || (session?.actionRuns || []).some((run) => run.action.id === action.id)
+      ),
+    );
     return [...new Map(items.map((item) => [item.id, item])).values()];
-  }, [selectedSuggestion, activeKeyword?.language, visibleExchanges]);
-  const actionReference = (action: BriefProposedAction) => {
-    const index = proposedActions.findIndex((item) => item.id === action.id);
-    return selectedSuggestionNumber && index >= 0
-      ? `动作 ${selectedSuggestionNumber}.${index + 1}`
-      : "建议动作";
-  };
+  }, [selectedSuggestion, visibleExchanges, session?.actionRuns]);
 
   const generate = async () => {
     if (!project || !product || loading) return;
@@ -511,10 +357,7 @@ export function CopilotPage() {
 
   const execute = async (action: BriefProposedAction) => {
     if (!project || !product || runningActionId) return;
-    if (action.kind.endsWith(".open")) {
-      setDetailAction(action);
-      return;
-    }
+    if (!briefActionCapability(action.kind).recommendationEligible) return;
     if (action.requiresConfirmation && pendingAction?.id !== action.id) {
       setPendingAction(action);
       return;
@@ -722,6 +565,7 @@ export function CopilotPage() {
                     <p className="mb-2 text-[11px] font-medium text-amber-700 dark:text-amber-400">可执行动作</p>
                     <div className="space-y-2">
                       {proposedActions.map((action, actionIndex) => {
+                        const capability = briefActionCapability(action.kind);
                         const actionRuns = (session?.actionRuns || []).filter((run) => run.action.id === action.id);
                         const executed = !action.kind.endsWith(".open") && actionRuns.some((run) => run.status === "executed");
                         const confirming = pendingAction?.id === action.id;
@@ -733,6 +577,9 @@ export function CopilotPage() {
                                 <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">动作 {selectedSuggestionNumber}.{actionIndex + 1}</p>
                                 <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">{action.label}</p>
                                 <p className="mt-0.5 truncate text-[10px] text-zinc-400" title={actionDescription(action)}>{actionDescription(action)}</p>
+                                {capability.recommendationEligible && (
+                                  <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">执行后验证：{capability.verification}</p>
+                                )}
                               </div>
                               {runningActionId === action.id ? (
                                 <button disabled className={cn(btnSmSecondary, "disabled:opacity-60")}>执行中…</button>
@@ -745,10 +592,10 @@ export function CopilotPage() {
                               ) : (
                                 <button
                                   onClick={() => void execute(action)}
-                                  disabled={executed || action.kind === "rank.collect" || runningActionId === action.id}
+                                  disabled={executed || !capability.recommendationEligible || runningActionId === action.id}
                                   className={cn(btnSmSecondary, "disabled:opacity-50")}
                                 >
-                                  {executed ? "已执行" : action.kind === "rank.collect" ? "每日自动更新" : action.kind.endsWith(".open") ? "查看" : action.requiresConfirmation ? "预览" : "执行"}
+                                  {executed ? "已执行" : !capability.recommendationEligible ? "已停用" : action.requiresConfirmation ? "预览" : "执行"}
                                 </button>
                               )}
                             </div>
@@ -837,29 +684,6 @@ export function CopilotPage() {
           </div>
         </main>
       </div>
-      {detailAction && (
-        <ActionDetailSheet
-          action={detailAction}
-          reference={actionReference(detailAction)}
-          suggestion={selectedSuggestion}
-          project={project}
-          product={product}
-          onClose={() => setDetailAction(null)}
-          onOpenFull={() => {
-            const returnTo = selectedSuggestion
-              ? `/copilot?suggestion=${encodeURIComponent(selectedSuggestion.id)}`
-              : "/copilot";
-            navigate(fullActionPath(detailAction), {
-              state: {
-                copilotReturn: {
-                  to: returnTo,
-                  label: selectedSuggestionNumber ? `返回建议 ${selectedSuggestionNumber}` : "返回副驾驶",
-                },
-              },
-            });
-          }}
-        />
-      )}
     </div>
   );
 }

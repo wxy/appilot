@@ -4,11 +4,13 @@
  */
 
 import {
+  briefActionCapability,
   parseBriefSuggestions,
   briefSuggestionId,
   buildBriefFollowupMessages,
   buildBriefMessages,
   filterActionableBriefSuggestions,
+  filterSupportedBriefActions,
   generateOverviewBrief,
   normalizeBriefFollowupResponse,
   normalizeBriefProposedActions,
@@ -38,6 +40,11 @@ assert(parsed[0].proposedActions[0]?.kind === "keyword.open", "parse: structured
 assert(
   normalizeBriefProposedActions([{ kind: "keyword.remove", label: "移除", language: "en", keyword: "night walk" }])[0]?.requiresConfirmation === true,
   "parse: mutating keyword action requires confirmation",
+);
+assert(
+  briefActionCapability("keyword.pause").recommendationEligible === true &&
+    briefActionCapability("keyword.open").recommendationEligible === false,
+  "capability: Appilot defines effective actions instead of trusting the model",
 );
 assert(
   normalizeBriefProposedActions([{ kind: "keyword.remove", label: "移除", keyword: "night walk" }]).length === 0,
@@ -171,6 +178,22 @@ assert(
   filterActionableBriefSuggestions(qualityCandidates).map((item) => item.title).join() === "暂停弱相关词",
   "quality: view-only and collection-only observations are not recommendations",
 );
+const effectiveAndView = normalizeBriefProposedActions([
+  { kind: "keyword.pause", label: "暂停", language: "en", keyword: "weak term" },
+  { kind: "keyword.open", label: "查看", language: "en", keyword: "weak term" },
+]);
+assert(
+  filterSupportedBriefActions(effectiveAndView).map((action) => action.kind).join() === "keyword.pause",
+  "capability: navigation is removed even when attached to an effective action",
+);
+assert(
+  filterSupportedBriefActions(effectiveAndView, {
+    active: [],
+    paused: [{ language: "en", keyword: "weak term" }],
+    removed: [],
+  }).length === 0,
+  "capability: an action that does not match current state is rejected",
+);
 const missingReviewWindow = parseBriefSuggestions(JSON.stringify({ suggestions: [{
   title: "缺少复核时间",
   reason: "词表需要整理",
@@ -193,7 +216,14 @@ const input: any = {
   supportedLanguages: ["en", "zh-Hans"],
   storefrontCoverage: [{ language: "en", storefronts: ["us", "es"] }],
   keywordStats: { tracked: 10, ranked: 4, top10: 2, paused: 1 },
-  keywordInventory: { active: [{ keyword: "night walk", language: "en" }], paused: [], removed: [] },
+  keywordInventory: {
+    active: [
+      { keyword: "night walk", language: "en" },
+      { keyword: "weak term", language: "en" },
+    ],
+    paused: [],
+    removed: [],
+  },
   keywordRankDetails: [{ keyword: "night walk", language: "en", checkedStorefronts: 1, rankedStorefronts: 1, unrankedStorefronts: 0, top10Storefronts: 0, bestRanks: [{ storefront: "us", rank: 12 }], weakestRanks: [], latestCheckedAt: new Date().toISOString() }],
   rankMovers: [{ keyword: "night walk", language: "en", storefront: "us", previousRank: 5, currentRank: 12, delta: -7 }],
   detectedIssues: [{ id: "rank-drop", category: "ranking", severity: "medium", title: "night walk 显著掉榜", evidence: "美区从第 5 名降至第 12 名", action: "trend", target: "night walk" }],
@@ -208,7 +238,11 @@ assert(messages[0].role === "system", "buildBriefMessages: system prompt first")
 assert(joined.includes("detectedIssues") && joined.includes("优先处理 high"), "buildBriefMessages: deterministic issues drive prioritization");
 assert(joined.includes("storefrontCoverage") && joined.includes("不能扩大覆盖"), "buildBriefMessages: collection refresh is distinct from storefront coverage");
 assert(joined.includes("不要复述这些状态") && joined.includes("不同的决策"), "buildBriefMessages: avoids dashboard repetition and fragmented advice");
-assert(joined.includes("不得输出 detectedIssues") && joined.includes("一律使用 keyword.open"), "buildBriefMessages: internal fields stay out of user copy and keyword trends use ranking page");
+assert(
+  joined.includes("不得输出 detectedIssues") &&
+    joined.includes("Appilot 有效动作目录") && joined.includes('"appliesTo":"active"'),
+  "buildBriefMessages: internal fields stay out of copy and only effective actions are offered",
+);
 
 // 4. buildBriefMessages with feedback themes + competitor deltas
 const themedInput: any = {
