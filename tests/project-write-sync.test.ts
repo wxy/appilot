@@ -105,25 +105,25 @@ async function main() {
     const p = electronProject();
     p.storeSubmissionDrafts = [{ id: 'd1', updatedAt: '2026-09-01T00:00:00Z', localizations: [] }];
     syncProjectToDb(store, p);
-    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 1);
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo-id') as any[]).length, 1);
 
     // 无关写（无该字段）不覆盖 DB 草稿
     const q = electronProject();
     delete q.storeSubmissionDrafts;
     syncProjectToDb(store, q);
-    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 1, '无字段写不覆盖草稿');
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo-id') as any[]).length, 1, '无字段写不覆盖草稿');
 
     // 防误清：快照草稿为空数组但 DB 已有非空草稿 → 保留 DB 草稿
     const r = electronProject();
     r.storeSubmissionDrafts = [];
     syncProjectToDb(store, r);
-    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo') as any[]).length, 1, '空数组快照不覆盖已有草稿（防误清）');
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo-id') as any[]).length, 1, '空数组快照不覆盖已有草稿（防误清）');
 
     // 新建项目：无既有草稿时仍可写入非空草稿
     const s = electronProject();
     s.storeSubmissionDrafts = [{ id: 'd2', updatedAt: '2026-09-02T00:00:00Z', localizations: [] }];
-    syncProjectToDb(store, { ...s, name: 'other' });
-    assert.equal((store.blobs.get('storeSubmissionDrafts', 'other') as any[]).length, 1, '新项目写入草稿');
+    syncProjectToDb(store, { ...s, id: 'other-id', name: 'other' });
+    assert.equal((store.blobs.get('storeSubmissionDrafts', 'other-id') as any[]).length, 1, '新项目写入草稿');
     store.close();
     console.log('✅ 草稿镜像（有字段才写/清空/不覆盖）');
   }

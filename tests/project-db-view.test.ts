@@ -19,6 +19,7 @@ async function main() {
   {
     const store = tempDb();
     store.projects.save({
+      id: 'ai-pulse-id',
       name: 'ai-pulse-macos',
       path: '/Users/x/dev/ai-pulse',
       githubUrl: 'https://github.com/wxy/ai-pulse',
@@ -67,7 +68,7 @@ async function main() {
     assert.equal(views.length, 1);
     const v = views[0];
     assert.equal(v.name, 'ai-pulse-macos');
-    assert.equal(v.id, 'ai-pulse-macos', 'id 以 name 兜底');
+    assert.equal(v.id, 'ai-pulse-id', '视图保留稳定项目 id');
     assert.equal(v.productType, 'ios');
     assert.equal(v.storeProducts.length, 2);
     const ios = v.storeProducts.find((p) => p.id === 'x:ios')!;

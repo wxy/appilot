@@ -25,6 +25,7 @@ import {
 import {
   buildStatusTaskId,
   bootstrapRoundState,
+  initialRankRunAt,
   markRoundTaskDone,
   nextRunAt,
   nextRankRunAt,
@@ -42,6 +43,7 @@ import { recordRankSnapshotToDb } from "./rank-db-sync";
 import { reconcileTaskInstances, type TaskInstanceSpec } from "@appilot-labs/appilot-headless";
 import type { AppStore } from "./store";
 import { requestDaemonRunDue, resolveDaemonSpawnConfig } from "./daemon-manager";
+import { shouldRunElectronOnlyTask } from "./electron-task-policy";
 
 interface ScheduledTaskBase {
   id: string;
@@ -365,7 +367,7 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
               storefront,
               groupKey: rankGroupKey(product.id, product.platform, keyword.language, storefront),
               intervalMinutes: Math.floor((24 * 60) / runsPerDay),
-              nextRunAt: previous?.nextRunAt || nextRankRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), runsPerDay),
+              nextRunAt: previous?.nextRunAt || initialRankRunAt(taskSeed({ productId: product.id, keyword: keyword.keyword, queryLanguage: keyword.language, storefront }), runsPerDay),
               lastRunAt: previous?.lastRunAt ?? null,
               firstRunAt: previous?.firstRunAt ?? null,
               executionCount: previous?.executionCount || 0,
@@ -417,15 +419,14 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
  */
 function syncRankInstancesToDb(store: AppStore, tasks: ScheduledTask[]): void {
   try {
-    // productId（Electron `${projId}:${platform}`）→ 所属项目（projectName/platform），
-    // 补进 instance——daemon/DSH 执行 rank 需要 projectName 归快照与产品上下文。
+    // productId（Electron `${projId}:${platform}`）→ 所属项目（稳定 id + 展示名/platform）。
     const projects: any[] = store.get("projects") || [];
-    const projectOf = (productId: string): { name: string; platform: string } | null => {
+    const projectOf = (productId: string): { id: string; name: string; platform: string } | null => {
       const projId = String(productId).split(":")[0];
       const project = projects.find((p: any) => p?.id === projId);
       if (!project) return null;
       const platform = String(productId).slice(projId.length + 1) || project.productType || "unknown";
-      return { name: project.name, platform };
+      return { id: project.id, name: project.name, platform };
     };
     const specs: TaskInstanceSpec[] = tasks
       .filter((t): t is RankScheduledTask => t.kind === "rank")
@@ -442,6 +443,7 @@ function syncRankInstancesToDb(store: AppStore, tasks: ScheduledTask[]): void {
             queryLanguage: t.queryLanguage,
             storefront: t.storefront,
             groupKey: t.groupKey,
+            projectId: ctx?.id ?? null,
             projectName: ctx?.name ?? null,
             platform: ctx?.platform ?? null,
           },
@@ -500,9 +502,8 @@ async function reconcileGithubSyncTasks(store: AppStore): Promise<void> {
   const specs: TaskInstanceSpec[] = projects
     .filter((p: any) => p?.id && p?.name && p?.repo?.githubUrl && p?.localPath)
     .map((p: any) => ({
-      // id 用 projectName（与 DSH/daemon 的 githubSyncInstancesFor 一致——同一
-      // 项目只有一个 github-sync 实例；旧 projectId id 行由 reconcile prune 清理）。
-      id: `github-sync:${p.name}`,
+      // v14：任务身份只使用稳定 projectId，改名不再重建或搬迁任务。
+      id: `github-sync:${p.id}`,
       kind: "github-sync",
       title: "GitHub 发布同步",
       intervalMinutes: 60,
@@ -1200,6 +1201,39 @@ export async function schedulerTick(): Promise<void> {
     await reconcileRankTasks(store);
     await reconcileGithubSyncTasks(store);
     await reconcileOpsTasks(store);
+    // 这三类任务仍依赖 Electron 安全存储解密后的凭据，或依赖完整项目富对象。
+    // 常驻 Node daemon 无法安全读取 safeStorage；应用运行时由这里补齐自动执行，
+    // 其余可无头任务继续只交给 daemon，避免双跑。
+    const nowMs = Date.now();
+    const electronOnlyDue = ((store.get("scheduledTasks") || []) as ScheduledTask[]).filter(
+      (task) => shouldRunElectronOnlyTask(task, nowMs, taskCenterStopped),
+    );
+    for (const task of electronOnlyDue) {
+      const startedAt = Date.now();
+      try {
+        await runTaskById(store, task.id);
+      } catch (err: any) {
+        log.warn(`Electron-only scheduled task failed (${task.id}): ${err?.message || String(err)}`);
+        const tasks = (store.get("scheduledTasks") || []) as ScheduledTask[];
+        const current = tasks.find((candidate) => candidate.id === task.id);
+        if (current) {
+          current.lastRunAt = new Date().toISOString();
+          current.lastStatus = "failed";
+          current.executionCount = (current.executionCount || 0) + 1;
+          current.consecutiveFailures = (current.consecutiveFailures || 0) + 1;
+          current.nextRunAt = nextRunWithinMinutes(current.id, 30);
+          (current as any).lastSummary = String(err?.message || err || "任务执行失败").slice(0, 300);
+          store.set("scheduledTasks", tasks);
+          await appendExecution(store, {
+            ts: current.lastRunAt,
+            taskId: current.id,
+            kind: current.kind,
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+          });
+        }
+      }
+    }
     // Migrate existing drafts to the appVersion identity (one copy per
     // target version) when legacy duplicates exist.
     const projectsForMigration = store.get("projects") || [];
@@ -1218,6 +1252,16 @@ export async function schedulerTick(): Promise<void> {
   } catch (err: any) {
     log.error(`Task scheduler reconcile failed: ${err.message}`);
   }
+}
+
+/**
+ * 启动 Electron 专属任务的轻量心跳。daemon 仍是 rank/github-sync 的唯一自动
+ * 执行者；这里只恢复依赖 Keychain/富项目上下文的 ops/reviews/build-status。
+ */
+export function startElectronOnlyScheduler(intervalMs = 60_000): () => void {
+  void schedulerTick();
+  const timer = setInterval(() => void schedulerTick(), intervalMs);
+  return () => clearInterval(timer);
 }
 
 /** 任务中心是否已被用户显式停止（P 收敛 C2）。 */

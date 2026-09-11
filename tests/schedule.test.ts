@@ -3,6 +3,7 @@ import {
   bootstrapRoundState,
   emptySchedulerRoundState,
   hashString,
+  initialRankRunAt,
   markRoundTaskDone,
   nextRunAt,
   nextRankRunAt,
@@ -66,6 +67,17 @@ console.log("✅ PASS: nextRankRunAt with runsPerDay=1 never runs twice on one c
   const seedLate = "msszspx4-r12ipi:ios:zh-Hant:tw:編碼成本"; // hash % 1440 = 1414 → phase 23:34
   const nextLate = Date.parse(nextRankRunAt(seedLate, 1, new Date(lateRun)));
   assert.notEqual(localDay(nextLate), localDay(lateRun), "skips today's phase after an early run");
+}
+
+console.log("✅ PASS: initialRankRunAt can use a later phase today without weakening post-run cadence");
+{
+  const now = new Date(2026, 7, 24, 10, 0, 0, 0);
+  const seed = "msszspx4-r12ipi:ios:zh-Hant:tw:編碼成本"; // stable phase 23:34
+  const initial = new Date(initialRankRunAt(seed, 1, now));
+  const afterRun = new Date(nextRankRunAt(seed, 1, now));
+  assert.equal(localDay(initial.getTime()), localDay(now.getTime()), "new task uses today's unpassed phase");
+  assert.ok(initial.getTime() > now.getTime());
+  assert.notEqual(localDay(afterRun.getTime()), localDay(now.getTime()), "completed task waits until tomorrow");
 }
 
 console.log("✅ PASS: nextRankRunAt supports more runs per day when configured later");

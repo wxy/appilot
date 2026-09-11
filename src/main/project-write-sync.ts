@@ -28,6 +28,8 @@ export function syncProjectToDb(
     return { registry: false, meta: 0, products: 0 };
   }
   store.projects.save(registryRecordOf(project));
+  const stableProjectId = store.projects.get(String(project.name))?.id;
+  if (!stableProjectId) throw new Error(`项目稳定 ID 写入失败：${project.name}`);
   let meta = 0;
   const m = toProjectMeta(project);
   if (m) {
@@ -43,10 +45,10 @@ export function syncProjectToDb(
     try {
       const drafts = Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [];
       if (drafts.length === 0) {
-        const existing = store.blobs.get("storeSubmissionDrafts", String(project.name));
+        const existing = store.blobs.get("storeSubmissionDrafts", stableProjectId);
         if (Array.isArray(existing) && existing.length > 0) return { registry: true, meta, products: rows.length };
       }
-      store.blobs.put("storeSubmissionDrafts", String(project.name), drafts);
+      store.blobs.put("storeSubmissionDrafts", stableProjectId, drafts);
     } catch (err: any) {
       // 草稿镜像失败不阻断项目同步
     }

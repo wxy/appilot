@@ -17,6 +17,25 @@ import type {
   SubmissionDraftRow,
 } from "./overviewData";
 
+interface BriefDiagnosticOverview {
+  coverage: {
+    tracked: number;
+    ranked: number;
+    top10: number;
+    paused: number;
+  };
+  facts: string[];
+  anomalies: string[];
+  limitations: string[];
+};
+
+interface BriefSessionExchange {
+  suggestionId: string | null;
+  question: string;
+  answer: string;
+  at: string;
+}
+
 /**
  * 总览页（Electron 侧壳）：负责取数（IPC + zustand + 路由），渲染共享内容组件
  * `OverviewContent`（纯 props，Electron 与 DSH 客户端共用同一套 UI）。
@@ -75,7 +94,37 @@ export function OverviewPage() {
     suggestions: BriefSuggestion[];
     progress: { chars: number; phase: "reasoning" | "content" } | null;
     error: string;
-  }>({ status: "idle", suggestions: [], progress: null, error: "" });
+    diagnostic: BriefDiagnosticOverview | null;
+    exchanges: BriefSessionExchange[];
+  }>({
+    status: "idle",
+    suggestions: [],
+    progress: null,
+    error: "",
+    diagnostic: null,
+    exchanges: [],
+  });
+
+  useEffect(() => {
+    if (!project?.id || !product?.id) return;
+    let cancelled = false;
+    void (window as any).appilot?.projects?.getBriefSession(project.id, product.id)
+      ?.then((session: any) => {
+        if (cancelled || !session?.suggestions?.length) return;
+        setBriefState({
+          status: "ready",
+          suggestions: session.suggestions,
+          progress: null,
+          error: "",
+          diagnostic: session.rankDiagnostic || null,
+          exchanges: session.exchanges || [],
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, product?.id]);
 
   // ② 发布卡：文案行（纯 props）＝ project.storeSubmissionDrafts × 状态上下文。
   // 直接派生自 project（store 重载即刷新），不额外 IPC。
@@ -343,7 +392,14 @@ export function OverviewPage() {
 
   const handleGenerateBrief = useCallback(async () => {
     if (!project || !product) return;
-    setBriefState({ status: "loading", suggestions: [], progress: null, error: "" });
+    setBriefState({
+      status: "loading",
+      suggestions: [],
+      progress: null,
+      error: "",
+      diagnostic: null,
+      exchanges: [],
+    });
     try {
       const result = await (window as any).appilot?.projects?.generateBrief(
         project.id,
@@ -354,6 +410,8 @@ export function OverviewPage() {
         suggestions: result?.suggestions || [],
         progress: null,
         error: "",
+        diagnostic: result?.rankDiagnostic || null,
+        exchanges: [],
       });
     } catch (err: any) {
       setBriefState({
@@ -361,6 +419,8 @@ export function OverviewPage() {
         suggestions: [],
         progress: null,
         error: err?.message || "生成失败",
+        diagnostic: null,
+        exchanges: [],
       });
     }
   }, [project?.id, product?.id]);
@@ -409,6 +469,20 @@ export function OverviewPage() {
     [project?.id, recordBriefAction, navigate, releaseOverview?.draft?.tag],
   );
 
+  const handleBriefQuestion = useCallback(
+    async (suggestion: BriefSuggestion, question: string) => {
+      if (!project || !product) return { answer: "" };
+      const result = await (window as any).appilot?.projects?.askBriefQuestion(
+        project.id,
+        product.id,
+        question,
+        suggestion.id,
+      );
+      return { answer: result?.answer || "" };
+    },
+    [project?.id, product?.id],
+  );
+
   // 活跃数据 = commits（activity:commits）∪ releases（release:list 发布日标注）。
   // commits 未取到（null，如无 window.appilot）→ 整体 undefined，组件侧隐藏活跃块。
   const activityData =
@@ -437,6 +511,7 @@ export function OverviewPage() {
       onOpenSettings={(id) => navigate(`/projects/${id}/settings`)}
       onGenerateBrief={handleGenerateBrief}
       onBriefAction={handleBriefAction}
+      onAskBriefQuestion={handleBriefQuestion}
     />
   );
 }

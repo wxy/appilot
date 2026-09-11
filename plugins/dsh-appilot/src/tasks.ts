@@ -84,7 +84,7 @@ export function createTaskRunTool() {
       taskId: {
         type: 'string',
         required: true,
-        description: 'Task instance id, e.g. github-sync:<projectName>.',
+        description: 'Task instance id, e.g. github-sync:<stableProjectId>. Names remain accepted by the CLI compatibility layer.',
       },
     },
     output: {

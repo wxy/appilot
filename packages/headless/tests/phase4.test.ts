@@ -41,6 +41,7 @@ try {
     INSERT INTO meta (key, value) VALUES ('schemaVersion', '1');`);
   v1.close();
   const store = openStore(dbPath);
+  store.projects.save({ id: 'x-id', name: 'x', path: '/x', githubUrl: null, platform: null, languages: [], lastResolvedAt: '2026-09-01T00:00:00.000Z', artworkUrl: null, updatedAt: '2026-09-01T00:00:00.000Z' });
   const cols = (store as any)._pragma?.() ?? [];
   // 通过插入带 productId 的行验证列存在
   store.snapshots.add([{ projectName: "x", productId: "p1", keyword: "k", language: "en", storefront: "us", rank: 1, totalResults: 10, checkedAt: "2026-09-01T00:00:00.000Z" }]);
@@ -82,6 +83,7 @@ try {
 /* productId 过滤：同项目不同产品互不串 */
 try {
   const store = openStore(join(dir, "prod.db"));
+  store.projects.save({ id: 'app-id', name: 'app', path: '/app', githubUrl: null, platform: null, languages: [], lastResolvedAt: '2026-09-01T00:00:00.000Z', artworkUrl: null, updatedAt: '2026-09-01T00:00:00.000Z' });
   store.snapshots.add([
     { projectName: "app", productId: "ios", keyword: "kw", language: "en", storefront: "us", rank: 1, totalResults: 10, checkedAt: "2026-09-01T00:00:00.000Z" },
     { projectName: "app", productId: "mac", keyword: "kw", language: "en", storefront: "us", rank: 5, totalResults: 10, checkedAt: "2026-09-01T00:00:00.000Z" },

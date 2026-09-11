@@ -23,13 +23,13 @@ export interface HeadlessExecutorsOptions {
 }
 
 /**
- * 项目级 GitHub 发布同步实例（id 形如 github-sync:<projectName>）。
- * instance: { projectName, path }（Electron 实例可含 projectId）。
+ * 项目级 GitHub 发布同步实例（id 形如 github-sync:<projectId>）。
+ * projectName 仅用于展示，稳定身份始终是 projectId。
  */
 export interface GithubSyncInstanceArgs {
+  projectId: string;
   projectName: string;
   path: string;
-  projectId?: string;
 }
 
 export const GITHUB_SYNC_KIND = 'github-sync';
@@ -41,6 +41,7 @@ export const RANK_INTERVAL_MINUTES = 720;
 
 /** rank 实例参数（product 上下文可来自 instance 或 DB product_records）。 */
 export interface RankInstanceArgs {
+  projectId?: string | null;
   projectName: string;
   productId: string;
   keyword: string;
@@ -107,13 +108,17 @@ export async function runRankInstance(ctx: TaskExecutorContext): Promise<TaskRun
   }
   // 产品上下文：projectName 可能缺失（Electron 旧 sync 实例不带），从 product_records
   // 反查（遍历注册项目的产品，productId 匹配）——不依赖 instance.projectName。
+  let projectId = args.projectId ?? null;
   let projectName = args.projectName ?? null;
   let trackId: string | number | null = null;
   let platform: string | null = args.platform ?? null;
-  for (const p of store.projects.list()) {
+  const projects = projectId ? [store.projects.get(projectId)].filter(Boolean) : store.projects.list();
+  for (const p of projects) {
+    if (!p) continue;
     const rec = store.products.listByProject(p.name).find((x) => x.productId === args.productId);
     if (rec) {
-      projectName = projectName ?? p.name;
+      projectId = p.id ?? projectId;
+      projectName = p.name;
       trackId = rec.trackId;
       platform = rec.platform ?? platform;
       break;
@@ -136,6 +141,7 @@ export async function runRankInstance(ctx: TaskExecutorContext): Promise<TaskRun
         : undefined,
   });
   const snap = {
+    projectId: projectId ?? undefined,
     projectName,
     productId: args.productId,
     keyword: args.keyword,
@@ -158,6 +164,7 @@ export async function runRankInstance(ctx: TaskExecutorContext): Promise<TaskRun
     summary: `${projectName}(${platform ?? '?'}): ${args.keyword} @ ${args.storefront} → ${rankText}（共 ${snap.totalResults} 结果${competitorCount > 0 ? `，竞品 ${competitorCount}` : ''}）`,
     execution: {
       kind: RANK_KIND,
+      projectId: projectId ?? null,
       projectName,
       productId: args.productId,
       platform: platform ?? null,
@@ -186,12 +193,12 @@ export async function runGithubSyncInstance(
     fetchRemote: true,
     lastSeenSha: undefined,
   });
-  // 结果写共享 DB release_cache（projectName 维度）——任何壳持主执行都产出
+  // 结果写共享 DB release_cache（projectId 维度）——任何壳持主执行都产出
   // 同一缓存，Electron 发布页经 hydrate 反向同步保持新鲜。
-  if (args.projectName) {
+  if (args.projectId || args.projectName) {
     try {
       store.releaseCache.save(
-        args.projectName,
+        args.projectId ?? args.projectName!,
         githubSyncCacheEntryFrom(inspection),
       );
     } catch (err: any) {

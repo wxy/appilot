@@ -1,6 +1,6 @@
 {
   "name": "@appilot-labs/appilot-headless",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Appilot headless core — SQLite store + scheduler lease, transport-agnostic; shared scheduled jobs. Embedded by Electron / DSH / CLI / MCP shells.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,7 +25,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@appilot-labs/appilot-core": "^1.0.0"
+    "@appilot-labs/appilot-core": "^1.1.0"
   },
   "repository": {
     "type": "git",

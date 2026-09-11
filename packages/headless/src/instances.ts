@@ -3,7 +3,7 @@
  *
  * 谁持有什么数据，就推导什么实例；但任务**类型与执行**全部来自核心
  * （executors.ts / core 纯函数），两壳共享同一 DB：
- * - DSH / Electron 项目级：github-sync:<name>（每注册项目一行）；
+ * - DSH / Electron 项目级：github-sync:<projectId>（每注册项目一行）；
  * - Electron 富数据实例（rank 等）后续随 4c 接入同一机制。
  *
  * reconcileTaskInstances 语义：
@@ -85,6 +85,7 @@ export function rankInstancesFor(
           title: `排名采集: ${keyword} @ ${storefront} (${lang})`,
           intervalMinutes,
           instance: {
+            projectId: product.projectId ?? null,
             projectName,
             productId: product.productId,
             keyword,
@@ -104,12 +105,12 @@ export function rankInstancesFor(
 
 /** 项目级 github-sync 实例规格（每注册项目一行）。 */
 export function githubSyncInstancesFor(
-  projects: Array<{ name: string; path: string }>,
+  projects: Array<{ id?: string | null; name: string; path: string }>,
 ): TaskInstanceSpec[] {
-  return (projects ?? []).map((p) => {
-    const args: GithubSyncInstanceArgs = { projectName: p.name, path: p.path };
+  return (projects ?? []).filter((p) => Boolean(p.id)).map((p) => {
+    const args: GithubSyncInstanceArgs = { projectId: String(p.id), projectName: p.name, path: p.path };
     return {
-      id: `${GITHUB_SYNC_KIND}:${p.name}`,
+      id: `${GITHUB_SYNC_KIND}:${p.id}`,
       kind: GITHUB_SYNC_KIND,
       title: 'GitHub 发布同步',
       intervalMinutes: GITHUB_SYNC_INTERVAL_MINUTES,

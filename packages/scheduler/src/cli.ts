@@ -89,7 +89,7 @@ async function main(): Promise<void> {
       );
       return;
     }
-    // daemon 未跑；查共享 DB 租约看是否有壳（dsh/electron）在调度。
+    // socket 不通；查共享 DB 租约区分 daemon 失联与其他壳在调度。
     let leader: string | null = null;
     let heartbeatAt: string | null = null;
     try {
@@ -103,6 +103,7 @@ async function main(): Promise<void> {
       /* DB 不可读则保持 null */
     }
     const scheduled = leader !== null;
+    const daemonLease = leader === 'scheduler';
     console.log(
       JSON.stringify(
         {
@@ -110,10 +111,12 @@ async function main(): Promise<void> {
           schedulerDaemon: false,
           leader,
           heartbeatAt,
-          note: scheduled
-            ? `调度者 = 壳进程「${leader}」（daemon 让位）——daemon 未在跑但调度在执行`
+          note: daemonLease
+            ? 'daemon 租约心跳仍在，但控制 socket 无响应——应重启 daemon'
+            : scheduled
+              ? `调度者 = 壳进程「${leader}」（daemon 让位）——daemon 未在跑但调度在执行`
             : '无调度者（未运行任何壳或 daemon）',
-          error: scheduled ? undefined : res.error,
+          error: daemonLease || !scheduled ? res.error : undefined,
         },
         null,
         2,

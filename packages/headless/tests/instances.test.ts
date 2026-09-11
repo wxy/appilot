@@ -59,14 +59,14 @@ async function main(): Promise<void> {
     const store = openStore(dbPath);
     const p1 = makeGitRepo('proj-a', 'v1.0.0');
     const p2 = makeGitRepo('proj-b');
-    const projA = { name: 'proj-a', path: p1 };
-    const projB = { name: 'proj-b', path: p2 };
+    const projA = { id: 'id-proj-a', name: 'proj-a', path: p1 };
+    const projB = { id: 'id-proj-b', name: 'proj-b', path: p2 };
 
     const r1 = reconcileTaskInstances(store, githubSyncInstancesFor([projA, projB]), 'dsh');
     assert.deepEqual(r1, { seeded: 2, pruned: 0 });
-    const a = store.tasks.get('github-sync:proj-a');
+    const a = store.tasks.get('github-sync:id-proj-a');
     assert.equal(a?.kind, 'github-sync');
-    assert.deepEqual(a?.instance, { projectName: 'proj-a', path: p1 });
+    assert.deepEqual(a?.instance, { projectId: 'id-proj-a', projectName: 'proj-a', path: p1 });
     assert.ok(a?.nextRunAt, 'seed 后应可立即到期');
 
     const r2 = reconcileTaskInstances(store, githubSyncInstancesFor([projA, projB]), 'dsh');
@@ -74,23 +74,23 @@ async function main(): Promise<void> {
 
     const r3 = reconcileTaskInstances(store, githubSyncInstancesFor([projA]), 'dsh');
     assert.deepEqual(r3, { seeded: 0, pruned: 1 });
-    assert.equal(store.tasks.get('github-sync:proj-b'), undefined, '消失项目实例应被清');
+    assert.equal(store.tasks.get('github-sync:id-proj-b'), undefined, '消失项目实例应被清');
 
     // 其他来源同 id 不受影响
-    store.tasks.upsert({ id: 'github-sync:proj-b', title: 'X', intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron', kind: 'github-sync', instance: { path: '/e' } });
+    store.tasks.upsert({ id: 'github-sync:id-proj-b', title: 'X', intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron', kind: 'github-sync', instance: { path: '/e' } });
     const r4 = reconcileTaskInstances(store, githubSyncInstancesFor([projA]), 'dsh');
     assert.equal(r4.pruned, 0, '不应清 electron 来源行');
-    assert.equal(store.tasks.get('github-sync:proj-b')?.source, 'electron');
+    assert.equal(store.tasks.get('github-sync:id-proj-b')?.source, 'electron');
 
     // 镜像先建的行（kind=null 无 instance）→ reconcile 刷新应升级身份（setIdentity）
     const ghost = makeGitRepo('ghost-proj', 'v1.1.0');
-    store.tasks.upsert({ id: 'github-sync:ghost-proj', title: '排名采集镜像', intervalMinutes: 55, lastRunAt: '2026-09-01T00:00:00Z', nextRunAt: null, lastStatus: 'ok', lastSummary: '旧', runCount: 3, source: 'electron' });
-    const pre = store.tasks.get('github-sync:ghost-proj');
+    store.tasks.upsert({ id: 'github-sync:id-ghost', title: '排名采集镜像', intervalMinutes: 55, lastRunAt: '2026-09-01T00:00:00Z', nextRunAt: null, lastStatus: 'ok', lastSummary: '旧', runCount: 3, source: 'electron' });
+    const pre = store.tasks.get('github-sync:id-ghost');
     assert.equal(pre?.kind, null, '镜像先行 kind=null（INSERT 新行）');
-    reconcileTaskInstances(store, githubSyncInstancesFor([{ name: 'ghost-proj', path: ghost }]), 'dsh');
-    const upgraded = store.tasks.get('github-sync:ghost-proj');
+    reconcileTaskInstances(store, githubSyncInstancesFor([{ id: 'id-ghost', name: 'ghost-proj', path: ghost }]), 'dsh');
+    const upgraded = store.tasks.get('github-sync:id-ghost');
     assert.equal(upgraded?.kind, 'github-sync', '镜像 null 行应被升级 kind');
-    assert.deepEqual(upgraded?.instance, { projectName: 'ghost-proj', path: ghost }, 'instance 应被写入');
+    assert.deepEqual(upgraded?.instance, { projectId: 'id-ghost', projectName: 'ghost-proj', path: ghost }, 'instance 应被写入');
     // 状态与排程保留（refresh 不改状态）；来源保留原值（不夺 source）
     assert.equal(upgraded?.lastStatus, 'ok');
     assert.equal(upgraded?.runCount, 3);
@@ -103,7 +103,8 @@ async function main(): Promise<void> {
     const dbPath = join(dir, 'sched-inst.db');
     const store = openStore(dbPath);
     const repo = makeGitRepo('proj-x', 'v2.0.0');
-    reconcileTaskInstances(store, githubSyncInstancesFor([{ name: 'proj-x', path: repo }]), 'dsh');
+    store.projects.save({ id: 'id-proj-x', name: 'proj-x', path: repo, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
+    reconcileTaskInstances(store, githubSyncInstancesFor([{ id: 'id-proj-x', name: 'proj-x', path: repo }]), 'dsh');
 
     const executors = buildHeadlessExecutors({ readToken: () => null });
     const sched = createLeaseScheduler({
@@ -118,7 +119,7 @@ async function main(): Promise<void> {
     const deadline = Date.now() + 8000;
     let row: any = null;
     while (Date.now() < deadline) {
-      row = store.tasks.get('github-sync:proj-x');
+      row = store.tasks.get('github-sync:id-proj-x');
       if (row && row.lastStatus === 'ok') break;
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -133,10 +134,10 @@ async function main(): Promise<void> {
     assert.ok((cache?.cache as any)?.syncedAt, '缓存应含 syncedAt');
 
     // runNow：显式触发（nextRunAt 已推未来，runNow 仍执行）
-    const before = store.tasks.get('github-sync:proj-x')?.runCount ?? 0;
-    const res = await sched.runNow('github-sync:proj-x');
+    const before = store.tasks.get('github-sync:id-proj-x')?.runCount ?? 0;
+    const res = await sched.runNow('github-sync:id-proj-x');
     assert.ok(res, 'runNow 实例应返回行');
-    assert.ok((store.tasks.get('github-sync:proj-x')?.runCount ?? 0) > before, 'runNow 应再跑一次');
+    assert.ok((store.tasks.get('github-sync:id-proj-x')?.runCount ?? 0) > before, 'runNow 应再跑一次');
 
     // 未知 id → undefined
     const miss = await sched.runNow('nope');
@@ -166,7 +167,8 @@ async function main(): Promise<void> {
     const dbPath = join(dir, 'accel.db');
     const store = openStore(dbPath);
     const repo = makeGitRepo('accel-proj', 'v3.0.0');
-    reconcileTaskInstances(store, githubSyncInstancesFor([{ name: 'accel-proj', path: repo }]), 'dsh');
+    store.projects.save({ id: 'id-accel', name: 'accel-proj', path: repo, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
+    reconcileTaskInstances(store, githubSyncInstancesFor([{ id: 'id-accel', name: 'accel-proj', path: repo }]), 'dsh');
     const executors = buildHeadlessExecutors({ readToken: () => null });
     const sched = createLeaseScheduler({
       store,
@@ -184,7 +186,7 @@ async function main(): Promise<void> {
     const deadline = Date.now() + 6000;
     let row: any = null;
     while (Date.now() < deadline) {
-      row = store.tasks.get('github-sync:accel-proj');
+      row = store.tasks.get('github-sync:id-accel');
       if (row && row.lastStatus === 'ok') break;
       await new Promise((r) => setTimeout(r, 80));
     }

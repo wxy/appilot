@@ -1,46 +1,65 @@
 # Appilot
 
-> AI-powered promotion tool for indie developers — connect your GitHub repo, let AI generate platform-adapted content, publish and track results.
+Appilot 是面向独立开发者的本地优先应用运营工作台：把代码仓库、App Store 商品、关键词排名、评价反馈、发布状态和 GitHub 运营数据放进一个桌面应用里。
 
-## Status
+当前版本：`1.0.1`。主界面由 Electron + React 提供，业务能力拆分为可复用的 TypeScript 包；SQLite 是跨桌面端、CLI、MCP 和调度进程共享的事实源。
 
-**Design Phase / Pre-development** — See [design docs](docs/README.md).  
-**Current focus: Phase 0 minimal MVP** — validate the core hypothesis: "AI-generated promotion content from code is better/faster than writing it yourself."
+## 已有能力
 
-## Phase 0 Minimal MVP
+- 多项目与 iOS/macOS 产品管理，本地 Git 仓库信息解析
+- App Store 关键词池、全球商店排名采集、竞品雷达与历史趋势
+- 免费 RSS 评价同步、GitHub Issues 反馈聚合
+- GitHub 发布、PR、流量与 Release 下载数据
+- App Store Connect 版本、构建和本地化状态读取
+- 商店文案草稿、AI 辅助生成与上线前检查
+- 任务中心：状态、立即执行、失败清理/重排、暂停与加速
+- SQLite 备份、清理和压缩
+- 轻量 DSH 插件、Headless CLI 与 MCP 服务
 
-1. **Connect a GitHub public repo** → AI reads README, code structure, recent commits
-2. **AI generates a tweet** → tailored to your project's features and tech stack
-3. **One-click Twitter Web Intent** → opens browser with pre-filled content, you click send
-4. **Paste the tweet URL back** → manually enter views/likes/comments
-5. **See a trend chart** → track engagement over time
+## 架构
 
-**What Phase 0 does NOT include** (coming in later phases): multi-repo, local/private repos, OAuth auto-publishing, Reddit/Discord/YouTube, inbox, operations dashboard, multi-project, i18n, system tray.
+```text
+packages/core          纯业务能力与外部 API
+packages/headless      SQLite store、任务实例与无头服务
+packages/scheduler     常驻调度 daemon 与控制 socket
+src/main               Electron 主进程、凭据与系统集成
+src/renderer           React 桌面界面
+plugins                Appilot / Project / Release 等 DSH 插件
+packages/mcp           MCP stdio 服务
+packages/headless-cli  命令行入口
+```
 
-## Full Vision (Phase 0–5)
+Electron 是唯一完整 GUI。DSH 只保留工具、结果卡片和 `/appilot` 命令；CLI/MCP 复用同一 SQLite 数据。详细边界见 [架构收敛说明](docs/architecture-convergence.md)。
 
-1. **Self-use** — Solve OPC operations fragmentation (dev + promotion + tracking + costs)
-2. **Open Source** — Community-driven plugin ecosystem
-3. **Commercial** — Paid model when mature
+## 本地开发
 
-## Full Feature Set (Post Phase 5)
+要求 Node.js 22 和 npm。
 
-- **AI reads your repo** (local or GitHub, multi-repo) to understand your product
-- **Generates promotion plans and platform-adapted content** (Twitter/X, Reddit, Discord, YouTube)
-- **Tracks interactions and downloads** (API or URL backfill, with manual fallback)
-- **Operations dashboard** — dev progress, promotion status, costs, and ROI in one view
+```bash
+npm ci
+npm run dev
+```
 
-## Tech Stack
+常用校验：
 
-- **Desktop:** Electron + React + TypeScript (macOS + Windows)
-- **UI:** Tailwind CSS + shadcn/ui (暗色模式)
-- **State:** Zustand
-- **Engine:** Pure TypeScript package (zero Electron dependency, reusable for future mobile PWA / cloud server)
-- **Data:** better-sqlite3 + drizzle-orm (SQLite)
-- **Git:** simple-git + @octokit/rest (GitHub API)
-- **AI:** OpenAI-compatible API (openai npm SDK)
-- **Security (Phase 1+):** electron-store + safeStorage (macOS Keychain / Windows DPAPI)
+```bash
+npm run typecheck
+npm test
+npm run build
+```
 
-## MVP Platforms (Phase 1+)
+打包：
 
-Twitter/X · Reddit · Discord · YouTube
+```bash
+npm run dist:mac
+```
+
+## 数据与安全
+
+- 默认数据库：`~/Library/Application Support/Appilot/appilot.db`
+- GitHub、AI 和 App Store Connect 凭据通过 Electron `safeStorage` 加密；macOS 使用 Keychain，Windows 使用 DPAPI
+- App Store Connect 私钥保存在应用数据目录，不提交到仓库
+- 排名/评价等读取型能力默认不修改 App Store Connect 或 GitHub 远端状态
+- `.env`、数据库、构建产物和用户凭据不得提交
+
+产品路线和未完成事项见 [产品 Backlog](docs/product-backlog.md)，更多设计文档见 [docs](docs/README.md)。

@@ -78,7 +78,15 @@ async function main() {
       .map((r) => electronTaskFromRow(r))
       .filter((t) => t && typeof t.id === 'string');
     assert.equal(electron.length, tasks.length);
-    assert.deepEqual(electron, tasks, 'DB 重建列表与引擎原列表一致（顺序按 id）');
+    const expected = tasks.map((task) => ({
+      ...task,
+      lastRunAt: task.lastRunAt ?? null,
+      nextRunAt: task.nextRunAt ?? null,
+      executionCount: task.executionCount ?? 0,
+      enabled: task.enabled !== false,
+      lastStatus: task.lastRunAt ? 'success' : task.lastStatus === 'failed' ? 'failed' : 'never',
+    }));
+    assert.deepEqual(electron, expected, '富参数无损，调度状态按 DB 列规范化（顺序按 id）');
     store.close();
     console.log('✅ 引擎装载等价（DB 重建 = 原列表）');
   }

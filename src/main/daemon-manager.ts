@@ -298,8 +298,18 @@ export async function ensureSchedulerTracked(
   while (Date.now() < deadline) {
     await sleep(400);
     if (gaveWay) {
-      // 让位：调度主在别处——记录不写（本模型下让位意味着另有 daemon 持主）。
-      return { ok: true, spawned: true, pid: null };
+      // exit 0 通常表示向现有 daemon 让位，但租约也可能只是崩溃进程留下的
+      // 新鲜残影。必须以 socket 可达为准，不能把“无 daemon”误报为成功。
+      const winnerPid = await currentDaemonPid(opts.socketPath, 1000);
+      if (winnerPid != null) {
+        return { ok: true, spawned: true, pid: winnerPid };
+      }
+      return {
+        ok: false,
+        spawned: true,
+        pid: null,
+        error: "daemon 让位后未发现可连接的调度主",
+      };
     }
     const pid = await currentDaemonPid(opts.socketPath, 1000);
     if (pid != null) {

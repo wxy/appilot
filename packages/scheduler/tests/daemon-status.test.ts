@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   execSync('git init -q', { cwd: repo });
   execSync('git config user.email t@t.dev && git config user.name t', { cwd: repo });
   execSync('echo a > a.txt && git add -A && git commit -qm init && git tag v1.0.0', { cwd: repo });
-  store.projects.save({ name: 'proj', path: repo, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
+  store.projects.save({ id: 'proj-id', name: 'proj', path: repo, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
   store.close();
 
   const fingerprint = 'f'.repeat(40);
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
   const deadline = Date.now() + 12000;
   let row: any = null;
   while (Date.now() < deadline) {
-    row = d1.store.tasks.get('github-sync:proj');
+    row = d1.store.tasks.get('github-sync:proj-id');
     if (row && row.lastStatus === 'ok') break;
     await sleep(150);
   }

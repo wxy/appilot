@@ -1,7 +1,7 @@
 /**
  * daemon 库级测试：单例仲裁、reconcile→实例执行闭环、socket hello/ping/runNow。
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connect } from 'node:net';
@@ -19,6 +19,9 @@ async function main(): Promise<void> {
   const logs: string[] = [];
   const log = (m: string) => logs.push(m);
 
+  // 模拟上个进程被强杀后遗留的 Unix socket 路径；新主取得租约后必须自愈。
+  if (process.platform !== 'win32') writeFileSync(socketPath, 'stale socket');
+
   // 预注册一个真实 git 仓库项目（github-sync 实例可立即执行成功）
   const store = openStore(dbPath);
   const repo = join(dir, 'proj');
@@ -27,7 +30,7 @@ async function main(): Promise<void> {
   execSync('git init -q', { cwd: repo });
   execSync('git config user.email t@t.dev && git config user.name t', { cwd: repo });
   execSync('echo a > a.txt && git add -A && git commit -qm init && git tag v1.0.0', { cwd: repo });
-  store.projects.save({ name: 'proj', path: repo, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
+  store.projects.save({ id: 'proj-id', name: 'proj', path: repo, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
   store.close();
 
   // 1. 单例：第一 daemon 启动成功
@@ -40,6 +43,7 @@ async function main(): Promise<void> {
     log,
   });
   assert.equal(d1.store.lease.leader(), SCHEDULER_LEADER_ID, 'daemon 应持租约');
+  assert.ok(logs.some((l) => l.includes('socket listening')), '残留 socket 路径应被替换并成功监听');
   console.log('✓ daemon 启动并持租约');
 
   // 2. 第二 daemon 同 DB → acquire 失败抛错（单例仲裁）
@@ -77,7 +81,7 @@ async function main(): Promise<void> {
   const deadline = Date.now() + 10000;
   let row: any = null;
   while (Date.now() < deadline) {
-    row = d1.store.tasks.get('github-sync:proj');
+    row = d1.store.tasks.get('github-sync:proj-id');
     if (row && row.lastStatus === 'ok') break;
     await sleep(150);
   }
@@ -90,7 +94,7 @@ async function main(): Promise<void> {
   const runNow = await new Promise<any>((resolve, reject) => {
     const sock = connect(socketPath);
     const rl = createInterface({ input: sock });
-    sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'runNow', params: { taskId: 'github-sync:proj' } }) + '\n'));
+    sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'runNow', params: { taskId: 'github-sync:proj-id' } }) + '\n'));
     rl.on('line', (line) => {
       try {
         resolve(JSON.parse(line));
@@ -101,7 +105,7 @@ async function main(): Promise<void> {
     sock.on('error', reject);
     setTimeout(() => reject(new Error('runNow 超时')), 8000);
   });
-  assert.equal(runNow.result?.taskId, 'github-sync:proj');
+  assert.equal(runNow.result?.taskId, 'github-sync:proj-id');
   console.log('✓ socket runNow');
 
   // 6. accelerate（socket 命令）→ daemon scheduler 加速（isAccel true 无法直接读，

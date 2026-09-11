@@ -145,6 +145,17 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   }
   log(`became schedule leader (${SCHEDULER_LEADER_ID}) @ ${dbPath}`);
 
+  // Unix socket 文件会在进程崩溃/被强杀后残留。租约已确认本进程可以接管，
+  // 因此此时移除旧路径是安全的；否则 listen(EADDRINUSE) 会形成
+  // “拿到租约 → socket 启动失败 → watchdog 再拉起”的永久恢复循环。
+  if (process.platform !== 'win32') {
+    try {
+      rmSync(socketPath, { force: true });
+    } catch {
+      // 交给 server.start 输出具体错误；catch 路径会显式释放租约。
+    }
+  }
+
   const executors = buildHeadlessExecutors({
     readToken: (name) => Promise.resolve(process.env[name] ?? null),
     // P2b 后启用 rank：Electron hydrate 的反向同步会把 daemon 采集的排名
@@ -203,7 +214,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   // reconcile：共享 DB 注册项目 → github-sync 实例（DSH 同一推导）。
   const reconcile = () => {
     try {
-      const projects = store.projects.list().map((p) => ({ name: p.name, path: p.path }));
+      const projects = store.projects.list().map((p) => ({ id: p.id, name: p.name, path: p.path }));
       reconcileTaskInstances(store, githubSyncInstancesFor(projects), SCHEDULER_LEADER_ID);
     } catch (err: any) {
       log(`reconcile failed: ${err?.message || String(err)}`);
@@ -276,6 +287,11 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     // socket 占用（已有 daemon 在服务）→ 仲裁退出。
     clearInterval(reconcileTimer);
     scheduler.dispose();
+    try {
+      store.lease.release(SCHEDULER_LEADER_ID);
+    } catch {
+      /* TTL 兜底 */
+    }
     store.close();
     throw new Error(`socket 启动失败（已有 daemon？）: ${err?.message || String(err)}`);
   }
@@ -291,12 +307,15 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     if (updateTimer) clearInterval(updateTimer);
     scheduler.dispose();
     sleepHold.dispose(); // 释放「保持唤醒」，避免残留断言阻止系统休眠
-    await server.close().catch(() => {});
+    // 先摘除本进程的 socket 名称，再等待现有连接关闭。不能在 close 完成后才按
+    // 路径删除：若关闭期间继任者已经绑定了同一路径，旧进程会误删新进程的
+    // socket，造成“进程和心跳都在、UI 却永远连不上”的幽灵运行态。
     try {
       rmSync(socketPath, { force: true });
     } catch {
       /* 清理失败无碍 */
     }
+    await server.close().catch(() => {});
     // 显式让位租约：停止后继任者（壳重启拉起）无需等 TTL 即可接管。同 id 双进程
     // 场景（重启间隙新 daemon 先 acquire）由「同 id 心跳新鲜拒绝」兜底——先退出
     // 者先 release，杜绝双跑。
@@ -339,30 +358,21 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     }
     restarting = true;
     log('检测到代码更新——自重启以加载新代码…');
-    // 先摘除 socket 文件：子进程 bind 同路径时不受旧文件阻碍（旧 server 在已
-    // unlink 的 inode 上继续服务至 stop()，短暂空窗内客户端重连即可）。
-    try {
-      rmSync(socketPath, { force: true });
-    } catch {
-      /* 清理失败无碍 */
-    }
-    try {
-      spawnRestartProcess(restartSpec(), log, opts.spawnRestartImpl);
-    } catch {
-      // spawnRestartProcess 已记录日志
-      restarting = false;
-      return;
-    }
     lastRestartAt = Date.now();
-    // 让位租约（继任者免等 TTL 立即接管）→ 清理 → 退出；新进程随后持主运行新代码。
-    try {
-      store.lease.release(SCHEDULER_LEADER_ID);
-      log('租约已让位（release）');
-    } catch (err: any) {
-      log(`让位失败（将由 TTL 过期兜底）: ${err?.message || String(err)}`);
-    }
+    const spec = restartSpec();
     const exitProcess = opts.exitProcess ?? ((code: number) => process.exit(code));
-    void stop().then(() => exitProcess(0));
+    // 必须先完整停止（关闭旧 socket + 释放租约），再 spawn 继任者。旧实现先
+    // spawn，子进程会撞上仍新鲜的同 id 租约并立即让位，随后旧进程退出，最终
+    // 无人接管；watchdog 又会被残留 socket 卡进重试循环。
+    void stop().then(() => {
+      try {
+        spawnRestartProcess(spec, log, opts.spawnRestartImpl);
+        exitProcess(0);
+      } catch {
+        // 当前进程已停止，交由壳 watchdog 拉起；非零退出避免伪装成正常让位。
+        exitProcess(1);
+      }
+    });
   };
   selfUpdate = { codeChanged, requestRestart };
   if (monitorReady && updateCheckMs > 0) {

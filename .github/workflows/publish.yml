@@ -1,8 +1,8 @@
 name: publish
 
-# 发布 @appilot-labs/* 5 个包到 npm（不发布 desktop/CLI/profile 等）。
+# 发布 @appilot-labs/* 9 个包到 npm（不发布 desktop/CLI/profile 等）。
 # 触发：手动（workflow_dispatch）或推送 v* tag。
-# 认证：npmjs 的 NPM_TOKEN secret（OIDC/Trusted Publishing 升级见文末说明）。
+# 认证：npmjs OIDC Trusted Publishing（无需长期 token）。
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # 用于 npm provenance / 未来 OIDC trusted publishing
+      id-token: write # npm OIDC Trusted Publishing + provenance
     steps:
       - uses: actions/checkout@v4
 
@@ -40,60 +40,42 @@ jobs:
       - name: Publish @appilot-labs/appilot-core
         working-directory: packages/core
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-headless
         working-directory: packages/headless
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-common
         working-directory: plugins/dsh-common
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-project
         working-directory: plugins/dsh-project
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-release
         working-directory: plugins/dsh-release
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot (dsh 插件)
         working-directory: plugins/dsh-appilot
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-headless-cli
         working-directory: packages/headless-cli
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-scheduler
         working-directory: packages/scheduler
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @appilot-labs/appilot-mcp
         working-directory: packages/mcp
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
 # OIDC Trusted Publishing（2026-09 流程，见 https://docs.npmjs.com/trusted-publishers/）：
 # 1) npmjs.com → 每个包 Settings → Trusted Publisher → GitHub Actions：
 #    Org/User=wxy · Repository=appilot · Workflow filename=publish.yml
 #    Allowed actions 勾选「npm publish」（9/3 后默认仅 stage，需显式允许直接发布）
 # 2) 本 workflow 已带 permissions: id-token: write + registry-url（Node 24/npm≥11.5.1）
-# 3) 全部 9 包配置完成后移除 NPM_TOKEN secret —— OIDC 发布自动生成 provenance
+# 3) OIDC 发布自动生成 provenance，无需配置 NODE_AUTH_TOKEN

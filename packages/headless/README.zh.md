@@ -10,6 +10,8 @@
   （可用 `APPILOT_DB_FILE` 覆盖）；WAL + busy_timeout 保证多进程安全
 - **store 命名空间** — `projects`、`products`、`snapshots`、`tasks`、`lease`、
   `meta`（repo 状态）、`releaseCache`
+- **稳定项目身份** — schema v14 以 `projects.id` 为主键；名称只是唯一展示名，
+  改名无需重写关联行
 - **租约单主** — `acquire / heartbeat / release`；心跳新鲜度决定接管；同 id 互斥
   防双 daemon；TTL 窗口由调用方传入（各壳统一 60s）
 - **实例任务引擎** — DB 中 `kind + instance` 行（github-sync / rank…）由租约主通过
@@ -31,14 +33,14 @@ const store = openStore(process.env.APPILOT_DB_FILE || defaultDbPath());
 
 store.lease.acquire('worker', 60_000);           // 成为主
 store.lease.heartbeat('worker');                 // 主持续续租
-store.projects.save({ name: 'demo', path: '/x', githubUrl: null, platform: 'ios',
+store.projects.save({ id: 'demo-id', name: 'demo', path: '/x', githubUrl: null, platform: 'ios',
   languages: ['en'], lastResolvedAt: new Date().toISOString(), artworkUrl: null,
   updatedAt: new Date().toISOString() });
-store.tasks.upsert({ id: 'github-sync:demo', title: 'GitHub 发布同步', intervalMinutes: 60,
+store.tasks.upsert({ id: 'github-sync:demo-id', title: 'GitHub 发布同步', intervalMinutes: 60,
   lastRunAt: null, nextRunAt: new Date().toISOString(), lastStatus: 'never',
   lastSummary: null, runCount: 0, source: 'worker', kind: 'github-sync',
-  instance: { projectName: 'demo', path: '/x' } });
-store.snapshots.add([{ projectName: 'demo', productId: 'x:ios', keyword: 'kw',
+  instance: { projectId: 'demo-id', projectName: 'demo', path: '/x' } });
+store.snapshots.add([{ projectId: 'demo-id', projectName: 'demo', productId: 'x:ios', keyword: 'kw',
   language: 'en', storefront: 'us', rank: 1, totalResults: 9,
   checkedAt: new Date().toISOString() }]);
 store.lease.release('worker');

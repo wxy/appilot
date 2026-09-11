@@ -37,6 +37,8 @@ import {
   itunesSearchBlockState,
   schedulerTick,
 } from "../scheduler";
+import type { BriefSuggestion } from "@appilot-labs/appilot-core/ai/overview-brief";
+import { requestText, buildArchiveMessages } from "@appilot-labs/appilot-core/ai/ai-request";
 import { getStore } from "../store";
 import { filterTasksForRemovedProject } from "../task-cleanup";
 import {
@@ -61,6 +63,72 @@ import {
   dedupeProjects,
   normalizeLocalPath,
 } from "../util";
+
+const BRIEF_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+const BRIEF_SESSION_MAX_EXCHANGES = 4;
+
+type BriefSessionExchange = {
+  suggestionId: string | null;
+  question: string;
+  answer: string;
+  at: string;
+};
+
+type BriefQuestionSession = {
+  projectId: string;
+  productId: string;
+  generatedAt: string;
+  expiresAt: number;
+  briefContext: string;
+  diagnostic: {
+    coverage: { tracked: number; ranked: number; top10: number; paused: number };
+    facts: string[];
+    anomalies: string[];
+    limitations: string[];
+  };
+  suggestions: Pick<BriefSuggestion, "id" | "title" | "reason" | "action" | "target">[];
+  exchanges: BriefSessionExchange[];
+};
+
+const briefQuestionSessions = new Map<string, BriefQuestionSession>();
+
+function briefSessionKey(projectId: string, productId: string): string {
+  return `${projectId}::${productId}`;
+}
+
+function trimBriefExchanges(exchanges: BriefSessionExchange[]): BriefSessionExchange[] {
+  return exchanges.slice(-BRIEF_SESSION_MAX_EXCHANGES);
+}
+
+function pruneExpiredBriefSession(): void {
+  const now = Date.now();
+  for (const [key, session] of briefQuestionSessions.entries()) {
+    if (session.expiresAt <= now) briefQuestionSessions.delete(key);
+  }
+}
+
+function buildBriefContextDigest(
+  input: any,
+): string {
+  const movers = Array.isArray(input?.rankMovers) ? input.rankMovers : [];
+  const topMoverText = movers
+    .slice(0, 3)
+    .map((m: any) =>
+      `${m.keyword || "关键词"}: ${m.previousRank ?? "新入榜"}→${m.currentRank}`
+    )
+    .join("；");
+  const feedbackCount = Array.isArray(input?.feedbackThemes) ? input.feedbackThemes.length : 0;
+  const competitorCount = Array.isArray(input?.competitorDeltas) ? input.competitorDeltas.length : 0;
+  return [
+    `项目：${input?.name || ""}`,
+    `平台：${input?.platform || "unknown"}`,
+    `关键词覆盖：跟踪 ${input?.keywordStats?.tracked || 0}，有快照 ${input?.keywordStats?.ranked || 0}，Top10 ${input?.keywordStats?.top10 || 0}，暂停 ${input?.keywordStats?.paused || 0}`,
+    `14 天发布状态：${input?.release ? `tag=${input.release.tag || "unknown"}，语言 ${input.release.languageProgress || 0}/${input.release.languageTotal || 0}` : "无发布草稿"}`,
+    `反馈主题：${feedbackCount} 个`,
+    `竞品动态：${competitorCount} 条`,
+    topMoverText ? `近期变动：${topMoverText}` : "近期无可对比排名变动",
+  ].join("\n");
+}
 
 function updateProjectInProjects(projects: any[], projectId: string, updater: (project: any) => any): any[] {
   return projects.map((project) =>
@@ -129,6 +197,108 @@ function sanitizeRankSnapshots(project: any): any {
   return { ...project, rankSnapshots: cleaned, storeProducts };
 }
 
+async function buildOverviewBriefPayload(
+  s: any,
+  project: any,
+  product: any,
+): Promise<{
+  input: any;
+  rankDiagnostic: {
+    coverage: {
+      tracked: number;
+      ranked: number;
+      top10: number;
+      paused: number;
+    };
+    facts: string[];
+    anomalies: string[];
+    limitations: string[];
+  };
+  briefContext: string;
+}> {
+  const { buildBriefInput } = await import("@appilot-labs/appilot-core/overview-summary");
+  const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
+  const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
+  const { competitorDeltaSummary } = await import("@appilot-labs/appilot-core/competitor-radar");
+  const description = readRepoDescription(project.localPath);
+  const profile = await buildProjectProfileFor(project, product, undefined, description);
+  const releaseResult = await checkForRelease(
+    project.localPath,
+    project.lastReleaseSha || null,
+    resolveEffectiveCredentials(s, project.id).githubToken,
+    { githubCache: githubSyncCacheEntry(s, project) ?? undefined },
+  );
+  const feedbackThemes =
+    ((blobGet(sharedStore(), "feedback", project.id) as { themes?: unknown[] } | undefined)?.themes ??
+      (s.get("feedback") || {})[project.id]?.themes ??
+      [])
+      .map((theme: any) => ({
+        title: theme.title,
+        evidenceCount: theme.evidenceCount,
+        topQuotes: (theme.sampleQuotes || []).slice(0, 2),
+      }));
+  const drafts = getStoreSubmissionDrafts(project)
+    .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const submissionDraft = drafts[0] || null;
+
+  const input = buildBriefInput({
+    projectName: project.name,
+    productName: product.trackName || project.name,
+    description,
+    platform: product.platform || "unknown",
+    supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
+    trackedKeywords: ensureProjectKeywordPool(project).trackedKeywords || [],
+    rankSnapshots: product.rankSnapshots || [],
+    releaseDraft: releaseResult.latest
+      ? { name: releaseResult.latest.name, tag: releaseResult.latest.tag }
+      : null,
+    submissionDraft,
+    submissionKeywords: project.submissionKeywords || [],
+    feedbackThemes,
+    competitorDeltas: (() => {
+      const competitors = (s.get("competitors") || {})[project.id] || [];
+      const snapshots = (s.get("competitorSnapshots") || {})[project.id] || {};
+      const deltas: { name: string; change: string }[] = [];
+      for (const competitor of competitors) {
+        const delta = competitorDeltaSummary(competitor, snapshots[competitor.id] || []);
+        if (delta) deltas.push(delta);
+      }
+      return deltas;
+    })(),
+    profile,
+  });
+
+  const rankDiagnostic = {
+    coverage: {
+      tracked: input.keywordStats.tracked,
+      ranked: input.keywordStats.ranked,
+      top10: input.keywordStats.top10,
+      paused: input.keywordStats.paused,
+    },
+    facts: [
+      `已采集 ${input.keywordStats.tracked} 个跟踪关键词；其中 ${input.keywordStats.ranked} 个有近 14 天内排名快照。`,
+      `在采样窗口内，Top10 关键词覆盖：${input.keywordStats.top10} 个。`,
+    ],
+    anomalies: [
+      ...(input.keywordStats.tracked > 0 && input.keywordStats.ranked === 0
+        ? ["当前无已采集排名数据，建议检查关键词采集任务状态与时区覆盖。"]
+        : []),
+      ...(input.keywordStats.tracked > 0 && input.keywordStats.ranked < input.keywordStats.tracked
+        ? ["部分关键词未形成近 14 天有效快照，建议补齐采集后再复盘。"]
+        : []),
+      ...(!releaseResult.latest
+        ? ["未检测到最近发布草稿，发布相关建议将偏保守。"]
+        : []),
+    ],
+    limitations: [
+      "建议仅基于最近 14 天的排名快照与已存在的历史反馈进行推断。",
+      "未覆盖未跟踪关键词与外部市场波动导致的短期异常。",
+    ],
+  };
+
+  return { input, rankDiagnostic, briefContext: buildBriefContextDigest(input) };
+}
+
 export function registerProjectsHandlers(): void {
   ipcMain.handle("projects:list", async () => {
     const s = await getStore();
@@ -154,7 +324,7 @@ export function registerProjectsHandlers(): void {
           const hasDrafts = Array.isArray(p.storeSubmissionDrafts) && p.storeSubmissionDrafts.length > 0;
           if (hasDrafts) continue;
           try {
-            const d = shared.blobs.get(DRAFT_BLOB_DOMAIN, p.name);
+            const d = shared.blobs.get(DRAFT_BLOB_DOMAIN, String(p.id));
             if (Array.isArray(d) && d.length > 0) p.storeSubmissionDrafts = d;
           } catch {
             // 忽略单条草稿注入失败
@@ -255,9 +425,15 @@ export function registerProjectsHandlers(): void {
       const index = projects.findIndex((project) => project.id === projectId);
       if (index < 0) throw new Error("Project not found");
       const project = { ...projects[index] };
+      const previousName = String(project.name || "").trim();
 
       if (typeof settings.name === "string" && settings.name.trim()) {
-        project.name = settings.name.trim();
+        const nextName = settings.name.trim();
+        const duplicate = projects.some(
+          (candidate: any) => candidate.id !== projectId && String(candidate.name || "").trim() === nextName,
+        );
+        if (duplicate) throw new Error(`项目名已存在：${nextName}`);
+        project.name = nextName;
       }
       if (
         typeof settings.localPath === "string" &&
@@ -292,8 +468,22 @@ export function registerProjectsHandlers(): void {
       const latestProjects: any[] = s.get("projects") || [];
       const latestIndex = latestProjects.findIndex((p: any) => p.id === projectId);
       if (latestIndex >= 0) {
-        latestProjects[latestIndex] = project;
-        s.set("projects", latestProjects);
+        const nextName = String(project.name || "").trim();
+        let renamedSharedDb = false;
+        if (previousName && nextName && previousName !== nextName) {
+          const renamed = sharedStore().projects.rename(previousName, nextName);
+          if (!renamed) throw new Error(`共享数据库中找不到待改名项目：${previousName}`);
+          renamedSharedDb = true;
+        }
+        try {
+          latestProjects[latestIndex] = project;
+          s.set("projects", latestProjects);
+        } catch (err) {
+          // app_kv 与结构化表共用 SQLite，但当前适配器仍是两个短事务；第二步失败时
+          // 立即反向改名，避免留下半迁移状态。
+          if (renamedSharedDb) sharedStore().projects.rename(nextName, previousName);
+          throw err;
+        }
       }
       void schedulerTick();
     notifyDataChanged("projects");
@@ -722,6 +912,7 @@ export function registerProjectsHandlers(): void {
           .all()
           .filter((task) =>
             taskReferencesProject(task as any, {
+              id: removed?.id,
               name: projectName,
               path: removed?.localPath,
               productIds: [...removedProductIds],
@@ -1804,56 +1995,13 @@ export function registerProjectsHandlers(): void {
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
     const { project, product } = context;
+    if (project.id !== projectId) throw new Error("Store product does not belong to project");
 
     const provider = await createAiProvider(s);
     const { generateOverviewBrief } = await import("@appilot-labs/appilot-core/ai/overview-brief");
-    const { buildBriefInput } = await import("@appilot-labs/appilot-core/overview-summary");
-    const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
-    const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
-    const { competitorDeltaSummary } = await import("@appilot-labs/appilot-core/competitor-radar");
-
-    const releaseResult = await checkForRelease(
-      project.localPath,
-      project.lastReleaseSha || null,
-      resolveEffectiveCredentials(s, project.id).githubToken,
-      { githubCache: githubSyncCacheEntry(s, project) ?? undefined },
-    );
-    const drafts = getStoreSubmissionDrafts(project)
-      .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    const submissionDraft = drafts[0] || null;
-    const description = readRepoDescription(project.localPath);
-    const profile = await buildProjectProfileFor(project, product, undefined, description);
-
-    const input = buildBriefInput({
-      projectName: project.name,
-      productName: product.trackName || project.name,
-      description,
-      platform: product.platform || "unknown",
-      supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
-      trackedKeywords: ensureProjectKeywordPool(project).trackedKeywords || [],
-      rankSnapshots: product.rankSnapshots || [],
-      releaseDraft: releaseResult.latest
-        ? { name: releaseResult.latest.name, tag: releaseResult.latest.tag }
-        : null,
-      submissionDraft,
-      submissionKeywords: project.submissionKeywords || [],
-      feedbackThemes: (((blobGet(sharedStore(), "feedback", projectId) as { themes?: unknown[] } | undefined)?.themes ?? (s.get("feedback") || {})[projectId]?.themes) || []).map((theme: any) => ({
-        title: theme.title,
-        evidenceCount: theme.evidenceCount,
-        topQuotes: (theme.sampleQuotes || []).slice(0, 2),
-      })),
-      competitorDeltas: (() => {
-        const competitors = (s.get("competitors") || {})[projectId] || [];
-        const snapshots = (s.get("competitorSnapshots") || {})[projectId] || {};
-        const deltas: { name: string; change: string }[] = [];
-        for (const competitor of competitors) {
-          const delta = competitorDeltaSummary(competitor, snapshots[competitor.id] || []);
-          if (delta) deltas.push(delta);
-        }
-        return deltas;
-      })(),
-      profile,
-    });
+    const { input, rankDiagnostic, briefContext } =
+      await buildOverviewBriefPayload(s, project, product);
+    if (!input) throw new Error("生成简报输入失败");
 
     const suggestions = await generateOverviewBrief(provider, input, (received) => {
       if (!_event.sender.isDestroyed()) {
@@ -1863,8 +2011,168 @@ export function registerProjectsHandlers(): void {
         });
       }
     });
-    return { suggestions, generatedAt: new Date().toISOString() };
+
+    pruneExpiredBriefSession();
+    const key = briefSessionKey(project.id, product.id);
+    briefQuestionSessions.set(key, {
+      projectId: project.id,
+      productId: product.id,
+      generatedAt: new Date().toISOString(),
+      expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
+      briefContext,
+      diagnostic: rankDiagnostic,
+      suggestions: suggestions.map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        reason: item.reason,
+        action: item.action,
+        target: item.target,
+      })),
+      exchanges: [],
+    });
+
+    return {
+      suggestions,
+      rankDiagnostic,
+      generatedAt: new Date().toISOString(),
+    };
   });
+
+  ipcMain.handle(
+    "projects:getBriefSession",
+    async (_event, projectId: string, productId: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context || context.project.id !== projectId) return null;
+      pruneExpiredBriefSession();
+      const session = briefQuestionSessions.get(briefSessionKey(projectId, productId));
+      if (!session) return null;
+      return {
+        suggestions: session.suggestions,
+        rankDiagnostic: session.diagnostic,
+        generatedAt: session.generatedAt,
+        exchanges: session.exchanges,
+      };
+    },
+  );
+
+  ipcMain.handle(
+    "projects:askBriefQuestion",
+    async (
+      _event,
+      projectId: string,
+      productId: string,
+      question: string,
+      suggestionId?: string | null,
+    ) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      const questionText = assertNonEmptyString(question, "question");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const context = findProductContext(projects, productId);
+      if (!context) throw new Error("Store product not found");
+      const { project, product } = context;
+      if (project.id !== projectId) throw new Error("Store product does not belong to project");
+
+      pruneExpiredBriefSession();
+      const key = briefSessionKey(project.id, product.id);
+      let session = briefQuestionSessions.get(key);
+      if (!session || session.expiresAt <= Date.now()) {
+        const { briefContext, rankDiagnostic } =
+          await buildOverviewBriefPayload(s, project, product);
+        session = {
+          projectId: project.id,
+          productId: product.id,
+          generatedAt: new Date().toISOString(),
+          expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
+          briefContext,
+          diagnostic: rankDiagnostic,
+          suggestions: [],
+          exchanges: [],
+        };
+        briefQuestionSessions.set(key, session);
+      }
+
+      const trimmedQuestion = questionText.trim();
+      if (trimmedQuestion.length < 2) {
+        throw new Error("问题太短，请提供更具体的追问内容");
+      }
+      if (trimmedQuestion.length > 1000) {
+        throw new Error("问题过长，请控制在 1000 字以内");
+      }
+      const targetSuggestion = suggestionId
+        ? session.suggestions.find((item) => item.id === suggestionId)
+        : null;
+
+      const followupSystem = [
+        "你是 Appilot 的运营副驾驶，擅长围绕上文简报给出可执行的中文建议。",
+        "请严格基于给定上下文回答，不要编造具体指标或事实；对不确定项明确标注。",
+        "回答应可直接执行，结构化输出：先给结论，再给 2~3 条可执行动作（每条 <=1 句）。",
+      ];
+      const baseContext = [
+        `项目/平台：${project.name} / ${product.platform || "unknown"}`,
+        session.briefContext,
+      ].join("\n");
+      const suggestionContext = targetSuggestion
+        ? [
+            `追问聚焦到建议：${targetSuggestion.title}`,
+            `依据：${targetSuggestion.reason}`,
+            `建议动作：${targetSuggestion.action}`,
+            targetSuggestion.target ? `动作目标：${targetSuggestion.target}` : "",
+          ].filter(Boolean).join("\n")
+        : "";
+      // 追问阶段只发送已压缩的简报摘要和有限轮次历史，避免每轮重复注入完整项目档案。
+      const messages = buildArchiveMessages(
+        undefined,
+        followupSystem.join("\n"),
+        [baseContext, suggestionContext].filter(Boolean),
+      );
+      const history = session.exchanges.flatMap((exchange) => [
+        {
+          role: "user" as const,
+          content: exchange.suggestionId
+            ? `围绕建议追问：${exchange.question}`
+            : `追问问题：${exchange.question}`,
+        },
+        { role: "assistant" as const, content: exchange.answer },
+      ]);
+      const userMessage = targetSuggestion
+        ? `围绕建议「${targetSuggestion.title}」追问：${trimmedQuestion}`
+        : `追问问题：${trimmedQuestion}`;
+      const requestMessages = [
+        ...messages,
+        ...history,
+        { role: "user" as const, content: userMessage },
+      ];
+      const answer = await requestText(
+        await createAiProvider(s),
+        requestMessages,
+        {
+          temperature: 0.3,
+          maxTokens: 1200,
+          thinking: "disabled",
+        },
+      );
+      const now = new Date().toISOString();
+      session.exchanges = trimBriefExchanges([
+        ...session.exchanges,
+        {
+          suggestionId: targetSuggestion?.id || null,
+          question: trimmedQuestion,
+          answer,
+          at: now,
+        },
+      ]);
+      session.expiresAt = Date.now() + BRIEF_SESSION_TTL_MS;
+      briefQuestionSessions.set(key, { ...session, exchanges: session.exchanges });
+
+      return { answer };
+    },
+  );
 
   ipcMain.handle(
     "projects:recordBriefAction",

@@ -47,6 +47,7 @@ async function main(): Promise<void> {
     INSERT INTO meta (key, value) VALUES ('schemaVersion', '4');`);
   v4.close();
   const migrated = openStore(dbPath);
+  migrated.projects.save({ id: 'p-id', name: 'p', path: '/p', githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
   migrated.meta.save({ projectName: 'p', githubUrl: null, headSha: null, headDate: null, lastReleaseSha: null, updatedAt: new Date().toISOString() });
   assert.ok(migrated.meta.get('p'), 'v4→v5 后 project_meta 可写');
   migrated.close();
@@ -70,6 +71,8 @@ async function main(): Promise<void> {
 
   // 3. 双写 + 读回（JSON 往返）
   const db2 = openStore(join(dir, 'appilot.db'));
+  db2.projects.save({ id: 'project-stable-id', name: p.name, path: p.localPath, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
+  p.id = 'project-stable-id';
   const res = syncRichDataToDb(db2, [p]);
   assert.deepEqual(res, { meta: 1, products: 2 });
   const back = db2.products.listByProject('ai-pulse-macos');

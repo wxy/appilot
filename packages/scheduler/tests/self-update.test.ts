@@ -50,6 +50,7 @@ async function main(): Promise<void> {
   const dbPath = join(dir, 'appilot.db');
   const socketPath = join(dir, 'scheduler.sock');
   const spawned: RestartSpec[] = [];
+  let leaderWhenSpawned: string | null | undefined;
   let exitCode: number | null = null;
   const d = await runDaemon({
     dbPath,
@@ -59,7 +60,12 @@ async function main(): Promise<void> {
     ttlMs: 2000,
     updateCheckIntervalMs: 0, // 周期关闭——用手动 requestRestart 驱动
     monitorDirs: [mon],
-    spawnRestartImpl: (spec) => spawned.push(spec),
+    spawnRestartImpl: (spec) => {
+      const probe = openStore(dbPath);
+      leaderWhenSpawned = probe.lease.leader();
+      probe.close();
+      spawned.push(spec);
+    },
     exitProcess: (code) => {
       exitCode = code;
     },
@@ -79,6 +85,7 @@ async function main(): Promise<void> {
   assert.equal(spawned.length, 1, '应 spawn 1 个重启进程');
   assert.deepEqual(spawned[0].args, process.argv.slice(1), '重启命令与当前一致');
   assert.equal(spawned[0].command, process.execPath, '重启用同一 node');
+  assert.equal(leaderWhenSpawned, null, '必须先释放旧租约再 spawn 继任者');
   assert.equal(exitCode, 0, 'stop 后应退出（注入 exit 0）');
   assert.ok(logs.some((l) => l.includes('自重启')), '应记录自重启');
   assert.ok(logs.some((l) => l.includes('daemon exited cleanly')), '应记录干净退出');

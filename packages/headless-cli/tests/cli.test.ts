@@ -98,6 +98,7 @@ async function main(): Promise<void> {
 
   // snapshots history：seed 两条 → history 返回降序点；productId 过滤
   const store = openStore(dbPath);
+  store.projects.save({ id: 'cli-history-id', name: 'cli-test-proj', path: repo, githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
   store.snapshots.add([
     { projectName: 'cli-test-proj', productId: null, keyword: 'app', language: 'en', storefront: 'us', rank: 3, totalResults: 100, checkedAt: '2026-08-01T00:00:00Z' },
     { projectName: 'cli-test-proj', productId: null, keyword: 'app', language: 'en', storefront: 'us', rank: 2, totalResults: 100, checkedAt: '2026-08-02T00:00:00Z' },
@@ -116,6 +117,7 @@ async function main(): Promise<void> {
 
   // snapshots prune：清 90 天前（seed 里 2026-08 距今不足 90 天 → 保留？用显式 before 清全部）
   const seedStore = openStore(dbPath);
+  seedStore.projects.save({ id: 'old-proj-id', name: 'old-proj', path: '/old-proj', githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
   seedStore.snapshots.add([
     { projectName: 'old-proj', productId: null, keyword: 'k', language: 'en', storefront: 'us', rank: 9, totalResults: 10, checkedAt: '2020-01-01T00:00:00Z' },
     { projectName: 'old-proj', productId: null, keyword: 'k', language: 'en', storefront: 'us', rank: 8, totalResults: 10, checkedAt: '2026-08-15T00:00:00Z' },

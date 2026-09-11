@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import { openStore } from '@appilot-labs/appilot-headless';
-import { mirrorTasksToDb, toTaskRow, clearElectronFailures, purgeOrphanProjectTasks, backfillTaskHistoryOnce, TASK_HISTORY_BACKFILL_MARK } from '../src/main/task-db-sync';
+import { mirrorTasksToDb, toTaskRow, electronTaskFromRow, electronTasksFromRows, clearElectronFailures, purgeOrphanProjectTasks, backfillTaskHistoryOnce, TASK_HISTORY_BACKFILL_MARK } from '../src/main/task-db-sync';
 
 async function main(): Promise<void> {
   const dbPath = join(mkdtempSync(join(tmpdir(), 'task-db-sync-test-')), 'appilot.db');
@@ -74,7 +74,29 @@ async function main(): Promise<void> {
   assert.equal(all.length, 1, `清理后应只剩 rankTask 1 行，实际 ${all.length}`);
   const mirroredRank = store.tasks.get('prod-x:macos:app:en:us');
   assert.equal(mirroredRank?.runCount, 5);
+  // DB 列是调度状态真相：daemon 更新列后，重建不能被旧 electronJson 状态盖回去。
+  store.tasks.upsert({
+    ...mirroredRank!, lastRunAt: '2026-09-03T00:00:00Z', nextRunAt: '2026-09-04T00:00:00Z',
+    lastStatus: 'error', lastSummary: 'upstream failed', runCount: 6,
+  });
+  const rebuilt = electronTaskFromRow(store.tasks.get('prod-x:macos:app:en:us'));
+  assert.equal(rebuilt.lastRunAt, '2026-09-03T00:00:00Z');
+  assert.equal(rebuilt.lastStatus, 'failed');
+  assert.equal(rebuilt.executionCount, 6);
+  assert.equal(rebuilt.lastSummary, 'upstream failed');
   console.log('✓ 镜像幂等 upsert + source 标记 + 幽灵行清理');
+
+  // 旧迁移行可能没有 electronJson；仍须按 DB 列恢复，不能在重启时丢失。
+  const legacyRow = { ...store.tasks.get('prod-x:macos:app:en:us'), electronJson: null };
+  const restored = electronTasksFromRows([
+    legacyRow,
+    { ...legacyRow, id: 'dsh-row', source: 'dsh' },
+  ]);
+  assert.equal(restored.length, 1, '无 electronJson 的 electron 行仍应恢复');
+  assert.equal(restored[0].id, rankTask.id);
+  assert.equal(restored[0].nextRunAt, legacyRow.nextRunAt, '恢复时保留 DB 排期列');
+  assert.equal(restored[0].executionCount, legacyRow.runCount, '恢复时保留执行次数');
+  console.log('✓ 无 electronJson 的历史 Electron 行可恢复');
 
   // 6. DSH 静态任务不被污染/不被误清
   store.tasks.upsert({ id: 'release-sync', title: '发布同步', intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'dsh' });
@@ -84,7 +106,7 @@ async function main(): Promise<void> {
   console.log('✓ DSH 静态任务行不受镜像清理影响');
 
   // 7. P1：kind 非空的 electron 实例行（reconcile 管理）不被镜像 prune
-  store.tasks.upsert({ id: 'github-sync:p1', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: '2026-09-01T00:00:00Z', nextRunAt: '2026-09-02T00:00:00Z', lastStatus: 'ok', lastSummary: 's', runCount: 2, source: 'electron', kind: 'github-sync', instance: { projectId: 'p1' } });
+  store.tasks.upsert({ id: 'github-sync:p1', title: 'GitHub 发布同步', intervalMinutes: 60, lastRunAt: '2026-09-01T00:00:00Z', nextRunAt: '2026-09-02T00:00:00Z', lastStatus: 'ok', lastSummary: 's', runCount: 2, source: 'electron', kind: 'github-sync', instance: { projectId: 'p1', projectName: 'p1', path: '/x/p1' } });
   const withKind = mirrorTasksToDb(store, [rankTask] as any);
   assert.equal(withKind.pruned, 0, 'kind 实例行不应被镜像清理（源里没有也保留）');
   assert.ok(store.tasks.get('github-sync:p1'), '实例行应保留');

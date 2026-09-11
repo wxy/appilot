@@ -26,6 +26,9 @@ export interface ElectronTaskLike {
   executionCount?: unknown;
   lastStatus?: unknown;
   enabled?: unknown;
+  projectId?: unknown;
+  productId?: unknown;
+  groupKey?: unknown;
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -49,6 +52,26 @@ function taskTitle(t: ElectronTaskLike): string {
     return `${kindLabel(t.kind)}: ${kw} @ ${sf} (${lang})`;
   }
   return kindLabel(t.kind);
+}
+
+function taskInstance(t: ElectronTaskLike): Record<string, unknown> | null {
+  const kind = typeof t.kind === 'string' ? t.kind : '';
+  if (kind === 'ops-sync' && typeof t.projectId === 'string') {
+    return { projectId: t.projectId };
+  }
+  if ((kind === 'reviews-sync' || kind === 'build-status') && typeof t.productId === 'string') {
+    return { productId: t.productId };
+  }
+  if (kind === 'rank' && typeof t.productId === 'string') {
+    return {
+      productId: t.productId,
+      keyword: t.keyword,
+      queryLanguage: t.queryLanguage,
+      storefront: t.storefront,
+      groupKey: t.groupKey,
+    };
+  }
+  return null;
 }
 
 /** Electron 任务对象 → headless TaskRow；字段不合法返回 null（跳过）。 */
@@ -76,6 +99,8 @@ export function toTaskRow(t: ElectronTaskLike): TaskRow | null {
       typeof (t as any).lastSummary === "string" ? String((t as any).lastSummary).slice(0, 300) : null,
     runCount: typeof t.executionCount === 'number' ? t.executionCount : 0,
     source: 'electron',
+    kind: typeof t.kind === 'string' ? t.kind : null,
+    instance: taskInstance(t),
     enabled: !disabled,
     electronJson: JSON.stringify(t), // 无损：引擎任务重建用
   };
@@ -87,7 +112,29 @@ export function electronTaskFromRow(row: any): any | null {
   if (typeof row.electronJson === 'string' && row.electronJson) {
     try {
       const parsed = JSON.parse(row.electronJson);
-      if (parsed && typeof parsed === 'object') return parsed;
+      if (parsed && typeof parsed === 'object') {
+        // electronJson 只保存任务的富参数；调度状态列由 daemon/CLI 持续更新，
+        // 必须以列为准合并回来，否则 Electron 周期 reconcile 会用旧 JSON 覆盖新状态。
+        parsed.id = row.id;
+        // title 是可选富字段；原任务没有时不要把 DB 的派生展示标题注入回去，
+        // 否则所谓“无损重建”会凭空改变 electron-store 对象形状。
+        if (Object.prototype.hasOwnProperty.call(parsed, 'title')) {
+          parsed.title = String(row.title || parsed.title || '').replace(/（已停用）$/, '');
+        }
+        parsed.intervalMinutes = row.intervalMinutes;
+        parsed.lastRunAt = row.lastRunAt;
+        parsed.nextRunAt = row.nextRunAt;
+        parsed.executionCount = row.runCount || 0;
+        parsed.enabled = row.enabled !== false && !String(row.title || '').includes('已停用');
+        parsed.lastStatus =
+          row.lastStatus === 'error'
+            ? 'failed'
+            : row.lastStatus === 'ok'
+              ? 'success'
+              : row.lastStatus ?? 'never';
+        if (typeof row.lastSummary === 'string') parsed.lastSummary = row.lastSummary;
+        return parsed;
+      }
     } catch {
       // 落回推导
     }
@@ -104,6 +151,20 @@ export function electronTaskFromRow(row: any): any | null {
     lastStatus:
       row.lastStatus === 'error' ? 'failed' : row.lastStatus === 'ok' ? 'success' : row.lastStatus ?? 'never',
   };
+}
+
+/**
+ * 从共享 DB 恢复 Electron 调度任务。
+ *
+ * electronJson 是富字段快照，不是任务存在性的标志。早期迁移生成的任务行可能
+ * 没有该列；这些行仍必须由列字段恢复，否则应用重启会把它们误判为“新任务”，
+ * 继而重置排期和“上次执行”状态。
+ */
+export function electronTasksFromRows(rows: any[]): any[] {
+  return (rows ?? [])
+    .filter((row) => row?.source === 'electron')
+    .map((row) => electronTaskFromRow(row))
+    .filter((task) => task && typeof task.id === 'string');
 }
 
 export interface MirrorResult {
@@ -129,15 +190,26 @@ export function mirrorTasksToDb(store: AppilotStore, tasks: ElectronTaskLike[]):
     sourceIds.add(t.id);
     const row = toTaskRow(t);
     if (!row) continue;
-    store.tasks.upsert(row);
+    store.tasks.upsert(row, { setIdentity: true });
     mirrored += 1;
   }
   // 清理：DB 中 source='electron' 但已不在当前源的任务行。
-  // P1：只清 kind 为 null 的纯镜像行——kind 非空的实例行由 reconcile 管理
-  // （github-sync 已切 DB 实例源；镜像清理不得删 reconcile 管理的实例行）。
+  // github-sync 已切 DB reconcile 管理；其余 Electron 富数据实例以
+  // scheduledTasks 为源，源里消失时必须清理，避免产品删除后留下幽灵任务。
+  const mirrorManagedKinds = new Set(['rank', 'ops-sync', 'reviews-sync', 'build-status']);
   let pruned = 0;
   for (const row of store.tasks.all()) {
-    if (row.source === 'electron' && row.kind == null && !sourceIds.has(row.id)) {
+    const reconciledGithub =
+      row.kind === 'github-sync' &&
+      typeof row.instance?.projectId === 'string' &&
+      typeof row.instance?.path === 'string';
+    if (
+      row.source === 'electron' &&
+      (row.kind == null ||
+        mirrorManagedKinds.has(row.kind) ||
+        (row.kind === 'github-sync' && !reconciledGithub)) &&
+      !sourceIds.has(row.id)
+    ) {
       if (store.tasks.remove(row.id)) pruned += 1;
     }
   }

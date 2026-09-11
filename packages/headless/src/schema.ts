@@ -8,7 +8,9 @@
  * - schema 版本号 + 迁移钩子：后续加表/加列走 migrations，而不是推倒重建。
  */
 
-export const SCHEMA_VERSION = 13;
+import { randomUUID } from 'node:crypto';
+
+export const SCHEMA_VERSION = 14;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -27,6 +29,8 @@ export interface ProjectRow {
 /** 排名快照行（keyword×language×storefront 历史点）。productId 供多产品（Electron）区分。 */
 export interface RankSnapshotRow {
   projectName: string;
+  /** v14 内部外键；公共调用仍可用 projectName，读出时两者都提供。 */
+  projectId?: string;
   /** 产品维度（Electron 的 product.id）；DSH 侧为 null。 */
   productId?: string | null;
   keyword: string;
@@ -77,6 +81,7 @@ export interface LeaseRow {
  */
 export interface ProjectMetaRow {
   projectName: string;
+  projectId?: string;
   githubUrl: string | null;
   /** 当前 HEAD sha（Electron repo 状态；DSH 可能为 null）。 */
   headSha: string | null;
@@ -97,6 +102,7 @@ export interface ProjectMetaRow {
  */
 export interface ProductRecordRow {
   projectName: string;
+  projectId?: string;
   /** Electron product.id（如 'projId:macos'）；DSH 侧无产品时可为项目名。 */
   productId: string;
   platform: string | null;
@@ -122,6 +128,7 @@ export interface ProductRecordRow {
  */
 export interface ReleaseCacheRow {
   projectName: string;
+  projectId?: string;
   /** githubSyncCache[projectId] 条目对象（JSON 原样保留，结构随壳变化）。 */
   cache: Record<string, unknown>;
   syncedAt: string;
@@ -159,8 +166,8 @@ CREATE TABLE IF NOT EXISTS project_blobs (
 );
 
 CREATE TABLE IF NOT EXISTS projects (
-  name TEXT PRIMARY KEY,
-  id TEXT,
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
   path TEXT NOT NULL,
   githubUrl TEXT,
   platform TEXT,
@@ -171,7 +178,7 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE TABLE IF NOT EXISTS project_meta (
-  projectName TEXT PRIMARY KEY,
+  projectId TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   githubUrl TEXT,
   headSha TEXT,
   headDate TEXT,
@@ -184,7 +191,7 @@ CREATE TABLE IF NOT EXISTS project_meta (
 );
 
 CREATE TABLE IF NOT EXISTS product_records (
-  projectName TEXT NOT NULL,
+  projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   productId TEXT NOT NULL,
   platform TEXT,
   trackId INTEGER,
@@ -197,14 +204,12 @@ CREATE TABLE IF NOT EXISTS product_records (
   submissionKeywords TEXT NOT NULL DEFAULT '[]',
   removedKeywords TEXT NOT NULL DEFAULT '[]',
   updatedAt TEXT NOT NULL,
-  PRIMARY KEY (projectName, productId)
+  PRIMARY KEY (projectId, productId)
 );
-CREATE INDEX IF NOT EXISTS idx_product_records_project
-  ON product_records(projectName);
 
 CREATE TABLE IF NOT EXISTS rank_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  projectName TEXT NOT NULL,
+  projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   productId TEXT,
   keyword TEXT NOT NULL,
   language TEXT NOT NULL,
@@ -213,8 +218,12 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (
   totalResults INTEGER NOT NULL DEFAULT 0,
   checkedAt TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_rank_snapshots_project
-  ON rank_snapshots(projectName, keyword, language, storefront, checkedAt);
+
+CREATE TABLE IF NOT EXISTS project_release_cache (
+  projectId TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  cacheJson TEXT NOT NULL,
+  syncedAt TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
@@ -249,6 +258,16 @@ export function migrate(db: {
     | { value?: unknown }
     | undefined;
   const ver = row && row.value !== undefined ? Number(row.value) : 0;
+  const initialProjectCols = (db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string; pk?: number }>) || [];
+  const alreadyUsesIdPrimaryKey = initialProjectCols.some((c) => c.name === 'id' && Number(c.pk) === 1);
+  // 全新数据库由上面的最终 DDL 一次建成；不要再回放只适用于旧列名的历史迁移。
+  if (!row && alreadyUsesIdPrimaryKey) {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_product_records_project ON product_records(projectId);
+      CREATE INDEX IF NOT EXISTS idx_rank_snapshots_project
+        ON rank_snapshots(projectId, keyword, language, storefront, checkedAt);`);
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schemaVersion', String(SCHEMA_VERSION));
+    return;
+  }
   if (ver < 1) {
     db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schemaVersion', '1');
   }
@@ -300,8 +319,13 @@ export function migrate(db: {
       trackedKeywords TEXT NOT NULL DEFAULT '[]',
       storeLinks TEXT NOT NULL DEFAULT '[]',
       updatedAt TEXT NOT NULL,
-      PRIMARY KEY (projectName, productId));
-    CREATE INDEX IF NOT EXISTS idx_product_records_project ON product_records(projectName);`);
+      PRIMARY KEY (projectName, productId));`);
+    const productCols5 = (db.prepare('PRAGMA table_info(product_records)').all() as Array<{ name: string }>) || [];
+    db.exec(
+      productCols5.some((c) => c.name === 'projectId')
+        ? 'CREATE INDEX IF NOT EXISTS idx_product_records_project ON product_records(projectId)'
+        : 'CREATE INDEX IF NOT EXISTS idx_product_records_project ON product_records(projectName)',
+    );
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
   if (ver < 6) {
@@ -394,5 +418,190 @@ export function migrate(db: {
       if (!mcols.some((c) => c.name === col)) db.exec(`ALTER TABLE project_meta ADD COLUMN ${col} ${decl}`);
     }
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '13') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 14) {
+    const projectCols = (db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string; pk?: number }>) || [];
+    const idIsPrimaryKey = projectCols.some((c) => c.name === 'id' && Number(c.pk) === 1);
+    if (!idIsPrimaryKey) {
+      // v13→v14：项目身份从可变 name 切到稳定 id。所有复制、任务改写与换表在
+      // 同一事务内完成；任一步失败都会保留完整 v13 数据。
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.exec(`
+          CREATE TABLE projects_v14 (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            path TEXT NOT NULL,
+            githubUrl TEXT,
+            platform TEXT,
+            languages TEXT NOT NULL DEFAULT '[]',
+            lastResolvedAt TEXT NOT NULL,
+            artworkUrl TEXT,
+            updatedAt TEXT NOT NULL);
+          CREATE TEMP TABLE project_id_map (name TEXT PRIMARY KEY, id TEXT NOT NULL UNIQUE);
+        `);
+        const oldProjects = db.prepare('SELECT * FROM projects ORDER BY name').all() as Array<Record<string, unknown>>;
+        const usedIds = new Set<string>();
+        const idByName = new Map<string, string>();
+        const mapInsert = db.prepare('INSERT INTO project_id_map (name, id) VALUES (?, ?)');
+        const projectInsert = db.prepare(
+          `INSERT INTO projects_v14
+           (id, name, path, githubUrl, platform, languages, lastResolvedAt, artworkUrl, updatedAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        for (const project of oldProjects) {
+          const name = String(project.name ?? '');
+          const legacyId = typeof project.id === 'string' ? project.id.trim() : '';
+          let id = legacyId && !usedIds.has(legacyId) ? legacyId : `legacy-${randomUUID()}`;
+          while (usedIds.has(id)) id = `legacy-${randomUUID()}`;
+          usedIds.add(id);
+          idByName.set(name, id);
+          mapInsert.run(name, id);
+          projectInsert.run(
+            id, name, project.path, project.githubUrl, project.platform, project.languages,
+            project.lastResolvedAt, project.artworkUrl, project.updatedAt,
+          );
+        }
+
+        db.exec(`
+          CREATE TABLE project_meta_v14 (
+            projectId TEXT PRIMARY KEY REFERENCES projects_v14(id) ON DELETE CASCADE,
+            githubUrl TEXT, headSha TEXT, headDate TEXT, lastReleaseSha TEXT,
+            branch TEXT, headMessage TEXT, dirty INTEGER, description TEXT, updatedAt TEXT NOT NULL);
+
+          CREATE TABLE product_records_v14 (
+            projectId TEXT NOT NULL REFERENCES projects_v14(id) ON DELETE CASCADE,
+            productId TEXT NOT NULL, platform TEXT, trackId INTEGER, bundleId TEXT,
+            trackName TEXT, artworkUrl TEXT, supportedLanguages TEXT NOT NULL DEFAULT '[]',
+            trackedKeywords TEXT NOT NULL DEFAULT '[]', storeLinks TEXT NOT NULL DEFAULT '[]',
+            submissionKeywords TEXT NOT NULL DEFAULT '[]', removedKeywords TEXT NOT NULL DEFAULT '[]',
+            updatedAt TEXT NOT NULL, PRIMARY KEY (projectId, productId));
+
+          CREATE TABLE rank_snapshots_v14 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            projectId TEXT NOT NULL REFERENCES projects_v14(id) ON DELETE CASCADE,
+            productId TEXT, keyword TEXT NOT NULL, language TEXT NOT NULL,
+            storefront TEXT NOT NULL, rank INTEGER, totalResults INTEGER NOT NULL DEFAULT 0,
+            checkedAt TEXT NOT NULL);
+
+          CREATE TABLE project_release_cache_v14 (
+            projectId TEXT PRIMARY KEY REFERENCES projects_v14(id) ON DELETE CASCADE,
+            cacheJson TEXT NOT NULL, syncedAt TEXT NOT NULL);
+        `);
+        // 历史测试库可能跳过部分版本，导致 DDL 新建的表已是 projectId，而存量表仍是
+        // projectName。逐表探测关联列，使任意 v1-v13 组合都能安全收敛到 v14。
+        const projectJoin = (table: string): string => {
+          const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+          return cols.some((col) => col.name === 'projectId')
+            ? 'JOIN project_id_map m ON m.id = x.projectId'
+            : 'JOIN project_id_map m ON m.name = x.projectName';
+        };
+        db.exec(`INSERT INTO project_meta_v14
+          SELECT m.id, x.githubUrl, x.headSha, x.headDate, x.lastReleaseSha,
+                 x.branch, x.headMessage, x.dirty, x.description, x.updatedAt
+          FROM project_meta x ${projectJoin('project_meta')};`);
+        db.exec(`INSERT INTO product_records_v14
+          SELECT m.id, x.productId, x.platform, x.trackId, x.bundleId, x.trackName,
+                 x.artworkUrl, x.supportedLanguages, x.trackedKeywords, x.storeLinks,
+                 x.submissionKeywords, x.removedKeywords, x.updatedAt
+          FROM product_records x ${projectJoin('product_records')};`);
+        db.exec(`INSERT INTO rank_snapshots_v14
+          SELECT x.id, m.id, x.productId, x.keyword, x.language, x.storefront,
+                 x.rank, x.totalResults, x.checkedAt
+          FROM rank_snapshots x ${projectJoin('rank_snapshots')};`);
+        db.exec(`INSERT INTO project_release_cache_v14
+          SELECT m.id, x.cacheJson, x.syncedAt
+          FROM project_release_cache x ${projectJoin('project_release_cache')};`);
+
+        // 草稿域此前是唯一仍以项目名作 projectKey 的 blob 域。
+        const draftRows = db.prepare(
+          "SELECT projectKey, json, updatedAt FROM project_blobs WHERE domain = 'storeSubmissionDrafts'",
+        ).all() as Array<{ projectKey: string; json: string; updatedAt: string }>;
+        const draftPut = db.prepare(
+          `INSERT OR REPLACE INTO project_blobs (domain, projectKey, json, updatedAt)
+           VALUES ('storeSubmissionDrafts', ?, ?, ?)`,
+        );
+        const draftDelete = db.prepare(
+          "DELETE FROM project_blobs WHERE domain = 'storeSubmissionDrafts' AND projectKey = ?",
+        );
+        for (const draft of draftRows) {
+          const projectId = idByName.get(draft.projectKey);
+          if (!projectId || projectId === draft.projectKey) continue;
+          draftPut.run(projectId, draft.json, draft.updatedAt);
+          draftDelete.run(draft.projectKey);
+        }
+
+        // 名称型 github-sync 实例迁到稳定 projectId；保留 projectName 仅作显示。
+        const taskRows = db.prepare("SELECT * FROM tasks WHERE kind = 'github-sync'").all() as Array<Record<string, unknown>>;
+        for (const task of taskRows) {
+          let instance: Record<string, unknown> = {};
+          try {
+            instance = task.instance ? JSON.parse(String(task.instance)) : {};
+          } catch {
+            instance = {};
+          }
+          const oldSuffix = String(task.id ?? '').startsWith('github-sync:')
+            ? String(task.id).slice('github-sync:'.length)
+            : '';
+          const name = typeof instance.projectName === 'string' ? instance.projectName : oldSuffix;
+          const projectId =
+            (typeof instance.projectId === 'string' && usedIds.has(instance.projectId) ? instance.projectId : null) ??
+            idByName.get(name);
+          if (!projectId) continue;
+          const newId = `github-sync:${projectId}`;
+          instance.projectId = projectId;
+          if (!instance.projectName) instance.projectName = name;
+          let electronJson = task.electronJson == null ? null : String(task.electronJson);
+          if (electronJson) {
+            try {
+              const parsed = JSON.parse(electronJson);
+              parsed.id = newId;
+              parsed.projectId = projectId;
+              electronJson = JSON.stringify(parsed);
+            } catch {
+              // 诊断副本损坏不阻断结构迁移。
+            }
+          }
+          if (newId !== task.id && db.prepare('SELECT 1 FROM tasks WHERE id = ?').get(newId)) {
+            db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
+            db.prepare('UPDATE tasks SET instance = ?, electronJson = ? WHERE id = ?')
+              .run(JSON.stringify(instance), electronJson, newId);
+          } else {
+            db.prepare('UPDATE tasks SET id = ?, instance = ?, electronJson = ? WHERE id = ?')
+              .run(newId, JSON.stringify(instance), electronJson, task.id);
+          }
+        }
+
+        db.exec(`
+          DROP TABLE project_meta;
+          DROP TABLE product_records;
+          DROP TABLE rank_snapshots;
+          DROP TABLE project_release_cache;
+          DROP TABLE projects;
+          ALTER TABLE projects_v14 RENAME TO projects;
+          ALTER TABLE project_meta_v14 RENAME TO project_meta;
+          ALTER TABLE product_records_v14 RENAME TO product_records;
+          ALTER TABLE rank_snapshots_v14 RENAME TO rank_snapshots;
+          ALTER TABLE project_release_cache_v14 RENAME TO project_release_cache;
+          CREATE INDEX idx_product_records_project ON product_records(projectId);
+          CREATE INDEX idx_rank_snapshots_project
+            ON rank_snapshots(projectId, keyword, language, storefront, checkedAt);
+          DROP TABLE project_id_map;
+        `);
+        db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '14') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      } finally {
+        db.exec('PRAGMA foreign_keys = ON');
+      }
+    } else {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_product_records_project ON product_records(projectId);
+        CREATE INDEX IF NOT EXISTS idx_rank_snapshots_project
+          ON rank_snapshots(projectId, keyword, language, storefront, checkedAt);`);
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '14') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
   }
 }

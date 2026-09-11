@@ -332,7 +332,7 @@ export function registerSchedulerHandlers(): void {
     const s = await getStore();
     const dbStore = sharedStore();
     const dbTasks = taskCenterTasksFromDb(dbStore);
-    const dbOverview = taskCenterOverviewFromDb(dbStore);
+    const dbOverview = taskCenterOverviewFromDb(dbStore, dbTasks);
     const now = Date.now();
     const executions: any[] = (() => {
       try {

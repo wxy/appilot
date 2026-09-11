@@ -2,7 +2,7 @@
  * Electron 发布页缓存（githubSyncCache）→ 共享 SQLite（M4-A）。
  *
  * Electron githubSyncCache 以 projectId 为 key 存 release material/PR/
- * capabilities；此处按 projectName 双写进共享 DB project_release_cache
+ * capabilities；此处按稳定 projectId 双写进共享 DB project_release_cache
  * （UI 数据源迁出 electron-store 的前提；迁移完成前 UI 仍读 electron-store）。
  * 本模块不 import electron，纯映射可在 node 下单测。
  */
@@ -36,7 +36,7 @@ export function syncReleaseCachesToDb(
       typeof (entry as any)?.syncedAt === 'string'
         ? ((entry as any).syncedAt as string)
         : undefined;
-    store.releaseCache.save(p.name, entry, entrySyncedAt);
+    store.releaseCache.save(p.id, entry, entrySyncedAt);
     n += 1;
   }
   return n;

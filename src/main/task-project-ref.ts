@@ -13,6 +13,8 @@ export interface TaskLike {
 }
 
 export interface ProjectRef {
+  /** 稳定 projects.id；v14 起任务身份优先使用它。 */
+  id?: string | null;
   /** electron project.name（registry name / projectName）。 */
   name: string;
   /** electron project.localPath。 */
@@ -27,17 +29,22 @@ export function normalizePathRef(p: string): string {
 
 export function taskReferencesProject(task: TaskLike, ref: ProjectRef): boolean {
   if (!task || typeof task !== 'object') return false;
+  const projectId = ref.id || '';
   const name = ref.name;
   const path = normalizePathRef(ref.path || '');
   const productIds = ref.productIds || [];
   const inst = (task.instance && typeof task.instance === 'object' ? task.instance : {}) as Record<string, unknown>;
-  const instStr = Object.values(inst).map((v) => String(v ?? '')).join('\u0000');
   const id = task.id || '';
 
+  const matchesStableId =
+    Boolean(projectId) &&
+    (inst.projectId === projectId ||
+      id === `github-sync:${projectId}` ||
+      id.startsWith(`${projectId}:`));
+  // name 分支只为清理由 v14 之前留下的任务。新任务不再以名称作为身份。
   const matchesName =
     name &&
     (inst.projectName === name ||
-      inst.projectId === name ||
       inst.name === name ||
       id.startsWith(`${name}:`) ||
       id === `github-sync:${name}`);
@@ -48,9 +55,7 @@ export function taskReferencesProject(task: TaskLike, ref: ProjectRef): boolean 
     productIds.some(
       (pid) =>
         inst.productId === pid ||
-        inst.projectId === pid ||
-        id.startsWith(`${pid}:`) ||
-        instStr.includes(pid),
+        id.startsWith(`${pid}:`),
     );
-  return Boolean(matchesName || matchesPath || matchesProduct);
+  return Boolean(matchesStableId || matchesName || matchesPath || matchesProduct);
 }

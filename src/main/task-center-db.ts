@@ -44,6 +44,12 @@ export interface TaskCenterTaskView {
   } | null;
 }
 
+interface TaskExecutionFacts {
+  firstRunAt: string;
+  lastRunAt: string;
+  count: number;
+}
+
 function electronStatus(s: TaskRow['lastStatus']): 'success' | 'failed' | undefined {
   if (s === 'ok') return 'success';
   if (s === 'error') return 'failed';
@@ -94,7 +100,7 @@ export function taskRowToView(
   rankGroups: Map<string, { ok: number; total: number }>,
   products?: Map<string, { projectName: string; trackName: string | null; platform: string | null }>,
   projNames?: Map<string, string>,
-  execFirst?: Map<string, string>,
+  executionFacts?: Map<string, TaskExecutionFacts>,
   roundsByGroup?: Map<string, { done: number; total: number; lastCompletedAt: string | null; roundStartedAt: string | null }>,
 ): TaskCenterTaskView {
   const inst = (row.instance ?? {}) as any;
@@ -115,7 +121,16 @@ export function taskRowToView(
   const electronFirst = electron && typeof electron.firstRunAt === 'string' && electron.firstRunAt ? electron.firstRunAt : null;
   const instFirst = typeof inst.firstRunAt === 'string' && inst.firstRunAt ? inst.firstRunAt : null;
   // DB 任务行未记首次：electronJson/instance 有就用，否则用最早可追溯执行时间。
-  const firstRunAt = electronFirst ?? instFirst ?? execFirst?.get(row.id) ?? null;
+  const facts = executionFacts?.get(row.id);
+  const firstRunAt = electronFirst ?? instFirst ?? facts?.firstRunAt ?? null;
+  const rowLastRunAt = row.lastRunAt ?? (electron && typeof electron.lastRunAt === 'string' ? electron.lastRunAt : null);
+  // 执行表是不可变事实来源：任务行可能在 reconcile/清除失败后丢失运行字段。
+  // 这里只补展示时间和次数，不从历史恢复 lastStatus，避免已清除的失败重新标红。
+  const lastRunAt = [rowLastRunAt, facts?.lastRunAt]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .sort()
+    .at(-1) ?? null;
+  const executionCount = Math.max(row.runCount ?? 0, facts?.count ?? 0);
   const groupKey = inst.groupKey ?? electron?.groupKey ?? undefined;
   const view: TaskCenterTaskView = {
     id: row.id,
@@ -123,10 +138,10 @@ export function taskRowToView(
     title: row.title ?? null,
     intervalMinutes: row.intervalMinutes,
     nextRunAt: row.nextRunAt,
-    lastRunAt: row.lastRunAt ?? (electron && typeof electron.lastRunAt === 'string' ? electron.lastRunAt : null),
+    lastRunAt,
     firstRunAt,
     lastStatus: electronStatus(row.lastStatus),
-    executionCount: row.runCount ?? 0,
+    executionCount,
     enabled: true,
     projectId,
     productId,
@@ -190,19 +205,20 @@ export function taskCenterTasksFromDb(store: AppilotStore): TaskCenterTaskView[]
     projNames.set(p.name, p.name);
     if (p.id) projNames.set(p.id, p.name);
   }
-  // firstRunAt 兜底：任务对象/instance 未记首次执行时，用 DB 最早可追溯执行
-  // （历史迁移前未记录的首次时间无法还原，最早执行即最接近的近似）。
-  const execFirst = new Map<string, string>();
+  // 执行事实兜底：任务对象/instance 未记运行字段时，从不可变执行表恢复
+  // 首次/最近执行时间与次数。状态刻意不恢复，避免“清除失败”后重新标红。
+  const executionFacts = new Map<string, TaskExecutionFacts>();
   try {
-    for (const e of store.executions.since('2000-01-01T00:00:00Z', 200000)) {
-      const id = String(e?.taskId ?? '');
-      const ts = String(e?.ts ?? '');
-      if (!id || !ts) continue;
-      const cur = execFirst.get(id);
-      if (!cur || ts < cur) execFirst.set(id, ts);
+    for (const summary of store.executions.summaryByTask()) {
+      if (!summary.taskId || !summary.firstRunAt || !summary.lastRunAt) continue;
+      executionFacts.set(summary.taskId, {
+        firstRunAt: summary.firstRunAt,
+        lastRunAt: summary.lastRunAt,
+        count: summary.count,
+      });
     }
   } catch {
-    // 执行表不可用时忽略首次兜底（仅影响展示）。
+    // 执行表不可用时忽略历史兜底（仅影响展示）。
   }
   // 引擎轮次状态（kv schedulerRounds，app_kv 落地，迁移前历史已保留）：本轮
   // done/members + 上轮完成时间。只在任务中心展示——调度仍由引擎自己维护。
@@ -227,19 +243,19 @@ export function taskCenterTasksFromDb(store: AppilotStore): TaskCenterTaskView[]
     // kv 状态缺失/损坏时忽略（各列回退 rankProgress/—）。
   }
   return rows
-    .map((r) => taskRowToView(r, rankGroups, products, projNames, execFirst, roundsByGroup))
+    .map((r) => taskRowToView(r, rankGroups, products, projNames, executionFacts, roundsByGroup))
     .sort((a, b) => (a.kind ?? '').localeCompare(b.kind ?? '') || a.id.localeCompare(b.id));
 }
 
 /** 任务中心概览计数（基于 DB 任务行）。 */
-export function taskCenterOverviewFromDb(store: AppilotStore): {
+export function taskCenterOverviewFromDb(store: AppilotStore, taskViews?: TaskCenterTaskView[]): {
   total: number;
   overdue: number;
   executed: number;
   nextDueAt: string | null;
   byKind: Record<string, number>;
 } {
-  const rows = store.tasks.all();
+  const rows = taskViews ?? taskCenterTasksFromDb(store);
   const now = Date.now();
   const byKind: Record<string, number> = {};
   let overdue = 0;

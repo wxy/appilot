@@ -144,7 +144,12 @@ export function buildBriefInput(args: {
       top10,
       paused: args.trackedKeywords.length - active.length,
     },
-    rankMovers: computeRankMovers(args.rankSnapshots, days),
+    rankMovers: computeRankMovers(
+      args.rankSnapshots.filter((snapshot) =>
+        activeKeys.has(`${snapshot.keyword}\u0000${snapshot.language}`),
+      ),
+      days,
+    ),
     release: args.releaseDraft
       ? {
           tag: args.releaseDraft.tag,

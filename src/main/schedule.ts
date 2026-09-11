@@ -76,6 +76,20 @@ export function nextRankRunAt(
 }
 
 /**
+ * 首次创建或恢复缺失的 rank 任务时选择最近的未来稳定相位。
+ * 与 nextRankRunAt 的区别是：这里没有“刚执行过”的事实，因此当天尚未到达的
+ * 相位可以使用；实际执行完成后仍由 nextRankRunAt 保证一天最多一次。
+ */
+export function initialRankRunAt(
+  seed: string,
+  runsPerDay = 1,
+  now = new Date(),
+): string {
+  const runs = Math.max(1, Math.min(48, Math.floor(runsPerDay || 1)));
+  return nextRunAt(seed, Math.floor((24 * 60) / runs), now);
+}
+
+/**
  * Scatter a batch of tasks (e.g. an overdue backlog on startup, or a failure
  * retry) across the next `windowMinutes` from now, so they do not all fire in
  * the same tick.
@@ -153,7 +167,7 @@ export function rebalanceCollapsedTasks<
         : 24 * 60;
     const nextRun =
       task.kind === "rank"
-        ? nextRankRunAt(task.id, runsPerDay, now)
+        ? initialRankRunAt(task.id, runsPerDay, now)
         : nextRunAt(task.id, interval, now);
     return { ...task, nextRunAt: nextRun };
   });

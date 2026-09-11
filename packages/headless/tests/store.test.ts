@@ -85,6 +85,7 @@ try {
   const pruned = store.snapshots.pruneOlderThan("keep", "2026-09-02T00:00:00.000Z");
   assert.ok(pruned >= 1);
   // 全库清理 pruneAllOlderThan：跨项目删除早于阈值快照
+  store.projects.save({ name: "other", path: "/x/other", githubUrl: null, platform: null, languages: [], lastResolvedAt: t1, artworkUrl: null, updatedAt: t1 });
   store.snapshots.add([
     { projectName: "other", keyword: "k2", language: "en", storefront: "de", rank: 3, totalResults: 90, checkedAt: "2026-08-31T00:00:00.000Z" },
     { projectName: "other", keyword: "k2", language: "en", storefront: "de", rank: 4, totalResults: 90, checkedAt: t2 },
@@ -209,6 +210,65 @@ try {
   pass("dual-connection concurrency + lease exclusivity");
 } catch (err) {
   fail("dual-connection concurrency + lease exclusivity", err);
+}
+
+/* ── 7. 项目改名：稳定 id 维持全部关联，无级联搬迁 ── */
+try {
+  const renamePath = join(dir, "rename.db");
+  const store = openStore(renamePath);
+  store.projects.save({
+    name: "old-name", id: "stable-id", path: "/x/rename", githubUrl: null,
+    platform: "ios", languages: ["en"], lastResolvedAt: "2026-09-01T00:00:00Z",
+    artworkUrl: null, updatedAt: "2026-09-01T00:00:00Z",
+  });
+  store.meta.save({
+    projectName: "old-name", githubUrl: null, headSha: "abc", headDate: null,
+    lastReleaseSha: null, branch: "main", headMessage: null, dirty: false,
+    description: null, updatedAt: "2026-09-01T00:00:00Z",
+  });
+  store.products.upsert({
+    projectName: "old-name", productId: "stable-id:ios", platform: "ios", trackId: 1,
+    bundleId: "xingyu.wang.demo", trackName: "Demo", artworkUrl: null,
+    supportedLanguages: ["en"], trackedKeywords: [], storeLinks: [],
+    submissionKeywords: [], removedKeywords: [], updatedAt: "2026-09-01T00:00:00Z",
+  });
+  store.snapshots.add([{
+    projectName: "old-name", productId: "stable-id:ios", keyword: "demo", language: "en",
+    storefront: "us", rank: 1, totalResults: 10, checkedAt: new Date().toISOString(),
+  }]);
+  store.releaseCache.save("old-name", { tag: "v1.0.0" });
+  store.blobs.put("storeSubmissionDrafts", "stable-id", [{ id: "draft-1" }]);
+  store.tasks.upsert({
+    id: "github-sync:stable-id", title: "GitHub 发布同步", intervalMinutes: 60,
+    lastRunAt: null, nextRunAt: null, lastStatus: "never", lastSummary: null, runCount: 0,
+    source: "electron", kind: "github-sync",
+    instance: { projectId: "stable-id", projectName: "old-name", path: "/x/rename" },
+    electronJson: JSON.stringify({ id: "github-sync:stable-id", projectId: "stable-id", projectName: "old-name" }),
+  });
+  const taskBeforeRename = store.tasks.get("github-sync:stable-id");
+
+  assert.equal(store.projects.rename("old-name", "new-name"), true);
+  assert.equal(store.projects.get("old-name"), undefined);
+  assert.equal(store.projects.get("new-name")?.id, "stable-id", "稳定项目 id 不变");
+  assert.equal(store.meta.get("new-name")?.headSha, "abc");
+  assert.equal(store.products.listByProject("old-name").length, 0);
+  assert.equal(store.products.listByProject("new-name").length, 1);
+  assert.equal(store.snapshots.history("new-name", { productId: "stable-id:ios" }).length, 1);
+  assert.equal(store.releaseCache.get("new-name")?.cache.tag, "v1.0.0");
+  assert.deepEqual(store.blobs.get("storeSubmissionDrafts", "stable-id"), [{ id: "draft-1" }]);
+  assert.deepEqual(store.tasks.get("github-sync:stable-id"), taskBeforeRename, "任务身份与状态无需迁移");
+
+  store.projects.save({
+    name: "occupied", id: null, path: "/x/occupied", githubUrl: null, platform: null,
+    languages: [], lastResolvedAt: "2026-09-01T00:00:00Z", artworkUrl: null,
+    updatedAt: "2026-09-01T00:00:00Z",
+  });
+  assert.throws(() => store.projects.rename("new-name", "occupied"), /项目名已存在/);
+  assert.equal(store.projects.get("new-name")?.id, "stable-id", "冲突时事务回滚");
+  store.close();
+  pass("projects stable-id rename");
+} catch (err) {
+  fail("projects stable-id rename", err);
 }
 
 if (failures > 0) {

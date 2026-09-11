@@ -93,7 +93,7 @@ export function TaskCenterPage() {
     } | null;
   } | null>(null);
   const [ctrlBusy, setCtrlBusy] = useState(false);
-  // 正在执行的控制动作（区分按钮忙碌文案：启动中/暂停中/重启中）。
+  // 正在执行的控制动作（区分按钮忙碌文案：启动中/停止中/重启中）。
   const [ctrlAction, setCtrlAction] = useState<"start" | "stop" | "restart" | null>(null);
   const [ctrlErr, setCtrlErr] = useState<string | null>(null);
   // 失败任务批量处理（backlog #2）
@@ -258,7 +258,7 @@ export function TaskCenterPage() {
     setCtrlErr(null);
     (window as any).appilot?.scheduler?.daemonStop()
       .then((r: any) => {
-        if (!r?.ok) setCtrlErr("暂停调度器失败（daemon 未响应）");
+        if (!r?.ok) setCtrlErr("停止调度器失败（daemon 未响应）");
       })
       .catch((e: any) => setCtrlErr(e?.message || String(e)))
       .finally(() => {
@@ -268,7 +268,7 @@ export function TaskCenterPage() {
       });
   };
 
-  // 重启调度器 = 先停止（daemon 关停 + 壳 fallback 暂停，等待进程退出）再启动
+  // 重启调度器 = 先停止（daemon 关停 + 壳 fallback 停止，等待进程退出）再启动
   // （复用现有 daemonStop/daemonStart IPC 流程；主进程 stop 已等待 daemon 退出，
   // 顺序执行不会复用到正在退出的旧进程）。用于应用更新后加载磁盘最新代码。
   const restartScheduler = () => {
@@ -278,7 +278,7 @@ export function TaskCenterPage() {
     setCtrlErr(null);
     (window as any).appilot?.scheduler?.daemonStop()
       .then((r: any) => {
-        if (!r?.ok) setCtrlErr("重启：暂停调度器失败（daemon 未响应）");
+        if (!r?.ok) setCtrlErr("重启：停止调度器失败（daemon 未响应）");
         return (window as any).appilot?.scheduler?.daemonStart();
       })
       .then((r: any) => {
@@ -548,7 +548,7 @@ export function TaskCenterPage() {
                   onClick={daemonStart}
                   aria-label="启动调度器"
                   className={cn(
-                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center h-7 w-7 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     "border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:border-emerald-600",
                   )}
                   title={
@@ -557,20 +557,22 @@ export function TaskCenterPage() {
                       : "启动调度器：拉起常驻 daemon，自动调度恢复"
                   }
                 >
-                  {ctrlAction === "start" ? "…" : "启动"}
+                  <span aria-hidden="true" className="text-[11px]">
+                    {ctrlAction === "start" ? "…" : "▶"}
+                  </span>
                 </button>
                 <button
                   type="button"
                   disabled={ctrlBusy || daemonCtrl == null || !engineActive}
                   onClick={daemonStop}
-                  aria-label="暂停调度器"
+                  aria-label="停止调度器"
                   className={cn(
-                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center h-7 w-7 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600",
                   )}
-                  title="暂停调度器：关停常驻 daemon（手动「立即运行」仍可用；重启应用随启动恢复）"
+                  title="停止调度器：关停常驻 daemon（手动「立即运行」仍可用；重启应用随启动恢复）"
                 >
-                  {ctrlAction === "stop" ? "…" : "暂停"}
+                  <span aria-hidden="true">{ctrlAction === "stop" ? "…" : "■"}</span>
                 </button>
                 <button
                   type="button"
@@ -578,12 +580,12 @@ export function TaskCenterPage() {
                   onClick={restartScheduler}
                   aria-label="重启调度器"
                   className={cn(
-                    "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center h-7 w-7 rounded-lg border text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     "border-zinc-300 dark:border-zinc-600 bg-white dark:bg-transparent text-zinc-600 dark:text-zinc-300 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400",
                   )}
                   title="重启调度器：先停止再启动，加载磁盘最新代码——「版本不一致」提示时使用"
                 >
-                  {ctrlAction === "restart" ? "…" : "重启"}
+                  <span aria-hidden="true">{ctrlAction === "restart" ? "…" : "↻"}</span>
                 </button>
                 <button
                   type="button"
@@ -608,7 +610,7 @@ export function TaskCenterPage() {
                   }}
                   aria-label={accel ? "延长加速 5 分钟" : "开启加速模式"}
                   className={cn(
-                    "inline-flex items-center justify-center gap-1 h-7 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center h-7 w-7 rounded-lg border text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     accel
                       ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
                       : "border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400",
@@ -617,20 +619,11 @@ export function TaskCenterPage() {
                     !engineActive
                       ? "调度器未运行——先「启动调度器」再加速"
                       : accel
-                        ? "点击延长 5 分钟加速；所有任务处理完或到时后自动解除"
+                        ? `加速中${accelRemainingMs != null ? `，剩余 ${Math.ceil(accelRemainingMs / 1000)} 秒` : ""}；点击延长 5 分钟`
                         : "开启加速模式，以更快速度处理积压任务"
                   }
                 >
-                  {accel ? (
-                    <>
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                      {accelRemainingMs != null
-                        ? `加速 · ${Math.ceil(accelRemainingMs / 1000)}s`
-                        : "加速中"}
-                    </>
-                  ) : (
-                    "加速"
-                  )}
+                  <span aria-hidden="true" className={accel ? "animate-pulse" : undefined}>⚡</span>
                 </button>
               </div>
             </div>
