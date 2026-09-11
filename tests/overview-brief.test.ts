@@ -39,6 +39,12 @@ assert(
   briefSuggestionId("a", "keywords", "b") === briefSuggestionId("a", "keywords", "b"),
   "parse: id is stable",
 );
+const deduped = parseBriefSuggestions(JSON.stringify({ suggestions: [
+  { title: "处理 night walk 下滑", reason: "下降 7 位", action: "trend", target: "night walk" },
+  { title: "复盘 night walk", reason: "从 5 到 12", action: "trend", target: "night walk" },
+  { title: "补齐发布文案", reason: "3/8", action: "release", target: "v1.2.0" },
+] }));
+assert(deduped.length === 2 && deduped[1].action === "release", "parse: duplicate actions for the same target are merged");
 
 // 2. buildBriefMessages
 const input: any = {
@@ -58,6 +64,7 @@ const joined = messages.map((m) => m.content).join("\n");
 assert(joined.includes("GloWalk") && joined.includes("night walk") && joined.includes("v1.2.0"), "buildBriefMessages: context embedded");
 assert(messages[0].role === "system", "buildBriefMessages: system prompt first");
 assert(joined.includes("detectedIssues") && joined.includes("优先处理 high"), "buildBriefMessages: deterministic issues drive prioritization");
+assert(joined.includes("不要复述这些状态") && joined.includes("不同的决策"), "buildBriefMessages: avoids dashboard repetition and fragmented advice");
 
 // 4. buildBriefMessages with feedback themes + competitor deltas
 const themedInput: any = {
@@ -115,7 +122,7 @@ void (async () => {
   const generated = await generateOverviewBrief(stubProvider, input);
   assert(generated.length === 3, "generate: returns parsed suggestions");
   assert(captured.opts.responseFormat === "json_object", "generate: requests json_object");
-  assert(captured.opts.maxTokens === 8000, "generate: token cap 8000");
+  assert(captured.opts.maxTokens === 2400, "generate: concise output token cap");
 
   if (errors === 0) console.log("\nAll overview-brief tests passed ✅");
   else { console.error(`\n${errors} test(s) failed ❌`); process.exit(1); }

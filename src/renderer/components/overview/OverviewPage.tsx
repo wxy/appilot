@@ -17,27 +17,6 @@ import type {
   SubmissionDraftRow,
 } from "./overviewData";
 
-interface BriefDiagnosticOverview {
-  coverage: {
-    tracked: number;
-    ranked: number;
-    top10: number;
-    paused: number;
-  };
-  facts: string[];
-  anomalies: string[];
-  limitations: string[];
-  issues: {
-    id: string;
-    category: string;
-    severity: "high" | "medium" | "low";
-    title: string;
-    evidence: string;
-    action: "keywords" | "release" | "trend";
-    target: string | null;
-  }[];
-};
-
 interface BriefSessionExchange {
   suggestionId: string | null;
   question: string;
@@ -103,14 +82,12 @@ export function OverviewPage() {
     suggestions: BriefSuggestion[];
     progress: { chars: number; phase: "reasoning" | "content" } | null;
     error: string;
-    diagnostic: BriefDiagnosticOverview | null;
     exchanges: BriefSessionExchange[];
   }>({
     status: "idle",
     suggestions: [],
     progress: null,
     error: "",
-    diagnostic: null,
     exchanges: [],
   });
 
@@ -125,7 +102,6 @@ export function OverviewPage() {
           suggestions: session.suggestions,
           progress: null,
           error: "",
-          diagnostic: session.rankDiagnostic || null,
           exchanges: session.exchanges || [],
         });
       })
@@ -406,7 +382,6 @@ export function OverviewPage() {
       suggestions: [],
       progress: null,
       error: "",
-      diagnostic: null,
       exchanges: [],
     });
     try {
@@ -419,7 +394,6 @@ export function OverviewPage() {
         suggestions: result?.suggestions || [],
         progress: null,
         error: "",
-        diagnostic: result?.rankDiagnostic || null,
         exchanges: [],
       });
     } catch (err: any) {
@@ -428,7 +402,6 @@ export function OverviewPage() {
         suggestions: [],
         progress: null,
         error: err?.message || "生成失败",
-        diagnostic: null,
         exchanges: [],
       });
     }

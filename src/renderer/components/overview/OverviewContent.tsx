@@ -42,7 +42,7 @@
  * 注入，repo 指标经 repoMetrics、② 文案行经 drafts、GitHub 活跃经 activityData
  * 注入；DSH 缺数据传 null/空即可（本组件不调用 window）。
  */
-import { useEffect, useState } from "react";
+import { memo, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -108,27 +108,6 @@ export interface StoreReviewSummary {
   lastSyncedAt: string | null;
 }
 
-type BriefDiagnosticOverview = {
-  coverage: {
-    tracked: number;
-    ranked: number;
-    top10: number;
-    paused: number;
-  };
-  facts: string[];
-  anomalies: string[];
-  limitations: string[];
-  issues: {
-    id: string;
-    category: string;
-    severity: "high" | "medium" | "low";
-    title: string;
-    evidence: string;
-    action: "keywords" | "release" | "trend";
-    target: string | null;
-  }[];
-};
-
 type BriefConversationEntry = {
   question: string;
   answer: string;
@@ -169,7 +148,6 @@ export interface OverviewContentProps {
     suggestions: BriefSuggestion[];
     progress: { chars: number; phase: "reasoning" | "content" } | null;
     error: string;
-    diagnostic: BriefDiagnosticOverview | null;
     exchanges: BriefSessionExchange[];
   };
   /** 默认 react-router Link；DSH 侧传入无路由依赖的实现。 */
@@ -486,6 +464,76 @@ function compareVersion(a: string, b: string): number {
   return 0;
 }
 
+const BriefQuestionThread = memo(function BriefQuestionThread({
+  suggestion,
+  initialEntries,
+  onAsk,
+}: {
+  suggestion: BriefSuggestion;
+  initialEntries: BriefConversationEntry[];
+  onAsk: (suggestion: BriefSuggestion, question: string) => Promise<{ answer: string }>;
+}) {
+  const [draft, setDraft] = useState("");
+  const [entries, setEntries] = useState(initialEntries);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    const question = draft.trim();
+    if (question.length < 2 || loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await onAsk(suggestion, question);
+      const answer = result.answer.trim();
+      if (!answer) throw new Error("AI 未返回内容，请稍后重试");
+      setEntries((current) => [...current, { question, answer }]);
+      setDraft("");
+    } catch (err: any) {
+      setError(err?.message || "追问失败，请稍后重试");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="ml-7 mt-2">
+      {entries.map((entry, turnIndex) => (
+        <div key={`${suggestion.id}-${turnIndex}`} className="mb-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 px-3 py-2 text-xs">
+          <p className="font-medium text-zinc-600 dark:text-zinc-300">你：{entry.question}</p>
+          <p className="mt-1 whitespace-pre-wrap leading-relaxed text-zinc-500 dark:text-zinc-400">
+            {entry.answer}
+          </p>
+        </div>
+      ))}
+      <div className="flex items-end gap-2">
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+          maxLength={1000}
+          rows={1}
+          placeholder="追问具体做法、优先级或验证标准…"
+          className="min-h-8 flex-1 resize-y rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none transition-colors placeholder:text-zinc-400 focus:border-amber-400 dark:focus:border-amber-500"
+        />
+        <button
+          onClick={() => void submit()}
+          disabled={draft.trim().length < 2 || loading}
+          className={cn(btnSmSecondary, "!h-8 !px-3 disabled:cursor-not-allowed disabled:opacity-50")}
+        >
+          {loading ? "思考中…" : "追问"}
+        </button>
+      </div>
+      {error && <p className="mt-1.5 text-[11px] text-red-500 dark:text-red-400">{error}</p>}
+    </div>
+  );
+});
+
 export function OverviewContent(props: OverviewContentProps) {
   const {
     project,
@@ -511,34 +559,6 @@ export function OverviewContent(props: OverviewContentProps) {
     onBriefAction,
     onAskBriefQuestion,
   } = props;
-
-  const [briefQuestionMap, setBriefQuestionMap] = useState<Record<string, string>>({});
-  const [briefConversations, setBriefConversations] = useState<
-    Record<string, BriefConversationEntry[]>
-  >({});
-  const [briefQuestionLoading, setBriefQuestionLoading] = useState<Record<string, boolean>>({});
-  const [briefQuestionErrors, setBriefQuestionErrors] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    if (briefState.status !== "loading") return;
-    setBriefQuestionMap({});
-    setBriefConversations({});
-    setBriefQuestionLoading({});
-    setBriefQuestionErrors({});
-  }, [briefState.status]);
-
-  useEffect(() => {
-    if (briefState.status !== "ready" || briefState.exchanges.length === 0) return;
-    const restored: Record<string, BriefConversationEntry[]> = {};
-    for (const exchange of briefState.exchanges) {
-      if (!exchange.suggestionId) continue;
-      restored[exchange.suggestionId] = [
-        ...(restored[exchange.suggestionId] || []),
-        { question: exchange.question, answer: exchange.answer },
-      ];
-    }
-    setBriefConversations(restored);
-  }, [briefState.status, briefState.exchanges]);
 
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目，副驾驶帮你看路。" />;
@@ -775,33 +795,6 @@ export function OverviewContent(props: OverviewContentProps) {
   const showRuleSignals =
     briefState.status === "idle" || briefState.status === "error";
   const visibleBriefItems = showRuleSignals ? ruleSignals : briefSuggestions;
-  const briefDiagnostic = briefState.diagnostic;
-
-  const submitBriefQuestion = async (suggestion: BriefSuggestion) => {
-    const question = (briefQuestionMap[suggestion.id] || "").trim();
-    if (question.length < 2 || briefQuestionLoading[suggestion.id]) return;
-    setBriefQuestionLoading((current) => ({ ...current, [suggestion.id]: true }));
-    setBriefQuestionErrors((current) => ({ ...current, [suggestion.id]: "" }));
-    try {
-      const result = await onAskBriefQuestion(suggestion, question);
-      if (!result.answer.trim()) throw new Error("AI 未返回内容，请稍后重试");
-      setBriefConversations((current) => ({
-        ...current,
-        [suggestion.id]: [
-          ...(current[suggestion.id] || []),
-          { question, answer: result.answer.trim() },
-        ],
-      }));
-      setBriefQuestionMap((current) => ({ ...current, [suggestion.id]: "" }));
-    } catch (err: any) {
-      setBriefQuestionErrors((current) => ({
-        ...current,
-        [suggestion.id]: err?.message || "追问失败，请稍后重试",
-      }));
-    } finally {
-      setBriefQuestionLoading((current) => ({ ...current, [suggestion.id]: false }));
-    }
-  };
 
   const hasCompetitorData = Boolean(competitorSummary) && competitorEntries.length > 0;
 
@@ -1038,7 +1031,12 @@ export function OverviewContent(props: OverviewContentProps) {
       {/* Copilot brief */}
       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-4">
         <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">副驾驶简报</h3>
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">副驾驶简报</h3>
+            <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+              只保留当前最值得处理的行动
+            </p>
+          </div>
           {briefState.status === "loading" ? (
             <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
               {briefState.progress?.phase === "content" ? "生成中" : "思考中"} · {briefState.progress?.chars ?? 0} 字
@@ -1049,93 +1047,6 @@ export function OverviewContent(props: OverviewContentProps) {
             </button>
           )}
         </div>
-        {briefDiagnostic && (
-          <div className="px-5 pt-4 pb-3 border-b border-zinc-100 dark:border-zinc-800">
-            <p className={cn("text-xs", "text-zinc-400 dark:text-zinc-500")}>诊断摘要</p>
-            <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
-              <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-800/30 px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">排名覆盖</p>
-                <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                  {briefDiagnostic.coverage.ranked}/{briefDiagnostic.coverage.tracked}
-                </p>
-                <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">近14天有快照</p>
-              </div>
-              <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-800/30 px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Top10 关键词</p>
-                <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                  {briefDiagnostic.coverage.top10}
-                </p>
-                <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">当前可观察窗口内</p>
-              </div>
-              <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-800/30 px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">暂停关键词</p>
-                <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                  {briefDiagnostic.coverage.paused}
-                </p>
-                <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">当前未纳入建议池</p>
-              </div>
-            </div>
-            {(briefDiagnostic.issues || []).length > 0 && (
-              <div className="mt-3 space-y-1.5">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                  已确认问题 · {briefDiagnostic.issues.length}
-                </p>
-                {briefDiagnostic.issues.slice(0, 3).map((issue) => (
-                  <div
-                    key={issue.id}
-                    className="flex items-start gap-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 px-2.5 py-2"
-                  >
-                    <span
-                      className={cn(
-                        "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
-                        issue.severity === "high"
-                          ? "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400"
-                          : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
-                      )}
-                    >
-                      {issue.severity === "high" ? "高" : "中"}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
-                        {issue.title}
-                      </p>
-                      <p className="mt-0.5 text-[10px] leading-relaxed text-zinc-400 dark:text-zinc-500">
-                        {issue.evidence}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {(briefDiagnostic.facts.length > 0 || briefDiagnostic.anomalies.length > 0) && (
-              <div className="mt-2 space-y-2">
-                {briefDiagnostic.facts.length > 0 && (
-                  <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                    {briefDiagnostic.facts[0]}
-                  </p>
-                )}
-                {briefDiagnostic.facts[1] && (
-                  <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                    {briefDiagnostic.facts[1]}
-                  </p>
-                )}
-                {(briefDiagnostic.issues || []).length === 0 && briefDiagnostic.anomalies.length > 0 && (
-                  <p className="text-[11px] leading-relaxed text-amber-600 dark:text-amber-300">
-                    异常：{briefDiagnostic.anomalies[0]}
-                  </p>
-                )}
-                {briefDiagnostic.limitations.length > 0 && (
-                  <p className="text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
-                    限制：{briefDiagnostic.limitations.join("；")}
-                  </p>
-                )}
-              </div>
-            )}
-            <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-              可针对每条建议继续追问，副驾驶会保留当前会话最近几轮上下文。
-            </p>
-          </div>
-        )}
         {briefState.status === "error" && (
           <p className="px-5 py-2 text-[11px] text-red-500 dark:text-red-400 border-b border-zinc-100 dark:border-zinc-800">
             {briefState.error}（已显示规则信号）
@@ -1201,47 +1112,13 @@ export function OverviewContent(props: OverviewContentProps) {
                   </button>
                 </div>
                 {briefState.status === "ready" && (
-                  <div className="ml-7 mt-2">
-                    {(briefConversations[item.id] || []).map((entry, turnIndex) => (
-                      <div key={`${item.id}-${turnIndex}`} className="mb-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 px-3 py-2 text-xs">
-                        <p className="font-medium text-zinc-600 dark:text-zinc-300">你：{entry.question}</p>
-                        <p className="mt-1 whitespace-pre-wrap leading-relaxed text-zinc-500 dark:text-zinc-400">
-                          {entry.answer}
-                        </p>
-                      </div>
-                    ))}
-                    <div className="flex items-end gap-2">
-                      <textarea
-                        value={briefQuestionMap[item.id] || ""}
-                        onChange={(event) => setBriefQuestionMap((current) => ({
-                          ...current,
-                          [item.id]: event.target.value,
-                        }))}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" && !event.shiftKey) {
-                            event.preventDefault();
-                            void submitBriefQuestion(item);
-                          }
-                        }}
-                        maxLength={1000}
-                        rows={1}
-                        placeholder="追问具体做法、优先级或验证标准…"
-                        className="min-h-8 flex-1 resize-y rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none transition-colors placeholder:text-zinc-400 focus:border-amber-400 dark:focus:border-amber-500"
-                      />
-                      <button
-                        onClick={() => void submitBriefQuestion(item)}
-                        disabled={(briefQuestionMap[item.id] || "").trim().length < 2 || briefQuestionLoading[item.id]}
-                        className={cn(btnSmSecondary, "!h-8 !px-3 disabled:cursor-not-allowed disabled:opacity-50")}
-                      >
-                        {briefQuestionLoading[item.id] ? "思考中…" : "追问"}
-                      </button>
-                    </div>
-                    {briefQuestionErrors[item.id] && (
-                      <p className="mt-1.5 text-[11px] text-red-500 dark:text-red-400">
-                        {briefQuestionErrors[item.id]}
-                      </p>
-                    )}
-                  </div>
+                  <BriefQuestionThread
+                    suggestion={item}
+                    initialEntries={briefState.exchanges
+                      .filter((exchange) => exchange.suggestionId === item.id)
+                      .map(({ question, answer }) => ({ question, answer }))}
+                    onAsk={onAskBriefQuestion}
+                  />
                 )}
               </li>
             ))}

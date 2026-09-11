@@ -74,29 +74,12 @@ type BriefSessionExchange = {
   at: string;
 };
 
-type BriefDiagnostic = {
-  coverage: { tracked: number; ranked: number; top10: number; paused: number };
-  facts: string[];
-  anomalies: string[];
-  limitations: string[];
-  issues: {
-    id: string;
-    category: string;
-    severity: "high" | "medium" | "low";
-    title: string;
-    evidence: string;
-    action: "keywords" | "release" | "trend";
-    target: string | null;
-  }[];
-};
-
 type BriefQuestionSession = {
   projectId: string;
   productId: string;
   generatedAt: string;
   expiresAt: number;
   briefContext: string;
-  diagnostic: BriefDiagnostic;
   suggestions: Pick<BriefSuggestion, "id" | "title" | "reason" | "action" | "target">[];
   exchanges: BriefSessionExchange[];
 };
@@ -221,7 +204,6 @@ async function buildOverviewBriefPayload(
   product: any,
 ): Promise<{
   input: any;
-  rankDiagnostic: BriefDiagnostic;
   briefContext: string;
 }> {
   const { buildBriefInput } = await import("@appilot-labs/appilot-core/overview-summary");
@@ -276,29 +258,7 @@ async function buildOverviewBriefPayload(
     profile,
   });
 
-  const rankDiagnostic = {
-    coverage: {
-      tracked: input.keywordStats.tracked,
-      ranked: input.keywordStats.ranked,
-      top10: input.keywordStats.top10,
-      paused: input.keywordStats.paused,
-    },
-    facts: [
-      `已采集 ${input.keywordStats.tracked} 个跟踪关键词；其中 ${input.keywordStats.ranked} 个有近 14 天内排名快照。`,
-      `在采样窗口内，Top10 关键词覆盖：${input.keywordStats.top10} 个。`,
-    ],
-    anomalies: [
-      ...input.detectedIssues.map((issue: any) => issue.evidence),
-    ],
-    limitations: [
-      "建议仅基于最近 14 天的排名快照与已存在的历史反馈进行推断。",
-      "未覆盖未跟踪关键词与外部市场波动导致的短期异常。",
-      ...(!releaseResult.latest ? ["未检测到最近发布草稿，无法检查发布完整度。"] : []),
-    ],
-    issues: input.detectedIssues,
-  };
-
-  return { input, rankDiagnostic, briefContext: buildBriefContextDigest(input) };
+  return { input, briefContext: buildBriefContextDigest(input) };
 }
 
 export function registerProjectsHandlers(): void {
@@ -2001,7 +1961,7 @@ export function registerProjectsHandlers(): void {
 
     const provider = await createAiProvider(s);
     const { generateOverviewBrief } = await import("@appilot-labs/appilot-core/ai/overview-brief");
-    const { input, rankDiagnostic, briefContext } =
+    const { input, briefContext } =
       await buildOverviewBriefPayload(s, project, product);
     if (!input) throw new Error("生成简报输入失败");
 
@@ -2022,7 +1982,6 @@ export function registerProjectsHandlers(): void {
       generatedAt: new Date().toISOString(),
       expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
       briefContext,
-      diagnostic: rankDiagnostic,
       suggestions: suggestions.map((item: any) => ({
         id: item.id,
         title: item.title,
@@ -2035,7 +1994,6 @@ export function registerProjectsHandlers(): void {
 
     return {
       suggestions,
-      rankDiagnostic,
       generatedAt: new Date().toISOString(),
     };
   });
@@ -2054,7 +2012,6 @@ export function registerProjectsHandlers(): void {
       if (!session) return null;
       return {
         suggestions: session.suggestions,
-        rankDiagnostic: session.diagnostic,
         generatedAt: session.generatedAt,
         exchanges: session.exchanges,
       };
@@ -2084,7 +2041,7 @@ export function registerProjectsHandlers(): void {
       const key = briefSessionKey(project.id, product.id);
       let session = briefQuestionSessions.get(key);
       if (!session || session.expiresAt <= Date.now()) {
-        const { briefContext, rankDiagnostic } =
+        const { briefContext } =
           await buildOverviewBriefPayload(s, project, product);
         session = {
           projectId: project.id,
@@ -2092,7 +2049,6 @@ export function registerProjectsHandlers(): void {
           generatedAt: new Date().toISOString(),
           expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
           briefContext,
-          diagnostic: rankDiagnostic,
           suggestions: [],
           exchanges: [],
         };
