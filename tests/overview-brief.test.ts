@@ -41,6 +41,10 @@ assert(
   "parse: keyword mutation without language is rejected",
 );
 assert(
+  normalizeBriefProposedActions([{ kind: "keyword.open", label: "查看", keyword: "night walk" }]).length === 0,
+  "parse: specific keyword view without language is rejected",
+);
+assert(
   normalizeBriefFollowupResponse({ answer: "**结论**", proposedActions: [{ kind: "trend.open", label: "查看趋势" }] }).proposedActions[0]?.kind === "trend.open",
   "parse: follow-up markdown answer and actions",
 );

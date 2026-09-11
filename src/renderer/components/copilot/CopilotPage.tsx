@@ -1,12 +1,12 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
   BriefProposedAction,
   BriefSuggestion,
 } from "@appilot-labs/appilot-core/ai/overview-brief";
-import { useProject } from "../../stores/project";
+import { useProject, type Project, type StoreProduct } from "../../stores/project";
 import { formatHumanTime, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
@@ -36,6 +36,15 @@ type Session = {
   actionRuns: ActionRun[];
   dismissedSuggestionIds: string[];
   supersededSuggestionIds: string[];
+};
+
+type TaskFeedback = {
+  actionId: string;
+  action: BriefProposedAction;
+  label: string;
+  state: "running" | "success" | "failed";
+  completed: number;
+  detail: string;
 };
 
 const Markdown = memo(function Markdown({ children }: { children: string }) {
@@ -118,7 +127,7 @@ function fallbackActions(suggestion: BriefSuggestion, language: string | null): 
     kind,
     label: suggestion.action === "release" ? "打开发布" : suggestion.action === "trend" ? "查看趋势" : "查看关键词",
     language,
-    keyword: suggestion.target,
+    keyword: kind === "keyword.open" && !language ? null : suggestion.target,
     storefront: null,
     requiresConfirmation: false,
   }];
@@ -132,9 +141,142 @@ function actionDescription(action: BriefProposedAction): string {
   if (action.kind === "keyword.restore") return `恢复已移除关键词 ${subject}`;
   if (action.kind === "keyword.resume") return `恢复已暂停关键词 ${subject}`;
   if (action.kind === "rank.collect") return `采集 ${action.language || "当前语言"}${store} 的最新排名`;
-  if (action.kind === "keyword.open") return `打开并定位 ${subject || "关键词页面"}`;
-  if (action.kind === "trend.open") return "打开长期效果页面";
-  return "打开发布工作台";
+  if (action.kind === "keyword.open") return `查看 ${subject || "关键词"} 的相关数据`;
+  if (action.kind === "trend.open") return "查看与建议有关的趋势信息";
+  return "查看与建议有关的发布信息";
+}
+
+function fullActionPath(action: BriefProposedAction): string {
+  if (action.kind === "keyword.open") {
+    const params = new URLSearchParams();
+    if (action.language) params.set("lang", action.language);
+    if (action.keyword) params.set("keyword", action.keyword);
+    return `/keywords${params.size ? `?${params.toString()}` : ""}`;
+  }
+  if (action.kind === "trend.open") return "/trend";
+  return "/release";
+}
+
+function ActionDetailSheet({
+  action,
+  reference,
+  suggestion,
+  project,
+  product,
+  onClose,
+  onOpenFull,
+}: {
+  action: BriefProposedAction;
+  reference: string;
+  suggestion: BriefSuggestion | null;
+  project: Project;
+  product: StoreProduct;
+  onClose: () => void;
+  onOpenFull: () => void;
+}) {
+  const tracked = project.trackedKeywords.find((item) =>
+    item.language === action.language && item.keyword === action.keyword,
+  );
+  const removed = project.removedKeywords.find((item) =>
+    item.language === action.language && item.keyword === action.keyword,
+  );
+  const rankRows = [...product.rankSnapshots]
+    .filter((item) =>
+      (!action.language || item.language === action.language)
+      && (!action.keyword || item.keyword === action.keyword)
+      && (!action.storefront || item.storefront === action.storefront),
+    )
+    .sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime());
+  const latestByStore = rankRows.filter(
+    (item, index) => rankRows.findIndex((candidate) => candidate.storefront === item.storefront) === index,
+  ).slice(0, 8);
+  const isKeyword = action.kind === "keyword.open";
+  const isTrend = action.kind === "trend.open";
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-zinc-950/25 backdrop-blur-[1px]" onMouseDown={onClose}>
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${reference} 相关信息`}
+        className="flex h-full w-full max-w-lg flex-col border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start gap-3 border-b border-zinc-200 dark:border-zinc-800 px-5 py-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">{reference} · 相关信息</p>
+            <h2 className="mt-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">{action.label}</h2>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{actionDescription(action)}</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800">关闭</button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          {suggestion && (
+            <div className="mb-5 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 px-4 py-3">
+              <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">建议依据</p>
+              <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-300"><Markdown>{suggestion.reason}</Markdown></div>
+            </div>
+          )}
+
+          {isKeyword ? (
+            <div className="space-y-5">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
+                  <p className="text-[10px] text-zinc-400">关键词</p>
+                  <p className="mt-1 text-sm font-medium text-zinc-800 dark:text-zinc-100">{action.keyword || "未指定"}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{tracked?.translation || removed?.translation || "暂无译文"}</p>
+                </div>
+                <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
+                  <p className="text-[10px] text-zinc-400">语言与状态</p>
+                  <p className="mt-1 text-sm font-medium text-zinc-800 dark:text-zinc-100">{action.language || "未指定语言"}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{tracked ? (tracked.status === "paused" ? "已暂停" : "跟踪中") : removed ? "已移除，可恢复" : "当前词库中未找到"}</p>
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-medium text-zinc-700 dark:text-zinc-200">最新商店排名</p>
+                {latestByStore.length ? (
+                  <div className="divide-y divide-zinc-100 dark:divide-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                    {latestByStore.map((row) => (
+                      <div key={row.storefront} className="flex items-center gap-3 px-3 py-2 text-xs">
+                        <span className="w-12 font-medium uppercase text-zinc-600 dark:text-zinc-300">{row.storefront}</span>
+                        <span className="flex-1 text-zinc-500">{formatHumanTime(row.checkedAt)}采集</span>
+                        <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-100">{row.rank ? `#${row.rank}` : "未进入前 200"}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : <p className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 px-3 py-5 text-center text-xs text-zinc-400">没有与该语言和关键词精确匹配的排名快照</p>}
+              </div>
+              {(tracked?.rationale || removed?.rationale) && (
+                <div>
+                  <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">收录依据</p>
+                  <p className="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">{tracked?.rationale || removed?.rationale}</p>
+                </div>
+              )}
+            </div>
+          ) : isTrend ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
+                <p className="text-[10px] text-zinc-400">历史快照</p>
+                <p className="mt-1 text-lg font-semibold text-zinc-800 dark:text-zinc-100">{product.rankSnapshots.length}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
+                <p className="text-[10px] text-zinc-400">覆盖关键词</p>
+                <p className="mt-1 text-lg font-semibold text-zinc-800 dark:text-zinc-100">{new Set(product.rankSnapshots.map((item) => `${item.language}\u0000${item.keyword}`)).size}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-4 text-sm leading-6 text-zinc-500 dark:text-zinc-400">发布包含版本、文案、检查项和商店状态等多个关联区域。这里保留建议依据，具体修改在完整发布工作台中进行。</p>
+          )}
+        </div>
+
+        <footer className="flex items-center justify-between gap-3 border-t border-zinc-200 dark:border-zinc-800 px-5 py-4">
+          <p className="text-[11px] text-zinc-400">详情层只读取当前动作所需数据</p>
+          <button onClick={onOpenFull} className={btnSmPrimary}>打开完整页面</button>
+        </footer>
+      </section>
+    </div>
+  );
 }
 
 export function CopilotPage() {
@@ -149,6 +291,7 @@ export function CopilotPage() {
     collectRanks,
   } = useProject();
   const navigate = useNavigate();
+  const location = useLocation();
   const project = projects.find((item) => item.id === currentProjectId) || null;
   const product = project?.storeProducts.find((item) => item.id === currentProductId)
     || project?.storeProducts[0]
@@ -159,7 +302,9 @@ export function CopilotPage() {
   const [progress, setProgress] = useState<{ chars: number; phase: string } | null>(null);
   const [asking, setAsking] = useState(false);
   const [pendingAction, setPendingAction] = useState<BriefProposedAction | null>(null);
+  const [detailAction, setDetailAction] = useState<BriefProposedAction | null>(null);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
+  const [taskFeedback, setTaskFeedback] = useState<TaskFeedback | null>(null);
   const [error, setError] = useState("");
 
   const loadSession = async () => {
@@ -177,14 +322,31 @@ export function CopilotPage() {
 
   useEffect(() => {
     setSession(null);
-    setSelectedId("general");
+    setSelectedId(new URLSearchParams(location.search).get("suggestion") || "general");
     setError("");
     void loadSession().catch(() => undefined);
-  }, [project?.id, product?.id]);
+  }, [project?.id, product?.id, location.search]);
 
   useEffect(() => {
     const off = (window as any).appilot?.projects?.onBriefProgress?.((value: any) => {
       setProgress(value || null);
+    });
+    return () => off?.();
+  }, []);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onRankProgress?.((value: any) => {
+      if (!value?.snapshot) return;
+      setTaskFeedback((current) => current?.state === "running"
+        && current.action.kind === "rank.collect"
+        && current.action.language === value.snapshot.language
+        && (!current.action.storefront || current.action.storefront === value.snapshot.storefront)
+        ? {
+            ...current,
+            completed: current.completed + 1,
+            detail: `已收到 ${current.completed + 1} 个排名结果，仍在继续采集…`,
+          }
+        : current);
     });
     return () => off?.();
   }, []);
@@ -202,13 +364,21 @@ export function CopilotPage() {
     () => new Set(session?.supersededSuggestionIds || []),
     [session],
   );
+  const suggestionNumberById = useMemo(
+    () => new Map((session?.suggestions || []).map((item, index) => [item.id, index + 1])),
+    [session],
+  );
   const selectedSuggestion = session?.suggestions.find((item) => item.id === selectedId) || null;
+  const selectedSuggestionNumber = selectedSuggestion
+    ? suggestionNumberById.get(selectedSuggestion.id) || 0
+    : 0;
   const visibleExchanges = (session?.exchanges || []).filter(
     (item) => item.suggestionId === (selectedSuggestion?.id || null),
   );
-  const activeKeyword = selectedSuggestion?.target
-    ? project?.trackedKeywords.find((item) => item.keyword === selectedSuggestion.target)
-    : null;
+  const matchingKeywords = selectedSuggestion?.target
+    ? project?.trackedKeywords.filter((item) => item.keyword === selectedSuggestion.target) || []
+    : [];
+  const activeKeyword = matchingKeywords.length === 1 ? matchingKeywords[0] : null;
   const proposedActions = useMemo(() => {
     const items = [
       ...(selectedSuggestion ? fallbackActions(selectedSuggestion, activeKeyword?.language || null) : []),
@@ -216,6 +386,12 @@ export function CopilotPage() {
     ];
     return [...new Map(items.map((item) => [item.id, item])).values()];
   }, [selectedSuggestion, activeKeyword?.language, visibleExchanges]);
+  const actionReference = (action: BriefProposedAction) => {
+    const index = proposedActions.findIndex((item) => item.id === action.id);
+    return selectedSuggestionNumber && index >= 0
+      ? `动作 ${selectedSuggestionNumber}.${index + 1}`
+      : "建议动作";
+  };
 
   const generate = async () => {
     if (!project || !product || loading) return;
@@ -272,20 +448,27 @@ export function CopilotPage() {
 
   const execute = async (action: BriefProposedAction) => {
     if (!project || !product || runningActionId) return;
+    if (action.kind.endsWith(".open")) {
+      setDetailAction(action);
+      return;
+    }
     if (action.requiresConfirmation && pendingAction?.id !== action.id) {
       setPendingAction(action);
       return;
     }
+    setPendingAction(null);
     setRunningActionId(action.id);
+    setTaskFeedback({
+      actionId: action.id,
+      action,
+      label: action.label,
+      state: "running",
+      completed: 0,
+      detail: action.kind === "rank.collect" ? "任务已提交，正在接收排名结果…" : "请求已提交，正在执行…",
+    });
     setError("");
     try {
-      if (action.kind === "keyword.open") {
-        navigate(action.keyword ? `/keywords?keyword=${encodeURIComponent(action.keyword)}` : "/keywords");
-      } else if (action.kind === "trend.open") {
-        navigate("/trend");
-      } else if (action.kind === "release.open") {
-        navigate("/release");
-      } else if (action.kind === "keyword.pause" && action.language && action.keyword) {
+      if (action.kind === "keyword.pause" && action.language && action.keyword) {
         await pauseTrackedKeyword(product.id, action.language, action.keyword);
       } else if (action.kind === "keyword.remove" && action.language && action.keyword) {
         await removeTrackedKeyword(product.id, action.language, action.keyword);
@@ -298,17 +481,22 @@ export function CopilotPage() {
       } else {
         throw new Error("动作参数不完整，无法执行");
       }
-      setPendingAction(null);
       try {
         await recordExecution(action, "executed", actionDescription(action));
       } catch {
         setError("动作已完成，但执行记录保存失败");
       }
       await loadSession();
+      setTaskFeedback((current) => current?.actionId === action.id
+        ? { ...current, state: "success", detail: current.completed ? `已完成，共收到 ${current.completed} 个排名结果` : "动作已完成" }
+        : current);
     } catch (err: any) {
       const message = err?.message || "执行失败";
       await recordExecution(action, "failed", message).catch(() => undefined);
       setError(message);
+      setTaskFeedback((current) => current?.actionId === action.id
+        ? { ...current, state: "failed", detail: message }
+        : current);
       await loadSession().catch(() => undefined);
     } finally {
       setRunningActionId(null);
@@ -376,6 +564,27 @@ export function CopilotPage() {
         </button>
       </div>
 
+      {taskFeedback && (
+        <div className={cn(
+          "mb-4 flex items-center gap-3 rounded-xl border px-4 py-3 text-sm",
+          taskFeedback.state === "running"
+            ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"
+            : taskFeedback.state === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
+              : "border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300",
+        )}>
+          <span className={cn(
+            "h-2.5 w-2.5 shrink-0 rounded-full",
+            taskFeedback.state === "running" ? "animate-pulse bg-amber-500" : taskFeedback.state === "success" ? "bg-emerald-500" : "bg-red-500",
+          )} />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">{taskFeedback.state === "running" ? `正在执行：${taskFeedback.label}` : taskFeedback.state === "success" ? `已完成：${taskFeedback.label}` : `执行失败：${taskFeedback.label}`}</p>
+            <p className="mt-0.5 text-xs opacity-75">{taskFeedback.detail}</p>
+          </div>
+          {taskFeedback.state !== "running" && <button onClick={() => setTaskFeedback(null)} className="text-xs opacity-60 hover:opacity-100">关闭</button>}
+        </div>
+      )}
+
       <div className="grid min-h-0 flex-1 grid-cols-[280px_minmax(0,1fr)] overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm">
         <aside className="overflow-y-auto border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/30 p-2">
           <button
@@ -388,7 +597,7 @@ export function CopilotPage() {
             <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">总体分析</p>
             <p className="mt-0.5 text-[11px] text-zinc-400">跨工作项继续讨论</p>
           </button>
-          {(session?.suggestions || []).map((suggestion) => {
+          {(session?.suggestions || []).map((suggestion, suggestionIndex) => {
             const completed = completedSuggestionIds.has(suggestion.id);
             const dismissed = dismissedSuggestionIds.has(suggestion.id);
             const superseded = supersededSuggestionIds.has(suggestion.id);
@@ -407,6 +616,7 @@ export function CopilotPage() {
                     completed ? "bg-emerald-500" : dismissed || superseded ? "bg-zinc-300 dark:bg-zinc-600" : "bg-amber-500",
                   )} />
                   <div className="min-w-0">
+                    <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">建议 {suggestionIndex + 1}</p>
                     <p className="line-clamp-2 text-xs font-medium leading-5 text-zinc-700 dark:text-zinc-200">{suggestion.title}</p>
                     <p className="mt-1 text-[10px] text-zinc-400">{completed ? "已验证" : dismissed ? "已忽略" : superseded ? "历史建议" : "待决策"}</p>
                   </div>
@@ -429,7 +639,7 @@ export function CopilotPage() {
                 <div className="mb-5 border-b border-zinc-100 dark:border-zinc-800 pb-4">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <p className="text-[10px] font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">工作项</p>
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">建议 {selectedSuggestionNumber}</p>
                       <h2 className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">{selectedSuggestion.title}</h2>
                     </div>
                     {!completedSuggestionIds.has(selectedSuggestion.id) && !dismissedSuggestionIds.has(selectedSuggestion.id) && (
@@ -442,16 +652,19 @@ export function CopilotPage() {
                   <div className="mb-5 rounded-xl border border-amber-200/70 dark:border-amber-500/20 bg-amber-50/50 dark:bg-amber-500/5 p-3">
                     <p className="mb-2 text-[11px] font-medium text-amber-700 dark:text-amber-400">可执行动作</p>
                     <div className="space-y-2">
-                      {proposedActions.map((action) => {
+                      {proposedActions.map((action, actionIndex) => {
                         const executed = !action.kind.endsWith(".open") && (session?.actionRuns || []).some((run) => run.action.id === action.id && run.status === "executed");
                         const confirming = pendingAction?.id === action.id;
                         return (
                           <div key={action.id} className="flex items-center gap-3 rounded-lg bg-white/80 dark:bg-zinc-900/70 px-3 py-2">
                             <div className="min-w-0 flex-1">
+                              <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">动作 {selectedSuggestionNumber}.{actionIndex + 1}</p>
                               <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">{action.label}</p>
                               <p className="mt-0.5 truncate text-[10px] text-zinc-400" title={actionDescription(action)}>{actionDescription(action)}</p>
                             </div>
-                            {confirming ? (
+                            {runningActionId === action.id ? (
+                              <button disabled className={cn(btnSmSecondary, "disabled:opacity-60")}>执行中…</button>
+                            ) : confirming ? (
                               <div className="flex items-center gap-1.5">
                                 <span className="text-[10px] text-amber-700 dark:text-amber-400">确认执行？</span>
                                 <button onClick={() => void execute(action)} className={btnSmPrimary}>确认</button>
@@ -463,7 +676,7 @@ export function CopilotPage() {
                                 disabled={executed || runningActionId === action.id}
                                 className={cn(btnSmSecondary, "disabled:opacity-50")}
                               >
-                                {executed ? "已执行" : runningActionId === action.id ? "执行中…" : action.requiresConfirmation ? "预览" : "执行"}
+                                {executed ? "已执行" : action.kind.endsWith(".open") ? "查看" : action.requiresConfirmation ? "预览" : "执行"}
                               </button>
                             )}
                           </div>
@@ -500,6 +713,7 @@ export function CopilotPage() {
                     : "border-red-200 bg-red-50 text-red-600 dark:border-red-500/20 dark:bg-red-500/5 dark:text-red-400",
                 )}>
                   {run.status === "executed" ? (isActionVerified(run) ? "已执行并验证" : "已执行，等待数据验证") : "执行失败"} · {run.message} · {formatHumanTime(run.at)}
+                  <span className="ml-1 opacity-60">({actionReference(run.action)})</span>
                 </div>
               ))}
           </div>
@@ -515,6 +729,29 @@ export function CopilotPage() {
           </div>
         </main>
       </div>
+      {detailAction && (
+        <ActionDetailSheet
+          action={detailAction}
+          reference={actionReference(detailAction)}
+          suggestion={selectedSuggestion}
+          project={project}
+          product={product}
+          onClose={() => setDetailAction(null)}
+          onOpenFull={() => {
+            const returnTo = selectedSuggestion
+              ? `/copilot?suggestion=${encodeURIComponent(selectedSuggestion.id)}`
+              : "/copilot";
+            navigate(fullActionPath(detailAction), {
+              state: {
+                copilotReturn: {
+                  to: returnTo,
+                  label: selectedSuggestionNumber ? `返回建议 ${selectedSuggestionNumber}` : "返回副驾驶",
+                },
+              },
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

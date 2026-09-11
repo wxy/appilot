@@ -2200,16 +2200,34 @@ export function registerProjectsHandlers(): void {
         "你是 Appilot 的运营副驾驶，擅长围绕上文简报给出可执行的中文建议。",
         "请严格基于给定上下文回答，不要编造具体指标或事实；对不确定项明确标注。",
         "上下文中的关键词状态和排名摘要来自 Appilot 数据库。用户询问具体关键词、暂停/删除状态或商店差异时，直接分析这些数据，不要要求用户再次导出或提供 Appilot 已持有的数据。",
+        "用户可以用“建议 2”或“动作 2.1”引用界面编号。请根据下方编号目录理解指代，并在回答中沿用编号。",
         "answer 使用 Markdown，先给结论，再给 2~3 条可执行动作。若动作可由 Appilot 完成，同时返回 proposedActions；允许 kind：keyword.open、keyword.pause、keyword.remove、keyword.restore、keyword.resume、rank.collect、trend.open、release.open。关键词动作必须填写上下文中真实存在的 language 和 keyword。",
         "只输出 JSON：{\"answer\":\"Markdown 回答\",\"proposedActions\":[{\"kind\":\"keyword.open\",\"label\":\"查看关键词\",\"language\":\"en\",\"keyword\":\"night walk\",\"storefront\":\"us\"}]}",
       ];
+      const numberedSuggestionContext = session.suggestions.slice(0, 10).map((suggestion, index) => {
+        const actions = [
+          ...(suggestion.proposedActions || []),
+          ...session.exchanges
+            .filter((exchange) => exchange.suggestionId === suggestion.id)
+            .flatMap((exchange) => exchange.proposedActions || []),
+        ];
+        const uniqueActions = [...new Map(actions.map((action) => [action.id, action])).values()];
+        const actionText = uniqueActions.map((action, actionIndex) =>
+          `动作 ${index + 1}.${actionIndex + 1}=${action.label} [${action.kind}${action.language ? `, ${action.language}` : ""}${action.keyword ? `, ${action.keyword}` : ""}]`,
+        ).join("；");
+        return `建议 ${index + 1}=${suggestion.title}${actionText ? `；${actionText}` : ""}`;
+      }).join("\n");
       const baseContext = [
         `项目/平台：${project.name} / ${product.platform || "unknown"}`,
         session.briefContext,
-      ].join("\n");
+        numberedSuggestionContext ? `界面编号目录：\n${numberedSuggestionContext}` : "",
+      ].filter(Boolean).join("\n");
+      const targetSuggestionNumber = targetSuggestion
+        ? session.suggestions.findIndex((item) => item.id === targetSuggestion.id) + 1
+        : 0;
       const suggestionContext = targetSuggestion
         ? [
-            `追问聚焦到建议：${targetSuggestion.title}`,
+            `追问聚焦到建议 ${targetSuggestionNumber}：${targetSuggestion.title}`,
             `依据：${targetSuggestion.reason}`,
             `建议动作：${targetSuggestion.action}`,
             targetSuggestion.target ? `动作目标：${targetSuggestion.target}` : "",

@@ -253,6 +253,9 @@ function Layout({ children }: { children: React.ReactNode }) {
       ? `${currentProject.name} · ${platformLabel(currentProduct.platform)}`
       : currentProject.name
     : null;
+  const copilotReturn = (location.state as any)?.copilotReturn as
+    | { to?: string; label?: string }
+    | undefined;
 
   return (
     <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950">
@@ -331,6 +334,17 @@ function Layout({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 min-h-0">
         {sidebarOpen && <ProjectSidebar />}
         <main className="flex-1 overflow-auto min-w-0">
+          {copilotReturn && location.pathname !== "/copilot" && (
+            <div className="sticky top-0 z-20 flex h-10 items-center gap-3 border-b border-amber-200/70 dark:border-amber-500/20 bg-amber-50/95 dark:bg-zinc-900/95 px-4 backdrop-blur">
+              <Link
+                to={copilotReturn.to || "/copilot"}
+                className="text-xs font-medium text-amber-700 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300"
+              >
+                ← {copilotReturn.label || "返回副驾驶"}
+              </Link>
+              <span className="text-[11px] text-zinc-400">你正在查看该建议对应的完整功能页</span>
+            </div>
+          )}
           {loading && projects.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
               <span className="w-5 h-5 rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-transparent animate-spin" />

@@ -78,6 +78,7 @@ export function normalizeBriefProposedActions(value: unknown): BriefProposedActi
       ? (raw as any).keyword.trim() : null;
     const storefront = typeof (raw as any).storefront === "string" && (raw as any).storefront.trim()
       ? (raw as any).storefront.trim().toLowerCase() : null;
+    if (kind === "keyword.open" && Boolean(language) !== Boolean(keyword)) continue;
     if (kind.startsWith("keyword.") && kind !== "keyword.open" && (!language || !keyword)) continue;
     if (kind === "rank.collect" && !language) continue;
     const id = proposedActionId(kind, language, keyword, storefront);
