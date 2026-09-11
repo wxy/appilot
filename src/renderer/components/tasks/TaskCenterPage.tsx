@@ -93,7 +93,7 @@ export function TaskCenterPage() {
     } | null;
   } | null>(null);
   const [ctrlBusy, setCtrlBusy] = useState(false);
-  // 正在执行的控制动作（区分按钮忙碌文案：启动中/暂停中/重启中）。
+  // 正在执行的控制动作（区分按钮忙碌文案：启动中/停止中/重启中）。
   const [ctrlAction, setCtrlAction] = useState<"start" | "stop" | "restart" | null>(null);
   const [ctrlErr, setCtrlErr] = useState<string | null>(null);
   // 失败任务批量处理（backlog #2）
@@ -258,7 +258,7 @@ export function TaskCenterPage() {
     setCtrlErr(null);
     (window as any).appilot?.scheduler?.daemonStop()
       .then((r: any) => {
-        if (!r?.ok) setCtrlErr("暂停调度器失败（daemon 未响应）");
+        if (!r?.ok) setCtrlErr("停止调度器失败（daemon 未响应）");
       })
       .catch((e: any) => setCtrlErr(e?.message || String(e)))
       .finally(() => {
@@ -268,7 +268,7 @@ export function TaskCenterPage() {
       });
   };
 
-  // 重启调度器 = 先停止（daemon 关停 + 壳 fallback 暂停，等待进程退出）再启动
+  // 重启调度器 = 先停止（daemon 关停 + 壳 fallback 停止，等待进程退出）再启动
   // （复用现有 daemonStop/daemonStart IPC 流程；主进程 stop 已等待 daemon 退出，
   // 顺序执行不会复用到正在退出的旧进程）。用于应用更新后加载磁盘最新代码。
   const restartScheduler = () => {
@@ -278,7 +278,7 @@ export function TaskCenterPage() {
     setCtrlErr(null);
     (window as any).appilot?.scheduler?.daemonStop()
       .then((r: any) => {
-        if (!r?.ok) setCtrlErr("重启：暂停调度器失败（daemon 未响应）");
+        if (!r?.ok) setCtrlErr("重启：停止调度器失败（daemon 未响应）");
         return (window as any).appilot?.scheduler?.daemonStart();
       })
       .then((r: any) => {
@@ -557,20 +557,27 @@ export function TaskCenterPage() {
                       : "启动调度器：拉起常驻 daemon，自动调度恢复"
                   }
                 >
-                  {ctrlAction === "start" ? "…" : "启动"}
+                  {ctrlAction === "start" ? (
+                    "…"
+                  ) : (
+                    <>
+                      <span aria-hidden="true" className="mr-1 text-[10px]">▶</span>
+                      启动
+                    </>
+                  )}
                 </button>
                 <button
                   type="button"
                   disabled={ctrlBusy || daemonCtrl == null || !engineActive}
                   onClick={daemonStop}
-                  aria-label="暂停调度器"
+                  aria-label="停止调度器"
                   className={cn(
                     "inline-flex items-center justify-center h-7 min-w-9 px-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     "border-red-500/60 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:border-red-600",
                   )}
-                  title="暂停调度器：关停常驻 daemon（手动「立即运行」仍可用；重启应用随启动恢复）"
+                  title="停止调度器：关停常驻 daemon（手动「立即运行」仍可用；重启应用随启动恢复）"
                 >
-                  {ctrlAction === "stop" ? "…" : "暂停"}
+                  {ctrlAction === "stop" ? "…" : "停止"}
                 </button>
                 <button
                   type="button"
