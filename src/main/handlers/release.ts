@@ -78,8 +78,6 @@ function screenshotArtifactContext(project: any, draft: StoreSubmissionDraft) {
     draft.screenshotCopy.sourceLanguage,
     supported,
   );
-  if (!screenshotCopy.batchConfirmedAt) throw new Error("请先确定整批截图文案");
-
   const pages = screenshotCopy.selectedLanguages.flatMap((language) =>
     screenshotCopy.items.map((item) => {
       const copy = item.copies[language];
@@ -108,12 +106,19 @@ function screenshotArtifactContext(project: any, draft: StoreSubmissionDraft) {
   return { pages, productName, version };
 }
 
-function availableDirectory(parent: string, baseName: string): string {
+function availableScreenshotArtifacts(parent: string, baseName: string): {
+  outputPath: string;
+  outputDirectory: string;
+} {
   for (let suffix = 1; suffix < 1000; suffix += 1) {
-    const candidate = path.join(parent, suffix === 1 ? baseName : `${baseName}-${suffix}`);
-    if (!fs.existsSync(candidate)) return candidate;
+    const resolvedBaseName = suffix === 1 ? baseName : `${baseName}-${suffix}`;
+    const outputPath = path.join(parent, `${resolvedBaseName}.key`);
+    const outputDirectory = path.join(parent, resolvedBaseName);
+    if (!fs.existsSync(outputPath) && !fs.existsSync(outputDirectory)) {
+      return { outputPath, outputDirectory };
+    }
   }
-  throw new Error("无法创建新的 PNG 输出目录");
+  throw new Error("无法创建新的截图成品文件");
 }
 
 export function registerReleaseHandlers(): void {
@@ -163,7 +168,7 @@ export function registerReleaseHandlers(): void {
   });
 
   ipcMain.handle(
-    "release:generateKeynote",
+    "release:generateScreenshotArtifacts",
     async (_event, projectId: string, draftId: string, templatePath: string) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       draftId = assertNonEmptyString(draftId, "draftId");
@@ -178,62 +183,23 @@ export function registerReleaseHandlers(): void {
       const draft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
       if (!draft) throw new Error("Submission draft not found");
       const { pages, productName, version } = screenshotArtifactContext(project, draft);
-      const saveResult = await dialog.showSaveDialog({
-        title: "生成 Keynote 截图文稿",
-        defaultPath: path.join(path.dirname(templatePath), `${productName}-${version}-screenshots.key`),
-        filters: [{ name: "Keynote", extensions: ["key"] }],
-      });
-      if (saveResult.canceled || !saveResult.filePath) return null;
-      const outputPath = saveResult.filePath.toLowerCase().endsWith(".key")
-        ? saveResult.filePath
-        : `${saveResult.filePath}.key`;
-      if (path.resolve(outputPath) === path.resolve(templatePath)) {
-        throw new Error("输出文件不能覆盖模板，请选择新的文件名");
-      }
-      await fillKeynoteFromTemplate({ templatePath, outputPath, pages });
-      shell.showItemInFolder(outputPath);
-      return { outputPath, pageCount: pages.length };
-    },
-  );
-
-  ipcMain.handle(
-    "release:exportScreenshotPngs",
-    async (_event, projectId: string, draftId: string, templatePath: string) => {
-      projectId = assertNonEmptyString(projectId, "projectId");
-      draftId = assertNonEmptyString(draftId, "draftId");
-      templatePath = assertNonEmptyString(templatePath, "templatePath");
-      if (!fs.existsSync(templatePath) || path.extname(templatePath).toLowerCase() !== ".key") {
-        throw new Error("请选择有效的 Keynote 模板");
-      }
-      const s = await getStore();
-      const projects: any[] = s.get("projects") || [];
-      const project = projects.find((item: any) => item.id === projectId);
-      if (!project) throw new Error("Project not found");
-      const draft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
-      if (!draft) throw new Error("Submission draft not found");
-      const { pages, productName, version } = screenshotArtifactContext(project, draft);
-
-      const folderResult = await dialog.showOpenDialog({
-        title: "选择 PNG 输出位置",
-        defaultPath: path.dirname(templatePath),
-        buttonLabel: "选择",
-        properties: ["openDirectory", "createDirectory"],
-      });
-      if (folderResult.canceled || folderResult.filePaths.length === 0) return null;
-      const outputDirectory = availableDirectory(
-        folderResult.filePaths[0],
+      const { outputPath, outputDirectory } = availableScreenshotArtifacts(
+        path.dirname(templatePath),
         `${productName}-${version}-screenshots`,
       );
-      const temporaryKeynotePath = path.join(outputDirectory, `${productName}-${version}-screenshots.key`);
       const result = await fillKeynoteFromTemplate({
         templatePath,
-        outputPath: temporaryKeynotePath,
+        outputPath,
         pages,
         exportPngDirectory: outputDirectory,
       });
-      fs.unlinkSync(temporaryKeynotePath);
-      shell.showItemInFolder(result.pngPaths[0] || outputDirectory);
-      return { outputDirectory, files: result.pngPaths, pageCount: result.pngPaths.length };
+      shell.showItemInFolder(outputPath);
+      return {
+        outputPath,
+        outputDirectory,
+        files: result.pngPaths,
+        pageCount: result.pngPaths.length,
+      };
     },
   );
 
@@ -391,7 +357,6 @@ export function registerReleaseHandlers(): void {
         requestedSource || supported[0] || "en",
         supported,
       );
-      if (screenshotCopy.batchConfirmedAt) throw new Error("截图文案已整批确定，不可重新生成");
       const sourceLanguage = screenshotCopy.sourceLanguage;
       if (screenshotCopy.items.length === 0) throw new Error("请先添加截图类型");
       const unnamed = screenshotCopy.items.find((item) => !item.name.trim());
@@ -488,7 +453,6 @@ export function registerReleaseHandlers(): void {
         supported,
       );
       if (!screenshotCopy.masterConfirmedAt) throw new Error("请先确定截图母本");
-      if (screenshotCopy.batchConfirmedAt) throw new Error("截图文案已整批确定");
       const targets = targetLanguages.filter(
         (language) => screenshotCopy.selectedLanguages.includes(language) && language !== screenshotCopy.sourceLanguage,
       );
@@ -548,6 +512,7 @@ export function registerReleaseHandlers(): void {
         }
       }
       latestCopy.updatedAt = new Date().toISOString();
+      delete latestCopy.batchConfirmedAt;
       latestDraft.screenshotCopy = latestCopy;
       latestDraft.updatedAt = latestCopy.updatedAt;
       upsertStoreSubmissionDraft(latestProject, latestDraft);

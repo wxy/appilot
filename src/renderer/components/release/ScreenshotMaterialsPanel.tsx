@@ -92,24 +92,24 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
       </div>
       <div className="space-y-3">
         <label className="block space-y-1">
-          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">标题（appilot.title）</span>
+          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">标题 <span className="text-violet-600 dark:text-violet-400">（appilot.title）</span></span>
           <CopyableTextInput copyKey={`screenshot:${language}:${item.id}:title`} aria-label={`${item.name}标题`} value={copy.title} onChange={(event) => onChange("title", event.target.value)} onBlur={onCommit} placeholder={language === sourceLanguage ? "由 AI 生成，也可手工修改" : "尚未翻译"} maxLength={SCREENSHOT_TITLE_MAX} readOnly={textReadOnly} className={cn(inputLineClass, textReadOnly && "cursor-default")} />
         </label>
         <label className="block space-y-1">
-          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">描述（appilot.description）</span>
+          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">描述 <span className="text-violet-600 dark:text-violet-400">（appilot.description）</span></span>
           <CopyableTextInput copyKey={`screenshot:${language}:${item.id}:description`} aria-label={`${item.name}描述`} value={copy.description} onChange={(event) => onChange("description", event.target.value)} onBlur={onCommit} placeholder={language === sourceLanguage ? "由 AI 生成，也可手工修改" : "尚未翻译"} maxLength={SCREENSHOT_DESCRIPTION_MAX} readOnly={textReadOnly} className={cn(inputLineClass, textReadOnly && "cursor-default")} />
         </label>
         <div className="space-y-2 pt-1">
           <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-            <span>截图预览（appilot.image）</span>
-            {inherited && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">继承母本</span>}
-            {override && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">本语言图片</span>}
+            <span>截图预览 <span className="text-violet-600 dark:text-violet-400">（appilot.image）</span></span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              {inherited && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">继承母本</span>}
+              {override && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">本语言图片</span>}
+              {!imageReadOnly && language !== sourceLanguage && override && <button type="button" onClick={() => onImageChange(undefined)} className="text-zinc-400 hover:text-amber-700 dark:hover:text-amber-300">恢复继承</button>}
+              {!imageReadOnly && language === sourceLanguage && item.sourceImage && <button type="button" onClick={() => onImageChange(undefined)} className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400">移除</button>}
+            </span>
           </div>
           <ScreenshotPreview asset={image} disabled={imageReadOnly} onSelect={() => void selectImage()} />
-          {!imageReadOnly && <div className="flex flex-wrap gap-1.5">
-            {language !== sourceLanguage && override && <button type="button" onClick={() => onImageChange(undefined)} className={btnSmSecondary}>恢复继承</button>}
-            {language === sourceLanguage && item.sourceImage && <button type="button" onClick={() => onImageChange(undefined)} className={btnSmSecondary}>移除</button>}
-          </div>}
           {image && <p className="truncate text-[10px] text-zinc-400" title={image.path}>{image.fileName} · {image.width}×{image.height}</p>}
         </div>
       </div>
@@ -157,7 +157,7 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   const [operationId, setOperationId] = useState("");
   const [progress, setProgress] = useState<{ chars: number; phase: "reasoning" | "content" } | null>(null);
   const [error, setError] = useState("");
-  const [artifactRunning, setArtifactRunning] = useState<"" | "keynote" | "png">("");
+  const [artifactRunning, setArtifactRunning] = useState(false);
   const [artifactResult, setArtifactResult] = useState("");
 
   useEffect(() => {
@@ -229,8 +229,8 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   const missingTranslations = screenshotCopy.selectedLanguages.filter(
     (language) => language !== screenshotCopy.sourceLanguage && !languageComplete(language),
   );
-  const fieldReadOnly = readOnly || batchConfirmed || (masterConfirmed && activeLanguage === screenshotCopy.sourceLanguage);
-  const typeReadOnly = readOnly || masterConfirmed || batchConfirmed;
+  const fieldReadOnly = readOnly;
+  const typeReadOnly = readOnly;
 
   const addType = () => {
     const name = newTypeName.trim();
@@ -238,7 +238,9 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
     setError("");
     update((next) => {
       next.items.push({ id: globalThis.crypto?.randomUUID?.() || `screenshot-${Date.now()}-${next.items.length}`, name, copies: {} });
-      if (sourceComplete) next.masterUpdatedAt = new Date().toISOString();
+      next.masterUpdatedAt = new Date().toISOString();
+      delete next.masterConfirmedAt;
+      delete next.batchConfirmedAt;
     }, true);
     setNewTypeName("");
   };
@@ -282,11 +284,12 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
     update((next) => { next.batchConfirmedAt = new Date().toISOString(); }, true);
   };
   const toggleLanguage = (language: string) => {
-    if (readOnly || batchConfirmed || language === screenshotCopy.sourceLanguage) return;
+    if (readOnly || language === screenshotCopy.sourceLanguage) return;
     update((next) => {
       next.selectedLanguages = next.selectedLanguages.includes(language)
         ? next.selectedLanguages.filter((item) => item !== language)
         : languages.filter((item) => [...next.selectedLanguages, language].includes(item));
+      delete next.batchConfirmedAt;
     }, true);
   };
   const generatedLanguages = screenshotCopy.selectedLanguages.filter(languageComplete);
@@ -308,30 +311,17 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
     update((next) => { next.keynoteTemplatePath = templatePath; }, true);
     setArtifactResult("");
   };
-  const generateKeynote = async () => {
+  const generateArtifacts = async () => {
     if (!projectId || !draftId || !screenshotCopy.keynoteTemplatePath || artifactRunning) return;
-    setError(""); setArtifactResult(""); setArtifactRunning("keynote");
+    setError(""); setArtifactResult(""); setArtifactRunning(true);
     try {
       await onCommit?.(screenshotCopy);
-      const result = await (window as any).appilot.release.generateKeynote(projectId, draftId, screenshotCopy.keynoteTemplatePath);
-      if (result?.outputPath) setArtifactResult(`已生成 ${result.pageCount} 页 Keynote：${result.outputPath}`);
+      const result = await (window as any).appilot.release.generateScreenshotArtifacts(projectId, draftId, screenshotCopy.keynoteTemplatePath);
+      if (result?.outputPath) setArtifactResult(`已生成 ${result.pageCount} 页；Keynote：${result.outputPath}；PNG：${result.outputDirectory}`);
     } catch (reason: any) {
-      setError(reason?.message || "Keynote 生成失败。");
+      setError(reason?.message || "截图成品生成失败。");
     } finally {
-      setArtifactRunning("");
-    }
-  };
-  const exportPngs = async () => {
-    if (!projectId || !draftId || !screenshotCopy.keynoteTemplatePath || artifactRunning) return;
-    setError(""); setArtifactResult(""); setArtifactRunning("png");
-    try {
-      await onCommit?.(screenshotCopy);
-      const result = await (window as any).appilot.release.exportScreenshotPngs(projectId, draftId, screenshotCopy.keynoteTemplatePath);
-      if (result?.outputDirectory) setArtifactResult(`已导出 ${result.pageCount} 张 PNG：${result.outputDirectory}`);
-    } catch (reason: any) {
-      setError(reason?.message || "PNG 导出失败。");
-    } finally {
-      setArtifactRunning("");
+      setArtifactRunning(false);
     }
   };
   return (
@@ -345,7 +335,7 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
               {languages.map((language) => {
                 const selected = screenshotCopy.selectedLanguages.includes(language);
                 const source = language === screenshotCopy.sourceLanguage;
-                return <button key={language} type="button" onClick={() => toggleLanguage(language)} disabled={readOnly || batchConfirmed || source} className={cn("rounded-md px-2 py-1.5 text-left text-[11px]", selected ? "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300" : "text-zinc-400 hover:bg-zinc-50 dark:text-zinc-500 dark:hover:bg-zinc-700")}>{source ? "母本 · " : selected ? "✓ " : "○ "}{languageLabel(language)}</button>;
+                return <button key={language} type="button" onClick={() => toggleLanguage(language)} disabled={readOnly || source} className={cn("rounded-md px-2 py-1.5 text-left text-[11px]", selected ? "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300" : "text-zinc-400 hover:bg-zinc-50 dark:text-zinc-500 dark:hover:bg-zinc-700")}>{source ? "母本 · " : selected ? "✓ " : "○ "}{languageLabel(language)}</button>;
               })}
             </div>
           </details>
@@ -359,7 +349,7 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
           <span>当前语言图片 {activeImages.length}/{screenshotCopy.items.length}</span>
           {activeLanguage !== screenshotCopy.sourceLanguage && <span>{activeOverrides} 张本地化，{activeImages.length - activeOverrides} 张继承母本</span>}
         </div>}
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] items-start gap-4">
+        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {screenshotCopy.items.map((item) => (
             <ScreenshotCard key={`${activeLanguage}:${item.id}`} item={item} language={activeLanguage} sourceLanguage={screenshotCopy.sourceLanguage} textReadOnly={fieldReadOnly} imageReadOnly={readOnly} typeReadOnly={typeReadOnly}
               onChange={(field, fieldValue) => update((next) => {
@@ -376,7 +366,13 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
                       : {}),
                   };
                 }
-                if (activeLanguage === next.sourceLanguage) next.masterUpdatedAt = new Date().toISOString();
+                if (activeLanguage === next.sourceLanguage || field === "name") {
+                  next.masterUpdatedAt = new Date().toISOString();
+                  delete next.masterConfirmedAt;
+                  delete next.batchConfirmedAt;
+                } else {
+                  delete next.batchConfirmedAt;
+                }
               })}
               onImageChange={(asset) => update((next) => {
                 const target = next.items.find((entry) => entry.id === item.id);
@@ -393,7 +389,9 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
               onCommit={commitCurrent}
               onRemove={() => update((next) => {
                 next.items = next.items.filter((entry) => entry.id !== item.id);
-                if (sourceComplete) next.masterUpdatedAt = new Date().toISOString();
+                next.masterUpdatedAt = new Date().toISOString();
+                delete next.masterConfirmedAt;
+                delete next.batchConfirmedAt;
               }, true)} />
           ))}
         </div>
@@ -408,10 +406,10 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
 
       {!readOnly && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
         <div className="flex flex-wrap items-center gap-2">
-          {activeLanguage === screenshotCopy.sourceLanguage && !masterConfirmed && screenshotCopy.items.length > 0 && (
+          {activeLanguage === screenshotCopy.sourceLanguage && screenshotCopy.items.length > 0 && (
             <AIProgressButton onStart={() => void run("generate")} onStop={() => { if (operationId) void (window as any).appilot.ai.cancel(operationId); }} loading={running} progress={progress} idleLabel={sourceComplete ? "重新润色截图母本" : "生成截图母本"} retry={failed} retrying={retrying} />
           )}
-          {activeLanguage !== screenshotCopy.sourceLanguage && masterConfirmed && !batchConfirmed && (
+          {activeLanguage !== screenshotCopy.sourceLanguage && masterConfirmed && (
             <AIProgressButton onStart={() => void run("translate", activeLanguage)} onStop={() => { if (operationId) void (window as any).appilot.ai.cancel(operationId); }} loading={running} progress={progress} idleLabel={languageComplete(activeLanguage) ? "重新翻译截图文案" : `翻译为${languageLabel(activeLanguage)}`} retry={failed} retrying={retrying} />
           )}
           {activeLanguage !== screenshotCopy.sourceLanguage && !masterConfirmed && (
@@ -419,25 +417,16 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
           )}
           {!batchConfirmed && <button type="button" onClick={confirmMaster} disabled={masterConfirmed} className={masterConfirmed ? btnSecondary : btnPrimary}>{masterConfirmed ? "截图母本已确定" : "确定截图母本"}</button>}
           <button type="button" onClick={confirmBatch} disabled={!masterConfirmed || batchConfirmed} className={batchConfirmed ? btnSecondary : btnPrimary}>{batchConfirmed ? "截图文案已完成" : "确定整批截图文案"}</button>
+          <button type="button" onClick={() => void selectKeynoteTemplate()} className={btnSecondary}>{screenshotCopy.keynoteTemplatePath ? "更换 Keynote 模板" : "选择 Keynote 模板"}</button>
+          <button type="button" onClick={() => void generateArtifacts()} disabled={!screenshotCopy.keynoteTemplatePath || !keynoteReady || artifactRunning} className={btnPrimary}>{artifactRunning ? "正在生成…" : "生成 Keynote 及图片"}</button>
         </div>
         {!batchConfirmed && onDelete && <button type="button" onClick={() => { if (window.confirm("删除本版本的全部截图文案？商店文案不会受到影响。")) void onDelete(); }} className={btnSmSecondary}>删除截图文案</button>}
       </div>}
-      {!readOnly && batchConfirmed && <section className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-700 dark:bg-zinc-800/20">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h4 className="text-sm font-medium text-zinc-800 dark:text-zinc-200">生成截图成品</h4>
-            <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400" title={screenshotCopy.keynoteTemplatePath}>{screenshotCopy.keynoteTemplatePath || "选择包含 appilot.screenshot.v1 母板的模板；原模板不会被修改。"}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => void selectKeynoteTemplate()} className={btnSecondary}>{screenshotCopy.keynoteTemplatePath ? "更换模板" : "选择模板"}</button>
-            <button type="button" onClick={() => void generateKeynote()} disabled={!screenshotCopy.keynoteTemplatePath || !keynoteReady || Boolean(artifactRunning)} className={btnSecondary}>{artifactRunning === "keynote" ? "正在生成…" : "生成 Keynote"}</button>
-            <button type="button" onClick={() => void exportPngs()} disabled={!screenshotCopy.keynoteTemplatePath || !keynoteReady || Boolean(artifactRunning)} className={btnPrimary}>{artifactRunning === "png" ? "正在导出…" : "导出 PNG"}</button>
-          </div>
-        </div>
-        <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">文字按模板画布宽度约束换行；PNG 使用“序号-语言-截图类型”命名。</p>
-        {!keynoteReady && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{!allTextReady ? "仍有语言文案未完成。" : `仍缺少 ${missingImagePageCount} 个语言截图。`}</p>}
-        {artifactResult && <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">{artifactResult}</p>}
-      </section>}
+      {!readOnly && <div className="space-y-1 text-xs">
+        <p className="truncate text-zinc-400 dark:text-zinc-500" title={screenshotCopy.keynoteTemplatePath}>{screenshotCopy.keynoteTemplatePath || "选择包含 appilot.screenshot.v1 母板的模板；Keynote 与 PNG 会生成在模板所在目录。"}</p>
+        {!keynoteReady && <p className="text-amber-600 dark:text-amber-400">{!allTextReady ? "仍有语言文案未完成。" : `仍缺少 ${missingImagePageCount} 个语言截图。`}</p>}
+        {artifactResult && <p className="text-emerald-600 dark:text-emerald-400">{artifactResult}</p>}
+      </div>}
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
     </div>
   );
