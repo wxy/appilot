@@ -3,6 +3,7 @@ import {
   generateScreenshotMaterialMaster,
   normalizeScreenshotCopySet,
   normalizeScreenshotMaterialDraft,
+  screenshotImageForLanguage,
   screenshotMaterialsForProduct,
   translateScreenshotMaterialMaster,
   upsertScreenshotMaterials,
@@ -32,6 +33,37 @@ async function main() {
   assert.deepEqual(normalized.selectedLanguages, ["en"]);
   assert.equal(normalized.sourceLanguage, "en");
   assert.equal(normalized.items[0].copies.xx, undefined);
+
+  const withImages = normalizeScreenshotMaterialDraft(
+    {
+      sourceLanguage: "en",
+      selectedLanguages: ["en", "zh-Hans"],
+      items: [{
+        id: "home",
+        name: "首页",
+        copies: {},
+        sourceImage: { path: "/tmp/home-en.png", fileName: "home-en.png", width: 750, height: 1334, selectedAt: "2026-09-13T01:00:00.000Z" },
+        imageOverrides: {
+          en: { path: "/tmp/invalid-source-override.png", fileName: "invalid.png", width: 1, height: 1, selectedAt: "2026-09-13T01:00:00.000Z" },
+          "zh-Hans": { path: "/tmp/home-zh.png", fileName: "home-zh.png", width: 750, height: 1334, selectedAt: "2026-09-13T01:00:00.000Z" },
+          xx: { path: "/tmp/drop.png", fileName: "drop.png", width: 1, height: 1, selectedAt: "2026-09-13T01:00:00.000Z" },
+        },
+      }],
+    },
+    "project-1",
+    "product-1",
+    ["en", "zh-Hans"],
+  );
+  assert.equal(screenshotImageForLanguage(withImages.items[0], "en", "en")?.path, "/tmp/home-en.png");
+  assert.equal(screenshotImageForLanguage(withImages.items[0], "zh-Hans", "en")?.path, "/tmp/home-zh.png");
+  assert.equal(withImages.items[0].imageOverrides?.en, undefined, "the source language never stores an override");
+  assert.equal(withImages.items[0].imageOverrides?.xx, undefined, "unsupported language images are dropped");
+  delete withImages.items[0].imageOverrides?.["zh-Hans"];
+  assert.equal(
+    screenshotImageForLanguage(withImages.items[0], "zh-Hans", "en")?.path,
+    "/tmp/home-en.png",
+    "a target language inherits the source image when no override exists",
+  );
 
   const typeOnly = normalizeScreenshotMaterialDraft(
     { selectedLanguages: ["en"], items: [{ id: "settings", name: "设置页", copies: {} }] },
@@ -69,6 +101,13 @@ async function main() {
     ["en", "zh-Hans"],
   );
   assert.equal(confirmedEmbedded.masterConfirmedAt, "2026-09-12T01:00:00.000Z", "confirmation survives when the independent master language is unchanged");
+
+  const withTemplate = normalizeScreenshotCopySet(
+    { ...normalized, keynoteTemplatePath: " /tmp/screenshots.key " },
+    "en",
+    ["en", "zh-Hans"],
+  );
+  assert.equal(withTemplate.keynoteTemplatePath, "/tmp/screenshots.key", "the selected Keynote template is persisted with the copy set");
 
   const migratedEmbedded = normalizeScreenshotCopySet(
     { sourceLanguage: "zh-Hans", items: [], masterUpdatedAt: "", updatedAt: "" },

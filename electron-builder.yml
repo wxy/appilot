@@ -24,6 +24,8 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSAppleEventsUsageDescription: Appilot 使用 Keynote 生成多语言商店截图文稿。
 
 dmg:
   title: Appilot ${version}

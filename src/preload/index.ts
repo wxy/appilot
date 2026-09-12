@@ -250,6 +250,14 @@ contextBridge.exposeInMainWorld("appilot", {
   },
 
   release: {
+    selectScreenshotImage: (): Promise<any | null> =>
+      ipcRenderer.invoke("release:selectScreenshotImage"),
+    screenshotImagePreview: (imagePath: string): Promise<string | null> =>
+      ipcRenderer.invoke("release:screenshotImagePreview", imagePath),
+    selectKeynoteTemplate: (): Promise<string | null> =>
+      ipcRenderer.invoke("release:selectKeynoteTemplate"),
+    generateKeynote: (projectId: string, draftId: string, templatePath: string): Promise<any | null> =>
+      ipcRenderer.invoke("release:generateKeynote", projectId, draftId, templatePath),
     listCopyPlans: (projectId: string, productId: string): Promise<any[]> =>
       ipcRenderer.invoke("release:listCopyPlans", projectId, productId),
     saveCopyPlan: (projectId: string, productId: string, value: any): Promise<any> =>

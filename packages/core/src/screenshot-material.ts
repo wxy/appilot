@@ -13,10 +13,31 @@ export interface ScreenshotMaterialCopy {
   sourceUpdatedAt?: string;
 }
 
+export interface ScreenshotImageAsset {
+  path: string;
+  fileName: string;
+  width: number;
+  height: number;
+  selectedAt: string;
+}
+
 export interface ScreenshotMaterialItem {
   id: string;
   name: string;
   copies: Record<string, ScreenshotMaterialCopy>;
+  /** 母本语言使用的默认截图。 */
+  sourceImage?: ScreenshotImageAsset;
+  /** 目标语言的本地化截图；缺省时继承 sourceImage。 */
+  imageOverrides?: Record<string, ScreenshotImageAsset>;
+}
+
+export function screenshotImageForLanguage(
+  item: ScreenshotMaterialItem,
+  language: string,
+  sourceLanguage: string,
+): ScreenshotImageAsset | undefined {
+  if (language === sourceLanguage) return item.sourceImage;
+  return item.imageOverrides?.[language] || item.sourceImage;
 }
 
 /** 截图文案属于某个版本，但拥有独立的母本、语言范围和确认状态。 */
@@ -27,6 +48,7 @@ export interface ScreenshotCopySet {
   masterConfirmedAt?: string;
   batchConfirmedAt?: string;
   items: ScreenshotMaterialItem[];
+  keynoteTemplatePath?: string;
   updatedAt: string;
 }
 
@@ -77,12 +99,29 @@ export function normalizeScreenshotCopySet(
       ? { batchConfirmedAt: String(raw.batchConfirmedAt).trim() }
       : {}),
     items: normalized.items,
+    ...(String(raw.keynoteTemplatePath || "").trim()
+      ? { keynoteTemplatePath: String(raw.keynoteTemplatePath).trim() }
+      : {}),
     updatedAt: normalized.updatedAt,
   };
 }
 
 function cleanText(value: unknown, max: number): string {
   return Array.from(String(value || "").trim().replace(/\s+/g, " ")).slice(0, max).join("");
+}
+
+function normalizeImageAsset(value: unknown): ScreenshotImageAsset | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as any;
+  const imagePath = String(raw.path || "").trim();
+  if (!imagePath) return undefined;
+  return {
+    path: imagePath,
+    fileName: String(raw.fileName || imagePath.split(/[\\/]/).pop() || "截图").trim(),
+    width: Math.max(0, Number(raw.width) || 0),
+    height: Math.max(0, Number(raw.height) || 0),
+    selectedAt: String(raw.selectedAt || "").trim() || new Date(0).toISOString(),
+  };
 }
 
 export function normalizeScreenshotMaterialDraft(
@@ -98,6 +137,9 @@ export function normalizeScreenshotMaterialDraft(
       .map((item: unknown) => String(item).trim())
       .filter((item: string) => supported.has(item)),
   ));
+  const sourceLanguage = supported.has(String(raw.sourceLanguage || "").trim())
+    ? String(raw.sourceLanguage).trim()
+    : selectedLanguages[0] || supportedLanguages[0] || "en";
   const seenIds = new Set<string>();
   const items: ScreenshotMaterialItem[] = [];
   for (const [index, entry] of (Array.isArray(raw.items) ? raw.items : []).entries()) {
@@ -118,18 +160,28 @@ export function normalizeScreenshotMaterialDraft(
           : {}),
       };
     }
+    const imageOverrides: Record<string, ScreenshotImageAsset> = {};
+    const rawOverrides = entry.imageOverrides && typeof entry.imageOverrides === "object"
+      ? entry.imageOverrides
+      : {};
+    for (const language of supported) {
+      if (language === sourceLanguage) continue;
+      const asset = normalizeImageAsset(rawOverrides[language]);
+      if (asset) imageOverrides[language] = asset;
+    }
+    const sourceImage = normalizeImageAsset(entry.sourceImage);
     items.push({
       id,
       name: cleanText(entry.name, 100),
       copies,
+      ...(sourceImage ? { sourceImage } : {}),
+      ...(Object.keys(imageOverrides).length ? { imageOverrides } : {}),
     });
   }
   return {
     projectId,
     productId,
-    sourceLanguage: supported.has(String(raw.sourceLanguage || "").trim())
-      ? String(raw.sourceLanguage).trim()
-      : selectedLanguages[0] || supportedLanguages[0] || "en",
+    sourceLanguage,
     masterUpdatedAt: String(raw.masterUpdatedAt || ""),
     selectedLanguages,
     items,

@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { dialog, ipcMain, nativeImage, shell } from "electron";
 import fs from "fs";
 import path from "path";
 import type { StoreSubmissionDraft } from "@appilot-labs/appilot-core/store-submission";
@@ -36,10 +36,12 @@ import {
 import {
   generateScreenshotMaterialMaster,
   normalizeScreenshotCopySet,
+  screenshotImageForLanguage,
   screenshotMaterialsForProduct,
   translateScreenshotMaterialMaster,
 } from "@appilot-labs/appilot-core/screenshot-material";
 import { buildProjectProfileFor } from "../release-service";
+import { fillKeynoteFromTemplate } from "../keynote-automation";
 
 function migrateLegacyScreenshotCopy(
   draft: StoreSubmissionDraft,
@@ -69,6 +71,114 @@ export function registerReleaseHandlers(): void {
     if (!operationId) return false;
     return cancelAiRequest(operationId);
   });
+
+  ipcMain.handle("release:selectScreenshotImage", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "选择截图图片",
+      properties: ["openFile"],
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "heic"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const imagePath = result.filePaths[0];
+    const image = nativeImage.createFromPath(imagePath);
+    if (image.isEmpty()) throw new Error("无法读取所选图片");
+    const size = image.getSize();
+    return {
+      path: imagePath,
+      fileName: path.basename(imagePath),
+      width: size.width,
+      height: size.height,
+      selectedAt: new Date().toISOString(),
+    };
+  });
+
+  ipcMain.handle("release:screenshotImagePreview", (_event, imagePath: string) => {
+    imagePath = assertNonEmptyString(imagePath, "imagePath");
+    if (!fs.existsSync(imagePath)) return null;
+    const image = nativeImage.createFromPath(imagePath);
+    if (image.isEmpty()) return null;
+    const size = image.getSize();
+    const preview = size.width > 520 ? image.resize({ width: 520, quality: "good" }) : image;
+    return preview.toDataURL();
+  });
+
+  ipcMain.handle("release:selectKeynoteTemplate", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "选择 Keynote 截图模板",
+      properties: ["openFile"],
+      filters: [{ name: "Keynote", extensions: ["key"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle(
+    "release:generateKeynote",
+    async (_event, projectId: string, draftId: string, templatePath: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      draftId = assertNonEmptyString(draftId, "draftId");
+      templatePath = assertNonEmptyString(templatePath, "templatePath");
+      if (!fs.existsSync(templatePath) || path.extname(templatePath).toLowerCase() !== ".key") {
+        throw new Error("请选择有效的 Keynote 模板");
+      }
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const draft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
+      if (!draft?.screenshotCopy) throw new Error("请先创建截图文案");
+      const product = (project.storeProducts || []).find((item: any) => item.id === draft.productId);
+      if (!product) throw new Error("Store product not found");
+      const supported = (product.supportedLanguages || []).map((item: any) => String(item.code || "")).filter(Boolean);
+      const screenshotCopy = normalizeScreenshotCopySet(
+        draft.screenshotCopy,
+        draft.screenshotCopy.sourceLanguage,
+        supported,
+      );
+      if (!screenshotCopy.batchConfirmedAt) throw new Error("请先确定整批截图文案");
+
+      const pages = screenshotCopy.selectedLanguages.flatMap((language) =>
+        screenshotCopy.items.map((item) => {
+          const copy = item.copies[language];
+          if (!copy?.title || !copy?.description) {
+            throw new Error(`${language} 的“${item.name}”文案不完整`);
+          }
+          if (language !== screenshotCopy.sourceLanguage && copy.sourceUpdatedAt !== screenshotCopy.masterUpdatedAt) {
+            throw new Error(`${language} 的“${item.name}”仍需按当前母本重新翻译`);
+          }
+          const image = screenshotImageForLanguage(item, language, screenshotCopy.sourceLanguage);
+          if (!image?.path || !fs.existsSync(image.path)) {
+            throw new Error(`${language} 的“${item.name}”尚未选择可用图片`);
+          }
+          return {
+            language,
+            screenshotId: item.id,
+            title: copy.title,
+            description: copy.description,
+            imagePath: image.path,
+          };
+        }),
+      );
+
+      const productName = String(product.trackName || project.name || "App").replace(/[\\/:*?"<>|]+/g, "-");
+      const version = String(draft.appVersion || draft.releaseTag || "release").replace(/^v/i, "");
+      const saveResult = await dialog.showSaveDialog({
+        title: "生成 Keynote 截图文稿",
+        defaultPath: path.join(path.dirname(templatePath), `${productName}-${version}-screenshots.key`),
+        filters: [{ name: "Keynote", extensions: ["key"] }],
+      });
+      if (saveResult.canceled || !saveResult.filePath) return null;
+      const outputPath = saveResult.filePath.toLowerCase().endsWith(".key")
+        ? saveResult.filePath
+        : `${saveResult.filePath}.key`;
+      if (path.resolve(outputPath) === path.resolve(templatePath)) {
+        throw new Error("输出文件不能覆盖模板，请选择新的文件名");
+      }
+      await fillKeynoteFromTemplate({ templatePath, outputPath, pages });
+      shell.showItemInFolder(outputPath);
+      return { outputPath, pageCount: pages.length };
+    },
+  );
 
   ipcMain.handle("release:listCopyPlans", async (_event, projectId: string, productId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
