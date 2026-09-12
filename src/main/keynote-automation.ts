@@ -12,6 +12,7 @@ export const KEYNOTE_SCREENSHOT_LAYOUT = "appilot.screenshot.v1";
 export interface KeynoteScreenshotPage {
   language: string;
   screenshotId: string;
+  screenshotName: string;
   title: string;
   description: string;
   imagePath: string;
@@ -25,6 +26,7 @@ export function buildKeynoteFillScript(input: {
   documentPath: string;
   layoutName?: string;
   pages: KeynoteScreenshotPage[];
+  exportPngDirectory?: string;
 }): string {
   const layoutName = input.layoutName || KEYNOTE_SCREENSHOT_LAYOUT;
   const pageBlocks = input.pages.map((page) => `
@@ -47,12 +49,27 @@ export function buildKeynoteFillScript(input: {
       if editableTextItemCount is not 2 then error "Template must create exactly two editable text placeholders: appilot.title and appilot.description"
       if titleItem is missing value then error "Template is missing appilot.title"
       if descriptionItem is missing value then error "Template is missing appilot.description"
+      set titlePosition to position of titleItem
+      set titleCenterX to (item 1 of titlePosition) + ((width of titleItem) / 2)
+      set titleCenterY to (item 2 of titlePosition) + ((height of titleItem) / 2)
+      set descriptionPosition to position of descriptionItem
+      set descriptionCenterX to (item 1 of descriptionPosition) + ((width of descriptionItem) / 2)
+      set descriptionCenterY to (item 2 of descriptionPosition) + ((height of descriptionItem) / 2)
       set object text of titleItem to ${appleScriptString(page.title)}
       set object text of descriptionItem to ${appleScriptString(page.description)}
+      set textMaxWidth to (width of targetDocument) * 0.8
+      set width of titleItem to textMaxWidth
+      set width of descriptionItem to textMaxWidth
+      set position of titleItem to {titleCenterX - (textMaxWidth / 2), titleCenterY - ((height of titleItem) / 2)}
+      set position of descriptionItem to {descriptionCenterX - (textMaxWidth / 2), descriptionCenterY - ((height of descriptionItem) / 2)}
       if (count of images of generatedSlide) is not 1 then error "Template must create exactly one editable appilot.image"
       set file name of image 1 of generatedSlide to POSIX file ${appleScriptString(page.imagePath)}
       set presenter notes of generatedSlide to ${appleScriptString(`appilot:${page.language}:${page.screenshotId}`)}
   `).join("\n");
+
+  const exportBlock = input.exportPngDirectory
+    ? `export targetDocument to POSIX file ${appleScriptString(input.exportPngDirectory)} as slide images with properties {image format:PNG}`
+    : "";
 
   return `
 set documentPath to ${appleScriptString(input.documentPath)}
@@ -82,6 +99,7 @@ tell application id "com.apple.Keynote"
     end tell
     save targetDocument
     delay 2
+    ${exportBlock}
     close targetDocument saving no
   on error errorMessage number errorNumber
     if targetDocument is not missing value then
@@ -100,7 +118,8 @@ export async function fillKeynoteFromTemplate(input: {
   templatePath: string;
   outputPath: string;
   pages: KeynoteScreenshotPage[];
-}): Promise<void> {
+  exportPngDirectory?: string;
+}): Promise<{ pngPaths: string[] }> {
   if (process.platform !== "darwin") throw new Error("Keynote 生成功能仅支持 macOS");
   if (!fs.existsSync(input.templatePath)) throw new Error("Keynote 模板不存在");
   if (input.pages.length === 0) throw new Error("没有可生成的截图页面");
@@ -112,8 +131,14 @@ export async function fillKeynoteFromTemplate(input: {
     throw new Error("输出文件不能覆盖 Keynote 模板");
   }
   fs.mkdirSync(path.dirname(input.outputPath), { recursive: true });
+  if (input.exportPngDirectory) fs.mkdirSync(input.exportPngDirectory, { recursive: true });
+  const outputParent = path.dirname(input.outputPath);
+  const stagingParent = input.exportPngDirectory
+    && path.resolve(input.exportPngDirectory) === path.resolve(outputParent)
+    ? path.dirname(outputParent)
+    : outputParent;
   const stagingPath = path.join(
-    path.dirname(input.outputPath),
+    stagingParent,
     `${path.basename(input.outputPath, path.extname(input.outputPath))}-appilot-${crypto.randomUUID()}.key`,
   );
   // Do not carry the template's iWork document UUID into the generated copy.
@@ -121,13 +146,35 @@ export async function fillKeynoteFromTemplate(input: {
   // AppleScript binds to it by its unique name.
   fs.copyFileSync(input.templatePath, stagingPath);
   const scriptPath = path.join(os.tmpdir(), `appilot-keynote-${process.pid}-${Date.now()}.applescript`);
-  fs.writeFileSync(scriptPath, buildKeynoteFillScript({ documentPath: stagingPath, pages: input.pages }), "utf8");
+  fs.writeFileSync(scriptPath, buildKeynoteFillScript({
+    documentPath: stagingPath,
+    pages: input.pages,
+    exportPngDirectory: input.exportPngDirectory,
+  }), "utf8");
+  let pngPaths: string[] = [];
   try {
     await execFileAsync("/usr/bin/open", ["-b", "com.apple.Keynote", stagingPath], {
       timeout: 60_000,
       maxBuffer: 1024 * 1024,
     });
     await execFileAsync("/usr/bin/osascript", [scriptPath], { timeout: 180_000, maxBuffer: 1024 * 1024 });
+    if (input.exportPngDirectory) {
+      const exported = fs.readdirSync(input.exportPngDirectory)
+        .filter((name) => name.toLowerCase().endsWith(".png"))
+        .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+      if (exported.length !== input.pages.length) {
+        throw new Error(`Keynote 导出了 ${exported.length} 张图片，预期 ${input.pages.length} 张`);
+      }
+      pngPaths = exported.map((name, index) => {
+        const page = input.pages[index];
+        const target = path.join(
+          input.exportPngDirectory!,
+          screenshotPngFileName(page, index),
+        );
+        fs.renameSync(path.join(input.exportPngDirectory!, name), target);
+        return target;
+      });
+    }
     try {
       fs.renameSync(stagingPath, input.outputPath);
     } catch (moveError: any) {
@@ -144,4 +191,19 @@ export async function fillKeynoteFromTemplate(input: {
     try { fs.unlinkSync(scriptPath); } catch { /* ignore */ }
     try { fs.unlinkSync(stagingPath); } catch { /* ignore */ }
   }
+  return { pngPaths };
+}
+
+function safeFilePart(value: string): string {
+  return String(value || "screenshot")
+    .normalize("NFKC")
+    .replace(/[\\/:*?"<>|\u0000-\u001F]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.\-]+|[.\-]+$/g, "")
+    .slice(0, 80) || "screenshot";
+}
+
+export function screenshotPngFileName(page: KeynoteScreenshotPage, index: number): string {
+  return `${String(index + 1).padStart(2, "0")}-${safeFilePart(page.language)}-${safeFilePart(page.screenshotName || page.screenshotId)}.png`;
 }

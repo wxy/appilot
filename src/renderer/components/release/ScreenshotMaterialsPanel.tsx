@@ -25,7 +25,11 @@ function cloneSet(value: ScreenshotCopySet): ScreenshotCopySet {
   };
 }
 
-function ScreenshotPreview({ asset }: { asset?: ScreenshotImageAsset }) {
+function ScreenshotPreview({ asset, disabled, onSelect }: {
+  asset?: ScreenshotImageAsset;
+  disabled: boolean;
+  onSelect: () => void;
+}) {
   const [preview, setPreview] = useState("");
   useEffect(() => {
     let active = true;
@@ -37,9 +41,19 @@ function ScreenshotPreview({ asset }: { asset?: ScreenshotImageAsset }) {
     return () => { active = false; };
   }, [asset?.path, asset?.selectedAt]);
   return (
-    <div className="flex aspect-[9/16] w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800">
-      {preview ? <img src={preview} alt="截图预览" className="h-full w-full object-contain" /> : <span className="px-3 text-center text-xs text-zinc-400">{asset ? "图片无法读取" : "尚未选择图片"}</span>}
-    </div>
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      aria-label={asset ? "更换截图图片" : "选择截图图片"}
+      className={cn(
+        "group relative flex aspect-[9/16] w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:border-zinc-700 dark:bg-zinc-800",
+        disabled ? "cursor-default" : "cursor-pointer hover:border-amber-400 dark:hover:border-amber-500",
+      )}
+    >
+      {preview ? <img src={preview} alt="截图预览" className="h-full w-full object-contain" /> : <span className="px-3 text-center text-xs text-zinc-400">{asset ? "图片无法读取" : "点击选择本地图片"}</span>}
+      {!disabled && <span className="absolute inset-x-2 bottom-2 rounded-md bg-black/65 px-2 py-1.5 text-center text-[11px] text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus:opacity-100">{asset ? "点击更换图片" : "点击选择图片"}</span>}
+    </button>
   );
 }
 
@@ -65,7 +79,7 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
     if (asset) onImageChange(asset);
   };
   return (
-    <article className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
+    <article className="flex min-w-0 flex-col rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-700 dark:bg-zinc-900">
       <div className="mb-3 flex min-w-0 items-center gap-2">
         {canEditType ? (
           <input value={item.name} onChange={(event) => onChange("name", event.target.value)} onBlur={onCommit} maxLength={100} className={cn(inputLineClass, "min-w-0 flex-1")} />
@@ -76,29 +90,26 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
           <button type="button" onClick={onRemove} className="h-7 w-7 shrink-0 rounded text-xs text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30" aria-label="删除截图类型" title="删除截图类型">×</button>
         )}
       </div>
-      <div className="grid gap-4 sm:grid-cols-[150px_minmax(0,1fr)]">
-        <div className="space-y-2">
+      <div className="space-y-3">
+        <label className="block space-y-1">
+          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">标题（appilot.title）</span>
+          <CopyableTextInput copyKey={`screenshot:${language}:${item.id}:title`} aria-label={`${item.name}标题`} value={copy.title} onChange={(event) => onChange("title", event.target.value)} onBlur={onCommit} placeholder={language === sourceLanguage ? "由 AI 生成，也可手工修改" : "尚未翻译"} maxLength={SCREENSHOT_TITLE_MAX} readOnly={textReadOnly} className={cn(inputLineClass, textReadOnly && "cursor-default")} />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">描述（appilot.description）</span>
+          <CopyableTextInput copyKey={`screenshot:${language}:${item.id}:description`} aria-label={`${item.name}描述`} value={copy.description} onChange={(event) => onChange("description", event.target.value)} onBlur={onCommit} placeholder={language === sourceLanguage ? "由 AI 生成，也可手工修改" : "尚未翻译"} maxLength={SCREENSHOT_DESCRIPTION_MAX} readOnly={textReadOnly} className={cn(inputLineClass, textReadOnly && "cursor-default")} />
+        </label>
+        <div className="space-y-2 pt-1">
           <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-            <span>图片（appilot.image）</span>
+            <span>截图预览（appilot.image）</span>
             {inherited && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">继承母本</span>}
             {override && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">本语言图片</span>}
           </div>
-          <ScreenshotPreview asset={image} />
+          <ScreenshotPreview asset={image} disabled={imageReadOnly} onSelect={() => void selectImage()} />
           {!imageReadOnly && <div className="flex flex-wrap gap-1.5">
-            <button type="button" onClick={() => void selectImage()} className={btnSmSecondary}>{image ? "更换图片" : "选择图片"}</button>
             {language !== sourceLanguage && override && <button type="button" onClick={() => onImageChange(undefined)} className={btnSmSecondary}>恢复继承</button>}
             {language === sourceLanguage && item.sourceImage && <button type="button" onClick={() => onImageChange(undefined)} className={btnSmSecondary}>移除</button>}
           </div>}
-        </div>
-        <div className="space-y-3">
-          <label className="block space-y-1">
-            <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">标题（appilot.title）</span>
-            <CopyableTextInput copyKey={`screenshot:${language}:${item.id}:title`} aria-label={`${item.name}标题`} value={copy.title} onChange={(event) => onChange("title", event.target.value)} onBlur={onCommit} placeholder={language === sourceLanguage ? "由 AI 生成，也可手工修改" : "尚未翻译"} maxLength={SCREENSHOT_TITLE_MAX} readOnly={textReadOnly} className={cn(inputLineClass, textReadOnly && "cursor-default")} />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">描述（appilot.description）</span>
-            <CopyableTextInput copyKey={`screenshot:${language}:${item.id}:description`} aria-label={`${item.name}描述`} value={copy.description} onChange={(event) => onChange("description", event.target.value)} onBlur={onCommit} placeholder={language === sourceLanguage ? "由 AI 生成，也可手工修改" : "尚未翻译"} maxLength={SCREENSHOT_DESCRIPTION_MAX} readOnly={textReadOnly} className={cn(inputLineClass, textReadOnly && "cursor-default")} />
-          </label>
           {image && <p className="truncate text-[10px] text-zinc-400" title={image.path}>{image.fileName} · {image.width}×{image.height}</p>}
         </div>
       </div>
@@ -146,8 +157,8 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   const [operationId, setOperationId] = useState("");
   const [progress, setProgress] = useState<{ chars: number; phase: "reasoning" | "content" } | null>(null);
   const [error, setError] = useState("");
-  const [keynoteRunning, setKeynoteRunning] = useState(false);
-  const [keynoteResult, setKeynoteResult] = useState("");
+  const [artifactRunning, setArtifactRunning] = useState<"" | "keynote" | "png">("");
+  const [artifactResult, setArtifactResult] = useState("");
 
   useEffect(() => {
     if (!normalizedValue) return;
@@ -295,19 +306,32 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
     const templatePath = await (window as any).appilot.release.selectKeynoteTemplate();
     if (!templatePath) return;
     update((next) => { next.keynoteTemplatePath = templatePath; }, true);
-    setKeynoteResult("");
+    setArtifactResult("");
   };
   const generateKeynote = async () => {
-    if (!projectId || !draftId || !screenshotCopy.keynoteTemplatePath || keynoteRunning) return;
-    setError(""); setKeynoteResult(""); setKeynoteRunning(true);
+    if (!projectId || !draftId || !screenshotCopy.keynoteTemplatePath || artifactRunning) return;
+    setError(""); setArtifactResult(""); setArtifactRunning("keynote");
     try {
       await onCommit?.(screenshotCopy);
       const result = await (window as any).appilot.release.generateKeynote(projectId, draftId, screenshotCopy.keynoteTemplatePath);
-      if (result?.outputPath) setKeynoteResult(`已生成 ${result.pageCount} 页：${result.outputPath}`);
+      if (result?.outputPath) setArtifactResult(`已生成 ${result.pageCount} 页 Keynote：${result.outputPath}`);
     } catch (reason: any) {
       setError(reason?.message || "Keynote 生成失败。");
     } finally {
-      setKeynoteRunning(false);
+      setArtifactRunning("");
+    }
+  };
+  const exportPngs = async () => {
+    if (!projectId || !draftId || !screenshotCopy.keynoteTemplatePath || artifactRunning) return;
+    setError(""); setArtifactResult(""); setArtifactRunning("png");
+    try {
+      await onCommit?.(screenshotCopy);
+      const result = await (window as any).appilot.release.exportScreenshotPngs(projectId, draftId, screenshotCopy.keynoteTemplatePath);
+      if (result?.outputDirectory) setArtifactResult(`已导出 ${result.pageCount} 张 PNG：${result.outputDirectory}`);
+    } catch (reason: any) {
+      setError(reason?.message || "PNG 导出失败。");
+    } finally {
+      setArtifactRunning("");
     }
   };
   return (
@@ -335,6 +359,7 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
           <span>当前语言图片 {activeImages.length}/{screenshotCopy.items.length}</span>
           {activeLanguage !== screenshotCopy.sourceLanguage && <span>{activeOverrides} 张本地化，{activeImages.length - activeOverrides} 张继承母本</span>}
         </div>}
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] items-start gap-4">
           {screenshotCopy.items.map((item) => (
             <ScreenshotCard key={`${activeLanguage}:${item.id}`} item={item} language={activeLanguage} sourceLanguage={screenshotCopy.sourceLanguage} textReadOnly={fieldReadOnly} imageReadOnly={readOnly} typeReadOnly={typeReadOnly}
               onChange={(field, fieldValue) => update((next) => {
@@ -371,6 +396,7 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
                 if (sourceComplete) next.masterUpdatedAt = new Date().toISOString();
               }, true)} />
           ))}
+        </div>
           {!typeReadOnly && activeLanguage === screenshotCopy.sourceLanguage && (
             <div className="flex items-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/20">
               <input value={newTypeName} onChange={(event) => setNewTypeName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addType(); }} maxLength={100} placeholder="添加截图类型，例如首页、设置页或 HUD" className={cn(inputLineClass, "max-w-sm")} />
@@ -399,16 +425,18 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
       {!readOnly && batchConfirmed && <section className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-700 dark:bg-zinc-800/20">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h4 className="text-sm font-medium text-zinc-800 dark:text-zinc-200">生成 Keynote 截图文稿</h4>
+            <h4 className="text-sm font-medium text-zinc-800 dark:text-zinc-200">生成截图成品</h4>
             <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400" title={screenshotCopy.keynoteTemplatePath}>{screenshotCopy.keynoteTemplatePath || "选择包含 appilot.screenshot.v1 母板的模板；原模板不会被修改。"}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => void selectKeynoteTemplate()} className={btnSecondary}>{screenshotCopy.keynoteTemplatePath ? "更换模板" : "选择模板"}</button>
-            <button type="button" onClick={() => void generateKeynote()} disabled={!screenshotCopy.keynoteTemplatePath || !keynoteReady || keynoteRunning} className={btnPrimary}>{keynoteRunning ? "正在生成…" : "生成 Keynote 副本"}</button>
+            <button type="button" onClick={() => void generateKeynote()} disabled={!screenshotCopy.keynoteTemplatePath || !keynoteReady || Boolean(artifactRunning)} className={btnSecondary}>{artifactRunning === "keynote" ? "正在生成…" : "生成 Keynote"}</button>
+            <button type="button" onClick={() => void exportPngs()} disabled={!screenshotCopy.keynoteTemplatePath || !keynoteReady || Boolean(artifactRunning)} className={btnPrimary}>{artifactRunning === "png" ? "正在导出…" : "导出 PNG"}</button>
           </div>
         </div>
+        <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">文字按模板画布宽度约束换行；PNG 使用“序号-语言-截图类型”命名。</p>
         {!keynoteReady && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{!allTextReady ? "仍有语言文案未完成。" : `仍缺少 ${missingImagePageCount} 个语言截图。`}</p>}
-        {keynoteResult && <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">{keynoteResult}</p>}
+        {artifactResult && <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">{artifactResult}</p>}
       </section>}
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
     </div>

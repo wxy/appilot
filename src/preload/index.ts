@@ -258,6 +258,8 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("release:selectKeynoteTemplate"),
     generateKeynote: (projectId: string, draftId: string, templatePath: string): Promise<any | null> =>
       ipcRenderer.invoke("release:generateKeynote", projectId, draftId, templatePath),
+    exportScreenshotPngs: (projectId: string, draftId: string, templatePath: string): Promise<any | null> =>
+      ipcRenderer.invoke("release:exportScreenshotPngs", projectId, draftId, templatePath),
     listCopyPlans: (projectId: string, productId: string): Promise<any[]> =>
       ipcRenderer.invoke("release:listCopyPlans", projectId, productId),
     saveCopyPlan: (projectId: string, productId: string, value: any): Promise<any> =>

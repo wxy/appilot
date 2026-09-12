@@ -66,6 +66,56 @@ function preferredLegacyScreenshotTarget(project: any, productId: string): Store
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] || null;
 }
 
+function screenshotArtifactContext(project: any, draft: StoreSubmissionDraft) {
+  const product = (project.storeProducts || []).find((item: any) => item.id === draft.productId);
+  if (!product) throw new Error("Store product not found");
+  const supported = (product.supportedLanguages || [])
+    .map((item: any) => String(item.code || "").trim())
+    .filter(Boolean);
+  if (!draft.screenshotCopy) throw new Error("请先创建截图文案");
+  const screenshotCopy = normalizeScreenshotCopySet(
+    draft.screenshotCopy,
+    draft.screenshotCopy.sourceLanguage,
+    supported,
+  );
+  if (!screenshotCopy.batchConfirmedAt) throw new Error("请先确定整批截图文案");
+
+  const pages = screenshotCopy.selectedLanguages.flatMap((language) =>
+    screenshotCopy.items.map((item) => {
+      const copy = item.copies[language];
+      if (!copy?.title || !copy?.description) {
+        throw new Error(`${language} 的“${item.name}”文案不完整`);
+      }
+      if (language !== screenshotCopy.sourceLanguage && copy.sourceUpdatedAt !== screenshotCopy.masterUpdatedAt) {
+        throw new Error(`${language} 的“${item.name}”仍需按当前母本重新翻译`);
+      }
+      const image = screenshotImageForLanguage(item, language, screenshotCopy.sourceLanguage);
+      if (!image?.path || !fs.existsSync(image.path)) {
+        throw new Error(`${language} 的“${item.name}”尚未选择可用图片`);
+      }
+      return {
+        language,
+        screenshotId: item.id,
+        screenshotName: item.name,
+        title: copy.title,
+        description: copy.description,
+        imagePath: image.path,
+      };
+    }),
+  );
+  const productName = String(product.trackName || project.name || "App").replace(/[\\/:*?"<>|]+/g, "-");
+  const version = String(draft.appVersion || draft.releaseTag || "release").replace(/^v/i, "");
+  return { pages, productName, version };
+}
+
+function availableDirectory(parent: string, baseName: string): string {
+  for (let suffix = 1; suffix < 1000; suffix += 1) {
+    const candidate = path.join(parent, suffix === 1 ? baseName : `${baseName}-${suffix}`);
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error("无法创建新的 PNG 输出目录");
+}
+
 export function registerReleaseHandlers(): void {
   ipcMain.handle("ai:cancel", (_event, operationId: string) => {
     if (!operationId) return false;
@@ -126,42 +176,8 @@ export function registerReleaseHandlers(): void {
       const project = projects.find((item: any) => item.id === projectId);
       if (!project) throw new Error("Project not found");
       const draft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
-      if (!draft?.screenshotCopy) throw new Error("请先创建截图文案");
-      const product = (project.storeProducts || []).find((item: any) => item.id === draft.productId);
-      if (!product) throw new Error("Store product not found");
-      const supported = (product.supportedLanguages || []).map((item: any) => String(item.code || "")).filter(Boolean);
-      const screenshotCopy = normalizeScreenshotCopySet(
-        draft.screenshotCopy,
-        draft.screenshotCopy.sourceLanguage,
-        supported,
-      );
-      if (!screenshotCopy.batchConfirmedAt) throw new Error("请先确定整批截图文案");
-
-      const pages = screenshotCopy.selectedLanguages.flatMap((language) =>
-        screenshotCopy.items.map((item) => {
-          const copy = item.copies[language];
-          if (!copy?.title || !copy?.description) {
-            throw new Error(`${language} 的“${item.name}”文案不完整`);
-          }
-          if (language !== screenshotCopy.sourceLanguage && copy.sourceUpdatedAt !== screenshotCopy.masterUpdatedAt) {
-            throw new Error(`${language} 的“${item.name}”仍需按当前母本重新翻译`);
-          }
-          const image = screenshotImageForLanguage(item, language, screenshotCopy.sourceLanguage);
-          if (!image?.path || !fs.existsSync(image.path)) {
-            throw new Error(`${language} 的“${item.name}”尚未选择可用图片`);
-          }
-          return {
-            language,
-            screenshotId: item.id,
-            title: copy.title,
-            description: copy.description,
-            imagePath: image.path,
-          };
-        }),
-      );
-
-      const productName = String(product.trackName || project.name || "App").replace(/[\\/:*?"<>|]+/g, "-");
-      const version = String(draft.appVersion || draft.releaseTag || "release").replace(/^v/i, "");
+      if (!draft) throw new Error("Submission draft not found");
+      const { pages, productName, version } = screenshotArtifactContext(project, draft);
       const saveResult = await dialog.showSaveDialog({
         title: "生成 Keynote 截图文稿",
         defaultPath: path.join(path.dirname(templatePath), `${productName}-${version}-screenshots.key`),
@@ -177,6 +193,47 @@ export function registerReleaseHandlers(): void {
       await fillKeynoteFromTemplate({ templatePath, outputPath, pages });
       shell.showItemInFolder(outputPath);
       return { outputPath, pageCount: pages.length };
+    },
+  );
+
+  ipcMain.handle(
+    "release:exportScreenshotPngs",
+    async (_event, projectId: string, draftId: string, templatePath: string) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      draftId = assertNonEmptyString(draftId, "draftId");
+      templatePath = assertNonEmptyString(templatePath, "templatePath");
+      if (!fs.existsSync(templatePath) || path.extname(templatePath).toLowerCase() !== ".key") {
+        throw new Error("请选择有效的 Keynote 模板");
+      }
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const draft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
+      if (!draft) throw new Error("Submission draft not found");
+      const { pages, productName, version } = screenshotArtifactContext(project, draft);
+
+      const folderResult = await dialog.showOpenDialog({
+        title: "选择 PNG 输出位置",
+        defaultPath: path.dirname(templatePath),
+        buttonLabel: "选择",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (folderResult.canceled || folderResult.filePaths.length === 0) return null;
+      const outputDirectory = availableDirectory(
+        folderResult.filePaths[0],
+        `${productName}-${version}-screenshots`,
+      );
+      const temporaryKeynotePath = path.join(outputDirectory, `${productName}-${version}-screenshots.key`);
+      const result = await fillKeynoteFromTemplate({
+        templatePath,
+        outputPath: temporaryKeynotePath,
+        pages,
+        exportPngDirectory: outputDirectory,
+      });
+      fs.unlinkSync(temporaryKeynotePath);
+      shell.showItemInFolder(result.pngPaths[0] || outputDirectory);
+      return { outputDirectory, files: result.pngPaths, pageCount: result.pngPaths.length };
     },
   );
 
