@@ -517,6 +517,32 @@ export function ReleasePage() {
         (workTargetRelease ? inferAppVersion(workTargetRelease) : "") ||
         "",
   ).replace(/^v/i, "");
+  const currentWorkspaceDraft = currentWorkspacePhase === "official"
+    ? currentCopy
+    : currentWorkspacePhase === "editing"
+      ? workingDraft
+      : null;
+  const currentWorkspaceStoreExists = Boolean(
+    currentWorkspaceDraft
+    && (
+      currentWorkspaceDraft.storeCopyCreatedAt
+      || (currentWorkspaceDraft.localizations || []).some((item: any) => item?.language)
+    ),
+  );
+  const currentStoreCopyStatus = !currentWorkspaceStoreExists
+    ? { label: "商店文案 · 未创建", tone: "muted" as const }
+    : currentWorkspaceDraft?.batchConfirmedAt
+      ? { label: "商店文案 · 已定稿", tone: "emerald" as const }
+      : currentWorkspaceDraft?.masterConfirmedAt
+        ? { label: "商店文案 · 翻译中", tone: "amber" as const }
+        : { label: "商店文案 · 编辑中", tone: "amber" as const };
+  const currentScreenshotCopyStatus = !currentWorkspaceDraft?.screenshotCopy
+    ? { label: "截图文案 · 未创建", tone: "muted" as const }
+    : currentWorkspaceDraft.screenshotCopy.batchConfirmedAt
+      ? { label: "截图文案 · 已定稿", tone: "emerald" as const }
+      : currentWorkspaceDraft.screenshotCopy.masterConfirmedAt
+        ? { label: "截图文案 · 翻译中", tone: "amber" as const }
+        : { label: "截图文案 · 编辑中", tone: "amber" as const };
   const officialVersionStatus = currentCopy?.appVersion
     ? deriveVersionStatus({
         appVersion: currentCopy.appVersion,
@@ -1618,26 +1644,8 @@ export function ReleasePage() {
                     {currentTargetVersion ? `v${currentTargetVersion}` : "当前发布"}
                   </h3>
                 )}
-                <StatusChip
-                  label={
-                    currentWorkspacePhase === "editing"
-                      ? "编辑中"
-                      : currentWorkspacePhase === "needs-creation"
-                        ? "待创建"
-                        : currentWorkspacePhase === "official"
-                          ? "已定稿"
-                          : "暂无文案"
-                  }
-                  tone={
-                    currentWorkspacePhase === "editing"
-                      ? "amber"
-                      : currentWorkspacePhase === "needs-creation"
-                        ? "blue"
-                        : currentWorkspacePhase === "official"
-                          ? "emerald"
-                          : "muted"
-                  }
-                />
+                <StatusChip label={currentStoreCopyStatus.label} tone={currentStoreCopyStatus.tone} />
+                <StatusChip label={currentScreenshotCopyStatus.label} tone={currentScreenshotCopyStatus.tone} />
                 {currentWorkspacePhase === "official" && officialVersionStatus && (
                   <StatusChip
                     label={officialVersionStatus.label}
