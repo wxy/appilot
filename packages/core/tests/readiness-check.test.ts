@@ -1,4 +1,8 @@
-import { runReadinessChecks, STORE_FIELD_LIMITS } from "../src/readiness-check";
+import {
+  findStoreFieldLimitIssues,
+  runReadinessChecks,
+  STORE_FIELD_LIMITS,
+} from "../src/readiness-check";
 
 let errors = 0;
 function check(ok: boolean, msg: string) {
@@ -7,6 +11,26 @@ function check(ok: boolean, msg: string) {
 }
 
 check(STORE_FIELD_LIMITS.promotionalText === 170 && STORE_FIELD_LIMITS.keywords === 100, "字段限制常量正确");
+
+check(
+  findStoreFieldLimitIssues([{
+    language: "en", name: "x".repeat(30), subtitle: "", promotionalText: "",
+    keywords: "", description: "", whatsNew: "",
+  }]).length === 0,
+  "字段恰好达到上限时允许确定",
+);
+
+const directLimitIssues = findStoreFieldLimitIssues([{
+  language: "zh-Hans", name: "", subtitle: "", promotionalText: "",
+  keywords: "x".repeat(101), description: "", whatsNew: "",
+}]);
+check(
+  directLimitIssues.length === 1 &&
+    directLimitIssues[0].field === "keywords" &&
+    directLimitIssues[0].length === 101 &&
+    directLimitIssues[0].limit === 100,
+  "可取得确认动作所需的超限字段详情",
+);
 
 const base = {
   localizations: [{

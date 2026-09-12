@@ -571,7 +571,10 @@ export function registerReleaseHandlers(): void {
       }));
     }
     s.set("projects", projects);
-    notifyDataChanged("releases");
+    // Draft content/status changed, but the GitHub release list did not.
+    // Keeping this scope separate prevents the renderer from replacing a
+    // freshly checked GitHub draft with an older hourly release cache.
+    notifyDataChanged("release-drafts");
     return draft;
   });
 

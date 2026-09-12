@@ -33,6 +33,12 @@ function setupRepo(tags: string[] = []): string {
   return dir;
 }
 
+function commit(dir: string, file: string, message: string) {
+  fs.writeFileSync(path.join(dir, file), message);
+  run(dir, ["add", "."]);
+  run(dir, ["commit", "-qm", message]);
+}
+
 async function runTests() {
   // GitHub-first path: draft listed first, untagged draft gets gh-{id} tag.
   {
@@ -79,6 +85,54 @@ async function runTests() {
       "GitHub 公告写入 material",
     );
     check(result.latest?.id === "gh-1", "latest 为最新草案");
+  }
+
+  // A new GitHub draft always uses the latest published release tag as its
+  // material boundary, even when Appilot's copy cursor points farther back.
+  {
+    const dir = setupRepo(["v1.1.2"]);
+    commit(dir, "b.txt", "feat: night memory (#28)");
+    commit(dir, "c.txt", "fix: HUD hints (#29)");
+    const historyStart = execFileSync(
+      "git",
+      ["-C", dir, "rev-list", "--max-parents=0", "HEAD"],
+    ).toString().trim();
+    const result = await checkForRelease(dir, historyStart, null, {
+      sync: false,
+      githubReleases: [
+        {
+          id: 113,
+          tag: "v1.1.3",
+          name: "GloWalk 1.1.3",
+          body: "draft body",
+          draft: true,
+          prerelease: false,
+          createdAt: "2026-09-12T00:00:00Z",
+          publishedAt: null,
+          url: "https://github.com/owner/repo/releases/113",
+          viaToken: true,
+        },
+        {
+          id: 112,
+          tag: "v1.1.2",
+          name: "GloWalk 1.1.2",
+          body: "published body",
+          draft: false,
+          prerelease: false,
+          createdAt: "2026-08-28T00:00:00Z",
+          publishedAt: "2026-08-28T00:00:00Z",
+          url: "https://github.com/owner/repo/releases/tag/v1.1.2",
+          viaToken: true,
+        },
+      ],
+    });
+    const material = result.latest?.material;
+    check(material?.commits.length === 2, "GitHub 草案始终仅收集上次已发布 tag 后的提交");
+    check(
+      material?.commits.every((item) => item.subject.includes("#28") || item.subject.includes("#29")) === true,
+      "草案素材不包含 v1.1.2 及更早历史",
+    );
+    check(material?.pullRequests.length === 2, "草案素材只包含新的 2 个 PR");
   }
 
   // No GitHub releases → degrade to local main-line git tag.

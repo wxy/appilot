@@ -12,7 +12,7 @@ export function DataSyncLayer() {
   useEffect(() => {
     const off = (window as any).appilot?.onDataChanged?.((scope: string) => {
       // 项目/排名/ASC/发布数据变化时重载项目数据（排名矩阵、总览、发布工作台共用）。
-      if (["rank", "asc", "releases", "projects"].includes(scope)) {
+      if (["rank", "asc", "releases", "release-drafts", "projects"].includes(scope)) {
         // 排名数据按任务高频推送（加速时一轮数十次），合并到一次全量重载。
         if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
         reloadTimerRef.current = setTimeout(() => {
