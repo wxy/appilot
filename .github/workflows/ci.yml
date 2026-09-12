@@ -36,8 +36,27 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
 
+  # 轻量插件构建——仅 PR 门禁（windows runner）。平台构建太贵只在 master 跑，
+  # 但 Windows 特有问题（如 spawn .bin sh shim）只有真跑插件构建才暴露
+  # （#292–#294 三连红的教训）。build:plugins 不含 electron-vite，跳过
+  # Electron 二进制下载。
+  plugin-build:
+    name: Plugin Build (windows)
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build:plugins
+
   # Platform build — only on master push (expensive: macOS 10x, Windows 2x).
-  # PRs are gated by typecheck + test above.
+  # PRs are gated by typecheck + test + plugin-build above.
   build:
     name: Build (${{ matrix.os }})
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
