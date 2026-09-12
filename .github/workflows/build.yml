@@ -1,0 +1,57 @@
+name: Platform Build
+
+# master 合入后的全量验证：typecheck + test + macOS/Windows 平台构建
+# （core + plugins + electron-vite）。独立 workflow 只在 push: master 触发——
+# PR checks 里不再出现常驻 skip 的 Build 检查项（matrix job 被跳过时名字
+# 还会显示未求值的 ${{ matrix.os }}）。
+# 代价说明：macOS runner 10x、Windows 2x 计费，平台构建不进 PR 门禁
+# （PR 由 ci.yml 的 Type Check / Unit Tests / Plugin Build 把关）。
+# 注意：typecheck / test 两个 job 与 ci.yml 保持同步。
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build

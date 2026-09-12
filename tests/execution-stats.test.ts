@@ -17,7 +17,14 @@ function check(ok: boolean, msg: string) {
 }
 
 const HOUR = 3_600_000;
-const now = Date.now();
+// 固定“now”为本地正午：下方部分块用 agoHours(≤3) 相对 fixture 断言“今日执行”，
+// 若真实运行时刻落在零点后 3 小时内，条目会掉到昨天导致随 CI 时刻漂移
+// （曾在 UTC 00:20 触发 FAIL）。正午保证所有相对 fixture 都留在当日。
+const now = (() => {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  return d.getTime();
+})();
 const t = (agoHours: number) => new Date(now - agoHours * HOUR).toISOString();
 
 const rankExec = (
