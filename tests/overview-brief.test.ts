@@ -51,12 +51,73 @@ assert(
   "parse: keyword mutation without language is rejected",
 );
 assert(
+  normalizeBriefProposedActions([{
+    kind: "keyword.track.add",
+    label: "添加跟踪",
+    input: { language: "en", keyword: "safe night walk", rationale: "与产品定位一致" },
+  }])[0]?.input.rationale === "与产品定位一致",
+  "parse: generalized action input preserves validated keyword-add rationale",
+);
+assert(
+  (normalizeBriefProposedActions([{
+    kind: "copy-plan.add",
+    label: "添加文案计划",
+    input: {
+      title: "突出安心感",
+      instruction: "在描述中说明离线能力。",
+      reason: "用户反复询问",
+      fields: ["description", "whatsNew"],
+      languages: ["en"],
+    },
+  }])[0]?.input.fields as string[])?.join() === "description",
+  "parse: copy-plan action accepts only registered copy fields and excludes whatsNew",
+);
+assert(
   normalizeBriefProposedActions([{ kind: "keyword.open", label: "查看", keyword: "night walk" }]).length === 0,
   "parse: specific keyword view without language is rejected",
 );
 assert(
   normalizeBriefFollowupResponse({ answer: "**结论**", proposedActions: [{ kind: "release.open", label: "查看发布" }] }).proposedActions[0]?.kind === "release.open",
   "parse: follow-up markdown answer and actions",
+);
+const withdrawnFollowup = normalizeBriefFollowupResponse({
+  answer: "原建议建立在错误假设上。",
+  proposedActions: [],
+  suggestionDecision: { disposition: "withdraw", reason: "用户不会为海报功能主动搜索应用" },
+});
+assert(
+  withdrawnFollowup.suggestionDecision.disposition === "withdraw"
+    && withdrawnFollowup.suggestionDecision.reason.includes("海报"),
+  "parse: follow-up can explicitly withdraw the original suggestion",
+);
+const replacementFollowup = normalizeBriefFollowupResponse({
+  answer: "改为降低海报宣传权重。",
+  suggestionDecision: { disposition: "replace", reason: "获客假设不成立" },
+  replacementSuggestion: {
+    title: "降低海报功能在商店文案中的权重",
+    reason: "海报词没有搜索侧需求证据",
+    expectedOutcome: "主文案更贴近照明需求",
+    successMetric: "下一版本商店转化率不低于当前基线",
+    evaluateAfterDays: 14,
+    action: "release",
+    target: "商店文案",
+    proposedActions: [{
+      kind: "copy-plan.add",
+      label: "加入文案计划",
+      input: {
+        title: "降低海报宣传权重",
+        instruction: "主推照明能力，把海报移到功能列表后部。",
+        reason: "海报词没有排名信号",
+        fields: ["description"],
+        languages: ["en"],
+      },
+    }],
+  },
+});
+assert(
+  replacementFollowup.suggestionDecision.disposition === "replace"
+    && replacementFollowup.replacementSuggestion?.proposedActions[0]?.kind === "copy-plan.add",
+  "parse: follow-up replacement is a complete standalone suggestion",
 );
 
 const followupProfile = buildProjectProfile({
@@ -193,6 +254,27 @@ assert(
     removed: [],
   }).length === 0,
   "capability: an action that does not match current state is rejected",
+);
+const addKeyword = normalizeBriefProposedActions([{
+  kind: "keyword.track.add",
+  label: "添加跟踪",
+  input: { language: "en", keyword: "new term", rationale: "相关且尚未跟踪" },
+}]);
+assert(
+  filterSupportedBriefActions(addKeyword, {
+    active: [],
+    paused: [],
+    removed: [],
+  }).length === 1,
+  "capability: missing keyword can be proposed for tracking",
+);
+assert(
+  filterSupportedBriefActions(addKeyword, {
+    active: [],
+    paused: [],
+    removed: [{ language: "en", keyword: "new term", removedAt: null }],
+  }).length === 0,
+  "capability: removed keyword must use restore instead of add",
 );
 const missingReviewWindow = parseBriefSuggestions(JSON.stringify({ suggestions: [{
   title: "缺少复核时间",

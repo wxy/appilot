@@ -7,6 +7,7 @@
 import type { AppilotStore } from '@appilot-labs/appilot-headless';
 
 export const DRAFT_BLOB_DOMAIN = 'storeSubmissionDrafts';
+export const COPY_PLAN_BLOB_DOMAIN = 'copyPlans';
 
 export interface LightProduct {
   id: string;
@@ -31,6 +32,7 @@ export interface LightProject {
   supportedLanguages: { code: string; name: string }[];
   artworkUrl: string | null;
   storeSubmissionDrafts: unknown[];
+  copyPlans: unknown[];
   repo: Record<string, unknown> | null;
   storeProducts: LightProduct[];
 }
@@ -46,6 +48,14 @@ export function buildLightProjects(store: AppilotStore): LightProject[] {
     const drafts = (() => {
       try {
         const v = store.blobs.get(DRAFT_BLOB_DOMAIN, rec.id ?? rec.name);
+        return Array.isArray(v) ? v : [];
+      } catch {
+        return [];
+      }
+    })();
+    const copyPlans = (() => {
+      try {
+        const v = store.blobs.get(COPY_PLAN_BLOB_DOMAIN, rec.id ?? rec.name);
         return Array.isArray(v) ? v : [];
       } catch {
         return [];
@@ -72,6 +82,7 @@ export function buildLightProjects(store: AppilotStore): LightProject[] {
       supportedLanguages: (rec.languages || []).map((code) => ({ code, name: code })),
       artworkUrl: rec.artworkUrl ?? null,
       storeSubmissionDrafts: drafts,
+      copyPlans,
       repo: repo as Record<string, unknown> | null,
       storeProducts: products.map((p) => ({
         id: p.productId,

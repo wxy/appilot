@@ -7,7 +7,7 @@
  *   （映射成 Project/StoreProduct 形状），回调为简单跳转/无操作。
  *
  * 布局（自上而下）：
- * 标题/产品选择 → 副驾驶入口（置顶宽条）
+ * 标题/产品选择 → 副驾入口（置顶宽条）
  * → 第一行：三张卡 md 三列（窄屏堆叠）：① 开发 → ② 发布 → ③ 上架
  * → 第二行：④ 竞品与表现独占一整行（宽卡，卡内 md 两栏分区）
  * → 排名分布（保留）→ 用户反馈（保持现状，置于页尾不强调）。
@@ -462,7 +462,7 @@ export function OverviewContent(props: OverviewContentProps) {
   } = props;
 
   if (!project || !product) {
-    return <EmptyState title="还没有项目" desc="添加一个项目，副驾驶帮你看路。" />;
+    return <EmptyState title="还没有项目" desc="添加一个项目，副驾帮你看路。" />;
   }
 
   const languages = product.supportedLanguages || [];
@@ -900,7 +900,7 @@ export function OverviewContent(props: OverviewContentProps) {
       <div className="rounded-2xl border border-amber-200/70 dark:border-amber-500/20 bg-gradient-to-r from-amber-50/80 to-white dark:from-amber-500/10 dark:to-zinc-900 px-5 py-3.5 shadow-sm mb-4 flex items-center gap-4">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-sm font-bold text-white shadow-sm">AI</div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">副驾驶</h3>
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">副驾</h3>
           <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
             {copilotSummary?.generatedAt
               ? `${copilotSummary.pending} 项待决策 · ${copilotSummary.completed} 项已执行 · 更新于 ${formatHumanTime(copilotSummary.generatedAt)}`

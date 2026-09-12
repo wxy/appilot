@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { BriefActionRecord } from "../lib/overview-brief";
+import type { CopyPlanItem } from "@appilot-labs/appilot-core/copy-plan";
 
 export interface KeywordEntry {
   language: string;
@@ -85,6 +86,7 @@ export interface Project {
   createdAt: string;
   repo: RepoInfo | null;
   briefActions: BriefActionRecord[];
+  copyPlans: CopyPlanItem[];
   storeProducts: StoreProduct[];
 
   // Legacy summary fields, kept for compatibility and migration.
@@ -333,6 +335,7 @@ function normalizeProject(p: any): Project {
     ...p,
     repo: normalizeRepo(p.repo),
     briefActions: normalizeBriefActions(p.briefActions),
+    copyPlans: Array.isArray(p.copyPlans) ? p.copyPlans : [],
     storeProducts: products,
     ...summarizeLegacyProject(products),
     ...pool,

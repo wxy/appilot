@@ -116,8 +116,10 @@ async function main() {
     // 防误清：快照草稿为空数组但 DB 已有非空草稿 → 保留 DB 草稿
     const r = electronProject();
     r.storeSubmissionDrafts = [];
+    r.copyPlans = [{ id: 'plan-1', productId: 'glo:ios', title: '未来改进' }];
     syncProjectToDb(store, r);
     assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo-id') as any[]).length, 1, '空数组快照不覆盖已有草稿（防误清）');
+    assert.equal((store.blobs.get('copyPlans', 'glo-id') as any[])[0].id, 'plan-1', '保留草稿时仍继续镜像文案计划');
 
     // 新建项目：无既有草稿时仍可写入非空草稿
     const s = electronProject();

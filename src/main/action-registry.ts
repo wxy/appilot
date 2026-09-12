@@ -1,8 +1,18 @@
 import {
   BRIEF_ACTION_CAPABILITIES,
+  normalizeBriefProposedActions,
   type BriefActionCapability,
+  type BriefActionInput,
   type EffectiveBriefCommandKind,
 } from "@appilot-labs/appilot-core/ai/overview-brief";
+import { normalizeTrackedKeyword } from "@appilot-labs/appilot-core/rank-keywords";
+import {
+  copyPlanDuplicateKey,
+  copyPlansForProduct,
+  createCopyPlanItem,
+  normalizeCopyPlanInput,
+  upsertCopyPlan,
+} from "@appilot-labs/appilot-core/copy-plan";
 import type { AppStore } from "./store";
 import {
   findProductContext,
@@ -19,10 +29,7 @@ export interface AppActionRequest {
   actionId: EffectiveBriefCommandKind;
   projectId: string;
   productId: string;
-  input: {
-    language: string;
-    keyword: string;
-  };
+  input: BriefActionInput;
   source: AppActionSource;
   suggestionId?: string | null;
 }
@@ -32,14 +39,6 @@ export interface AppActionDescriptor extends BriefActionCapability {
   title: string;
   description: string;
   risk: "low" | "medium";
-  inputSchema: {
-    type: "object";
-    required: readonly ["language", "keyword"];
-    properties: {
-      language: { type: "string"; minLength: 1 };
-      keyword: { type: "string"; minLength: 1 };
-    };
-  };
 }
 
 export interface AppActionPreview {
@@ -77,17 +76,14 @@ export interface AppActionExecutionResult {
 
 type RegisteredAction = {
   descriptor: AppActionDescriptor;
-  mutate: (project: any, product: any, input: AppActionRequest["input"], now: string) => any;
-  verify: (project: any, input: AppActionRequest["input"]) => boolean;
-};
-
-const keywordInputSchema: AppActionDescriptor["inputSchema"] = {
-  type: "object",
-  required: ["language", "keyword"],
-  properties: {
-    language: { type: "string", minLength: 1 },
-    keyword: { type: "string", minLength: 1 },
-  },
+  mutate: (
+    project: any,
+    product: any,
+    input: AppActionRequest["input"],
+    now: string,
+    request: AppActionRequest,
+  ) => any;
+  verify: (project: any, product: any, input: AppActionRequest["input"]) => boolean;
 };
 
 function descriptor(
@@ -102,7 +98,6 @@ function descriptor(
     title,
     description,
     risk,
-    inputSchema: keywordInputSchema,
   } as AppActionDescriptor;
 }
 
@@ -111,6 +106,27 @@ function matches(item: any, input: AppActionRequest["input"]): boolean {
 }
 
 const registeredActions: Record<EffectiveBriefCommandKind, RegisteredAction> = {
+  "keyword.track.add": {
+    descriptor: descriptor("keyword.track.add", "添加跟踪关键词", "把新关键词加入跟踪池并开始后续排名采集", "low"),
+    mutate: (project, _product, input, now) => syncKeywordPoolToProducts({
+      ...project,
+      trackedKeywords: [
+        ...(project.trackedKeywords || []),
+        normalizeTrackedKeyword({
+          language: input.language,
+          keyword: input.keyword,
+          rationale: input.rationale,
+          translation: "",
+          status: "active",
+          source: "ai",
+          addedAt: now,
+        }),
+      ],
+    }),
+    verify: (project, _product, input) =>
+      (project.trackedKeywords || []).some((item: any) => matches(item, input))
+      && !(project.removedKeywords || []).some((item: any) => matches(item, input)),
+  },
   "keyword.pause": {
     descriptor: descriptor("keyword.pause", "暂停关键词", "暂停关键词的后续定时排名采集", "low"),
     mutate: (project, _product, input, now) => syncKeywordPoolToProducts({
@@ -126,7 +142,7 @@ const registeredActions: Record<EffectiveBriefCommandKind, RegisteredAction> = {
           : item,
       ),
     }),
-    verify: (project, input) => (project.trackedKeywords || []).some(
+    verify: (project, _product, input) => (project.trackedKeywords || []).some(
       (item: any) => matches(item, input) && item.status === "paused",
     ),
   },
@@ -149,7 +165,7 @@ const registeredActions: Record<EffectiveBriefCommandKind, RegisteredAction> = {
         removedKeywords,
       });
     },
-    verify: (project, input) =>
+    verify: (project, _product, input) =>
       !(project.trackedKeywords || []).some((item: any) => matches(item, input))
       && (project.removedKeywords || []).some((item: any) => matches(item, input)),
   },
@@ -171,7 +187,7 @@ const registeredActions: Record<EffectiveBriefCommandKind, RegisteredAction> = {
         removedKeywords: (project.removedKeywords || []).filter((item: any) => !matches(item, input)),
       });
     },
-    verify: (project, input) =>
+    verify: (project, _product, input) =>
       (project.trackedKeywords || []).some((item: any) => matches(item, input))
       && !(project.removedKeywords || []).some((item: any) => matches(item, input)),
   },
@@ -199,9 +215,38 @@ const registeredActions: Record<EffectiveBriefCommandKind, RegisteredAction> = {
         ),
       });
     },
-    verify: (project, input) => (project.trackedKeywords || []).some(
+    verify: (project, _product, input) => (project.trackedKeywords || []).some(
       (item: any) => matches(item, input) && item.status !== "paused",
     ),
+  },
+  "copy-plan.add": {
+    descriptor: descriptor("copy-plan.add", "添加文案计划", "记录一条供之后发布文案生成参考的长期改进方向", "low"),
+    mutate: (project, product, input, now, request) => {
+      const normalized = normalizeCopyPlanInput(
+        input,
+        (product.supportedLanguages || []).map((item: any) => String(item.code || "")),
+      );
+      if (!normalized) throw new Error("文案计划参数不完整");
+      const item = createCopyPlanItem({
+        projectId: project.id,
+        productId: product.id,
+        input: normalized,
+        source: request.source === "copilot" ? "copilot" : "manual",
+        sourceSuggestionId: request.suggestionId,
+        now,
+      });
+      upsertCopyPlan(project, item);
+      return { ...project };
+    },
+    verify: (project, product, input) => {
+      const normalized = normalizeCopyPlanInput(
+        input,
+        (product.supportedLanguages || []).map((item: any) => String(item.code || "")),
+      );
+      return Boolean(normalized && copyPlansForProduct(project, product.id).some(
+        (item) => copyPlanDuplicateKey(item) === copyPlanDuplicateKey(normalized),
+      ));
+    },
   },
 };
 
@@ -210,14 +255,17 @@ function normalizedRequest(request: AppActionRequest): AppActionRequest {
   if (!action) throw new Error("该动作未在 Appilot 注册");
   const projectId = String(request?.projectId || "").trim();
   const productId = String(request?.productId || "").trim();
-  const language = String(request?.input?.language || "").trim();
-  const keyword = String(request?.input?.keyword || "").trim();
-  if (!projectId || !productId || !language || !keyword) throw new Error("动作参数不完整");
+  const normalizedAction = normalizeBriefProposedActions([{
+    kind: request?.actionId,
+    label: action.descriptor.title,
+    input: request?.input,
+  }])[0];
+  if (!projectId || !productId || !normalizedAction) throw new Error("动作参数不完整");
   return {
     ...request,
     projectId,
     productId,
-    input: { language, keyword },
+    input: normalizedAction.input,
     source: ["copilot", "ui", "internal"].includes(request.source) ? request.source : "internal",
     suggestionId: typeof request.suggestionId === "string" ? request.suggestionId : null,
   };
@@ -235,6 +283,7 @@ function actionContext(store: AppStore, request: AppActionRequest): { projects: 
 function availability(
   action: RegisteredAction,
   project: any,
+  product: any,
   input: AppActionRequest["input"],
 ): string | null {
   const tracked = (project.trackedKeywords || []).find((item: any) => matches(item, input));
@@ -251,6 +300,22 @@ function availability(
   if (action.descriptor.appliesTo === "removed" && !removed) {
     return "关键词当前不在已移除记录中";
   }
+  if (action.descriptor.appliesTo === "missing") {
+    if (tracked) return "关键词已经在跟踪池中";
+    if (removed) return "关键词位于已移除记录中，请使用恢复动作";
+    const supported = (product.supportedLanguages || []).map((item: any) => String(item.code || ""));
+    if (supported.length > 0 && !supported.includes(String(input.language || ""))) {
+      return "关键词语言不属于当前产品支持的语言";
+    }
+  }
+  if (action.descriptor.kind === "copy-plan.add") {
+    const supported = (product.supportedLanguages || []).map((item: any) => String(item.code || ""));
+    const normalized = normalizeCopyPlanInput(input, supported);
+    if (!normalized) return "文案计划字段或语言无效";
+    if (copyPlansForProduct(project, product.id).some(
+      (item) => copyPlanDuplicateKey(item) === copyPlanDuplicateKey(normalized),
+    )) return "相同的文案计划已经存在";
+  }
   return null;
 }
 
@@ -265,13 +330,14 @@ export function listRegisteredActions(): AppActionDescriptor[] {
 }
 
 export function recommendationActionCatalog(): BriefActionCapability[] {
-  return listRegisteredActions().map(({ kind, recommendationEligible, execution, appliesTo, immediateEffect, verification }) => ({
+  return listRegisteredActions().map(({ kind, recommendationEligible, execution, appliesTo, immediateEffect, verification, inputSchema }) => ({
     kind,
     recommendationEligible,
     execution,
     appliesTo,
     immediateEffect,
     verification,
+    inputSchema,
   }));
 }
 
@@ -287,12 +353,15 @@ export function findRecordedActionExecution(
 export function previewRegisteredAction(store: AppStore, rawRequest: AppActionRequest): AppActionPreview {
   const request = normalizedRequest(rawRequest);
   const action = registeredActions[request.actionId];
-  const { project } = actionContext(store, request);
-  const unavailableReason = availability(action, project, request.input);
+  const { project, product } = actionContext(store, request);
+  const unavailableReason = availability(action, project, product, request.input);
+  const target = action.descriptor.kind === "copy-plan.add"
+    ? String(request.input.title || "文案计划")
+    : `${String(request.input.language || "")} · ${String(request.input.keyword || "")}`;
   return {
     actionId: request.actionId,
     title: action.descriptor.title,
-    target: `${request.input.language} · ${request.input.keyword}`,
+    target,
     immediateEffect: action.descriptor.immediateEffect,
     verification: action.descriptor.verification,
     risk: action.descriptor.risk,
@@ -322,14 +391,15 @@ export function executeRegisteredAction(
   };
   try {
     const { projects, project, product } = actionContext(store, request);
-    const unavailableReason = availability(action, project, request.input);
+    const unavailableReason = availability(action, project, product, request.input);
     if (unavailableReason) throw new Error(unavailableReason);
-    const changedProject = action.mutate(project, product, request.input, startedAt);
+    const changedProject = action.mutate(project, product, request.input, startedAt, request);
     const nextProjects = updateProjectInProjects(projects, project.id, () => changedProject);
     store.set("projects", nextProjects);
     const persistedProjects: any[] = store.get("projects") || [];
-    const savedProject = findProductContext(persistedProjects, request.productId)?.project;
-    if (!savedProject || !action.verify(savedProject, request.input)) {
+    const savedContext = findProductContext(persistedProjects, request.productId);
+    const savedProject = savedContext?.project;
+    if (!savedProject || !savedContext || !action.verify(savedProject, savedContext.product, request.input)) {
       throw new Error("动作已提交，但状态校验未通过");
     }
     const execution: AppActionExecution = {

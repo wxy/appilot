@@ -13,8 +13,9 @@
 import { build } from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url))); // plugins/dsh-appilot
 const outFile = join(root, 'client', 'client.js');
@@ -22,15 +23,21 @@ const genDir = join(root, 'client', 'src', 'generated');
 const genFile = join(genDir, 'tailwind-css.ts');
 
 /* ── 1. scoped tailwind 构建 ── */
-const twBin = resolve(root, '..', '..', 'node_modules', '.bin', 'tailwindcss');
+// 不能直接 spawn node_modules/.bin/tailwindcss：那是 sh shim，Windows 的
+// CreateProcess 无法执行（.cmd shim 又要求 shell:true，CVE-2024-27980 之后
+// Node 明令禁止）。改为用当前 Node 直接跑 tailwind 的真实 JS 入口，三端一致。
+const require = createRequire(import.meta.url);
+const twCli = require.resolve('tailwindcss/lib/cli.js');
 const twOut = join(root, 'client', '.build', 'overview.css');
 await mkdir(dirname(twOut), { recursive: true });
-const tw = spawnSync(twBin, [
+const tw = spawnSync(process.execPath, [
+  twCli,
   '-c', join(root, 'scripts', 'tailwind-overview.config.cjs'),
   '-i', join(root, 'client', 'src', 'tailwind.overview.css'),
   '-o', twOut,
   '--minify',
 ], { cwd: root, encoding: 'utf8' });
+if (tw.error) console.error(tw.error);
 if (tw.status !== 0) {
   console.error(tw.stderr || tw.stdout);
   throw new Error('tailwind build failed');

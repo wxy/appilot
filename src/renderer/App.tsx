@@ -21,7 +21,7 @@ import { DataSyncLayer } from "./components/ui/DataSyncLayer";
 
 const PROJECT_NAV_ITEMS = [
   { to: "/overview", label: "总览", title: "项目总览" },
-  { to: "/copilot", label: "副驾驶", title: "AI 副驾驶工作台" },
+  { to: "/copilot", label: "副驾", title: "AI 副驾工作台" },
   { to: "/release", label: "发布", title: "发布工作台" },
   { to: "/keywords", label: "排名", title: "关键词排名" },
   { to: "/reviews", label: "评论", title: "评论" },
@@ -340,7 +340,7 @@ function Layout({ children }: { children: React.ReactNode }) {
                 to={copilotReturn.to || "/copilot"}
                 className="text-xs font-medium text-amber-700 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300"
               >
-                ← {copilotReturn.label || "返回副驾驶"}
+                ← {copilotReturn.label || "返回副驾"}
               </Link>
               <span className="text-[11px] text-zinc-400">你正在查看该建议对应的完整功能页</span>
             </div>

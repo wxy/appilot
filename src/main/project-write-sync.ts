@@ -46,11 +46,22 @@ export function syncProjectToDb(
       const drafts = Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [];
       if (drafts.length === 0) {
         const existing = store.blobs.get("storeSubmissionDrafts", stableProjectId);
-        if (Array.isArray(existing) && existing.length > 0) return { registry: true, meta, products: rows.length };
+        if (!(Array.isArray(existing) && existing.length > 0)) {
+          store.blobs.put("storeSubmissionDrafts", stableProjectId, drafts);
+        }
+      } else {
+        store.blobs.put("storeSubmissionDrafts", stableProjectId, drafts);
       }
-      store.blobs.put("storeSubmissionDrafts", stableProjectId, drafts);
     } catch (err: any) {
       // 草稿镜像失败不阻断项目同步
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(project, "copyPlans")) {
+    try {
+      const copyPlans = Array.isArray((project as any).copyPlans) ? (project as any).copyPlans : [];
+      store.blobs.put("copyPlans", stableProjectId, copyPlans);
+    } catch {
+      // 文案计划镜像失败不阻断项目同步
     }
   }
   return { registry: true, meta, products: rows.length };
