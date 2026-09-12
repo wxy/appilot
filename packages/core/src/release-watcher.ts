@@ -601,7 +601,45 @@ export async function checkForRelease(
   }
   const endRefs = frontierShas.join(" ");
 
-  let material = await collectReleaseMaterial(localPath, lastSeenSha || null, frontierShas);
+  const githubReleases =
+    options.githubReleases ?? options.githubCache?.releases ?? null;
+  const githubItems =
+    githubReleases && githubReleases.length > 0 ? githubReleases : null;
+  const sortedGithubItems = githubItems
+    ? [...githubItems].sort((a, b) => {
+        if (a.draft !== b.draft) return a.draft ? -1 : 1;
+        return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+      })
+    : null;
+
+  // A GitHub draft is a release-to-release workflow: its authoritative
+  // material boundary is the latest published release tag. lastSeenSha is an
+  // Appilot copy-generation cursor (advanced when a copy batch is confirmed),
+  // so it is only a fallback for untagged/local workflows or when the
+  // published tag cannot be resolved locally.
+  let materialBoundary = lastSeenSha || null;
+  if (sortedGithubItems?.[0]?.draft) {
+    for (const item of sortedGithubItems) {
+      if (item.draft || !item.tag) continue;
+      const publishedTagSha = await git(
+        localPath,
+        ["rev-parse", `${item.tag}^{commit}`],
+      ).catch(() => "");
+      if (
+        publishedTagSha &&
+        (await Promise.all(
+          frontierShas.map((frontier) =>
+            isAncestor(localPath, publishedTagSha, frontier),
+          ),
+        )).some(Boolean)
+      ) {
+        materialBoundary = publishedTagSha;
+        break;
+      }
+    }
+  }
+
+  let material = await collectReleaseMaterial(localPath, materialBoundary, frontierShas);
 
   // The release identity is the newest main-line tag (or the head when there
   // are no tags). It stays stable across the generation boundary, so the
@@ -631,16 +669,6 @@ export async function checkForRelease(
     }
   }
 
-  const githubReleases =
-    options.githubReleases ?? options.githubCache?.releases ?? null;
-  const githubItems =
-    githubReleases && githubReleases.length > 0 ? githubReleases : null;
-  const sortedGithubItems = githubItems
-    ? [...githubItems].sort((a, b) => {
-        if (a.draft !== b.draft) return a.draft ? -1 : 1;
-        return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
-      })
-    : null;
   // 缓存匹配以「前沿发布」（草案优先）的 tag 为准：后台同步缓存的 PR 列表
   // 属于该发布，而 git tag 名（releaseTag）在草案场景下是上一个版本，会
   // 导致缓存永远匹配不上、每次视图加载都重新走 GitHub API。

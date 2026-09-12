@@ -1,4 +1,5 @@
 import { cn } from "../../lib/utils";
+import { STORE_FIELD_LIMITS } from "@appilot-labs/appilot-core/readiness-check";
 import { FieldHeader } from "../ui/Fields";
 import { inputClass, inputLineClass } from "../ui/styles";
 
@@ -16,19 +17,10 @@ export type CopyField =
   | "whatsNew"
   | "keywords";
 
-const FIELD_LIMITS: Record<CopyField, number> = {
-  name: 30,
-  subtitle: 30,
-  promotionalText: 170,
-  description: 4000,
-  whatsNew: 4000,
-  keywords: 100,
-};
-
 function charCounterClass(len: number, max: number): string {
   return cn(
     "text-[11px] px-1",
-    len >= max
+    len > max
       ? "text-red-500"
       : len >= max * 0.9
         ? "text-amber-600/90 dark:text-amber-500/90"
@@ -71,7 +63,7 @@ export function SubmissionCopyFields({
       props.readOnly = true;
     } else {
       props.onChange = (e: any) => set(field, e.target.value);
-      props.maxLength = FIELD_LIMITS[field];
+      props.maxLength = STORE_FIELD_LIMITS[field];
     }
     return multiline ? (
       <textarea {...props} className={inputClass + ` ${minHeight} resize-y`} />
@@ -82,7 +74,7 @@ export function SubmissionCopyFields({
 
   const counter = (field: CopyField) => {
     const len = display(field).length;
-    const max = FIELD_LIMITS[field];
+    const max = STORE_FIELD_LIMITS[field];
     return (
       <p className={charCounterClass(len, max)}>
         {len}/{max} 字符

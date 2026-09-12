@@ -4,6 +4,7 @@ import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
 import { buildStatusForVersion } from "@appilot-labs/appilot-core/build-status";
 import { inferAppVersion } from "@appilot-labs/appilot-core/store-submission";
+import { findStoreFieldLimitIssues } from "@appilot-labs/appilot-core/readiness-check";
 import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
 import {
   formatHumanTime,
@@ -27,6 +28,7 @@ import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import { PreReleaseChecklistPanel } from "./PreReleaseChecklistPanel";
 import {
   btnPrimary,
+  btnSecondary,
   inputClass,
   inputLineClass,
 } from "../ui/styles";
@@ -65,6 +67,8 @@ export function ReleasePage() {
   const [active, setActive] = useState<any>(null);
   const [checking, setChecking] = useState(false);
   const [releasesLoaded, setReleasesLoaded] = useState(false);
+  const [initialCheckPending, setInitialCheckPending] = useState(true);
+  const initialCheckPendingRef = useRef(true);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<{
@@ -104,6 +108,8 @@ export function ReleasePage() {
   const [showChecklist, setShowChecklist] = useState(false);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [confirmingMaster, setConfirmingMaster] = useState(false);
+  const [confirmingBatch, setConfirmingBatch] = useState(false);
 
   useEffect(() => {
     const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
@@ -159,6 +165,10 @@ export function ReleasePage() {
 
   const loadReleases = async (force = false, clearFirst = true, resetView = false) => {
     if (!project?.id) return;
+    if (resetView) {
+      initialCheckPendingRef.current = true;
+      setInitialCheckPending(true);
+    }
     // 只有切换项目/平台或首次加载时才清空旧数据走载入态；
     // 后台发布同步触发的刷新不清空，原地更新，避免整页闪成“正在检查发布状态”。
     if (clearFirst) {
@@ -259,6 +269,10 @@ export function ReleasePage() {
     } finally {
       setChecking(false);
       setReleasesLoaded(true);
+      if (resetView) {
+        initialCheckPendingRef.current = false;
+        setInitialCheckPending(false);
+      }
     }
   };
 
@@ -268,7 +282,14 @@ export function ReleasePage() {
     const key = `${project?.id}:${productId}`;
     const resetView = lastProductKey.current !== key;
     lastProductKey.current = key;
-    void loadReleases(false, true, resetView);
+    // React Strict Mode replays effects in development. The key guard keeps
+    // that replay from starting a second, cached release:list request beside
+    // the authoritative live check.
+    if (!resetView) return;
+    // Entering the workbench/project must verify GitHub live before revealing
+    // copy-planning data. The hourly background cache is useful elsewhere,
+    // but it can hide a release draft created moments ago.
+    void loadReleases(resetView, true, resetView);
     // 视图/发布切换只改变 selectedTag，由 release:context 增量加载对应发布
     // 的素材与草案；不整页重载 release.list，避免出现「检查发布状态」与
     // 长等待。首次进入或切项目/平台时才调用上面的 loadReleases。
@@ -284,7 +305,20 @@ export function ReleasePage() {
     const handler = (e: Event) => {
       const scope = (e as CustomEvent).detail;
       if (scope === "releases") {
+        // Background sync can emit while the initial live GitHub request is in
+        // flight. Do not let its older hourly cache overwrite the entry gate
+        // or select/load an older release draft.
+        if (initialCheckPendingRef.current) return;
         void loadReleasesRef.current(false, false);
+        setContextRevision((revision) => revision + 1);
+      } else if (scope === "release-drafts") {
+        // Saving/confirming copy only changes local draft state. Refresh its
+        // context without reloading the GitHub release list from an older
+        // hourly cache.
+        // Translation saves the current edits immediately before starting.
+        // The active draft is already updated locally, so refreshing here only
+        // makes the fixed-material area flicker on every language click.
+        if (translatingRef.current.size > 0) return;
         setContextRevision((revision) => revision + 1);
       } else if (scope === "asc" && productId) {
         (window as any).appilot?.asc?.status(productId)
@@ -1104,36 +1138,94 @@ export function ReleasePage() {
     }
   };
 
+  const attachSavedDraft = (saved: any) => {
+    if (!saved?.id) return;
+    setReleases((current) =>
+      current.map((item) => {
+        const sameRelease = item.tag === saved.releaseTag;
+        const sameVersion =
+          String(inferAppVersion(item) || "").replace(/^v/i, "") ===
+          String(saved.appVersion || "").replace(/^v/i, "");
+        if (!sameRelease && !sameVersion) return item;
+        const drafts = (item.submissionDrafts || []).filter(
+          (candidate: any) => candidate.id !== saved.id,
+        );
+        return { ...item, submissionDrafts: [saved, ...drafts] };
+      }),
+    );
+  };
+
   const persistConfirm = async (patch: Record<string, string>) => {
-    if (!project?.id || !draft) return;
+    if (!project?.id || !draft) return null;
     try {
       const saved = await (window as any).appilot.release.saveDraft(project.id, { ...draft, ...patch });
       setActive((prev: any) => ({ ...prev, draft: saved }));
+      attachSavedDraft(saved);
+      return saved;
     } catch (e: any) {
       setError(e.message || "保存失败。");
+      return null;
     }
   };
 
-  const handleConfirmMaster = () => {
+  const validateConfirmFieldLimits = () => {
+    const issues = findStoreFieldLimitIssues(localizations);
+    if (issues.length === 0) return true;
+
+    const visibleIssues = issues.slice(0, 3).map(
+      (issue) =>
+        `${languageLabel(issue.language)}的${issue.label}（${issue.length}/${issue.limit} 字符）`,
+    );
+    const remaining = issues.length - visibleIssues.length;
+    setActiveLanguage(issues[0].language);
+    setError(
+      `无法确定文案：${visibleIssues.join("；")}${
+        remaining > 0 ? `；另有 ${remaining} 个字段超限` : ""
+      }。请缩短标红字段后重试。`,
+    );
+    return false;
+  };
+
+  const handleConfirmMaster = async () => {
     if (!draft?.appVersion?.trim()) {
       setError("请先填写目标版本后再确定文案。");
       return;
     }
-    if (!draft?.masterConfirmedAt) {
-      void persistConfirm({ masterConfirmedAt: new Date().toISOString() });
+    if (draft?.masterConfirmedAt || confirmingMaster) return;
+    if (!validateConfirmFieldLimits()) return;
+    setConfirmingMaster(true);
+    try {
+      await persistConfirm({ masterConfirmedAt: new Date().toISOString() });
+    } finally {
+      setConfirmingMaster(false);
     }
   };
 
-  const handleConfirmBatch = () => {
+  const handleConfirmBatch = async () => {
     if (!draft?.appVersion?.trim()) {
       setError("请先填写目标版本后再确定文案。");
+      return;
+    }
+    if (!masterConfirmed || batchConfirmed || confirmingBatch) return;
+    if (!validateConfirmFieldLimits()) return;
+    if (
+      remainingTranslationCount > 0 &&
+      !window.confirm(
+        `还有 ${remainingTranslationCount} 个语言尚未翻译。仍要确定整批文案吗？`,
+      )
+    ) {
       return;
     }
     const now = new Date().toISOString();
-    void persistConfirm({
-      masterConfirmedAt: draft?.masterConfirmedAt || now,
-      batchConfirmedAt: now,
-    });
+    setConfirmingBatch(true);
+    try {
+      await persistConfirm({
+        masterConfirmedAt: draft?.masterConfirmedAt || now,
+        batchConfirmedAt: now,
+      });
+    } finally {
+      setConfirmingBatch(false);
+    }
   };
 
   const handleTranslateOne = async (language: string) => {
@@ -1194,6 +1286,26 @@ export function ReleasePage() {
       setLoadingDraft(false);
     }
   }, [draft?.id, selectedExistingDraft?.id, project?.id, selectedTag, viewMode]);
+
+  // A release with no draft is always the creation step. This also heals any
+  // stale async load that completed after switching from an older release.
+  useEffect(() => {
+    if (
+      viewMode === "working" &&
+      selectedRelease &&
+      !draft &&
+      !selectedExistingDraft &&
+      !generating
+    ) {
+      setStep(1);
+    }
+  }, [
+    viewMode,
+    selectedRelease?.tag,
+    draft?.id,
+    selectedExistingDraft?.id,
+    generating,
+  ]);
 
   // 工作中的文案整批确定后，它就成为「最新文案」——视图随之切换。
   useEffect(() => {
@@ -1258,10 +1370,24 @@ export function ReleasePage() {
         </div>
       )}
 
-      {releases.length === 0 ? (
+      {initialCheckPending ? (
+        <div className="py-16 text-center">
+          <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+            检查 GitHub 发布
+          </p>
+          <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+            正在获取最新发布草案、PR 与提交…
+          </p>
+        </div>
+      ) : releases.length === 0 ? (
         !releasesLoaded || checking ? (
-          <div className="py-16 text-center text-sm text-zinc-400 dark:text-zinc-500">
-            正在检查发布状态…
+          <div className="py-16 text-center">
+            <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+              检查 GitHub 发布
+            </p>
+            <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+              正在获取最新发布草案、PR 与提交…
+            </p>
           </div>
         ) : (
           <EmptyState
@@ -1852,36 +1978,61 @@ export function ReleasePage() {
                   {/* 选项卡页面结束；下方为整份文案级操作 */}
                   <div className="border-t border-zinc-100 dark:border-zinc-800 pt-5 space-y-4">
 
-                    {!feedbackReadOnly && !batchConfirmed && (
+                    {draft && (
                       <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                          {!masterConfirmed
-                            ? "确定母本语言后，可逐一翻译其他语言"
-                            : remainingTranslationCount > 0
-                              ? `还有 ${remainingTranslationCount} 个语言未翻译（可选）`
-                              : "全部语言已翻译"}
+                        <span className={cn(
+                          "text-xs",
+                          batchConfirmed && !versionLocked
+                            ? "font-medium text-emerald-600 dark:text-emerald-400"
+                            : "text-zinc-400 dark:text-zinc-500",
+                        )}>
+                          {versionLocked
+                            ? "已上架，完全只读"
+                            : batchConfirmed
+                              ? "母本与整批文案均已确定"
+                              : !masterConfirmed
+                                ? "确定母本语言后，可逐一翻译其他语言"
+                                : remainingTranslationCount > 0
+                                  ? `还有 ${remainingTranslationCount} 个语言未翻译（可选）`
+                                  : "全部语言已翻译"}
                         </span>
-                        <button
-                          onClick={masterConfirmed ? handleConfirmBatch : handleConfirmMaster}
-                          className={btnPrimary}
-                        >
-                          {masterConfirmed ? "确定整个文案" : "确定母本语言"}
-                        </button>
-                      </div>
-                    )}
-
-                    {batchConfirmed && !versionLocked && (
-                      <div className="flex justify-end">
-                        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                          文案已确定
-                        </span>
-                      </div>
-                    )}
-                    {versionLocked && batchConfirmed && (
-                      <div className="flex justify-end">
-                        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                          已上架，完全只读
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleConfirmMaster()}
+                            disabled={
+                              masterConfirmed ||
+                              confirmingMaster ||
+                              confirmingBatch ||
+                              feedbackReadOnly
+                            }
+                            className={masterConfirmed ? btnSecondary : btnPrimary}
+                          >
+                            {masterConfirmed
+                              ? "母本已确定"
+                              : confirmingMaster
+                                ? "确定中…"
+                                : "确定母本语言"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleConfirmBatch()}
+                            disabled={
+                              !masterConfirmed ||
+                              batchConfirmed ||
+                              confirmingMaster ||
+                              confirmingBatch ||
+                              feedbackReadOnly
+                            }
+                            className={batchConfirmed ? btnSecondary : btnPrimary}
+                          >
+                            {batchConfirmed
+                              ? "整批已确定"
+                              : confirmingBatch
+                                ? "确定中…"
+                                : "确定整批文案"}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

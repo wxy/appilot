@@ -35,7 +35,7 @@ export const STORE_FIELD_LIMITS = {
   whatsNew: 4000,
 } as const;
 
-const FIELD_LABELS: Record<keyof typeof STORE_FIELD_LIMITS, string> = {
+export const STORE_FIELD_LABELS: Record<keyof typeof STORE_FIELD_LIMITS, string> = {
   name: "名称",
   subtitle: "副标题",
   promotionalText: "Promotional Text",
@@ -43,6 +43,36 @@ const FIELD_LABELS: Record<keyof typeof STORE_FIELD_LIMITS, string> = {
   description: "描述",
   whatsNew: "What's New",
 };
+
+export interface StoreFieldLimitIssue {
+  language: string;
+  field: keyof typeof STORE_FIELD_LIMITS;
+  label: string;
+  length: number;
+  limit: number;
+}
+
+export function findStoreFieldLimitIssues(
+  localizations: ReadinessLocalization[],
+): StoreFieldLimitIssue[] {
+  const issues: StoreFieldLimitIssue[] = [];
+  for (const loc of localizations || []) {
+    for (const field of Object.keys(STORE_FIELD_LIMITS) as (keyof typeof STORE_FIELD_LIMITS)[]) {
+      const length = String(loc[field] || "").length;
+      const limit = STORE_FIELD_LIMITS[field];
+      if (length > limit) {
+        issues.push({
+          language: loc.language,
+          field,
+          label: STORE_FIELD_LABELS[field],
+          length,
+          limit,
+        });
+      }
+    }
+  }
+  return issues;
+}
 
 function localeMatches(locale: string, code: string): boolean {
   const a = locale.toLowerCase();
@@ -70,19 +100,13 @@ export function runReadinessChecks(input: ReadinessInput): ReadinessCheckItem[] 
   if (localizations.length === 0) {
     items.push({ id: "limits", label: "字段限制", status: "warning", detail: "尚未生成任何本地化文案" });
   } else {
-    for (const loc of localizations) {
-      for (const field of Object.keys(STORE_FIELD_LIMITS) as (keyof typeof STORE_FIELD_LIMITS)[]) {
-        const value = String(loc[field] || "");
-        const limit = STORE_FIELD_LIMITS[field];
-        if (value.length > limit) {
-          items.push({
-            id: `limit:${loc.language}:${field}`,
-            label: `${FIELD_LABELS[field]}（${loc.language}）`,
-            status: "fail",
-            detail: `${value.length}/${limit} 超限`,
-          });
-        }
-      }
+    for (const issue of findStoreFieldLimitIssues(localizations)) {
+      items.push({
+        id: `limit:${issue.language}:${issue.field}`,
+        label: `${issue.label}（${issue.language}）`,
+        status: "fail",
+        detail: `${issue.length}/${issue.limit} 超限`,
+      });
     }
   }
 
