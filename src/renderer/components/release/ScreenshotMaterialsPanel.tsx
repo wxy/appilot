@@ -102,7 +102,7 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
         </label>
         <div className="space-y-2 pt-1">
           <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-            <span>截图预览 <span className="text-violet-600 dark:text-violet-400">（appilot.image）</span></span>
+            <span>截图 <span className="text-violet-600 dark:text-violet-400">（appilot.image）</span></span>
             <span className="flex shrink-0 items-center gap-1.5">
               {inherited && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">继承</span>}
               {override && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">本语言</span>}
