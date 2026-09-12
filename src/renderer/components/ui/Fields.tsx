@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { CopyButton } from "./CopyButton";
 
 export function FieldBlock({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -12,17 +11,19 @@ export function FieldBlock({ label, children }: { label: string; children: React
 
 export function FieldHeader({
   label,
-  text,
-  copy = true,
+  copyStatus,
 }: {
   label: string;
-  text: string;
-  copy?: boolean;
+  copyStatus?: string;
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500">{label}</span>
-      {copy ? <CopyButton text={text} /> : null}
+      {copyStatus ? (
+        <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+          {copyStatus}
+        </span>
+      ) : null}
     </div>
   );
 }

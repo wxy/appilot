@@ -8,6 +8,7 @@ import path from 'node:path';
 import { mkdtempSync } from 'node:fs';
 import { openStore } from '@appilot-labs/appilot-headless';
 import { syncProjectToDb } from '../src/main/project-write-sync';
+import { buildLightProjects } from '../src/main/projects-db-light';
 
 function tempDb() {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'writesync-'));
@@ -117,9 +118,29 @@ async function main() {
     const r = electronProject();
     r.storeSubmissionDrafts = [];
     r.copyPlans = [{ id: 'plan-1', productId: 'glo:ios', title: '未来改进' }];
+    r.screenshotMaterials = [{ productId: 'glo:ios', selectedLanguages: ['en'], items: [] }];
+    r.preReleaseChecklist = {
+      updatedAt: '2026-09-03T00:00:00Z',
+      checks: [{ id: 'version-consistency', status: 'pass' }],
+    };
     syncProjectToDb(store, r);
     assert.equal((store.blobs.get('storeSubmissionDrafts', 'glo-id') as any[]).length, 1, '空数组快照不覆盖已有草稿（防误清）');
     assert.equal((store.blobs.get('copyPlans', 'glo-id') as any[])[0].id, 'plan-1', '保留草稿时仍继续镜像文案计划');
+    assert.equal(
+      (store.blobs.get('screenshotMaterials', 'glo-id') as any[])[0].productId,
+      'glo:ios',
+      '截图素材写入独立 blob',
+    );
+    assert.equal(
+      (store.blobs.get('preReleaseChecklist', 'glo-id') as any).checks[0].status,
+      'pass',
+      '发布检查结果写入独立 blob',
+    );
+    assert.equal(
+      (buildLightProjects(store)[0].preReleaseChecklist as any).checks[0].status,
+      'pass',
+      'DB 项目视图可重新读取发布检查结果',
+    );
 
     // 新建项目：无既有草稿时仍可写入非空草稿
     const s = electronProject();

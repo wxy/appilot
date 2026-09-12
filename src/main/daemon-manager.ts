@@ -21,7 +21,8 @@
  * - daemon 自重启（其 self-update 发现磁盘代码变化）后 pid 改变：后续 status
  *   的 live hello 会发现 pid 不吻合 → 运行指纹归 unknown（重启一次重新纳入）。
  */
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { dirname, join } from "node:path";
 import {
   SCHEDULER_FINGERPRINT_ENV,
   diskSchedulerFingerprint,
@@ -240,14 +241,39 @@ export interface EnsureTrackedResult {
   error?: string;
 }
 
+// 合并同一 socket 的并发启动；超时但仍存活的子进程继续跟踪，避免重复拉起。
+const ensureFlights = new Map<string, Promise<EnsureTrackedResult>>();
+const pendingChildren = new Map<string, ChildProcess>();
+
+function leaseDiagnostic(socketPath: string): string {
+  try {
+    const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
+    const db = new DatabaseSync(process.env.APPILOT_DB_FILE || join(dirname(socketPath), "appilot.db"), { readOnly: true });
+    try {
+      const row = db.prepare("SELECT leaderId, heartbeatAt FROM lease WHERE id = 1").get();
+      return row ? JSON.stringify({ ...row, ageMs: Date.now() - Date.parse(String(row.heartbeatAt)) }) : "none";
+    } finally { db.close(); }
+  } catch (err) {
+    return `unavailable: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+export function ensureSchedulerTracked(opts: EnsureTrackedOptions): Promise<EnsureTrackedResult> {
+  const existing = ensureFlights.get(opts.socketPath);
+  if (existing) return existing;
+  const flight = ensureSchedulerTrackedOnce(opts).finally(() => ensureFlights.delete(opts.socketPath));
+  ensureFlights.set(opts.socketPath, flight);
+  return flight;
+}
+
 /**
  * 确保调度 daemon 在跑（语义对齐 packages/scheduler 的 ensureScheduler）：
  * - socket 已通 → 复用（通知代码自检）；不覆盖 spawn 记录；
  * - 不通 → spawn detached（env 带指纹）→ 退避重试 hello；确认存活后把
  *   { pid, fingerprint } 写入 spawn 记录；
- * - spawn 的子进程 exit 0（单例仲裁让位：其他壳/daemon 持主）→ 视为成功。
+ * - 子进程退出后仍须确认 socket 可达，退出码本身不代表服务健康。
  */
-export async function ensureSchedulerTracked(
+async function ensureSchedulerTrackedOnce(
   opts: EnsureTrackedOptions,
 ): Promise<EnsureTrackedResult> {
   const log = opts.log ?? (() => {});
@@ -273,48 +299,56 @@ export async function ensureSchedulerTracked(
     return { ok: false, spawned: false, pid: null, error: "cli 不可解析" };
   }
 
-  // 2) spawn detached（不随父死；stdio 忽略；env 带指纹）。
-  log(`spawning scheduler: ${spawnCommand.join(" ")}`);
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  // 用 Electron 可执行文件跑 node 脚本时必须标记为 node 模式，否则 daemon 会
-  // 作为一个 Electron 应用启动（Dock/任务栏出现图标）。
-  env.ELECTRON_RUN_AS_NODE = "1";
+  const pending = pendingChildren.get(opts.socketPath);
+  if (pending && pending.exitCode === null && pending.signalCode === null) {
+    const error = `scheduler child still alive but socket unavailable (pid ${pending.pid}); lease=${leaseDiagnostic(opts.socketPath)}`;
+    log(error);
+    return { ok: false, spawned: false, pid: null, error };
+  }
+
+  const startedAt = Date.now();
+  log(`spawning scheduler: ${spawnCommand.join(" ")}; socket=${opts.socketPath}; lease=${leaseDiagnostic(opts.socketPath)}`);
+  const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: "1", APPILOT_STARTUP_REPORT_FD: "3" };
   if (opts.fingerprint != null) env[SCHEDULER_FINGERPRINT_ENV] = opts.fingerprint;
   const child = spawn(spawnCommand[0], spawnCommand.slice(1), {
     detached: true,
-    stdio: "ignore",
+    // fd 3 仅传启动结论；CLI 写完即关闭，常驻进程不依赖父进程管道。
+    stdio: ["ignore", "ignore", "ignore", "pipe"],
     env,
   });
+  pendingChildren.set(opts.socketPath, child);
   child.unref();
-  // daemon 快速 exit 0 = 单例仲裁让位（已有调度者——其他壳或 daemon 持主）：
-  // 调度已在跑，ensure 视为成功。
-  let gaveWay = false;
-  child.on("exit", (code) => {
-    if (code === 0) gaveWay = true;
+  let exitReason: string | null = null;
+  const forget = () => {
+    if (pendingChildren.get(opts.socketPath) === child) pendingChildren.delete(opts.socketPath);
+  };
+  const report = child.stdio[3];
+  let reportText = "";
+  report?.on("data", (chunk: Buffer) => { reportText = (reportText + chunk.toString()).slice(0, 8192); });
+  report?.on("end", () => { if (reportText.trim()) log(`scheduler startup (pid ${child.pid}): ${reportText.trim()}`); });
+  report?.on("error", (err: Error) => log(`scheduler startup report unavailable: ${err.message}`));
+  // 兼容尚未实现诊断通道的旧 CLI；不可让额外管道阻止应用退出。
+  (report as (typeof report & { unref?(): void }))?.unref?.();
+  child.on("error", (err) => {
+    exitReason = `spawn error: ${err.message}`;
+    forget();
+    log(`scheduler ${exitReason}`);
+  });
+  child.on("exit", (code, signal) => {
+    exitReason = `exit code=${code}, signal=${signal ?? "none"}`;
+    forget();
+    log(`scheduler child pid=${child.pid} ${exitReason}; elapsedMs=${Date.now() - startedAt}`);
   });
 
   // 3) 退避重试 hello（daemon 启动 + lease 仲裁；冲突输家退出后可能需重连）。
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await sleep(400);
-    if (gaveWay) {
-      // exit 0 通常表示向现有 daemon 让位，但租约也可能只是崩溃进程留下的
-      // 新鲜残影。必须以 socket 可达为准，不能把“无 daemon”误报为成功。
-      const winnerPid = await currentDaemonPid(opts.socketPath, 1000);
-      if (winnerPid != null) {
-        return { ok: true, spawned: true, pid: winnerPid };
-      }
-      return {
-        ok: false,
-        spawned: true,
-        pid: null,
-        error: "daemon 让位后未发现可连接的调度主",
-      };
-    }
     const pid = await currentDaemonPid(opts.socketPath, 1000);
     if (pid != null) {
       // 确认存活：写入「本壳拉起并确认存活」的 daemon 记录（pid 绑定）。
-      spawnRecord = { pid, fingerprint: opts.fingerprint };
+      if (pid === child.pid) spawnRecord = { pid, fingerprint: opts.fingerprint };
+      forget();
       try {
         schedulerPkg().notifyCheckUpdate(opts.socketPath);
       } catch {
@@ -323,9 +357,11 @@ export async function ensureSchedulerTracked(
       log(`scheduler up (pid ${pid})`);
       return { ok: true, spawned: true, pid };
     }
+    if (exitReason) break;
   }
-  log("scheduler did not come up within timeout");
-  return { ok: false, spawned: true, pid: null, error: "scheduler did not come up within timeout" };
+  const error = `scheduler unavailable: ${exitReason ?? "startup timeout (child retained; no duplicate spawn)"}; elapsedMs=${Date.now() - startedAt}; lease=${leaseDiagnostic(opts.socketPath)}`;
+  log(error);
+  return { ok: false, spawned: true, pid: null, error };
 }
 
 /**

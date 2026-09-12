@@ -5,7 +5,9 @@
  * - install / uninstall：注册/移除 launchd LaunchAgent（macOS 常驻保活）。
  * - 退出：SIGTERM/SIGINT 优雅退出（升级/关机让位）；单例冲突安静退出(exit 0)。
  */
+import { reportStartup } from './startup-report.js';
 import { runDaemon, type DaemonOptions } from './daemon.js';
+import { installSchedulerHupRestart } from './signals.js';
 import { defaultDbPath } from '@appilot-labs/appilot-headless';
 import { parseMonitorDirsEnv } from './self-update.js';
 import { dirname, join } from 'node:path';
@@ -166,7 +168,9 @@ async function main(): Promise<void> {
   let handle: Awaited<ReturnType<typeof runDaemon>> | null = null;
   try {
     handle = await runDaemon(opts);
+    reportStartup({ ok: true, pid: process.pid });
   } catch (err: any) {
+    reportStartup({ ok: false, pid: process.pid, error: err?.message || String(err) });
     // 单例仲裁退出：已有调度者（另一 daemon / Electron / DSH 壳内调度）。若持主者
     // 刚退出，租约 TTL（默认 60s）未过也会拒绝——提示等 TTL 或查 status。
     console.log(`[appilot-scheduler] ${err?.message || String(err)}`);
@@ -178,9 +182,11 @@ async function main(): Promise<void> {
       void (handle?.stop() ?? Promise.resolve()).then(() => process.exit(0));
     });
   }
+  installSchedulerHupRestart(handle);
 }
 
 main().catch((err: any) => {
+  reportStartup({ ok: false, pid: process.pid, error: err?.message || String(err) });
   console.error(`[appilot-scheduler] fatal: ${err?.message || String(err)}`);
   process.exit(1);
 });

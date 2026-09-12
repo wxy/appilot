@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -49,7 +49,15 @@ export interface RankSnapshotRow {
  * 数组驱动）无 kind；实例任务由 executors（按 kind 分发的核心执行器）执行，
  * 使 Electron / DSH 的任务收敛为同一 DB 实例 + 同一核心执行器。
  */
+export interface TaskSchedule {
+  origin: 'automatic' | 'manual' | 'retry';
+  originalDueAt: string;
+  balancedAt: string | null;
+}
+
 export interface TaskRow {
+  /** Absent metadata means unknown provenance and must never be balanced. */
+  schedule?: TaskSchedule | null;
   id: string;
   title: string;
   intervalMinutes: number;
@@ -238,7 +246,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   kind TEXT,
   instance TEXT,
   enabled INTEGER NOT NULL DEFAULT 1,
-  electronJson TEXT
+  electronJson TEXT,
+  scheduleJson TEXT
 );
 
 CREATE TABLE IF NOT EXISTS lease (
@@ -604,4 +613,10 @@ export function migrate(db: {
       db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '14') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
     }
   }
+  if (ver < 15) {
+    const cols = db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'scheduleJson')) db.exec('ALTER TABLE tasks ADD COLUMN scheduleJson TEXT');
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '15') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+
 }

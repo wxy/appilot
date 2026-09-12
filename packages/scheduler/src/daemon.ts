@@ -120,7 +120,7 @@ export interface DaemonHandle {
   /** 自检当前代码是否已变化（自更新用）。 */
   codeChanged(): boolean;
   /** 立即发起自重启（释放租约 + spawn 新进程 + 退出）。 */
-  requestRestart(): void;
+  requestRestart(reason?: "code-update" | "SIGHUP"): void;
 }
 
 /**
@@ -350,14 +350,18 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     if (!monitorReady || restarting) return false;
     return isChanged(baseline, fingerprintDirs(monitorDirs));
   };
-  const requestRestart = (): void => {
+  const requestRestart = (reason: "code-update" | "SIGHUP" = "code-update"): void => {
     if (restarting) return;
     if (Date.now() - lastRestartAt < RESTART_COOLDOWN_MS) {
       log('检测到代码变更，但处于自重启防抖窗口——跳过（下周期再试）');
       return;
     }
     restarting = true;
-    log('检测到代码更新——自重启以加载新代码…');
+    log(
+      reason === "SIGHUP"
+        ? "收到 SIGHUP——安全重启调度器…"
+        : "检测到代码更新——自重启以加载新代码…",
+    );
     lastRestartAt = Date.now();
     const spec = restartSpec();
     const exitProcess = opts.exitProcess ?? ((code: number) => process.exit(code));

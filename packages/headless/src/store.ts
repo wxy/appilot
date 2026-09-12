@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { migrate, type ProjectRow, type RankSnapshotRow, type TaskRow, type ProjectMetaRow, type ProductRecordRow, type ReleaseCacheRow } from './schema.js';
+import { migrate, type ProjectRow, type RankSnapshotRow, type TaskRow, type TaskSchedule, type ProjectMetaRow, type ProductRecordRow, type ReleaseCacheRow } from './schema.js';
 
 /** 等待写锁的毫秒数（并发进程写竞争时避免立刻报 busy）。 */
 const BUSY_TIMEOUT_MS = 5000;
@@ -97,7 +97,9 @@ export interface AppilotStore {
      * （调度状态写回不应改身份）；opts.setIdentity=true 时同时更新身份字段
      * （reconcile 参数/身份刷新用，例如把镜像先建的 kind=null 行升级为实例行）。
      */
-    upsert(row: TaskRow, opts?: { setIdentity?: boolean }): void;
+    upsert(row: TaskRow, opts?: { setIdentity?: boolean; schedule?: TaskSchedule | null }): void;
+    /** Atomic compare-and-set: never overwrite an intervening manual edit. */
+    advance(row: TaskRow, target: string, at: string): boolean;
     all(): TaskRow[];
     get(id: string): TaskRow | undefined;
     /** 删除任务行（镜像清理：源里已不存在的 Electron 任务）。 */
@@ -262,7 +264,7 @@ export function openStore(dbPath: string): AppilotStore {
         return tx(() => {
           const identity = projectIdentity(name);
           if (!identity) return false;
-          db.prepare("DELETE FROM project_blobs WHERE domain IN ('storeSubmissionDrafts', 'copyPlans') AND projectKey = ?").run(identity.id);
+          db.prepare("DELETE FROM project_blobs WHERE domain IN ('storeSubmissionDrafts', 'copyPlans', 'preReleaseChecklist') AND projectKey = ?").run(identity.id);
           // 关联表由 FK ON DELETE CASCADE 清理；任务表是跨来源队列，按实例身份清理。
           const productIds = new Set(
             (db.prepare('SELECT productId FROM product_records WHERE projectId = ?').all(identity.id) as any[])
@@ -570,12 +572,30 @@ export function openStore(dbPath: string): AppilotStore {
     },
 
     tasks: {
+      advance(row, target, at) {
+        if (row.schedule?.origin !== 'automatic' || row.schedule.balancedAt || !row.nextRunAt ||
+            !(Date.parse(target) < Date.parse(row.nextRunAt))) return false;
+        const schedule = { ...row.schedule, balancedAt: at };
+        return tx(() => Number(db.prepare(`UPDATE tasks SET nextRunAt = ?, scheduleJson = ?
+          WHERE id = ? AND nextRunAt = ? AND scheduleJson = ? AND enabled = 1
+          AND intervalMinutes = ? AND lastRunAt IS ? AND lastStatus = ?`).run(
+            target, JSON.stringify(schedule), row.id, row.nextRunAt, JSON.stringify(row.schedule),
+            row.intervalMinutes, row.lastRunAt, row.lastStatus,
+          ).changes) === 1);
+      },
       upsert(row, opts = {}) {
         tx(() => {
           const setIdentity = opts.setIdentity === true;
+          const previous = db.prepare('SELECT * FROM tasks WHERE id = ?').get(row.id) as any;
+          // Explicit scheduling writers set provenance. Generic edits that change
+          // due time/interval invalidate it; spreading a stale TaskRow cannot restore it.
+          const scheduleJson = opts.schedule !== undefined
+            ? (opts.schedule ? JSON.stringify(opts.schedule) : null)
+            : previous && previous.nextRunAt === row.nextRunAt && previous.intervalMinutes === row.intervalMinutes
+              ? previous.scheduleJson : null;
           db.prepare(
-            `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount, source, kind, instance, enabled, electronJson)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO tasks (id, title, intervalMinutes, lastRunAt, nextRunAt, lastStatus, lastSummary, runCount, source, kind, instance, enabled, electronJson, scheduleJson)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                title = excluded.title,
                intervalMinutes = excluded.intervalMinutes,
@@ -585,7 +605,8 @@ export function openStore(dbPath: string): AppilotStore {
                lastSummary = excluded.lastSummary,
                runCount = excluded.runCount,
                enabled = excluded.enabled,
-               electronJson = excluded.electronJson
+               electronJson = excluded.electronJson,
+               scheduleJson = excluded.scheduleJson
                ${setIdentity ? ", source = excluded.source, kind = excluded.kind, instance = excluded.instance" : ""}`,
           ).run(
             row.id,
@@ -601,6 +622,7 @@ export function openStore(dbPath: string): AppilotStore {
             row.instance ? JSON.stringify(row.instance) : null,
             row.enabled === false ? 0 : 1,
             row.electronJson ?? null,
+            scheduleJson,
           );
         });
       },
@@ -862,6 +884,7 @@ function parseTaskRow(r: any): TaskRow {
     }
   }
   return {
+    schedule: parseSchedule(r.scheduleJson),
     id: r.id,
     title: r.title,
     intervalMinutes: r.intervalMinutes,
@@ -876,4 +899,12 @@ function parseTaskRow(r: any): TaskRow {
     enabled: r.enabled === undefined ? undefined : Number(r.enabled) === 1,
     electronJson: typeof r.electronJson === 'string' ? r.electronJson : null,
   };
+}
+
+function parseSchedule(raw: unknown): TaskSchedule | null {
+  try {
+    const s = JSON.parse(String(raw));
+    return s && ['automatic', 'manual', 'retry'].includes(s.origin) && Number.isFinite(Date.parse(s.originalDueAt)) &&
+      (s.balancedAt === null || Number.isFinite(Date.parse(s.balancedAt))) ? s : null;
+  } catch { return null; }
 }

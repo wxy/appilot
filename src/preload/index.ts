@@ -250,12 +250,55 @@ contextBridge.exposeInMainWorld("appilot", {
   },
 
   release: {
+    selectScreenshotImage: (): Promise<any | null> =>
+      ipcRenderer.invoke("release:selectScreenshotImage"),
+    screenshotImagePreview: (imagePath: string): Promise<string | null> =>
+      ipcRenderer.invoke("release:screenshotImagePreview", imagePath),
+    selectKeynoteTemplate: (): Promise<string | null> =>
+      ipcRenderer.invoke("release:selectKeynoteTemplate"),
+    generateScreenshotArtifacts: (projectId: string, draftId: string, templatePath: string): Promise<any | null> =>
+      ipcRenderer.invoke("release:generateScreenshotArtifacts", projectId, draftId, templatePath),
     listCopyPlans: (projectId: string, productId: string): Promise<any[]> =>
       ipcRenderer.invoke("release:listCopyPlans", projectId, productId),
     saveCopyPlan: (projectId: string, productId: string, value: any): Promise<any> =>
       ipcRenderer.invoke("release:saveCopyPlan", projectId, productId, value),
     deleteCopyPlan: (projectId: string, productId: string, itemId: string): Promise<boolean> =>
       ipcRenderer.invoke("release:deleteCopyPlan", projectId, productId, itemId),
+    createScreenshotDraft: (
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      appVersion: string,
+      sourceLanguage: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "release:createScreenshotDraft",
+        projectId,
+        productId,
+        releaseTag,
+        appVersion,
+        sourceLanguage,
+      ),
+    generateScreenshotMaster: (
+      projectId: string,
+      draftId: string,
+      value: any,
+      operationId = "",
+    ): Promise<any> =>
+      ipcRenderer.invoke("release:generateScreenshotMaster", projectId, draftId, value, operationId),
+    translateScreenshotCopy: (
+      projectId: string,
+      draftId: string,
+      targetLanguages: string[],
+      operationId = "",
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "release:translateScreenshotCopy",
+        projectId,
+        draftId,
+        targetLanguages,
+        operationId,
+      ),
     list: (projectId: string, force = false): Promise<any> =>
       ipcRenderer.invoke("release:list", projectId, force),
     context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>

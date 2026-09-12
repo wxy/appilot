@@ -1,99 +1,100 @@
-import { cn } from "../../lib/utils";
 import { formatHumanTime } from "../../lib/format";
 import { draftVersionLabel, mergeHistoryDrafts } from "./releaseFormat";
-import { ReferenceSection } from "./ReferenceSection";
 import { AppleIcon } from "../ui/Icons";
 
 export function HistoryPanel({
   drafts,
-  selectedDraft,
   onSelect,
-  currentTag,
   onDelete,
 }: {
   drafts: any[];
-  selectedDraft: any;
   onSelect: (draft: any) => void;
-  currentTag?: string;
   onDelete?: (draft: any) => void;
 }) {
   const merged = mergeHistoryDrafts(drafts);
+
   return (
-    <ReferenceSection title="文案历史列表" meta={merged.length > 0 ? `${merged.length} 个版本` : "暂无文案"} defaultOpen>
+    <section className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900/70">
+      <header className="flex items-center justify-between gap-4 border-b border-zinc-200/80 px-5 py-4 dark:border-zinc-800">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">历史文案</h2>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            查看过去的发布文案，并在需要时作为新版本的参考。
+          </p>
+        </div>
+        <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
+          {merged.length > 0 ? `${merged.length} 个版本` : "暂无文案"}
+        </span>
+      </header>
+
       {merged.length === 0 ? (
-        <p className="text-sm text-zinc-400 dark:text-zinc-500 py-1">还没有文案。</p>
+        <div className="px-5 py-12 text-center">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">还没有历史文案。</p>
+        </div>
       ) : (
-        <div className="space-y-1">
+        <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
           {merged.map((item: any, index: number) => {
-            const isCurrent = item.releaseTag === currentTag;
-            const active =
-              selectedDraft?.releaseTag === item.releaseTag ||
-              (!selectedDraft && isCurrent);
             const languages = (item.localizations || [])
-              .map((loc: any) => String(loc?.language || "").trim())
+              .map((localization: any) => String(localization?.language || "").trim())
               .filter(Boolean);
+
             return (
-              <button
+              <div
                 key={item.releaseTag || index}
-                type="button"
-                onClick={() => onSelect(isCurrent ? null : item)}
-                className={cn(
-                  "w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left transition-colors",
-                  active
-                    ? "bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300"
-                    : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                )}
+                className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/40"
               >
-                <span className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1 text-sm font-medium truncate">
-                    {draftVersionLabel(item)}
-                    {item.ascSyncedAt && <AppleIcon className="w-3 h-3 text-emerald-500" />}
-                  </span>
-                  {!item.batchConfirmedAt && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 shrink-0">
-                      未完成
+                <button
+                  type="button"
+                  onClick={() => onSelect(item)}
+                  className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 text-left sm:grid-cols-[minmax(0,1fr)_auto_auto]"
+                >
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                        {draftVersionLabel(item)}
+                      </span>
+                      {item.ascSyncedAt && (
+                        <AppleIcon className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                      )}
+                      <span
+                        className={
+                          item.batchConfirmedAt
+                            ? "shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                            : "shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                        }
+                      >
+                        {item.batchConfirmedAt ? "已定稿" : "未完成"}
+                      </span>
                     </span>
-                  )}
-                  {isCurrent && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shrink-0">
-                      当前
+                    <span className="mt-1 block text-xs text-zinc-400 dark:text-zinc-500 sm:hidden">
+                      {formatHumanTime(item.updatedAt)}
                     </span>
-                  )}
-                  <span className="text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
-                    {formatHumanTime(item.updatedAt)}
                   </span>
-                </span>
-                {languages.length > 0 && (
-                  <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 shrink-0">
+
+                  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                     {languages.length} 语言
                   </span>
-                )}
+                  <span className="hidden text-xs text-zinc-400 dark:text-zinc-500 sm:block">
+                    {formatHumanTime(item.updatedAt)}
+                  </span>
+                </button>
+
                 {onDelete && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(item);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDelete(item);
-                      }
-                    }}
+                  <button
+                    type="button"
+                    onClick={() => onDelete(item)}
                     title="删除该文案"
-                    className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-md text-zinc-400 dark:text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                    aria-label={`删除 ${draftVersionLabel(item)}`}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:text-zinc-500 dark:hover:bg-red-500/10"
                   >
                     ×
-                  </span>
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
       )}
-    </ReferenceSection>
+    </section>
   );
 }

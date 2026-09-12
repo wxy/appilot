@@ -75,7 +75,7 @@ for (const table of ['project_meta', 'product_records', 'rank_snapshots', 'proje
   assert.ok(cols.some((c) => c.name === 'projectId'), `${table} 应引用 projectId`);
   assert.ok(!cols.some((c) => c.name === 'projectName'), `${table} 不应再持久化 projectName`);
 }
-assert.equal((check.prepare("SELECT value FROM meta WHERE key = 'schemaVersion'").get() as any).value, '14');
+assert.equal((check.prepare("SELECT value FROM meta WHERE key = 'schemaVersion'").get() as any).value, '15');
 assert.equal((check.prepare('PRAGMA quick_check').get() as any).quick_check, 'ok');
 assert.deepEqual(check.prepare('PRAGMA foreign_key_check').all(), []);
 check.close();

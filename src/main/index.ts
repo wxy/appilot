@@ -11,6 +11,7 @@ import { registerHeadlessReadIpc } from "./headless-ipc";
 import { registerDbAdminHandlers } from "./db-admin";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
 import { setupLogger } from "./logger";
+import { installHupRestart } from "./hup-restart";
 import { isAllowedRendererNavigation, safeHttpUrl } from "./url-policy";
 
 let mainWindow: BrowserWindow | null = null;
@@ -23,6 +24,10 @@ if (process.platform === "win32") {
   app.setAppUserModelId("com.appilot.app");
 }
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+// HMR 偶尔只能更新一部分进程。SIGHUP 保留当前启动参数与 Vite 服务，
+// 完整替换 Electron 主进程和窗口。
+installHupRestart(app, log);
 
 function createWindow() {
   const iconPath = path.join(__dirname, "../../resources/icon_1024.png");
