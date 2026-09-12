@@ -53,7 +53,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run build:plugins
+      # dsh-common 等插件 import @appilot-labs/appilot-core/headless 的 dist，
+      # 必须先构建 core（与根 build 脚本顺序一致）。
+      - run: npm run build:core && npm run build:plugins
 
   # Platform build — only on master push (expensive: macOS 10x, Windows 2x).
   # PRs are gated by typecheck + test + plugin-build above.
