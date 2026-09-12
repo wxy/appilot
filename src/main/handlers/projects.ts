@@ -423,7 +423,12 @@ export function registerProjectsHandlers(): void {
         );
         // 草稿注入：DB 组装结果缺 storeSubmissionDrafts 时从 project_blobs 补
         // （写切(2)：kv projects 退役后草稿源 = DB blob）。
-        const { COPY_PLAN_BLOB_DOMAIN, DRAFT_BLOB_DOMAIN } = await import("../projects-db-light");
+        const {
+          COPY_PLAN_BLOB_DOMAIN,
+          DRAFT_BLOB_DOMAIN,
+          PRE_RELEASE_CHECKLIST_BLOB_DOMAIN,
+          SCREENSHOT_MATERIAL_BLOB_DOMAIN,
+        } = await import("../projects-db-light");
         for (const p of merged.projects as any[]) {
           if (!p?.name) continue;
           const hasDrafts = Array.isArray(p.storeSubmissionDrafts) && p.storeSubmissionDrafts.length > 0;
@@ -440,6 +445,26 @@ export function registerProjectsHandlers(): void {
             if (Array.isArray(plans)) p.copyPlans = plans;
           } catch {
             // 忽略单条文案计划注入失败
+          }
+          try {
+            const materials = shared.blobs.get(
+              SCREENSHOT_MATERIAL_BLOB_DOMAIN,
+              String(p.id),
+            );
+            if (Array.isArray(materials)) p.screenshotMaterials = materials;
+          } catch {
+            // 忽略单条截图素材注入失败
+          }
+          try {
+            const checklist = shared.blobs.get(
+              PRE_RELEASE_CHECKLIST_BLOB_DOMAIN,
+              String(p.id),
+            );
+            if (checklist && typeof checklist === "object" && !Array.isArray(checklist)) {
+              p.preReleaseChecklist = checklist;
+            }
+          } catch {
+            // 忽略单条发布检查结果注入失败
           }
         }
         raw = merged.projects;
@@ -1882,7 +1907,7 @@ export function registerProjectsHandlers(): void {
         );
         detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
         languageDisplayNameFn = languageDisplayName;
-        log.warn(
+        log.info(
           `Checklist language detection: ${detectedLanguages.length} languages detected for ${project.localPath}`,
         );
       } catch (err: any) {

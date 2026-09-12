@@ -28,3 +28,5 @@ export {
   RESTART_COOLDOWN_MS,
 } from './self-update.js';
 export type { CodeFingerprint, RestartSpec } from './self-update.js';
+export { installSchedulerHupRestart } from './signals.js';
+export type { SchedulerSignalTarget } from './signals.js';

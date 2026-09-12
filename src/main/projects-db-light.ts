@@ -8,6 +8,8 @@ import type { AppilotStore } from '@appilot-labs/appilot-headless';
 
 export const DRAFT_BLOB_DOMAIN = 'storeSubmissionDrafts';
 export const COPY_PLAN_BLOB_DOMAIN = 'copyPlans';
+export const PRE_RELEASE_CHECKLIST_BLOB_DOMAIN = 'preReleaseChecklist';
+export const SCREENSHOT_MATERIAL_BLOB_DOMAIN = 'screenshotMaterials';
 
 export interface LightProduct {
   id: string;
@@ -33,6 +35,8 @@ export interface LightProject {
   artworkUrl: string | null;
   storeSubmissionDrafts: unknown[];
   copyPlans: unknown[];
+  screenshotMaterials: unknown[];
+  preReleaseChecklist: Record<string, unknown> | null;
   repo: Record<string, unknown> | null;
   storeProducts: LightProduct[];
 }
@@ -61,6 +65,24 @@ export function buildLightProjects(store: AppilotStore): LightProject[] {
         return [];
       }
     })();
+    const preReleaseChecklist = (() => {
+      try {
+        const v = store.blobs.get(PRE_RELEASE_CHECKLIST_BLOB_DOMAIN, rec.id ?? rec.name);
+        return v && typeof v === 'object' && !Array.isArray(v)
+          ? v as Record<string, unknown>
+          : null;
+      } catch {
+        return null;
+      }
+    })();
+    const screenshotMaterials = (() => {
+      try {
+        const v = store.blobs.get(SCREENSHOT_MATERIAL_BLOB_DOMAIN, rec.id ?? rec.name);
+        return Array.isArray(v) ? v : [];
+      } catch {
+        return [];
+      }
+    })();
     const repo = meta
       ? {
           githubUrl: meta.githubUrl,
@@ -83,6 +105,8 @@ export function buildLightProjects(store: AppilotStore): LightProject[] {
       artworkUrl: rec.artworkUrl ?? null,
       storeSubmissionDrafts: drafts,
       copyPlans,
+      screenshotMaterials,
+      preReleaseChecklist,
       repo: repo as Record<string, unknown> | null,
       storeProducts: products.map((p) => ({
         id: p.productId,

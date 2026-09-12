@@ -1,25 +1,13 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import type { ReadinessCheckItem, ReadinessStatus } from "@appilot-labs/appilot-core/readiness-check";
-import { cn } from "../../lib/utils";
+import type { ReactNode } from "react";
 import { formatHumanTime } from "../../lib/format";
 import { AppleIcon, GithubIcon } from "../ui/Icons";
-
-const STATUS_STYLES: Record<ReadinessStatus, { dot: string; text: string }> = {
-  pass: { dot: "bg-emerald-500", text: "text-emerald-700 dark:text-emerald-400" },
-  fail: { dot: "bg-red-500", text: "text-red-700 dark:text-red-400" },
-  warning: { dot: "bg-amber-500", text: "text-amber-700 dark:text-amber-400" },
-  unknown: { dot: "bg-zinc-400", text: "text-zinc-500 dark:text-zinc-400" },
-};
+import { btnSmSecondary } from "../ui/styles";
 
 export function ReleaseReadinessPanel({
-  projectId,
-  productId,
-  draft,
   githubNode,
   copyNode,
   storeNode,
   alerts,
-  storeActions,
   onAscRefresh,
   ascRefreshing,
   ascInfo,
@@ -29,17 +17,12 @@ export function ReleaseReadinessPanel({
   onToggleChecklist,
   checklistOpen,
 }: {
-  projectId: string;
-  productId: string;
-  draft: { id: string; releaseTag: string } | null;
   /** GitHub 发布节点内容。 */
   githubNode?: ReactNode;
   /** 本地文案草案节点内容。 */
   copyNode?: ReactNode;
   /** 商店版本节点内容。 */
   storeNode?: ReactNode;
-  /** 商店节点动作按钮（根据此版本重建等）。 */
-  storeActions?: ReactNode;
   /** 动态提醒与警告（未创建版本、上架提醒等）。 */
   alerts?: ReactNode;
   onAscRefresh?: () => Promise<void>;
@@ -49,38 +32,12 @@ export function ReleaseReadinessPanel({
   checkingGithub?: boolean;
   /** 权限等导致发布草案不可见时的提示（与当前发布节点是否已加载无关）。 */
   githubWarning?: ReactNode;
-  /** 切换发布前检查单面板（放在商店版本节点内）。 */
+  /** 切换统一的发布检查面板。 */
   onToggleChecklist?: () => void;
-  /** 发布前检查单面板当前是否打开（用于按钮文案）。 */
+  /** 发布检查面板当前是否打开（用于按钮文案）。 */
   checklistOpen?: boolean;
 }) {
-  const [result, setResult] = useState<{ checkedAt: string; items: ReadinessCheckItem[] } | null>(null);
-  const [checking, setChecking] = useState(false);
-
-  const loadCached = useCallback(() => {
-    if (!draft) {
-      setResult(null);
-      return;
-    }
-    (window as any).appilot?.readiness?.get(projectId, draft.id)
-      .then(setResult)
-      .catch(() => setResult(null));
-  }, [projectId, draft]);
-
-  useEffect(() => { loadCached(); }, [loadCached]);
-
-  const handleCheck = async () => {
-    if (!draft) return;
-    setChecking(true);
-    try {
-      // 检查 App Store 发布前先刷新缓存，保证基于最新外部状态。
-      if (onAscRefresh) await onAscRefresh();
-      const next = await (window as any).appilot?.readiness?.check(projectId, productId, draft.releaseTag);
-      setResult(next || null);
-    } finally {
-      setChecking(false);
-    }
-  };
+  const actionButtonClass = `${btnSmSecondary} disabled:cursor-not-allowed disabled:opacity-50`;
 
   const FlowNode = ({
     title,
@@ -107,13 +64,29 @@ export function ReleaseReadinessPanel({
     </div>
   );
 
-  const actionBtnClass =
-    "inline-flex items-center gap-1 px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors disabled:opacity-50";
-
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm">
       <div className="p-4">
-        <div className="flex items-stretch gap-2">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布流程</h3>
+            <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+              GitHub 发布、发布文案与商店状态
+            </p>
+          </div>
+          {onToggleChecklist && (
+            <button
+              type="button"
+              onClick={onToggleChecklist}
+              className={actionButtonClass}
+              title="检查代码、文案、目标版本、语言覆盖和构建挂载"
+            >
+              <AppleIcon className="w-3 h-3" />
+              {checklistOpen ? "返回工作单" : "发布检查"}
+            </button>
+          )}
+        </div>
+        <div className="flex flex-col items-stretch gap-2 lg:flex-row">
           <FlowNode
             title="GitHub 发布"
             icon={<GithubIcon className="w-3 h-3" />}
@@ -124,7 +97,7 @@ export function ReleaseReadinessPanel({
                     type="button"
                     onClick={onCheckGithub}
                     disabled={checkingGithub}
-                    className={actionBtnClass}
+                    className={actionButtonClass}
                     title="从 GitHub 检测新的发布草案、已发布或提交变化"
                   >
                     <GithubIcon className="w-3 h-3" />
@@ -141,13 +114,13 @@ export function ReleaseReadinessPanel({
               </span>
             )}
           </FlowNode>
-          <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
+          <div className="flex rotate-90 items-center justify-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0 lg:rotate-0" aria-hidden="true">
             →
           </div>
-          <FlowNode title="文案草案">
+          <FlowNode title="发布文案">
             {copyNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
           </FlowNode>
-          <div className="flex items-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0" aria-hidden="true">
+          <div className="flex rotate-90 items-center justify-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0 lg:rotate-0" aria-hidden="true">
             →
           </div>
           <FlowNode
@@ -155,42 +128,22 @@ export function ReleaseReadinessPanel({
             icon={<AppleIcon className="w-3 h-3" />}
             actions={
               <>
-                {onToggleChecklist && (
-                  <button
-                    type="button"
-                    onClick={onToggleChecklist}
-                    className={actionBtnClass}
-                    title="发布前检查单：自动检查 + 发布前素材"
-                  >
-                    <AppleIcon className="w-3 h-3" />
-                    {checklistOpen ? "返回工作单" : "发布前检查单"}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void handleCheck()}
-                  disabled={!draft || checking || ascRefreshing}
-                  className={actionBtnClass}
-                  title={draft ? undefined : "生成或重建文案后可检查就绪"}
-                >
-                  <AppleIcon className="w-3 h-3" />
-                  {checking ? "检查中…" : "检查 App Store 版本"}
-                </button>
                 {onAscRefresh && (
                   <button
                     type="button"
                     onClick={() => void onAscRefresh()}
                     disabled={ascRefreshing}
-                    className={actionBtnClass}
+                    className={actionButtonClass}
                   >
-                    {ascRefreshing
-                      ? "刷新中…"
-                      : ascInfo?.fetchedAt
-                        ? `App Store ${formatHumanTime(ascInfo.fetchedAt)}`
-                        : "刷新 App Store"}
+                    <AppleIcon className="w-3 h-3" />
+                    {ascRefreshing ? "刷新中…" : "刷新状态"}
                   </button>
                 )}
-                {storeActions}
+                {ascInfo?.fetchedAt && (
+                  <span className="self-center text-[10px] text-zinc-400 dark:text-zinc-500">
+                    更新于 {formatHumanTime(ascInfo.fetchedAt)}
+                  </span>
+                )}
               </>
             }
           >
@@ -202,28 +155,6 @@ export function ReleaseReadinessPanel({
         <div className="mt-3 flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 dark:border-zinc-800 pt-2.5">
           {alerts || <span className="text-[11px] text-zinc-400/60">暂无提醒</span>}
         </div>
-        {result && (
-          (() => {
-            const issues = result.items.filter((item) => item.status !== "pass");
-            if (issues.length === 0) return null;
-            return (
-              <div className="mt-3 border-t border-zinc-100 dark:border-zinc-800 pt-2.5 space-y-1.5">
-                {issues.map((item) => {
-                  const style = STATUS_STYLES[item.status];
-                  return (
-                    <div key={item.id} className="flex items-start gap-2">
-                      <span className={cn("mt-1.5 w-2 h-2 rounded-full shrink-0", style.dot)} />
-                      <div className="min-w-0">
-                        <span className={cn("text-xs font-medium", style.text)}>{item.label}：</span>
-                        <span className="text-xs text-zinc-500 dark:text-zinc-400">{item.detail}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()
-        )}
       </div>
     </div>
   );

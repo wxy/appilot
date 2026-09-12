@@ -3,18 +3,28 @@ import { formatHumanTime, languageLabel } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
 import { draftVersionLabel } from "./releaseFormat";
 import { CopyTabPage } from "./CopyTabPage";
+import { ScreenshotMaterialsPanel } from "./ScreenshotMaterialsPanel";
+import { btnSmSecondary } from "../ui/styles";
+import { cn } from "../../lib/utils";
 
 export function HistoryViewer({
   draft,
   productTrackName,
   onBack,
+  backLabel = "返回历史文案",
 }: {
   draft: any;
   productTrackName?: string | null;
   onBack?: () => void;
+  backLabel?: string;
 }) {
-  const [language, setLanguage] = useState("");
   const localizations = localizationList(draft);
+  const [language, setLanguage] = useState("");
+  const [section, setSection] = useState<"store" | "screenshots">(
+    localizations.length === 0 && draft.screenshotCopy ? "screenshots" : "store",
+  );
+  const hasStoreCopy = localizations.length > 0;
+  const hasScreenshotCopy = Boolean(draft.screenshotCopy);
   const activeLanguage = localizations.some((item: any) => item.language === language)
     ? language
     : localizations[0]?.language || "";
@@ -35,30 +45,38 @@ export function HistoryViewer({
             {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
           </span>
         </div>
+        <div className="flex items-center gap-3">
+          <div className="inline-flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
+            {([['store', '商店文案'], ['screenshots', '截图文案']] as const).map(([key, label]) => (
+              <button key={key} type="button" onClick={() => setSection(key)} className={cn("rounded-md px-3 py-1.5 text-xs transition-colors", section === key ? "bg-white font-medium text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400")}>{label}</button>
+            ))}
+          </div>
         {onBack && (
           <button
             type="button"
             onClick={onBack}
-            className="shrink-0 px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+            className={btnSmSecondary}
           >
-            ← 返回当前文案
+            ← {backLabel}
           </button>
         )}
+        </div>
       </div>
       <div className="p-6 space-y-6">
-        {localizations.length > 0 && (
-          <>
-            {/* 与发布工作台一致的语言选项卡页面（标签栏 + 文案字段一体） */}
-            <CopyTabPage
+        {section === "store" ? hasStoreCopy ? <CopyTabPage
               languages={tabLanguages}
               activeLanguage={activeLanguage}
               onSelect={setLanguage}
               localization={loc}
               readOnly
               productTrackName={productTrackName}
-            />
-          </>
-        )}
+            /> : <p className="py-10 text-center text-sm text-zinc-400 dark:text-zinc-500">这个版本没有商店文案。</p>
+          : hasScreenshotCopy ? <ScreenshotMaterialsPanel
+              value={draft.screenshotCopy}
+              supportedLanguages={draft.screenshotCopy?.selectedLanguages || tabLanguages}
+              defaultSourceLanguage={draft.screenshotCopy?.sourceLanguage || localizations[0]?.language || ""}
+              readOnly
+            /> : <p className="py-10 text-center text-sm text-zinc-400 dark:text-zinc-500">这个版本没有截图文案。</p>}
       </div>
     </div>
   );

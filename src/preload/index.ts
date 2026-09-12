@@ -256,6 +256,41 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("release:saveCopyPlan", projectId, productId, value),
     deleteCopyPlan: (projectId: string, productId: string, itemId: string): Promise<boolean> =>
       ipcRenderer.invoke("release:deleteCopyPlan", projectId, productId, itemId),
+    createScreenshotDraft: (
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      appVersion: string,
+      sourceLanguage: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "release:createScreenshotDraft",
+        projectId,
+        productId,
+        releaseTag,
+        appVersion,
+        sourceLanguage,
+      ),
+    generateScreenshotMaster: (
+      projectId: string,
+      draftId: string,
+      value: any,
+      operationId = "",
+    ): Promise<any> =>
+      ipcRenderer.invoke("release:generateScreenshotMaster", projectId, draftId, value, operationId),
+    translateScreenshotCopy: (
+      projectId: string,
+      draftId: string,
+      targetLanguages: string[],
+      operationId = "",
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "release:translateScreenshotCopy",
+        projectId,
+        draftId,
+        targetLanguages,
+        operationId,
+      ),
     list: (projectId: string, force = false): Promise<any> =>
       ipcRenderer.invoke("release:list", projectId, force),
     context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>

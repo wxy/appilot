@@ -1,4 +1,5 @@
 import type { ReleaseInfo } from "./release-watcher";
+import type { ScreenshotCopySet } from "./screenshot-material";
 
 export type AppStoreStatus =
   | "prepared"
@@ -48,6 +49,10 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   githubDraftStatus: GitHubReleaseStatus;
   storeStatus: AppStoreStatus;
   reviewFeedback: string;
+  /** 商店文案模块已创建；旧草案可由 localizations 非空推断。 */
+  storeCopyCreatedAt?: string;
+  /** 同属这个版本、但独立创建、确认、翻译和完成的截图标题与描述。 */
+  screenshotCopy?: ScreenshotCopySet;
   /** 母本语言已确定（锁定母本、允许翻译其他语言）的时间。 */
   masterConfirmedAt?: string;
   /** 整批多语言文案已确定（全部只读）的时间。 */
@@ -358,6 +363,8 @@ export function createStoreSubmissionDraft(input: {
     githubDraftStatus: githubStatusForRelease(input.release),
     storeStatus: existing?.storeStatus || "prepared",
     reviewFeedback: existing?.reviewFeedback || "",
+    storeCopyCreatedAt: existing?.storeCopyCreatedAt || now,
+    screenshotCopy: existing?.screenshotCopy,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
     summary: input.content.summary,

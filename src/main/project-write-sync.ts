@@ -64,5 +64,25 @@ export function syncProjectToDb(
       // 文案计划镜像失败不阻断项目同步
     }
   }
+  if (Object.prototype.hasOwnProperty.call(project, "screenshotMaterials")) {
+    try {
+      const screenshotMaterials = Array.isArray((project as any).screenshotMaterials)
+        ? (project as any).screenshotMaterials
+        : [];
+      store.blobs.put("screenshotMaterials", stableProjectId, screenshotMaterials);
+    } catch {
+      // 截图素材镜像失败不阻断项目其它数据写入
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(project, "preReleaseChecklist")) {
+    try {
+      const checklist = (project as any).preReleaseChecklist;
+      if (checklist && typeof checklist === "object" && !Array.isArray(checklist)) {
+        store.blobs.put("preReleaseChecklist", stableProjectId, checklist);
+      }
+    } catch {
+      // 发布检查结果镜像失败不阻断其它项目字段同步
+    }
+  }
   return { registry: true, meta, products: rows.length };
 }

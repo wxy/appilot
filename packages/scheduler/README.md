@@ -38,6 +38,13 @@ appilot-scheduler checkUpdate   # force a code self-check
 appilot-scheduler install|uninstall   # launchd KeepAlive (macOS)
 ```
 
+On `SIGHUP`, the daemon closes its control socket, releases the scheduler lease,
+and then starts its replacement process:
+
+```bash
+kill -HUP <daemon-pid>
+```
+
 ## Embedding in a shell
 
 ```ts

@@ -12,7 +12,7 @@ import {
   getStoreSubmissionDrafts,
   upsertStoreSubmissionDraft,
 } from "../project-state";
-import { inferAppVersion } from "@appilot-labs/appilot-core/store-submission";
+import { inferAppVersion, submissionDraftId } from "@appilot-labs/appilot-core/store-submission";
 import { githubSyncCacheEntry } from "../scheduler";
 import { getStore } from "../store";
 import {
@@ -33,6 +33,36 @@ import {
   normalizeCopyPlanInput,
   upsertCopyPlan,
 } from "@appilot-labs/appilot-core/copy-plan";
+import {
+  generateScreenshotMaterialMaster,
+  normalizeScreenshotCopySet,
+  screenshotMaterialsForProduct,
+  translateScreenshotMaterialMaster,
+} from "@appilot-labs/appilot-core/screenshot-material";
+import { buildProjectProfileFor } from "../release-service";
+
+function migrateLegacyScreenshotCopy(
+  draft: StoreSubmissionDraft,
+  project: any,
+  product: any,
+): boolean {
+  const supported = (product.supportedLanguages || [])
+    .map((item: any) => String(item.code || "").trim())
+    .filter(Boolean);
+  const legacy = draft.screenshotCopy || screenshotMaterialsForProduct(project, product.id);
+  if (!legacy?.items?.length) return false;
+  const sourceLanguage = legacy.sourceLanguage || draft.localizations[0]?.language || supported[0] || "en";
+  const normalized = normalizeScreenshotCopySet(legacy, sourceLanguage, supported);
+  if (JSON.stringify(draft.screenshotCopy) === JSON.stringify(normalized)) return false;
+  draft.screenshotCopy = normalized;
+  return true;
+}
+
+function preferredLegacyScreenshotTarget(project: any, productId: string): StoreSubmissionDraft | null {
+  return getStoreSubmissionDrafts(project)
+    .filter((draft) => draft.productId === productId)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] || null;
+}
 
 export function registerReleaseHandlers(): void {
   ipcMain.handle("ai:cancel", (_event, operationId: string) => {
@@ -96,6 +126,269 @@ export function registerReleaseHandlers(): void {
     notifyDataChanged("releases");
     return true;
   });
+
+  ipcMain.handle(
+    "release:createScreenshotDraft",
+    async (
+      _event,
+      projectId: string,
+      productId: string,
+      releaseTag: string,
+      appVersion: string,
+      sourceLanguage: string,
+    ) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      productId = assertNonEmptyString(productId, "productId");
+      releaseTag = assertNonEmptyString(releaseTag, "releaseTag");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const product = (project.storeProducts || []).find((item: any) => item.id === productId);
+      if (!product) throw new Error("Store product not found");
+      const supported = (product.supportedLanguages || [])
+        .map((item: any) => String(item.code || "").trim())
+        .filter(Boolean);
+      const source = supported.includes(String(sourceLanguage || "").trim())
+        ? String(sourceLanguage).trim()
+        : supported[0] || "en";
+      const now = new Date().toISOString();
+      const existing = findStoreSubmissionDraft(project, releaseTag)
+        || findDraftByVersion(project, appVersion);
+      const draft: StoreSubmissionDraft = existing || {
+        id: submissionDraftId(projectId, releaseTag),
+        projectId,
+        productId,
+        releaseTag,
+        sourceHash: "",
+        appVersion: String(appVersion || "").trim().replace(/^v/i, ""),
+        buildNumber: "",
+        githubDraftStatus: "draft",
+        storeStatus: "prepared",
+        reviewFeedback: "",
+        summary: "",
+        localizations: [],
+        promotionalText: "",
+        whatsNew: "",
+        description: "",
+        submissionKeywords: [],
+        promotionAngles: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (!draft.screenshotCopy) {
+        const legacy = screenshotMaterialsForProduct(project, productId);
+        draft.screenshotCopy = legacy?.items?.length
+          ? normalizeScreenshotCopySet(legacy, legacy.sourceLanguage || source, supported)
+          : {
+              sourceLanguage: source,
+              selectedLanguages: supported.length > 0 ? supported : [source],
+              masterUpdatedAt: "",
+              items: [],
+              updatedAt: now,
+            };
+      }
+      draft.updatedAt = now;
+      upsertStoreSubmissionDraft(project, draft);
+      s.set("projects", projects);
+      notifyDataChanged("release-drafts");
+      return draft;
+    },
+  );
+
+  ipcMain.handle(
+    "release:generateScreenshotMaster",
+    async (
+      event,
+      projectId: string,
+      draftId: string,
+      value: any,
+      operationId = "",
+    ) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      draftId = assertNonEmptyString(draftId, "draftId");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const releaseDraft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
+      if (!releaseDraft) throw new Error("Submission draft not found");
+      const product = (project.storeProducts || []).find((item: any) => item.id === releaseDraft.productId);
+      if (!product) throw new Error("Store product not found");
+      const supported = (product.supportedLanguages || [])
+        .map((item: any) => String(item.code || "").trim())
+        .filter(Boolean);
+      const requestedSource = String(value?.sourceLanguage || "").trim();
+      const screenshotCopy = normalizeScreenshotCopySet(
+        value,
+        requestedSource || supported[0] || "en",
+        supported,
+      );
+      if (screenshotCopy.batchConfirmedAt) throw new Error("截图文案已整批确定，不可重新生成");
+      const sourceLanguage = screenshotCopy.sourceLanguage;
+      if (screenshotCopy.items.length === 0) throw new Error("请先添加截图类型");
+      const unnamed = screenshotCopy.items.find((item) => !item.name.trim());
+      if (unnamed) throw new Error("请填写每个截图类型的名称");
+
+      const provider = await createAiProvider(s);
+      const profile = await buildProjectProfileFor(project, product);
+      const existing: Record<string, any> = {};
+      for (const item of screenshotCopy.items) {
+        const copy = item.copies[sourceLanguage];
+        if (copy?.title || copy?.description) {
+          existing[item.id] = { title: copy.title, description: copy.description };
+        }
+      }
+      const storeMaster = releaseDraft.localizations.find((item) => item.language === sourceLanguage);
+      const generated = await withAiOperation(operationId, (signal) =>
+        generateScreenshotMaterialMaster(
+          provider,
+          {
+            productName: product.trackName || project.name,
+            profile,
+            language: sourceLanguage,
+            screenshots: screenshotCopy.items.map((item) => ({ id: item.id, name: item.name })),
+            existing,
+            storeMaster,
+          },
+          {
+            signal,
+            onProgress: (progress) => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send("release:generateProgress", { kind: "chars", ...progress });
+              }
+            },
+            onRetry: () => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send("release:generateProgress", { kind: "retry" });
+              }
+            },
+          },
+        ),
+      );
+      for (const item of screenshotCopy.items) {
+        item.copies[sourceLanguage] = generated[item.id];
+      }
+      screenshotCopy.masterUpdatedAt = new Date().toISOString();
+      screenshotCopy.updatedAt = screenshotCopy.masterUpdatedAt;
+      // Generating or regenerating a master produces an editable draft. It must
+      // be explicitly confirmed again before translations are available.
+      delete screenshotCopy.masterConfirmedAt;
+      delete screenshotCopy.batchConfirmedAt;
+
+      // AI 调用期间项目数据可能被其它 handler 更新；写回前重新读取，避免覆盖。
+      const latestProjects: any[] = s.get("projects") || [];
+      const latestProject = latestProjects.find((item: any) => item.id === projectId);
+      const latestDraft = latestProject
+        ? getStoreSubmissionDrafts(latestProject).find((item) => item.id === draftId)
+        : null;
+      if (!latestDraft) throw new Error("Submission draft not found");
+      latestDraft.screenshotCopy = screenshotCopy;
+      latestDraft.updatedAt = screenshotCopy.updatedAt;
+      upsertStoreSubmissionDraft(latestProject, latestDraft);
+      s.set("projects", latestProjects);
+      notifyDataChanged("release-drafts");
+      return latestDraft;
+    },
+  );
+
+  ipcMain.handle(
+    "release:translateScreenshotCopy",
+    async (
+      event,
+      projectId: string,
+      draftId: string,
+      targetLanguages: string[],
+      operationId = "",
+    ) => {
+      projectId = assertNonEmptyString(projectId, "projectId");
+      draftId = assertNonEmptyString(draftId, "draftId");
+      targetLanguages = assertStringArray(targetLanguages, "targetLanguages");
+      const s = await getStore();
+      const projects: any[] = s.get("projects") || [];
+      const project = projects.find((item: any) => item.id === projectId);
+      if (!project) throw new Error("Project not found");
+      const releaseDraft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
+      if (!releaseDraft?.screenshotCopy) throw new Error("请先创建截图文案");
+      const product = (project.storeProducts || []).find((item: any) => item.id === releaseDraft.productId);
+      if (!product) throw new Error("Store product not found");
+      const supported = (product.supportedLanguages || [])
+        .map((item: any) => String(item.code || "").trim())
+        .filter(Boolean);
+      const screenshotCopy = normalizeScreenshotCopySet(
+        releaseDraft.screenshotCopy,
+        releaseDraft.screenshotCopy.sourceLanguage,
+        supported,
+      );
+      if (!screenshotCopy.masterConfirmedAt) throw new Error("请先确定截图母本");
+      if (screenshotCopy.batchConfirmedAt) throw new Error("截图文案已整批确定");
+      const targets = targetLanguages.filter(
+        (language) => screenshotCopy.selectedLanguages.includes(language) && language !== screenshotCopy.sourceLanguage,
+      );
+      if (targets.length === 0) throw new Error("没有需要翻译的目标语言");
+      const source: Record<string, any> = {};
+      for (const item of screenshotCopy.items) {
+        const copy = item.copies[screenshotCopy.sourceLanguage];
+        if (!copy?.title || !copy?.description) throw new Error("请先完整生成截图母本");
+        source[item.id] = { title: copy.title, description: copy.description };
+      }
+
+      const provider = await createAiProvider(s);
+      const translated = await withAiOperation(operationId, (signal) =>
+        translateScreenshotMaterialMaster(
+          provider,
+          {
+            productName: product.trackName || project.name,
+            sourceLanguage: screenshotCopy.sourceLanguage,
+            targetLanguages: targets,
+            screenshots: screenshotCopy.items.map((item) => ({ id: item.id, name: item.name })),
+            source,
+          },
+          {
+            signal,
+            onProgress: (received) => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send("release:generateProgress", { kind: "chars", ...received });
+              }
+            },
+            onRetry: () => {
+              if (!event.sender.isDestroyed()) event.sender.send("release:generateProgress", { kind: "retry" });
+            },
+          },
+        ),
+      );
+
+      const latestProjects: any[] = s.get("projects") || [];
+      const latestProject = latestProjects.find((item: any) => item.id === projectId);
+      const latestDraft = latestProject
+        ? getStoreSubmissionDrafts(latestProject).find((item) => item.id === draftId)
+        : null;
+      if (!latestDraft?.screenshotCopy) throw new Error("截图文案不存在");
+      const latestCopy = normalizeScreenshotCopySet(
+        latestDraft.screenshotCopy,
+        latestDraft.screenshotCopy.sourceLanguage,
+        supported,
+      );
+      if (latestCopy.masterUpdatedAt !== screenshotCopy.masterUpdatedAt) {
+        throw new Error("截图母本在翻译期间发生变化，请重新翻译");
+      }
+      for (const item of latestCopy.items) {
+        for (const language of targets) {
+          item.copies[language] = {
+            ...translated[language][item.id],
+            sourceUpdatedAt: latestCopy.masterUpdatedAt,
+          };
+        }
+      }
+      latestCopy.updatedAt = new Date().toISOString();
+      latestDraft.screenshotCopy = latestCopy;
+      latestDraft.updatedAt = latestCopy.updatedAt;
+      upsertStoreSubmissionDraft(latestProject, latestDraft);
+      s.set("projects", latestProjects);
+      notifyDataChanged("release-drafts");
+      return latestDraft;
+    },
+  );
 
   async function githubReleaseCandidates(
     project: any,
@@ -214,6 +507,12 @@ export function registerReleaseHandlers(): void {
       }
       if (!release) return null;
 
+      const migrationTarget = preferredLegacyScreenshotTarget(project, productId);
+      if (migrationTarget && migrateLegacyScreenshotCopy(migrationTarget, project, product)) {
+        upsertStoreSubmissionDraft(project, migrationTarget);
+        s.set("projects", projects);
+      }
+
       const draftSummaries = getStoreSubmissionDrafts(project)
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .map((draft) => ({
@@ -229,9 +528,11 @@ export function registerReleaseHandlers(): void {
           submissionKeywords: draft.submissionKeywords || [],
           githubDraftStatus: draft.githubDraftStatus || "",
           storeStatus: draft.storeStatus || "",
+          storeCopyCreatedAt: draft.storeCopyCreatedAt || "",
           masterConfirmedAt: draft.masterConfirmedAt || "",
           batchConfirmedAt: draft.batchConfirmedAt || "",
           ascSyncedAt: draft.ascSyncedAt || "",
+          screenshotCopy: draft.screenshotCopy,
         }))
         // Identity by appVersion: one entry per target version, newest first.
         .filter((draft, index, all) => {
@@ -339,6 +640,13 @@ export function registerReleaseHandlers(): void {
       ).trim();
       existing = findDraftByVersion(project, targetVersion);
     }
+    const migrationTarget = preferredLegacyScreenshotTarget(project, productId);
+    if (existing && migrationTarget?.id === existing.id && migrateLegacyScreenshotCopy(existing, project, product)) {
+      // 一次性兼容旧版产品级截图文案。旧 blob 暂时保留作回退，之后所有
+      // 编辑只随这份发布草案保存。
+      upsertStoreSubmissionDraft(project, existing);
+      s.set("projects", projects);
+    }
     if (release.draft) {
       if (force) {
         // 已按商店上架冻结的文案完全只读：不允许强制重新生成覆盖。
@@ -381,6 +689,7 @@ export function registerReleaseHandlers(): void {
             },
           ),
         );
+        migrateLegacyScreenshotCopy(draft, project, product);
         // Re-read before writing: AI generation awaited for seconds, during
         // which concurrent handlers may have replaced the projects array.
         const latestProjects: any[] = s.get("projects") || [];
@@ -548,9 +857,37 @@ export function registerReleaseHandlers(): void {
       if (JSON.stringify(frozenFields) !== JSON.stringify(incomingFields)) {
         throw new Error("该文案已按商店上架状态冻结，不可修改");
       }
+      if (JSON.stringify(existing.screenshotCopy) !== JSON.stringify(draft.screenshotCopy)) {
+        const product = (project.storeProducts || []).find((item: any) => item.id === draft.productId);
+        const supported = (product?.supportedLanguages || [])
+          .map((item: any) => String(item.code || "").trim())
+          .filter(Boolean);
+        existing.screenshotCopy = draft.screenshotCopy
+          ? normalizeScreenshotCopySet(
+              draft.screenshotCopy,
+              draft.screenshotCopy.sourceLanguage || supported[0] || "en",
+              supported,
+            )
+          : undefined;
+        existing.updatedAt = new Date().toISOString();
+        upsertStoreSubmissionDraft(project, existing);
+        s.set("projects", projects);
+        notifyDataChanged("release-drafts");
+      }
       return existing;
     }
 
+    const draftProduct = (project.storeProducts || []).find((item: any) => item.id === draft.productId);
+    if (draft.screenshotCopy && draftProduct) {
+      const supported = (draftProduct.supportedLanguages || [])
+        .map((item: any) => String(item.code || "").trim())
+        .filter(Boolean);
+      draft.screenshotCopy = normalizeScreenshotCopySet(
+        draft.screenshotCopy,
+        draft.screenshotCopy.sourceLanguage || supported[0] || "en",
+        supported,
+      );
+    }
     draft.updatedAt = new Date().toISOString();
     // 整批确定是「上次生成点」真正推进的时刻：该版本文案从此冻结，
     // 下一个版本文案的素材从这条 commit 之后开始收集。仅在新确认时推进，
@@ -564,7 +901,10 @@ export function registerReleaseHandlers(): void {
     }
     upsertStoreSubmissionDraft(project, draft);
     const context = findProductContext(projects, draft.productId);
-    if (context) {
+    const storeCopyExists = Boolean(
+      draft.storeCopyCreatedAt || (draft.localizations || []).length > 0,
+    );
+    if (context && storeCopyExists) {
       ensureProjectKeywordPool(context.project).submissionKeywords = (draft.localizations || []).map((item) => ({
         language: item.language,
         text: item.keywords,

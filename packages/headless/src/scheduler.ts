@@ -9,6 +9,7 @@
  * 心跳是否过期（TTL），先到者为主。主每 heartbeatMs 续租；心跳过期即视为崩溃，
  * 从者在下一个 tick 抢占接管（延迟 ≤ TTL + heartbeatMs）。
  */
+import { planScheduleBalance, nextAutomaticDue, BALANCE_INTERVAL_MS } from './schedule-balance.js';
 import type { AppilotStore } from './store.js';
 import type { TaskRow } from './schema.js';
 import { formatItunesBlockClock, isItunesSearchForbidden } from '@appilot-labs/appilot-core/rank-collector';
@@ -390,7 +391,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   }
 
   /** 执行一个 DB 实例任务行（v4：kind 在 executors）。状态写回保留 kind/instance。 */
-  async function executeInstance(task: TaskRow): Promise<void> {
+  async function executeInstance(task: TaskRow, manual = false): Promise<void> {
     const executor = task.kind ? executors[task.kind] : undefined;
     if (!executor || running.has(task.id)) return;
     // iTunes Search 403 熔断（与主进程同键/45min 冷却，见 itunes-breaker.ts）：
@@ -419,11 +420,13 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     refreshSleepHold();
     statsNoteStart(task.id);
     const started = new Date().toISOString();
+    const nextDue = nextAutomaticDue({ ...task, intervalMinutes: task.intervalMinutes || executor.intervalMinutes }, now(), manual);
+    const nextSchedule = { origin: (manual || accel ? 'manual' : 'automatic') as 'manual' | 'automatic', originalDueAt: nextDue, balancedAt: null };
     const base = {
       id: task.id,
       title: task.title || executor.title,
       intervalMinutes: task.intervalMinutes || executor.intervalMinutes,
-      nextRunAt: new Date(now() + (task.intervalMinutes || executor.intervalMinutes) * 60_000).toISOString(),
+      nextRunAt: nextDue,
       runCount: (task.runCount ?? 0) + 1,
       source: task.source,
       kind: task.kind,
@@ -436,7 +439,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         lastRunAt: started,
         lastStatus: 'ok' as const,
         lastSummary: ran.summary,
-      });
+      }, { schedule: nextSchedule });
       recordExecution(task, 'success', started, ran.summary, ran.execution);
       statsState.succeeded += 1;
     } catch (err: any) {
@@ -495,7 +498,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
         const lastSummary = sleepInterrupted ? `SLEEP-INTERRUPT: ${msg}` : `${tag}:${streak}: ${msg}`;
         if (prev && (sleepInterrupted || streak < TRANSIENT_RED_STREAK)) {
           // 重试中：保留原状态/派生字段（不标红、不推周期），仅排短退避 + 写说明。
-          store.tasks.upsert({ ...prev, nextRunAt, lastSummary });
+          store.tasks.upsert({ ...prev, nextRunAt, lastSummary }, { schedule: { origin: 'retry', originalDueAt: task.schedule?.originalDueAt ?? nextRunAt, balancedAt: task.schedule?.balancedAt ?? null } });
           recordExecution(task, 'retry', started, lastSummary, {
             reason: sleepInterrupted ? 'sleep-interrupt' : transient ? 'transient' : 'rate-limit',
             streak,
@@ -507,7 +510,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
             lastRunAt: started,
             lastStatus: 'error' as const,
             lastSummary,
-          });
+          }, { schedule: { origin: 'retry', originalDueAt: task.schedule?.originalDueAt ?? nextRunAt, balancedAt: task.schedule?.balancedAt ?? null } });
           // 连续多次 → 真失败，时间线同步标红（failed）。
           recordExecution(task, 'failed', started, lastSummary, {
             reason: transient ? 'transient' : 'rate-limit',
@@ -560,6 +563,30 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       .slice(0, accel ? (accelOpts.tickLimit ?? 100) : 20); // 单 tick 上限（加速放大）
   }
 
+  let lastBalanceCheck = -Infinity;
+  function balanceFuture(): void {
+    const time = now();
+    if (accel || sleepTracker?.isSuspended() || isItunesSearchBlockedStore(store, time) || time - lastBalanceCheck < BALANCE_INTERVAL_MS) return;
+    lastBalanceCheck = time;
+    try {
+      const key = 'scheduler:lastFutureBalanceAt';
+      const saved = Number(store.kv.get(key));
+      if (Number.isFinite(saved) && time >= saved && time - saved < BALANCE_INTERVAL_MS) return;
+      const plan = planScheduleBalance(store.tasks.all().filter(t => !running.has(t.id)), time);
+      let applied = 0;
+      for (const change of plan.changes) {
+        if (store.tasks.advance(change.task, change.target, new Date(time).toISOString())) {
+          applied++;
+          log(`[scheduler:${leaderId}] balance advance ${change.task.id}: ${change.task.nextRunAt} -> ${change.target}`);
+        }
+      }
+      store.kv.set(key, String(time));
+      if (applied) log(`[scheduler:${leaderId}] balance moved=${applied}/${plan.changes.length}, cap15m=${plan.cap}, plannedPeak=${plan.peakBefore}->${plan.peakAfter}`);
+    } catch (err) {
+      log(`[scheduler:${leaderId}] balance skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   /** 单次 tick：主 → 续租 + 跑到期任务；从 → 尝试抢占。 */
   function tick(): void {
     // 休眠感知（sleep-window.ts）：tick 间隔异常大 = 进程刚被系统休眠冻结过。
@@ -584,6 +611,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     } else {
       return; // 存在活主，等待其过期
     }
+    balanceFuture();
     for (const job of dueJobs()) void execute(job);
     // 并发上限：避免网络型实例（github-sync/rank）执行堆积叠加触发上游限流
     // （教训 B——全量到期时 tick 叠加曾把 iTunes 打到 IP 级 403）。
@@ -668,7 +696,7 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       // v4：DB 实例任务（kind 在 executors）显式触发
       const row = store.tasks.get(id);
       if (row && row.kind && row.kind in executors) {
-        await executeInstance(row);
+        await executeInstance(row, true);
         return store.tasks.get(id);
       }
       return undefined;

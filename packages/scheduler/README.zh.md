@@ -33,6 +33,12 @@ appilot-scheduler checkUpdate   # 手动触发代码自检
 appilot-scheduler install|uninstall   # launchd 保活（macOS）
 ```
 
+守护进程收到 `SIGHUP` 后，会先关闭控制 socket、释放调度租约，再启动继任进程：
+
+```bash
+kill -HUP <daemon-pid>
+```
+
 ## 壳内嵌入
 
 ```ts

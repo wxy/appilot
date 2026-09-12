@@ -78,4 +78,5 @@ export function registerShellHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
+
 }

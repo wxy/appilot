@@ -2,6 +2,7 @@ import { cn } from "../../lib/utils";
 import { STORE_FIELD_LIMITS } from "@appilot-labs/appilot-core/readiness-check";
 import { FieldHeader } from "../ui/Fields";
 import { inputClass, inputLineClass } from "../ui/styles";
+import { useCopyableField } from "../ui/CopyFeedback";
 
 /**
  * 提交文案字段（应用信息 + 软件版本信息）：发布工作单（可编辑）与历史/最新
@@ -52,13 +53,28 @@ export function SubmissionCopyFields({
     return value;
   };
   const name = display("name") || (readOnly ? String(productTrackName || "") : "");
+  const copyPrefix = `submission:${String(loc.language || "unknown")}`;
+  const copyableByField: Record<CopyField, ReturnType<typeof useCopyableField>> = {
+    name: useCopyableField(`${copyPrefix}:name`, name),
+    subtitle: useCopyableField(`${copyPrefix}:subtitle`, display("subtitle")),
+    promotionalText: useCopyableField(`${copyPrefix}:promotionalText`, display("promotionalText")),
+    description: useCopyableField(`${copyPrefix}:description`, display("description")),
+    whatsNew: useCopyableField(`${copyPrefix}:whatsNew`, display("whatsNew")),
+    keywords: useCopyableField(`${copyPrefix}:keywords`, display("keywords")),
+  };
   const set = (field: CopyField, value: string) => {
     if (!readOnly) onChange?.(field, value);
   };
 
   const fieldControl = (field: CopyField, multiline = false, minHeight = "") => {
     const value = field === "name" ? name : display(field);
-    const props: Record<string, any> = { value };
+    const copyable = copyableByField[field];
+    const props: Record<string, any> = {
+      value,
+      onDoubleClick: copyable.onDoubleClick,
+      title: copyable.title,
+      "data-copy-state": copyable.state,
+    };
     if (readOnly) {
       props.readOnly = true;
     } else {
@@ -66,10 +82,16 @@ export function SubmissionCopyFields({
       props.maxLength = STORE_FIELD_LIMITS[field];
     }
     return multiline ? (
-      <textarea {...props} className={inputClass + ` ${minHeight} resize-y`} />
+      <textarea {...props} className={cn(inputClass, minHeight, "resize-y", copyable.className)} />
     ) : (
-      <input {...props} className={inputLineClass} />
+      <input {...props} className={cn(inputLineClass, copyable.className)} />
     );
+  };
+
+  const header = (field: CopyField, label: string) => {
+    const value = field === "name" ? name : display(field);
+    const copyable = copyableByField[field];
+    return <FieldHeader label={label} copyStatus={value ? copyable.statusLabel : undefined} />;
   };
 
   const counter = (field: CopyField) => {
@@ -90,7 +112,7 @@ export function SubmissionCopyFields({
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <FieldHeader label="软件名称" text={display("name")} />
+            {header("name", "软件名称")}
             {fieldControl("name")}
             {hints && !readOnly && !display("name") && (
               <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
@@ -105,7 +127,7 @@ export function SubmissionCopyFields({
             {counter("name")}
           </div>
           <div className="space-y-1.5">
-            <FieldHeader label="软件副标题" text={display("subtitle")} />
+            {header("subtitle", "软件副标题")}
             {fieldControl("subtitle")}
             {hints && !readOnly && !display("subtitle") && (
               <p className="text-[11px] text-amber-600/80 dark:text-amber-500/70 px-1">
@@ -122,22 +144,22 @@ export function SubmissionCopyFields({
           软件版本信息
         </p>
         <div className="space-y-1.5">
-          <FieldHeader label="推广文本" text={display("promotionalText")} />
+          {header("promotionalText", "推广文本")}
           {fieldControl("promotionalText")}
           {counter("promotionalText")}
         </div>
         <div className="space-y-1.5">
-          <FieldHeader label="软件描述" text={display("description")} />
+          {header("description", "软件描述")}
           {fieldControl("description", true, "min-h-40")}
           {counter("description")}
         </div>
         <div className="space-y-1.5">
-          <FieldHeader label="新增内容" text={display("whatsNew")} />
+          {header("whatsNew", "新增内容")}
           {fieldControl("whatsNew", true, "min-h-28")}
           {counter("whatsNew")}
         </div>
         <div className="space-y-1.5">
-          <FieldHeader label="关键词（提交字段）" text={display("keywords")} />
+          {header("keywords", "关键词（提交字段）")}
           {fieldControl("keywords")}
           {counter("keywords")}
         </div>

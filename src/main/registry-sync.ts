@@ -104,11 +104,13 @@ function startLeaderHeartbeat(): void {
 }
 
 /** 本侧项目变更 → 写共享 DB（identity upsert）。 */
-export async function syncRegistryToDb(projects: any[]): Promise<void> {
+export async function syncRegistryToDb(projects: any[]): Promise<boolean> {
   try {
     syncRegistryCore(sharedStore(), projects);
+    return true;
   } catch (err: any) {
     log.warn(`registry sync to db failed: ${err.message}`);
+    return false;
   }
 }
 
@@ -132,6 +134,9 @@ export function startRegistrySync(
   getStore: () => Promise<{ get<T = any>(k: string): T; set(k: string, v: unknown): void }>,
 ): () => void {
   let timer: ReturnType<typeof setInterval> | null = null;
+  // 全量项目写回只用于旧数据启动迁移。日常项目修改已经由 getStore().set
+  // 直接写结构化 DB；每 10 秒重复写会和 scheduler daemon 争用 SQLite 写锁。
+  let initialProjectSyncPending = true;
 
   // rank 反向同步日志节流（聚合窗口 ≥60s；rank 恢复期高频命中时不刷屏）。
 
@@ -140,7 +145,17 @@ export function startRegistrySync(
       const s = await getStore();
       const { projects, changed } = await hydrateFromDb((s.get('projects') || []) as any[]);
       if (changed) s.set('projects', projects);
-      await syncRegistryToDb(projects as any[]);
+      if (initialProjectSyncPending) {
+        const registrySynced = await syncRegistryToDb(projects as any[]);
+        let richDataSynced = false;
+        try {
+          syncRichDataToDb(sharedStore(), projects as any[]);
+          richDataSynced = true;
+        } catch (err: any) {
+          log.warn(`rich data sync failed: ${err.message}`);
+        }
+        if (registrySynced && richDataSynced) initialProjectSyncPending = false;
+      }
       // Phase 4b：electron-store 存量 rank 历史一次性幂等导入共享 DB（此后由
       // scheduler 双写增量）。失败不影响注册表同步。
       try {
@@ -176,13 +191,6 @@ export function startRegistrySync(
         }
       } catch (err: any) {
         log.warn(`kv blob import failed: ${err.message}`);
-      }
-      // Phase M3：Electron 富数据（storeProducts / repo 状态）双写共享 DB——
-      // product_records / project_meta（rank 等富数据任务实例化与跨壳读的前提）。
-      try {
-        syncRichDataToDb(sharedStore(), projects as any[]);
-      } catch (err: any) {
-        log.warn(`rich data sync failed: ${err.message}`);
       }
       // rank 页面已直接从共享 DB 组装快照（projects:list includeSnapshots）。
       // 不再把 DB 历史反灌进 app_kv projects：轻量 hydration 每次都不含快照，
