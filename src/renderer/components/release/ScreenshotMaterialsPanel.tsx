@@ -230,8 +230,11 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   const missingTranslations = screenshotCopy.selectedLanguages.filter(
     (language) => language !== screenshotCopy.sourceLanguage && !languageComplete(language),
   );
-  const fieldReadOnly = readOnly;
-  const typeReadOnly = readOnly;
+  const fieldReadOnly = readOnly
+    || batchConfirmed
+    || (!masterConfirmed && activeLanguage !== screenshotCopy.sourceLanguage)
+    || (masterConfirmed && activeLanguage === screenshotCopy.sourceLanguage);
+  const typeReadOnly = readOnly || masterConfirmed || batchConfirmed;
 
   const addType = () => {
     const name = newTypeName.trim();
@@ -294,6 +297,12 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
     }, true);
   };
   const generatedLanguages = screenshotCopy.selectedLanguages.filter(languageComplete);
+  const tabLanguages = [...screenshotCopy.selectedLanguages].sort((a, b) =>
+    languageLabel(a).localeCompare(languageLabel(b), "zh-CN"),
+  );
+  const languageOptions = [...languages].sort((a, b) =>
+    languageLabel(a).localeCompare(languageLabel(b), "zh-CN"),
+  );
   const activeImages = screenshotCopy.items.filter((item) => screenshotImageForLanguage(item, activeLanguage, screenshotCopy.sourceLanguage));
   const activeOverrides = activeLanguage === screenshotCopy.sourceLanguage
     ? activeImages.length
@@ -307,10 +316,23 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   );
   const keynoteReady = allTextReady && missingImagePageCount === 0;
   const selectKeynoteTemplate = async () => {
-    const templatePath = await (window as any).appilot.release.selectKeynoteTemplate();
-    if (!templatePath) return;
-    update((next) => { next.keynoteTemplatePath = templatePath; }, true);
-    setArtifactResult("");
+    setError("");
+    try {
+      const templatePath = await (window as any).appilot.release.selectKeynoteTemplate();
+      if (!templatePath) return;
+      update((next) => { next.keynoteTemplatePath = templatePath; }, true);
+      setArtifactResult("");
+    } catch (reason: any) {
+      setError(reason?.message || "Keynote 模板验证失败。");
+    }
+  };
+  const modifyScreenshotCopy = () => {
+    update((next) => {
+      delete next.masterConfirmedAt;
+      delete next.batchConfirmedAt;
+    }, true);
+    setActiveLanguage(screenshotCopy.sourceLanguage);
+    setError("");
   };
   const generateArtifacts = async () => {
     if (!projectId || !draftId || !screenshotCopy.keynoteTemplatePath || artifactRunning) return;
@@ -333,7 +355,7 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
           <details className="relative">
             <summary className="cursor-pointer list-none text-xs text-zinc-500 dark:text-zinc-400">目标语言 {screenshotCopy.selectedLanguages.length}/{languages.length} ▾</summary>
             <div className="absolute left-0 top-7 z-20 grid min-w-56 grid-cols-2 gap-1 rounded-xl border border-zinc-200 bg-white p-2 shadow-xl dark:border-zinc-700 dark:bg-zinc-800">
-              {languages.map((language) => {
+              {languageOptions.map((language) => {
                 const selected = screenshotCopy.selectedLanguages.includes(language);
                 const source = language === screenshotCopy.sourceLanguage;
                 return <button key={language} type="button" onClick={() => toggleLanguage(language)} disabled={readOnly || source} className={cn("rounded-md px-2 py-1.5 text-left text-[11px]", selected ? "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300" : "text-zinc-400 hover:bg-zinc-50 dark:text-zinc-500 dark:hover:bg-zinc-700")}>{source ? "母本 · " : selected ? "✓ " : "○ "}{languageLabel(language)}</button>;
@@ -344,8 +366,10 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
         <span className={cn("text-xs", batchConfirmed ? "text-emerald-600 dark:text-emerald-400" : masterConfirmed ? "text-amber-600 dark:text-amber-400" : "text-zinc-400")}>{batchConfirmed ? "截图文案已完成" : masterConfirmed ? "截图母本已确定" : "截图母本编辑中"}</span>
       </div>
 
-      <LanguageTabs languages={screenshotCopy.selectedLanguages} activeLanguage={activeLanguage} onSelect={setActiveLanguage} generatedLanguages={generatedLanguages} />
-      <div className="space-y-3">
+      <div>
+        <LanguageTabs languages={tabLanguages} activeLanguage={activeLanguage} onSelect={setActiveLanguage} generatedLanguages={generatedLanguages} />
+        <div className="overflow-hidden rounded-lg border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="space-y-3 p-4">
         {screenshotCopy.items.length > 0 && <div className="flex items-center justify-between gap-3 text-xs text-zinc-500 dark:text-zinc-400">
           <span>当前语言图片 {activeImages.length}/{screenshotCopy.items.length}</span>
           {activeLanguage !== screenshotCopy.sourceLanguage && <span>{activeOverrides} 张本地化，{activeImages.length - activeOverrides} 张继承母本</span>}
@@ -403,22 +427,25 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
             </div>
           )}
           {screenshotCopy.items.length === 0 && (typeReadOnly || activeLanguage !== screenshotCopy.sourceLanguage) && <div className="rounded-xl border border-zinc-200 px-4 py-10 text-center text-sm text-zinc-400 dark:border-zinc-700">尚未添加截图类型。</div>}
+          </div>
+        </div>
       </div>
 
       {!readOnly && <section className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-3.5 dark:border-zinc-700 dark:bg-zinc-800/20">
         <h4 className="mb-2.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">文案操作</h4>
         <div className="flex flex-wrap items-center gap-2">
           {activeLanguage === screenshotCopy.sourceLanguage && screenshotCopy.items.length > 0 && (
-            <AIProgressButton onStart={() => void run("generate")} onStop={() => { if (operationId) void (window as any).appilot.ai.cancel(operationId); }} loading={running} progress={progress} idleLabel={sourceComplete ? "重新润色截图文本" : "生成截图文本"} retry={failed} retrying={retrying} />
+            <AIProgressButton onStart={() => void run("generate")} onStop={() => { if (operationId) void (window as any).appilot.ai.cancel(operationId); }} loading={running} progress={progress} disabled={masterConfirmed || batchConfirmed} idleLabel={sourceComplete ? "重新润色截图文本" : "生成截图文本"} retry={failed} retrying={retrying} />
           )}
           {activeLanguage !== screenshotCopy.sourceLanguage && masterConfirmed && (
-            <AIProgressButton onStart={() => void run("translate", activeLanguage)} onStop={() => { if (operationId) void (window as any).appilot.ai.cancel(operationId); }} loading={running} progress={progress} idleLabel={languageComplete(activeLanguage) ? "重新翻译截图文案" : `翻译为${languageLabel(activeLanguage)}`} retry={failed} retrying={retrying} />
+            <AIProgressButton onStart={() => void run("translate", activeLanguage)} onStop={() => { if (operationId) void (window as any).appilot.ai.cancel(operationId); }} loading={running} progress={progress} disabled={batchConfirmed} idleLabel={languageComplete(activeLanguage) ? "重新翻译截图文案" : `翻译为${languageLabel(activeLanguage)}`} retry={failed} retrying={retrying} />
           )}
           {activeLanguage !== screenshotCopy.sourceLanguage && !masterConfirmed && (
             <p className="text-xs text-zinc-400 dark:text-zinc-500">先确定截图母本，再翻译其他语言。</p>
           )}
-          {!batchConfirmed && <button type="button" onClick={confirmMaster} disabled={masterConfirmed} className={masterConfirmed ? btnSecondary : btnPrimary}>{masterConfirmed ? "截图文本已确定" : "确定截图文本"}</button>}
+          <button type="button" onClick={confirmMaster} disabled={masterConfirmed || batchConfirmed} className={masterConfirmed ? btnSecondary : btnPrimary}>{masterConfirmed ? "母本已确定" : "确定母本"}</button>
           <button type="button" onClick={confirmBatch} disabled={!masterConfirmed || batchConfirmed} className={batchConfirmed ? btnSecondary : btnPrimary}>{batchConfirmed ? "整批文案已确定" : "确定整批文案"}</button>
+          {batchConfirmed && <button type="button" onClick={modifyScreenshotCopy} className={btnPrimary}>修改截图文案</button>}
           {onDelete && <button type="button" onClick={() => { if (window.confirm("删除本版本的全部截图文案？商店文案不会受到影响。")) void onDelete(); }} className={cn(btnSecondary, "border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 dark:border-red-900/70 dark:text-red-400 dark:hover:bg-red-950/30")}>删除截图文案</button>}
         </div>
       </section>}

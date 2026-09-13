@@ -41,7 +41,7 @@ import {
   translateScreenshotMaterialMaster,
 } from "@appilot-labs/appilot-core/screenshot-material";
 import { buildProjectProfileFor } from "../release-service";
-import { fillKeynoteFromTemplate } from "../keynote-automation";
+import { fillKeynoteFromTemplate, validateKeynoteTemplate } from "../keynote-automation";
 
 function migrateLegacyScreenshotCopy(
   draft: StoreSubmissionDraft,
@@ -164,7 +164,9 @@ export function registerReleaseHandlers(): void {
       filters: [{ name: "Keynote", extensions: ["key"] }],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
+    const templatePath = result.filePaths[0];
+    await validateKeynoteTemplate(templatePath);
+    return templatePath;
   });
 
   ipcMain.handle(
@@ -357,6 +359,9 @@ export function registerReleaseHandlers(): void {
         requestedSource || supported[0] || "en",
         supported,
       );
+      if (screenshotCopy.masterConfirmedAt) {
+        throw new Error("截图母本已确定，请先点击“修改截图文案”");
+      }
       const sourceLanguage = screenshotCopy.sourceLanguage;
       if (screenshotCopy.items.length === 0) throw new Error("请先添加截图类型");
       const unnamed = screenshotCopy.items.find((item) => !item.name.trim());
@@ -453,6 +458,7 @@ export function registerReleaseHandlers(): void {
         supported,
       );
       if (!screenshotCopy.masterConfirmedAt) throw new Error("请先确定截图母本");
+      if (screenshotCopy.batchConfirmedAt) throw new Error("整批截图文案已确定，请先点击“修改截图文案”");
       const targets = targetLanguages.filter(
         (language) => screenshotCopy.selectedLanguages.includes(language) && language !== screenshotCopy.sourceLanguage,
       );

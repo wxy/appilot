@@ -1,5 +1,17 @@
 import assert from "node:assert";
-import { buildKeynoteFillScript, KEYNOTE_SCREENSHOT_LAYOUT, screenshotPngFileName } from "../src/main/keynote-automation";
+import {
+  buildKeynoteFillScript,
+  buildKeynoteValidationScript,
+  KEYNOTE_SCREENSHOT_LAYOUT,
+  screenshotPngFileName,
+} from "../src/main/keynote-automation";
+
+const validationScript = buildKeynoteValidationScript({ documentPath: "/tmp/Template copy.key" });
+assert.match(validationScript, new RegExp(KEYNOTE_SCREENSHOT_LAYOUT.replaceAll(".", "\\.")));
+assert.match(validationScript, /every document whose name is documentName/);
+assert.match(validationScript, /editableTextItemCount is not 2/);
+assert.match(validationScript, /count of images of validationSlide\) is not 1/);
+assert.match(validationScript, /close targetDocument saving no/);
 
 const script = buildKeynoteFillScript({
   documentPath: "/tmp/App screenshots.key",
