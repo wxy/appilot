@@ -159,15 +159,21 @@ Publishing maintainers should follow [the npm and profile publishing SOP](docs/p
 
 **Contributing · 参与贡献**
 
-Keep changes scoped, preserve existing data, and include current test or build evidence. Discuss substantial product changes before implementation.
+Keep changes scoped, preserve existing data, and include current test or build evidence. Discuss substantial product changes before implementation. See [Contributing](CONTRIBUTING.md) for the development gates and CLA signing process.
 
-> 请控制改动范围、保留现有数据，并附上当前测试或构建证据。重大产品变更应先讨论再实施。
+> 请控制改动范围、保留现有数据，并附上当前测试或构建证据。重大产品变更应先讨论再实施。开发门禁与 CLA 签署流程参见[参与贡献](CONTRIBUTING.md)。
+
+**Contributor agreement · 贡献者协议**
+
+External contributions require acceptance of the [Appilot Contributor License Agreement v1.0](CLA.md). Contributors retain copyright; the agreement grants the copyright and patent licenses needed for Appilot to distribute and build upon Contributions under `GPL-3.0-or-later`.
+
+> 外部贡献需要接受 [Appilot 贡献者许可协议 1.0](CLA.zh-CN.md)。贡献者保留版权；该协议授予 Appilot 按照 `GPL-3.0-or-later` 分发并继续开发贡献所需的版权与专利许可。
 
 **License · 许可证**
 
-No open-source license is currently published. Source visibility does not grant permission to reuse or redistribute the code.
+Copyright © 2026 Xingyu Wang. Appilot is licensed under [GNU GPL v3 or later](LICENSE) (`GPL-3.0-or-later`). The project license and the contributor agreement serve separate purposes.
 
-> 当前未发布开源许可证。源码可见并不代表获得复用或再分发许可。
+> 版权所有 © 2026 Xingyu Wang。Appilot 按 [GNU GPL v3 或更高版本](LICENSE)（`GPL-3.0-or-later`）授权。项目许可证与贡献者协议分别解决不同问题。
 
 **Links · 链接**
 
