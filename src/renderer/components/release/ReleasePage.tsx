@@ -62,7 +62,7 @@ export function ReleasePage() {
   const [productId, setProductId] = useState(currentProductId || products[0]?.id || "");
   const [releases, setReleases] = useState<any[]>([]);
   const [githubCapabilities, setGithubCapabilities] = useState<{
-    repoPush: boolean | null;
+    push: boolean | null;
     tokenKind?: "fine-grained" | "classic" | "none" | "unknown";
     contents?: "read" | "write" | null;
   } | null>(null);
@@ -73,6 +73,7 @@ export function ReleasePage() {
   const [checking, setChecking] = useState(false);
   const [releasesLoaded, setReleasesLoaded] = useState(false);
   const [initialCheckPending, setInitialCheckPending] = useState(true);
+  const [githubLastCheckedAt, setGithubLastCheckedAt] = useState<string | null>(null);
   const initialCheckPendingRef = useRef(true);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
@@ -175,6 +176,7 @@ export function ReleasePage() {
     if (resetView) {
       initialCheckPendingRef.current = true;
       setInitialCheckPending(true);
+      setGithubLastCheckedAt(null);
     }
     // 只有切换项目/平台或首次加载时才清空旧数据走载入态；
     // 后台发布同步触发的刷新不清空，原地更新，避免整页闪成“正在检查发布状态”。
@@ -187,6 +189,7 @@ export function ReleasePage() {
       const next = await (window as any).appilot.release.list(project.id, force);
       setReleases(next.releases || []);
       setGithubCapabilities(next.githubCapabilities || null);
+      setGithubLastCheckedAt(next.githubLastCheckedAt || null);
       // 视图模式跟随工作目标：有尚未定稿的发布 → 工作视图；否则当前文案视图。
       // 仅在切项目/平台或首次载入时重置，后台刷新保留当前视图。
       if (resetView) {
@@ -295,10 +298,9 @@ export function ReleasePage() {
     // that replay from starting a second, cached release:list request beside
     // the authoritative live check.
     if (!resetView) return;
-    // Entering the workbench/project must verify GitHub live before revealing
-    // copy-planning data. The hourly background cache is useful elsewhere,
-    // but it can hide a release draft created moments ago.
-    void loadReleases(resetView, true, resetView);
+    // Entering the workbench reads the last saved GitHub snapshot and local
+    // repository state. Remote inspection is reserved for the explicit button.
+    void loadReleases(false, true, resetView);
     // 视图/发布切换只改变 selectedTag，由 release:context 增量加载对应发布
     // 的素材与草案；不整页重载 release.list，避免出现「检查发布状态」与
     // 长等待。首次进入或切项目/平台时才调用上面的 loadReleases。
@@ -314,9 +316,8 @@ export function ReleasePage() {
     const handler = (e: Event) => {
       const scope = (e as CustomEvent).detail;
       if (scope === "releases") {
-        // Background sync can emit while the initial live GitHub request is in
-        // flight. Do not let its older hourly cache overwrite the entry gate
-        // or select/load an older release draft.
+        // Background sync can emit while the initial saved snapshot is loading.
+        // Let that first load establish the selected release before refreshing.
         if (initialCheckPendingRef.current) return;
         void loadReleasesRef.current(false, false);
         setContextRevision((revision) => revision + 1);
@@ -508,8 +509,6 @@ export function ReleasePage() {
     : currentCopy
       ? "official"
       : "empty";
-  const isCopyWorkspaceFocused =
-    showCurrentDetails || currentWorkspacePhase === "editing";
   const currentTargetVersion = String(
     currentWorkspacePhase === "official"
       ? currentCopy?.appVersion || ""
@@ -543,13 +542,9 @@ export function ReleasePage() {
       : currentWorkspaceDraft.screenshotCopy.masterConfirmedAt
         ? { label: "截图文案 · 翻译中", tone: "amber" as const }
         : { label: "截图文案 · 编辑中", tone: "amber" as const };
-  const officialVersionStatus = currentCopy?.appVersion
-    ? deriveVersionStatus({
-        appVersion: currentCopy.appVersion,
-        ascVersions: ascInfo?.versions ?? null,
-        storeCurrentVersion,
-      })
-    : null;
+  const currentCopyFullyFinalized = Boolean(
+    currentCopy?.batchConfirmedAt && currentCopy?.screenshotCopy?.batchConfirmedAt,
+  );
   const orderedLanguages = availableLanguages.includes(UI_SOURCE_LANGUAGE)
     ? [
         UI_SOURCE_LANGUAGE,
@@ -564,57 +559,79 @@ export function ReleasePage() {
   const githubNode = githubStatus ? (
     <>
       <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
-      {selectedRelease?.tag && (
-        selectedRelease.url ? (
-          <button
-            type="button"
-            onClick={() => (window as any).appilot?.openExternal?.(selectedRelease.url)}
-            className="inline-flex min-w-0 items-center gap-1 truncate text-[10px] text-zinc-500 underline decoration-zinc-300 underline-offset-2 transition-colors hover:text-amber-600 dark:text-zinc-400 dark:decoration-zinc-600 dark:hover:text-amber-400"
-            title={`在 GitHub 打开 ${selectedRelease.tag}`}
-          >
-            <span className="truncate">{selectedRelease.tag}</span>
-            <span aria-hidden="true">↗</span>
-          </button>
-        ) : (
-          <span className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
-            {selectedRelease.tag}
-          </span>
-        )
-      )}
     </>
   ) : null;
+  const flowPrimaryButtonClass = cn(
+    btnPrimary,
+    "min-h-11 w-full justify-between px-3.5 disabled:bg-zinc-300 dark:disabled:bg-zinc-700",
+  );
+  const githubPrimaryAction = (
+    <button
+      type="button"
+      onClick={() => selectedRelease?.url && (window as any).appilot?.openExternal?.(selectedRelease.url)}
+      disabled={!selectedRelease?.url}
+      className={flowPrimaryButtonClass}
+      title={selectedRelease?.url ? `在 GitHub 打开 ${selectedRelease.tag || "发布公告"}` : "这个发布还没有 GitHub 公告链接"}
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <GithubIcon className="h-4 w-4 text-white" />
+        <span className="truncate">打开发布公告</span>
+      </span>
+      <span className="shrink-0 text-xs font-semibold">
+        {selectedRelease?.tag || "不可用"}{selectedRelease?.url ? " ↗" : ""}
+      </span>
+    </button>
+  );
   const githubWarning =
-    githubCapabilities?.repoPush === false
+    githubCapabilities?.push === false
       ? githubCapabilities.tokenKind === "fine-grained"
         ? "GitHub Token（fine-grained）的 Contents 只有读取权限，发布草案不可见。请在 GitHub 设置中将 Contents 权限改为 Read and write，或改用带 repo 权限的 classic token"
         : githubCapabilities.tokenKind === "classic"
           ? "GitHub Token（classic）缺少 repo / public_repo 权限，发布草案不可见。请改用带 repo 权限的 classic token"
           : "GitHub Token 没有仓库写权限，发布草案不可见（需 Contents 读+写或 repo 权限）"
       : null;
-  const copyNode = loadingDraft && !viewDraft ? (
+  const copyNode = loadingDraft && !currentWorkspaceDraft ? (
     <span className="text-[11px] text-zinc-400 dark:text-zinc-500">载入中…</span>
-  ) : viewDraft &&
-    (masterConfirmed ||
-      batchConfirmed ||
-      viewDraft?.appVersion ||
-      (viewDraft && (viewDraft.localizations || []).length > 0)) ? (
+  ) : currentWorkspaceDraft || currentTargetVersion ? (
       <>
-        {masterConfirmed && !batchConfirmed && (
-          <StatusChip label="母本已确定" tone="amber" />
-        )}
-        {batchConfirmed && <StatusChip label="整批已确定" tone="emerald" />}
-        {viewDraft?.appVersion && (
+        <StatusChip label={currentStoreCopyStatus.label} tone={currentStoreCopyStatus.tone} />
+        <StatusChip label={currentScreenshotCopyStatus.label} tone={currentScreenshotCopyStatus.tone} />
+        {currentWorkspaceDraft && (currentWorkspaceDraft.localizations || []).length > 0 && (
           <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-            v{viewDraft.appVersion}
+            {(currentWorkspaceDraft.localizations || []).length}/{availableLanguages.length} 语言
           </span>
         )}
-        {viewDraft && (viewDraft.localizations || []).length > 0 && (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-            {(viewDraft.localizations || []).length}/{availableLanguages.length} 语言
+        {currentWorkspaceDraft?.updatedAt && (
+          <span className="w-full text-[10px] text-zinc-400 dark:text-zinc-500">
+            更新于 {formatHumanTime(currentWorkspaceDraft.updatedAt)}
           </span>
         )}
       </>
-    ) : null;
+    ) : (
+      <>
+        <StatusChip label={currentStoreCopyStatus.label} tone={currentStoreCopyStatus.tone} />
+        <StatusChip label={currentScreenshotCopyStatus.label} tone={currentScreenshotCopyStatus.tone} />
+      </>
+    );
+  const copyPrimaryAction = (
+    <button
+      type="button"
+      onClick={() => setShowCurrentDetails(true)}
+      className={flowPrimaryButtonClass}
+      title={currentWorkspaceDraft ? "打开该版本的发布文案" : "打开文案工作区"}
+    >
+      <span className="truncate">
+        {currentWorkspacePhase === "official"
+          ? "打开当前发布文案"
+          : currentWorkspacePhase === "editing"
+            ? "打开编辑中的文案"
+            : "打开文案工作区"}
+      </span>
+      <span className="shrink-0 text-xs font-semibold">
+        {currentTargetVersion ? `v${currentTargetVersion} →` : "→"}
+      </span>
+    </button>
+  );
   const storeNode = effectiveVersionStatus || buildInfo || (viewDraft?.appVersion && storeLiveVersion) ? (
     <>
       {effectiveVersionStatus && (
@@ -638,8 +655,28 @@ export function ReleasePage() {
       )}
     </>
   ) : null;
+  const storePageUrl = selectedProduct?.storeLinks?.[0]?.url
+    || (selectedProduct?.trackId ? `https://apps.apple.com/app/id${selectedProduct.trackId}` : "");
+  const storePrimaryAction = (
+    <button
+      type="button"
+      onClick={() => storePageUrl && (window as any).appilot?.openExternal?.(storePageUrl)}
+      disabled={!storePageUrl}
+      className={flowPrimaryButtonClass}
+      title={storePageUrl ? "打开 App Store 网页版" : "这个产品还没有 App Store 链接"}
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <AppleIcon className="h-4 w-4 text-white" />
+        <span className="truncate">打开商店页面</span>
+      </span>
+      <span className="shrink-0 text-xs font-semibold">
+        {storeLiveVersion ? `v${storeLiveVersion} ↗` : storePageUrl ? "打开 ↗" : "不可用"}
+      </span>
+    </button>
+  );
   const canRebuildFromStore =
     effectiveVersionStatus?.key === "ready-for-sale" && !storeAligned;
+  const busy = generating || loadingDraft;
   const copyStoreActions = (
     <>
       {draft && (
@@ -677,6 +714,21 @@ export function ReleasePage() {
             </button>
           </div>
         </details>
+      )}
+    </>
+  );
+  const copyActions = (
+    <>
+      {draft && copyStoreActions}
+      {(currentWorkspacePhase === "editing" || currentWorkspacePhase === "needs-creation") && currentCopy && (
+        <button
+          type="button"
+          onClick={() => setShowBaseline(true)}
+          className={btnSmSecondary}
+          title={`查看上一份已定稿文案 ${draftVersionLabel(currentCopy)}`}
+        >
+          查看正式基线
+        </button>
       )}
     </>
   );
@@ -741,7 +793,6 @@ export function ReleasePage() {
     versionLocked ||
     batchConfirmed ||
     (masterConfirmed && activeLocalization?.language === primaryLanguage);
-  const busy = generating || loadingDraft;
   // 侧边栏「文案草案」区块的素材始终属于工作目标（最新未定稿发布）；
   // 工作视图下 selectedRelease 即工作目标，其它视图下也以工作目标为准。
   const summaryMaterial = workTargetRelease?.material || selectedRelease?.material || null;
@@ -1160,6 +1211,29 @@ export function ReleasePage() {
     }
   };
 
+  const persistReadOnlyScreenshotCopy = async (targetDraft: any, screenshotCopy: any) => {
+    if (!targetDraft?.id || !project?.id) return null;
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, {
+        ...targetDraft,
+        screenshotCopy,
+      });
+      setHistoryDraft((current: any) => current?.id === saved.id ? saved : current);
+      setActive((current: any) => current?.draft?.id === saved.id
+        ? { ...current, draft: saved }
+        : current);
+      setReleaseContext((current: any) => current ? {
+        ...current,
+        drafts: (current.drafts || []).map((item: any) => item.id === saved.id ? saved : item),
+      } : current);
+      attachSavedDraft(saved);
+      return saved;
+    } catch (e: any) {
+      setError(e?.message || "Keynote 模板保存失败。");
+      return null;
+    }
+  };
+
   const toggleSummaryItem = async (id: string) => {
     const next = new Set(summaryChecked);
     if (next.has(id)) next.delete(id);
@@ -1245,7 +1319,7 @@ export function ReleasePage() {
       if (String(e?.message || "").includes("已取消")) {
         // 用户主动停止：不算错误，静默清理。
       } else {
-        setError(e.message || "发布工作单加载失败。");
+        setError(e.message || "发布文案加载失败。");
         if (force) setGenerateFailed(true);
       }
     } finally {
@@ -1531,7 +1605,7 @@ export function ReleasePage() {
         {[
           {
             key: "current",
-            label: "当前发布",
+            label: "发布流程",
             active: isCurrentReleaseMode,
             onClick: switchToCurrentRelease,
           },
@@ -1543,7 +1617,7 @@ export function ReleasePage() {
           },
           {
             key: "history",
-            label: "历史文案",
+            label: "文案列表",
             active: viewMode === "history",
             onClick: switchToHistory,
           },
@@ -1573,26 +1647,31 @@ export function ReleasePage() {
       {initialCheckPending ? (
         <div className="py-16 text-center">
           <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
-            检查 GitHub 发布
+            载入发布工作台
           </p>
           <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-            正在获取最新发布草案、PR 与提交…
+            正在读取上次发布检查结果…
           </p>
         </div>
       ) : (
         <>
-      {isCurrentReleaseMode && releases.length > 0 && (!isCopyWorkspaceFocused || showChecklist) && (
+      {isCurrentReleaseMode && releases.length > 0 && (!showCurrentDetails || showChecklist) && (
         <div className="mb-6">
           <ReleaseReadinessPanel
             githubNode={githubNode}
+            githubPrimaryAction={githubPrimaryAction}
             copyNode={copyNode}
+            copyPrimaryAction={copyPrimaryAction}
+            copyActions={copyActions}
             storeNode={storeNode}
+            storePrimaryAction={storePrimaryAction}
             alerts={alerts}
             onAscRefresh={handleAscRefresh}
             ascRefreshing={ascRefreshing}
             ascInfo={ascInfo}
-            onCheckGithub={() => void loadReleases(true)}
+            onCheckGithub={() => void loadReleases(true, false)}
             checkingGithub={checking}
+            githubLastCheckedAt={githubLastCheckedAt}
             githubWarning={githubWarning}
             onToggleChecklist={() => setShowChecklist((value) => !value)}
             checklistOpen={showChecklist}
@@ -1608,96 +1687,6 @@ export function ReleasePage() {
             </div>
           )}
         </div>
-      )}
-      {isCurrentReleaseMode && !initialCheckPending && !showChecklist && (
-        <section className="mb-6 rounded-2xl border border-zinc-200 bg-white px-5 py-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                {showCurrentDetails && (
-                  <button
-                    type="button"
-                    onClick={() => setShowCurrentDetails(false)}
-                    className="mr-1 inline-flex h-7 w-7 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-                    aria-label="返回发布概览"
-                    title="返回发布概览"
-                  >
-                    ←
-                  </button>
-                )}
-                {currentWorkspacePhase === "official" && currentCopy && !showCurrentDetails ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowCurrentDetails(true)}
-                    className="group inline-flex items-baseline gap-1.5 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/30"
-                    title="查看完整发布文案"
-                  >
-                    <span className="text-base font-semibold text-zinc-900 transition-colors group-hover:text-amber-700 dark:text-zinc-100 dark:group-hover:text-amber-400">
-                      {currentTargetVersion ? `v${currentTargetVersion}` : "当前发布"}
-                    </span>
-                    <span className="text-[11px] font-normal text-zinc-400 transition-colors group-hover:text-amber-600 dark:text-zinc-500 dark:group-hover:text-amber-400">
-                      （点击查看文案）
-                    </span>
-                  </button>
-                ) : (
-                  <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-                    {currentTargetVersion ? `v${currentTargetVersion}` : "当前发布"}
-                  </h3>
-                )}
-                <StatusChip label={currentStoreCopyStatus.label} tone={currentStoreCopyStatus.tone} />
-                <StatusChip label={currentScreenshotCopyStatus.label} tone={currentScreenshotCopyStatus.tone} />
-                {currentWorkspacePhase === "official" && officialVersionStatus && (
-                  <StatusChip
-                    label={officialVersionStatus.label}
-                    tone={officialVersionStatus.tone}
-                  />
-                )}
-              </div>
-              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                {currentWorkspacePhase === "editing"
-                  ? `正在编辑商店提交文案${workingDraft?.updatedAt ? ` · ${formatHumanTime(workingDraft.updatedAt)} 更新` : ""}`
-                  : currentWorkspacePhase === "needs-creation"
-                    ? "已发现新的发布目标，可根据本次变更创建文案"
-                    : currentWorkspacePhase === "official"
-                      ? `当前正式文案 · ${(currentCopy?.localizations || []).filter((item: any) => item?.language).length} 种语言${currentCopy?.updatedAt ? ` · ${formatHumanTime(currentCopy.updatedAt)}更新` : ""}`
-                      : "尚未检测到可创建或已定稿的发布文案"}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {draft && <div className="flex items-center gap-2">{copyStoreActions}</div>}
-              {isCopyWorkspaceFocused && (
-                <button
-                  type="button"
-                  onClick={() => setShowChecklist(true)}
-                  className={btnSmSecondary}
-                >
-                  发布检查
-                </button>
-              )}
-              {(currentWorkspacePhase === "editing" || currentWorkspacePhase === "needs-creation") && currentCopy && (
-                <button
-                  type="button"
-                  onClick={() => setShowBaseline(true)}
-                  className="flex max-w-full items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-left transition-[background-color,transform] duration-150 hover:bg-zinc-100 active:scale-[0.98] dark:border-zinc-700 dark:bg-zinc-800/60 dark:hover:bg-zinc-800"
-                  title="查看上一份已定稿文案"
-                >
-                  <span className="text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500">
-                    正式基线
-                  </span>
-                  <span className="truncate text-xs font-medium text-zinc-700 dark:text-zinc-200">
-                    {draftVersionLabel(currentCopy)}
-                  </span>
-                  {officialVersionStatus && (
-                    <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                      {officialVersionStatus.label}
-                    </span>
-                  )}
-                  <span aria-hidden="true" className="text-xs text-zinc-400">查看 →</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </section>
       )}
       {releases.length > 0 && alignment && (
         <div
@@ -1810,7 +1799,7 @@ export function ReleasePage() {
       )}
       <div className="space-y-6">
           <div className="min-w-0 space-y-4">
-            {isCurrentReleaseMode && !showChecklist && releaseContext && hasWork && selectedRelease && (
+            {isCurrentReleaseMode && showCurrentDetails && !showChecklist && releaseContext && hasWork && selectedRelease && (
               <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 bg-zinc-50/50 px-5 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
                   <div>
@@ -2059,30 +2048,56 @@ export function ReleasePage() {
               historyDraft ? (
                 <HistoryViewer
                   draft={historyDraft}
+                  projectId={project.id}
                   productTrackName={selectedProduct?.trackName}
+                  onSaveScreenshotCopy={(screenshotCopy) =>
+                    persistReadOnlyScreenshotCopy(historyDraft, screenshotCopy)
+                  }
                   onBack={handleBackFromHistory}
                 />
               ) : (
                 <HistoryPanel
-                  drafts={(releaseContext?.drafts || []).filter(
-                    (item: any) => item.id !== currentCopy?.id && item.id !== workingDraft?.id,
-                  )}
+                  drafts={(releaseContext?.drafts || []).filter((item: any) => Boolean(item.batchConfirmedAt))}
+                  currentDraftId={currentCopy?.id}
                   onSelect={handleSelectHistory}
                   onDelete={(item: any) => void handleDeleteDraft(item)}
                 />
               )
             ) : showChecklist ? null
-            : currentWorkspacePhase === "official" && !showCurrentDetails ? null
+            : isCurrentReleaseMode && currentWorkspacePhase === "official" && currentCopyFullyFinalized && showCurrentDetails && currentCopy ? (
+              <HistoryViewer
+                draft={currentCopy}
+                projectId={project.id}
+                productTrackName={selectedProduct?.trackName}
+                onSaveScreenshotCopy={(screenshotCopy) =>
+                  persistReadOnlyScreenshotCopy(currentCopy, screenshotCopy)
+                }
+                onBack={() => setShowCurrentDetails(false)}
+                backLabel="返回发布流程"
+              />
+            )
+            : isCurrentReleaseMode && releases.length > 0 && !showCurrentDetails ? null
             : releases.length === 0 ? (
               !releasesLoaded || checking ? (
                 <div className="py-16 text-center text-sm text-zinc-400 dark:text-zinc-500">
                   正在检查发布状态…
                 </div>
               ) : (
-                <EmptyState
-                  title="尚未检测到新的发布"
-                  desc="可进入文案计划提前记录改进方向；有新提交、GitHub 发布草案或新 tag 后，再据此生成发布文案。"
-                />
+                <div className="space-y-3 text-center">
+                  <EmptyState
+                    title="尚未检测到新的发布"
+                    desc="可进入文案计划提前记录改进方向；需要获取新提交、GitHub 发布草案或新 tag 时，请手动检查。"
+                  />
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button type="button" onClick={() => void loadReleases(true)} disabled={checking} className={cn(btnSecondary, "disabled:cursor-not-allowed disabled:opacity-50")}>
+                      <GithubIcon className="h-3.5 w-3.5" />
+                      {checking ? "检查中…" : "检查 GitHub 发布"}
+                    </button>
+                    <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                      上次检查：{githubLastCheckedAt ? formatHumanTime(githubLastCheckedAt) : "尚未检查"}
+                    </span>
+                  </div>
+                </div>
               )
             ) : (
               <>
@@ -2147,7 +2162,19 @@ export function ReleasePage() {
             ) : (
               <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
                 <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布文案</h3>
+                  <div className="flex min-w-0 flex-wrap items-center gap-3">
+                    <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布文案</h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentDetails(false)}
+                      className={btnSmSecondary}
+                    >
+                      ← 返回发布流程
+                    </button>
+                    <span className="truncate text-xs text-zinc-400 dark:text-zinc-500">
+                      {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
+                    </span>
+                  </div>
                   <div className="inline-flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
                     {([
                       ["store", !storeCopyExists ? "商店文案 · 未创建" : batchConfirmed ? "商店文案 · 已完成" : masterConfirmed ? "商店文案 · 翻译中" : "商店文案 · 编辑中"],

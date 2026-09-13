@@ -4,22 +4,28 @@ import { AppleIcon } from "../ui/Icons";
 
 export function HistoryPanel({
   drafts,
+  currentDraftId,
   onSelect,
   onDelete,
 }: {
   drafts: any[];
+  currentDraftId?: string | null;
   onSelect: (draft: any) => void;
   onDelete?: (draft: any) => void;
 }) {
-  const merged = mergeHistoryDrafts(drafts);
+  const merged = mergeHistoryDrafts(drafts).sort((a: any, b: any) => {
+    if (a.id === currentDraftId) return -1;
+    if (b.id === currentDraftId) return 1;
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
 
   return (
     <section className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900/70">
       <header className="flex items-center justify-between gap-4 border-b border-zinc-200/80 px-5 py-4 dark:border-zinc-800">
         <div>
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">历史文案</h2>
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案列表</h2>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            查看过去的发布文案，并在需要时作为新版本的参考。
+            查看当前与历史的已定稿发布文案，并在需要时作为新版本的参考。
           </p>
         </div>
         <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
@@ -29,11 +35,12 @@ export function HistoryPanel({
 
       {merged.length === 0 ? (
         <div className="px-5 py-12 text-center">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">还没有历史文案。</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">还没有已定稿文案。</p>
         </div>
       ) : (
         <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
           {merged.map((item: any, index: number) => {
+            const isCurrent = item.id === currentDraftId;
             const languages = (item.localizations || [])
               .map((localization: any) => String(localization?.language || "").trim())
               .filter(Boolean);
@@ -57,13 +64,9 @@ export function HistoryPanel({
                         <AppleIcon className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
                       )}
                       <span
-                        className={
-                          item.batchConfirmedAt
-                            ? "shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
-                            : "shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                        }
+                        className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
                       >
-                        {item.batchConfirmedAt ? "已定稿" : "未完成"}
+                        {isCurrent ? "当前 · 已定稿" : "已定稿"}
                       </span>
                     </span>
                     <span className="mt-1 block text-xs text-zinc-400 dark:text-zinc-500 sm:hidden">
@@ -79,7 +82,7 @@ export function HistoryPanel({
                   </span>
                 </button>
 
-                {onDelete && (
+                {onDelete && !isCurrent && (
                   <button
                     type="button"
                     onClick={() => onDelete(item)}

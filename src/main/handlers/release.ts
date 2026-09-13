@@ -13,7 +13,7 @@ import {
   upsertStoreSubmissionDraft,
 } from "../project-state";
 import { inferAppVersion, submissionDraftId } from "@appilot-labs/appilot-core/store-submission";
-import { githubSyncCacheEntry } from "../scheduler";
+import { githubSyncCacheSnapshot, saveGithubSyncCacheSnapshot } from "../scheduler";
 import { getStore } from "../store";
 import {
   generateStoreSubmissionDraft,
@@ -41,7 +41,7 @@ import {
   translateScreenshotMaterialMaster,
 } from "@appilot-labs/appilot-core/screenshot-material";
 import { buildProjectProfileFor } from "../release-service";
-import { fillKeynoteFromTemplate } from "../keynote-automation";
+import { fillKeynoteFromTemplate, validateKeynoteTemplate } from "../keynote-automation";
 
 function migrateLegacyScreenshotCopy(
   draft: StoreSubmissionDraft,
@@ -58,6 +58,12 @@ function migrateLegacyScreenshotCopy(
   if (JSON.stringify(draft.screenshotCopy) === JSON.stringify(normalized)) return false;
   draft.screenshotCopy = normalized;
   return true;
+}
+
+function frozenScreenshotContent(value: any): any {
+  if (!value || typeof value !== "object") return null;
+  const { keynoteTemplatePath: _templatePath, updatedAt: _updatedAt, ...content } = value;
+  return content;
 }
 
 function preferredLegacyScreenshotTarget(project: any, productId: string): StoreSubmissionDraft | null {
@@ -164,7 +170,9 @@ export function registerReleaseHandlers(): void {
       filters: [{ name: "Keynote", extensions: ["key"] }],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
+    const templatePath = result.filePaths[0];
+    await validateKeynoteTemplate(templatePath);
+    return templatePath;
   });
 
   ipcMain.handle(
@@ -357,6 +365,9 @@ export function registerReleaseHandlers(): void {
         requestedSource || supported[0] || "en",
         supported,
       );
+      if (screenshotCopy.masterConfirmedAt) {
+        throw new Error("截图母本已确定，不能重新润色");
+      }
       const sourceLanguage = screenshotCopy.sourceLanguage;
       if (screenshotCopy.items.length === 0) throw new Error("请先添加截图类型");
       const unnamed = screenshotCopy.items.find((item) => !item.name.trim());
@@ -453,6 +464,7 @@ export function registerReleaseHandlers(): void {
         supported,
       );
       if (!screenshotCopy.masterConfirmedAt) throw new Error("请先确定截图母本");
+      if (screenshotCopy.batchConfirmedAt) throw new Error("整批截图文案已确定，不能重新翻译");
       const targets = targetLanguages.filter(
         (language) => screenshotCopy.selectedLanguages.includes(language) && language !== screenshotCopy.sourceLanguage,
       );
@@ -528,12 +540,10 @@ export function registerReleaseHandlers(): void {
     cached?: any,
     force = false,
   ): Promise<any[]> {
+    // 工作台载入只读取最近一次检查快照。只有用户显式点击检查按钮时
+    // 才访问 GitHub，避免进入页面时被远程请求阻塞。
+    if (!force) return Array.isArray(cached?.releases) ? cached.releases : [];
     const { listGitHubReleases } = await import("@appilot-labs/appilot-core/github-api");
-    // 非强制刷新时优先用小时级同步缓存，避免每次打开工作台都打 GitHub API；
-    // 缓存新鲜度（1 小时内 + lastSeenSha 一致）由 githubSyncCacheEntry 保证。
-    if (!force && Array.isArray(cached?.releases) && cached.releases.length > 0) {
-      return cached.releases;
-    }
     const fresh = await listGitHubReleases(project.localPath, token);
     if (fresh.length > 0) return fresh;
     return Array.isArray(cached?.releases) ? cached.releases : [];
@@ -548,10 +558,11 @@ export function registerReleaseHandlers(): void {
 
     const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
     const token = resolveEffectiveCredentials(s, project.id).githubToken;
+    const savedGithub = githubSyncCacheSnapshot(s, project);
     const githubReleases = await githubReleaseCandidates(
       project,
       token,
-      githubSyncCacheEntry(s, project),
+      savedGithub,
       Boolean(force),
     );
     const result = await checkForRelease(
@@ -559,22 +570,38 @@ export function registerReleaseHandlers(): void {
       project.lastReleaseSha || null,
       token,
       {
-        sync: true,
+        sync: Boolean(force),
         force: Boolean(force),
+        allowNetwork: Boolean(force),
         githubReleases,
-        githubCache: githubSyncCacheEntry(s, project) ?? undefined,
+        githubCache: savedGithub ?? undefined,
       },
     );
     // Draft-release visibility depends on the token's write access to
-    // releases. Live-check on an explicit force refresh; otherwise reuse the
-    // last hourly sync's result so the workbench can warn when drafts are
-    // invisible instead of silently missing them.
+    // releases. Check it live only on the explicit manual action; initial
+    // workbench loading reuses the last saved capability result.
     let githubCapabilities: GitHubRepoCapabilities | null = null;
+    let githubLastCheckedAt = savedGithub?.syncedAt || null;
     if (force) {
       const { fetchRepoCapabilities } = await import("@appilot-labs/appilot-core/github-api");
       githubCapabilities = await fetchRepoCapabilities(project.localPath, token);
+      const checkedAt = new Date().toISOString();
+      try {
+        saveGithubSyncCacheSnapshot(project, {
+          tag: result.releases[0]?.tag || null,
+          release: result.releases[0]?.material?.githubRelease || null,
+          pullRequests: result.releases[0]?.material?.pullRequests || [],
+          releases: githubReleases,
+          capabilities: githubCapabilities,
+          syncedAt: checkedAt,
+          lastSeenSha: project.lastReleaseSha || null,
+        });
+      } catch (error: any) {
+        log.warn(`manual GitHub release check cache write failed: ${error?.message || String(error)}`);
+      }
+      githubLastCheckedAt = checkedAt;
     } else {
-      githubCapabilities = githubSyncCacheEntry(s, project)?.capabilities ?? null;
+      githubCapabilities = savedGithub?.capabilities ?? null;
     }
     log.debug(
       `release:list ${project.name} force=${Boolean(force)} ` +
@@ -595,6 +622,7 @@ export function registerReleaseHandlers(): void {
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,
       githubCapabilities,
+      githubLastCheckedAt,
     };
   });
 
@@ -616,10 +644,11 @@ export function registerReleaseHandlers(): void {
       const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
       const { readFullReadme, readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
       const token = resolveEffectiveCredentials(s, project.id).githubToken;
+      const savedGithub = githubSyncCacheSnapshot(s, project);
       const githubReleases = await githubReleaseCandidates(
         project,
         token,
-        githubSyncCacheEntry(s, project),
+        savedGithub,
         false,
       );
       const result = await checkForRelease(
@@ -627,9 +656,10 @@ export function registerReleaseHandlers(): void {
         project.lastReleaseSha || null,
         token,
         {
-          sync: true,
+          sync: false,
+          allowNetwork: false,
           githubReleases,
-          githubCache: githubSyncCacheEntry(s, project) ?? undefined,
+          githubCache: savedGithub ?? undefined,
         },
       );
       let release = result.releases.find((item) => item.tag === releaseTag) || null;
@@ -729,11 +759,12 @@ export function registerReleaseHandlers(): void {
 
     const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
     const token = resolveEffectiveCredentials(s, project.id).githubToken;
+    const savedGithub = githubSyncCacheSnapshot(s, project);
     const githubReleases = await githubReleaseCandidates(
       project,
       token,
-      githubSyncCacheEntry(s, project),
-      Boolean(force),
+      savedGithub,
+      false,
     );
     _event.sender.send("release:generateProgress", {
       kind: "phase",
@@ -745,9 +776,10 @@ export function registerReleaseHandlers(): void {
       project.lastReleaseSha || null,
       token,
       {
-        sync: true,
+        sync: false,
+        allowNetwork: false,
         githubReleases,
-        githubCache: githubSyncCacheEntry(s, project) ?? undefined,
+        githubCache: savedGithub ?? undefined,
       },
     );
     let release = result.releases.find((item) => item.tag === releaseTag) || null;
@@ -965,6 +997,13 @@ export function registerReleaseHandlers(): void {
     const existing = getStoreSubmissionDrafts(project).find(
       (item: any) => item.id === draft.id,
     );
+    if (
+      existing?.screenshotCopy?.batchConfirmedAt
+      && JSON.stringify(frozenScreenshotContent(existing.screenshotCopy))
+        !== JSON.stringify(frozenScreenshotContent(draft.screenshotCopy))
+    ) {
+      throw new Error("整批截图文案已确定，不可修改或删除；请在新版本中创建截图文案");
+    }
     if (existing?.ascSyncedAt) {
       // 冻结文案完全只读：内容未变时视为无操作（UI 的失焦保存等会触发），
       // 不报错也不改写 updatedAt；内容确实变化时才拒绝。
