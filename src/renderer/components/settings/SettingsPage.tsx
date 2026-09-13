@@ -143,7 +143,7 @@ export function SettingsPage() {
             <span className="text-sm text-zinc-700 dark:text-zinc-300">
               应用退出时同时退出后台调度器
               <span className="mt-0.5 block text-xs text-zinc-400 dark:text-zinc-500">
-                默认关闭：后台调度（排名/发布/评论采集）以常驻进程独立运行，关闭应用后继续采集；
+                默认关闭：后台调度（排名与发布数据）以常驻进程独立运行，关闭应用后继续采集；
                 开启后应用退出会一并停止后台调度，下次打开应用时自动重新启动。
               </span>
             </span>

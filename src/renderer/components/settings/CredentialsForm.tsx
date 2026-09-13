@@ -11,7 +11,7 @@ import {
 } from "../ui/styles";
 
 const GITHUB_CAPABILITIES = ["私有/草案 release 公告", "真实 PR 素材", "远程仓库数据"];
-const ASC_CAPABILITIES = ["版本/审核状态回读", "审核意见（待实测）", "评论洞察（免费 RSS）", "销量/下载分析（待实测）"];
+const ASC_CAPABILITIES = ["版本/审核状态回读", "审核意见（待实测）", "销量/下载分析（待实测）"];
 
 export function CredentialsForm({
   projectId,
@@ -481,10 +481,6 @@ export function CredentialsForm({
             <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
               <span>发布草案 / 发布公告</span>
               <code className={credentialCodeChipClass}>Contents: Read</code>
-              <span>仓库流量数据</span>
-              <code className={credentialCodeChipClass}>Administration: Read</code>
-              <span>评论（App Store RSS）</span>
-              <span className="text-zinc-400">无需凭证</span>
             </div>
           </div>
           {githubExpiryWarning && (
@@ -782,8 +778,6 @@ export function CredentialsForm({
             <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
               <span>版本 / 审核状态回读</span>
               <code className={credentialCodeChipClass}>App Store Connect API Key</code>
-              <span>评论（App Store RSS）</span>
-              <span className="text-zinc-400">无需凭证</span>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">

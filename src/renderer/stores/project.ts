@@ -82,7 +82,6 @@ export interface Project {
   hasAscKey?: boolean;
   githubSource?: "global" | "project" | null;
   ascSource?: "global" | "project" | null;
-  trafficError?: string | null;
   createdAt: string;
   repo: RepoInfo | null;
   briefActions: BriefActionRecord[];

@@ -4,7 +4,7 @@
  * - rank tasks group by their scheduler round (product × platform × language
  *   × storefront), so the round-progress column stays meaningful;
  * - github-sync / ops-sync are project-scoped;
- * - reviews-sync / build-status are product-scoped.
+ * - build-status is product-scoped.
  */
 export function taskGroupKey(task: {
   kind?: string;

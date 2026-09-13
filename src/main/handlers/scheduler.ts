@@ -394,7 +394,7 @@ export function registerSchedulerHandlers(): void {
   ipcMain.handle("scheduler:runTaskNow", async (_event, taskId: string) => {
     // daemon 优先：常驻 daemon 在服务时发 runNow（DB 实例：rank/github-sync）。
     // 失败/不在服务 → 回退壳内手动执行（用户显式「立即执行」；daemon 无法执行
-    // 的 electron 域任务 ops-sync/reviews-sync/build-status 只能壳内直跑——
+    // 的 electron 域任务 ops-sync/build-status 只能壳内直跑——
     // 属于显式手动操作，不构成壳作为自动调度执行体）。
     if (await sendToDaemon("runNow", { taskId })) return true;
     return runTaskNow(taskId);

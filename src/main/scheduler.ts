@@ -33,7 +33,7 @@ import {
   opsSyncTaskId,
   pruneRoundMembers,
   rankGroupKey,
-  reviewsSyncTaskId,
+  removeRetiredScheduledTasks,
   seedScheduledTask,
   type SchedulerRoundState,
 } from "./schedule";
@@ -79,12 +79,6 @@ interface OpsSyncTask extends ScheduledTaskBase {
   lastDurationMs?: number;
 }
 
-interface ReviewsSyncTask extends ScheduledTaskBase {
-  kind: "reviews-sync";
-  productId: string;
-  lastDurationMs?: number;
-}
-
 interface BuildStatusTask extends ScheduledTaskBase {
   kind: "build-status";
   productId: string;
@@ -95,11 +89,10 @@ export type ScheduledTask =
   | RankScheduledTask
   | GithubSyncTask
   | OpsSyncTask
-  | ReviewsSyncTask
   | BuildStatusTask;
 
 export interface RunningTaskInfo {
-  kind?: "rank" | "github-sync" | "ops-sync" | "reviews-sync" | "build-status";
+  kind?: "rank" | "github-sync" | "ops-sync" | "build-status";
   keyword: string;
   language: string;
   storefront: string;
@@ -148,8 +141,7 @@ export function schedulerStatusSnapshot(): {
 // 请求使情况恶化；冷却期（ITUNES_SEARCH_BLOCK_MS = 45 分钟，常量共享自 core
 // rank-collector，headless daemon 同键同窗口）结束后自动恢复。状态持久化
 // 到 kv（app_kv，键 ITUNES_SEARCH_BLOCK_KV_KEY），应用重启后延续。熔断只在
-// 真正走 iTunes Search API 的任务上触发/检查（rank 类；reviews/ops-sync 分别
-// 走 RSS / lookup 端点，不受本熔断约束——调用点清单见代码注释与验收汇报）。
+// 真正走 iTunes Search API 的任务上触发/检查（rank 类）。
 // ────────────────────────────────────────────────────────────────────────────
 /** 熔断命中的调度任务类型：scheduler 内唯一走 iTunes Search API 的任务。 */
 const ITUNES_SEARCH_TASK_KINDS = new Set<string>(["rank"]);
@@ -420,13 +412,12 @@ async function reconcileRankTasks(store: AppStore): Promise<void> {
 
   const next = existing
     // Rank tasks are re-derived below; github-sync tasks are reconciled
-    // separately and ops/reviews/build-status tasks are reconciled by
+    // separately and ops/build-status tasks are reconciled by
     // reconcileOpsTasks. All of them must survive this pass; drop only stale
     // rank kinds.
     .filter((task) =>
       task.kind === "github-sync" ||
       task.kind === "ops-sync" ||
-      task.kind === "reviews-sync" ||
       task.kind === "build-status" ||
       (task.kind === "rank" && activeKeys.has(task.id)),
     )
@@ -567,15 +558,6 @@ async function reconcileOpsTasks(store: AppStore): Promise<void> {
     );
     for (const product of project.storeProducts || []) {
       if (!product?.trackId || !isProductPostRelease(project, product)) continue;
-      desired.set(
-        reviewsSyncTaskId(product.id),
-        seedScheduledTask(existing, {
-          id: reviewsSyncTaskId(product.id),
-          kind: "reviews-sync",
-          productId: product.id,
-          intervalMinutes: 24 * 60,
-        }),
-      );
       // Version status is derived from ASC data, so poll it whenever the
       // project has a copy draft — but only with complete ASC credentials.
       const creds = resolveEffectiveCredentials(store, project.id);
@@ -598,7 +580,9 @@ async function reconcileOpsTasks(store: AppStore): Promise<void> {
   }
 
   const next: ScheduledTask[] = [
-    ...existing.filter((task) => !desired.has(task.id)),
+    // reviews-sync 已下线；reconcile 时主动从任务源移除旧任务，
+    // store.set 的 DB 镜像随后会清理对应的旧 Electron 任务行。
+    ...removeRetiredScheduledTasks(existing).filter((task) => !desired.has(task.id)),
     ...Array.from(desired.values()),
   ];
   store.set("scheduledTasks", next);
@@ -930,37 +914,6 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
   try {
     if (!project?.localPath) throw new Error("Project not found");
     const token = resolveEffectiveCredentials(store, task.projectId).githubToken;
-    const { fetchTrafficSnapshot } = await import("@appilot-labs/appilot-core/gh-traffic");
-    const snapshot = await fetchTrafficSnapshot(project.localPath, token);
-    const opsStatusStore: Record<string, any> = store.get("opsStatus") || {};
-    const opsSyncedAt = new Date().toISOString();
-    if (snapshot) {
-      const syncEntry = githubSyncCacheEntry(store, project);
-      if (syncEntry?.tag) {
-        const { fetchReleaseAssetDownloads } = await import("@appilot-labs/appilot-core/gh-traffic");
-        const assets = await fetchReleaseAssetDownloads(project.localPath, syncEntry.tag, token);
-        if (assets) {
-          snapshot.assetTag = assets.tag;
-          snapshot.assetDownloads = assets.assets;
-        }
-      }
-      const all: Record<string, any[]> = store.get("trafficSnapshots") || {};
-      const list = all[task.projectId] || [];
-      if (list[list.length - 1]?.date !== snapshot.date) {
-        all[task.projectId] = [...list, snapshot].slice(-90);
-        store.set("trafficSnapshots", all);
-      }
-      opsStatusStore[task.projectId] = { trafficError: null, lastSyncedAt: opsSyncedAt };
-    } else {
-      opsStatusStore[task.projectId] = {
-        trafficError: token
-          ? "GitHub 流量接口无数据（Token 需要仓库 Administration 只读权限，或仓库不可访问）"
-          : "未配置 GitHub Token",
-        lastSyncedAt: opsSyncedAt,
-      };
-    }
-    store.set("opsStatus", opsStatusStore);
-
     const competitors: any[] = (store.get("competitors") || {})[task.projectId] || [];
     if (competitors.length > 0) {
       const {
@@ -1016,23 +969,14 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
       notifyDataChanged("competitors");
     }
 
-    const { fetchIssues, mergeFeedbackItems, normalizeIssue, reviewsToFeedbackItems } =
+    const { fetchIssues, mergeFeedbackItems, normalizeIssue } =
       await import("@appilot-labs/appilot-core/feedback-inbox");
     const issues = await fetchIssues(project.localPath, token, 30);
-    const reviewItems: any[] = [];
-    const reviewsStore: Record<string, any> = store.get("reviews") || {};
-    for (const product of project.storeProducts || []) {
-      const perProduct = reviewsStore[product.id] || {};
-      for (const country of Object.keys(perProduct)) {
-        for (const review of perProduct[country]?.items || []) {
-          reviewItems.push(...reviewsToFeedbackItems([review], product.id));
-        }
-      }
-    }
     const feedbackStore: Record<string, any> = store.get("feedback") || {};
     const entry = feedbackStore[task.projectId] || { items: [], lastSyncedAt: null };
     feedbackStore[task.projectId] = {
-      items: mergeFeedbackItems(entry.items, [...issues.map(normalizeIssue), ...reviewItems]),
+      // 保留历史 inbox 条目（包括曾经采集的评论），但从现在起只增量同步 GitHub Issues。
+      items: mergeFeedbackItems(entry.items, issues.map(normalizeIssue)),
       lastSyncedAt: new Date().toISOString(),
     };
     store.set("feedback", feedbackStore);
@@ -1061,40 +1005,6 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
       ? nextRunWithinMinutes(task.id, 30)
       : nextRunAt(task.id, task.intervalMinutes);
   notifyDataChanged("tasks");
-}
-
-async function runReviewsSyncTask(store: AppStore, task: ReviewsSyncTask): Promise<void> {
-  const context = findProductContext(store.get("projects") || [], task.productId);
-  const product = context?.product;
-  const project = context?.project;
-  if (!project || !product?.trackId) return;
-  const { storefrontsForLanguage } = await import("@appilot-labs/appilot-core/storefronts");
-  const countries: string[] = [];
-  for (const loc of product.supportedLanguages || []) {
-    for (const country of storefrontsForLanguage(loc.code)) {
-      if (!countries.includes(country)) countries.push(country);
-    }
-  }
-  const all: Record<string, any> = store.get("reviews") || {};
-  const perProduct: Record<string, any> = all[task.productId] || {};
-  const existingIds = new Set<string>();
-  for (const country of Object.keys(perProduct)) {
-    for (const review of perProduct[country]?.items || []) existingIds.add(review.id);
-  }
-  const { fetchAllStorefrontReviews } = await import("@appilot-labs/appilot-core/review-collector");
-  const { reviews, fetchedAt } = await fetchAllStorefrontReviews(product.trackId, countries, [...existingIds]);
-  for (const review of reviews) {
-    const list = perProduct[review.country]?.items || [];
-    perProduct[review.country] = { items: [...list, review].slice(-500), lastFetchedAt: fetchedAt };
-  }
-  all[task.productId] = perProduct;
-  store.set("reviews", all);
-  notifyDataChanged("reviews");
-  task.lastRunAt = new Date().toISOString();
-  task.executionCount += 1;
-  task.lastStatus = "success";
-  task.firstRunAt = task.firstRunAt || task.lastRunAt;
-  task.nextRunAt = nextRunAt(task.id, task.intervalMinutes);
 }
 
 async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promise<void> {
@@ -1201,9 +1111,6 @@ async function runScheduledTask(
       case "ops-sync":
         await runOpsSyncTask(store, task as OpsSyncTask);
         return true;
-      case "reviews-sync":
-        await runReviewsSyncTask(store, task as ReviewsSyncTask);
-        return true;
       case "build-status":
         await runBuildStatusTask(store, task as BuildStatusTask);
         return true;
@@ -1221,7 +1128,7 @@ async function runScheduledTask(
 /**
  * 壳侧 schedulerTick 已收敛为「任务池 reconcile + 通知 daemon」（架构收敛 A）：
  * 壳不再在此执行任何到期任务，也不再 acquire 调度租约（无 scheduleGate）——
- * - 重算 electron 域任务池（rank/github-sync/ops/reviews/build-status 的
+ * - 重算 electron 域任务池（rank/github-sync/ops/build-status 的
  *   scheduledTasks 推导与 DB 实例同步，UI 与 daemon 读同一份）；
  * - 保留 tick 的既有整理副作用（草稿身份迁移）；
  * - 最后经 socket runDue 通知常驻 daemon「立即处理到期」——daemon 未跑时该
@@ -1289,7 +1196,7 @@ export async function schedulerTick(): Promise<void> {
 
 /**
  * 启动 Electron 专属任务的轻量心跳。daemon 仍是 rank/github-sync 的唯一自动
- * 执行者；这里只恢复依赖 Keychain/富项目上下文的 ops/reviews/build-status。
+ * 执行者；这里只恢复依赖 Keychain/富项目上下文的 ops/build-status。
  */
 export function startElectronOnlyScheduler(intervalMs = 60_000): () => void {
   void schedulerTick();
@@ -1320,11 +1227,6 @@ export function enableTaskScheduler(): void {
 export async function runOpsSyncNow(projectId: string): Promise<boolean> {
   const store = await getStore();
   return runTaskById(store, opsSyncTaskId(projectId));
-}
-
-export async function runReviewsSyncNow(productId: string): Promise<boolean> {
-  const store = await getStore();
-  return runTaskById(store, reviewsSyncTaskId(productId));
 }
 
 export async function runBuildStatusNow(productId: string): Promise<boolean> {

@@ -6,9 +6,7 @@ import {
   fetchIssues,
   mergeFeedbackItems,
   normalizeIssue,
-  reviewsToFeedbackItems,
 } from "../src/feedback-inbox";
-import type { Review } from "../src/review-collector";
 
 let errors = 0;
 function check(ok: boolean, msg: string) {
@@ -38,19 +36,15 @@ const normalized = normalizeIssue(issue);
 check(normalized.source === "issue" && normalized.sourceId === "12", "normalizeIssue 映射 source/sourceId");
 check(normalized.url === issue.html_url && normalized.state === "open", "normalizeIssue 保留 url/state");
 
-const review: Review = {
-  id: "r1", trackId: "1", country: "us", rating: 2, title: "闪退",
-  body: "启动就崩", version: "1.0", author: "bob", updatedAt: "2026-08-21T00:00:00Z",
-};
-const reviewItems = reviewsToFeedbackItems([review], "p1:ios");
-check(reviewItems[0].source === "review" && reviewItems[0].productId === "p1:ios", "reviewsToFeedbackItems 携带 productId");
-
 const merged = mergeFeedbackItems(
-  [{ ...normalized, sourceId: "12" }, { ...reviewItems[0] }],
-  [{ ...normalized, sourceId: "12", state: "closed" }, { ...normalized, sourceId: "13" }],
+  [{ ...normalized, sourceId: "12" }],
+  [
+    { ...normalized, sourceId: "12", state: "closed" },
+    { ...normalized, sourceId: "13", createdAt: "2026-08-21T00:00:00Z" },
+  ],
 );
-check(merged.length === 3, "merge 按 source+sourceId 去重");
-check(merged[0].sourceId === "r1", "merge 按 createdAt 倒序（最新在前）");
+check(merged.length === 2, "merge 按 source+sourceId 去重");
+check(merged[0].sourceId === "13", "merge 按 createdAt 倒序（最新在前）");
 check(merged.find((item) => item.sourceId === "12")?.state === "closed", "merge 重复条目取较新的状态");
 
 async function runFetch() {

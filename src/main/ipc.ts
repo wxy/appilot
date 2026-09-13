@@ -1,7 +1,6 @@
 import { registerAiHandlers } from "./handlers/ai";
 import { registerActionHandlers } from "./handlers/actions";
 import { registerCompetitorsHandlers } from "./handlers/competitors";
-import { registerFeedbackHandlers } from "./handlers/feedback";
 import { registerOpsHandlers } from "./handlers/ops";
 import { registerOverviewHandlers } from "./handlers/overview";
 import { registerProjectsHandlers } from "./handlers/projects";
@@ -16,7 +15,6 @@ export function registerIpcHandlers() {
   registerSchedulerHandlers();
   registerAiHandlers();
   registerCompetitorsHandlers();
-  registerFeedbackHandlers();
   registerOpsHandlers();
   registerOverviewHandlers();
   registerProjectsHandlers();

@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { Review } from "@appilot-labs/appilot-core/review-collector";
 import { useProject } from "../../stores/project";
-import { reviewStats } from "../../lib/review-stats";
 import { OverviewContent } from "./OverviewContent";
-import type { StoreReviewSummary } from "./OverviewContent";
 import {
   aggregateCompetitorOverview,
   computeCompetitorAdvantage,
@@ -67,8 +64,6 @@ export function OverviewPage() {
   const [activityReleases, setActivityReleases] = useState<
     { tag: string; publishedAt: string | null }[]
   >([]);
-  // ③上架 的商店评价摘要（reviews:list → reviewStats 聚合）；null = 无数据。
-  const [storeReviews, setStoreReviews] = useState<StoreReviewSummary | null>(null);
   const [copilotSummary, setCopilotSummary] = useState<{
     pending: number;
     completed: number;
@@ -217,53 +212,6 @@ export function OverviewPage() {
     return () => { cancelled = true; };
   }, [project?.id]);
 
-  // ③上架 的商店评价（评分★/评论数/最近同步时间）：reviews:list（既有通道）→
-  // reviewStats 聚合；无数据 → null。监听 data-changed(reviews/projects) 刷新。
-  useEffect(() => {
-    if (!product?.id) {
-      setStoreReviews(null);
-      return;
-    }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const pending = (window as any).appilot?.reviews?.list?.(product.id!);
-        if (!pending || typeof pending.then !== "function") {
-          if (!cancelled) setStoreReviews(null);
-          return;
-        }
-        const byCountry = await pending;
-        if (cancelled) return;
-        const all: Review[] = [];
-        let lastSyncedAt: string | null = null;
-        for (const entry of Object.values((byCountry as Record<string, any>) || {})) {
-          for (const item of entry?.items || []) all.push(item);
-          const fetchedAt = entry?.lastFetchedAt || null;
-          if (
-            fetchedAt &&
-            (!lastSyncedAt || new Date(fetchedAt).getTime() > new Date(lastSyncedAt).getTime())
-          ) {
-            lastSyncedAt = fetchedAt;
-          }
-        }
-        const stats = reviewStats(all);
-        setStoreReviews({ ...stats, lastSyncedAt });
-      } catch {
-        if (!cancelled) setStoreReviews(null);
-      }
-    };
-    void load();
-    const handler = (e: Event) => {
-      const scope = (e as CustomEvent).detail;
-      if (scope === "reviews" || scope === "projects") void load();
-    };
-    window.addEventListener("appilot:data-changed", handler);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("appilot:data-changed", handler);
-    };
-  }, [product?.id]);
-
   // 竞品概览 + 竞品优势（能力②）：项目 + 当前产品就绪时调 competitors:overview，
   // profiles 同时喂给 aggregateCompetitorOverview（④概览）与
   // computeCompetitorAdvantage（占优商店/优势劣势词，纯函数，见 overviewData）。
@@ -379,7 +327,6 @@ export function OverviewPage() {
       ascInfo={ascInfo}
       storeCurrentVersion={storeCurrentVersion}
       activityData={activityData}
-      storeReviews={storeReviews}
       drafts={drafts}
       repoMetrics={repoMetrics}
       competitorSummary={competitorSummary}

@@ -12,7 +12,6 @@ import {
 import { isStorefrontAllowedForQueryLanguage, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { createAiProvider } from "../ai-service";
 import { sharedStore } from "../registry-sync";
-import { blobGet } from "../db-blob-read";
 import { importAscKeyFileTo } from "../asc-key-file";
 import { notifyDataChanged } from "../data-sync";
 import { withAiOperation } from "../ai-cancel";
@@ -33,6 +32,7 @@ import {
   updateProjectInProjects,
 } from "../project-state";
 import { buildProjectProfileFor } from "../release-service";
+import { resolveBriefRankData } from "../brief-rank-data";
 import {
   armItunesSearchBlock,
   githubSyncCacheEntry,
@@ -138,6 +138,7 @@ type BriefQuestionSession = {
   actionRuns: BriefActionRun[];
   dismissedSuggestionIds: string[];
   supersededSuggestionIds: string[];
+  rankDiagnostic?: unknown;
 };
 
 const briefQuestionSessions = new Map<string, BriefQuestionSession>();
@@ -202,7 +203,6 @@ function buildBriefContextDigest(
       `${m.keyword || "关键词"}: ${m.previousRank ?? "新入榜"}→${m.currentRank}`
     )
     .join("；");
-  const feedbackCount = Array.isArray(input?.feedbackThemes) ? input.feedbackThemes.length : 0;
   const competitorCount = Array.isArray(input?.competitorDeltas) ? input.competitorDeltas.length : 0;
   const issueText = Array.isArray(input?.detectedIssues)
     ? input.detectedIssues
@@ -212,6 +212,7 @@ function buildBriefContextDigest(
     : "";
   const inventory = input?.keywordInventory || {};
   const readiness = input?.rankDataReadiness;
+  const diagnostic = input?.rankDiagnostic;
   const inventoryText = (items: any[]) => (Array.isArray(items) && items.length > 0
     ? items.map((item: any) => `${item.language || "?"}:${item.keyword || "?"}`).join("、")
     : "无");
@@ -248,8 +249,10 @@ function buildBriefContextDigest(
     readiness
       ? `排名数据状态：${readiness.freshTargets}/${readiness.totalTargets} 个查询目标在 24 小时内更新，过期 ${readiness.staleTargets}，失败 ${readiness.failedTargets}${readiness.nextScheduledAt ? `，下一次计划 ${readiness.nextScheduledAt}` : ""}${readiness.scheduledCoverageCompleteAt ? `，当前排期预计最晚 ${readiness.scheduledCoverageCompleteAt}` : ""}`
       : "",
+    diagnostic
+      ? `排名诊断：${(diagnostic.facts || []).map((item: any) => item.statement).join("；") || "无可用事实"}${(diagnostic.anomalies || []).length > 0 ? `；异常：${diagnostic.anomalies.map((item: any) => `${item.statement} ${item.interpretation}`).join("；")}` : ""}`
+      : "排名诊断：不可用",
     `14 天发布状态：${input?.release ? `tag=${input.release.tag || "unknown"}，语言 ${input.release.languageProgress || 0}/${input.release.languageTotal || 0}` : "无发布草稿"}`,
-    `反馈主题：${feedbackCount} 个`,
     `竞品动态：${competitorCount} 条`,
     topMoverText ? `近期变动：${topMoverText}` : "近期无可对比排名变动",
     issueText ? `已确认问题：${issueText}` : "确定性检查未发现明确问题",
@@ -310,6 +313,10 @@ async function buildOverviewBriefPayload(
   const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
   const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
   const { competitorDeltaSummary } = await import("@appilot-labs/appilot-core/competitor-radar");
+  const {
+    buildRankDiagnosticPackage,
+    selectRankDiagnosticEvidence,
+  } = await import("@appilot-labs/appilot-core/diagnostics/rank");
   const description = readRepoDescription(project.localPath);
   const profile = await buildProjectProfileFor(project, product, undefined, description);
   const releaseResult = await checkForRelease(
@@ -318,44 +325,56 @@ async function buildOverviewBriefPayload(
     resolveEffectiveCredentials(s, project.id).githubToken,
     { githubCache: githubSyncCacheEntry(s, project) ?? undefined },
   );
-  const feedbackThemes =
-    ((blobGet(sharedStore(), "feedback", project.id) as { themes?: unknown[] } | undefined)?.themes ??
-      (s.get("feedback") || {})[project.id]?.themes ??
-      [])
-      .map((theme: any) => ({
-        title: theme.title,
-        evidenceCount: theme.evidenceCount,
-        topQuotes: (theme.sampleQuotes || []).slice(0, 2),
-      }));
   const drafts = getStoreSubmissionDrafts(project)
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const submissionDraft = drafts[0] || null;
 
-  let rankSnapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
-  try {
-    // getStore('projects') intentionally returns a lightweight DB view without snapshots.
-    // Brief generation needs the same rich rank history shown by the Overview page.
-    rankSnapshots = sharedStore().snapshots.history(project.name, { productId: product.id });
-  } catch (err: any) {
-    log.warn(`overview brief: DB rank snapshots unavailable, using product fallback: ${err.message}`);
-  }
   const keywordPool = ensureProjectKeywordPool(project);
+  const fallbackSnapshots = Array.isArray(product.rankSnapshots) ? product.rankSnapshots : [];
+  // A successful empty SQLite query does not prove that no evidence exists: older
+  // projects may still carry their last complete snapshot history in the product.
+  const rankData = resolveBriefRankData(
+    sharedStore(),
+    project.name,
+    product.id,
+    fallbackSnapshots,
+    (error) => log.warn(
+      `overview brief: DB rank snapshots unavailable, using product fallback: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
+  const supportedLanguages = (product.supportedLanguages || []).map((l: any) => l.code);
+  const diagnosticEvidence = selectRankDiagnosticEvidence({
+    snapshots: rankData.snapshots,
+    trackedKeywords: keywordPool.trackedKeywords || [],
+    supportedLanguages,
+    platform: product.platform || "unknown",
+  });
+  const rankDiagnostic = buildRankDiagnosticPackage({
+    scope: {
+      projectId: project.id,
+      productId: product.id,
+      platform: product.platform || "unknown",
+    },
+    source: rankData.source,
+    snapshots: diagnosticEvidence.snapshots,
+    expectedSeriesCount: diagnosticEvidence.expectedSeriesCount,
+  });
 
   const input = buildBriefInput({
     projectName: project.name,
     productName: product.trackName || project.name,
     description,
     platform: product.platform || "unknown",
-    supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
+    supportedLanguages,
     trackedKeywords: keywordPool.trackedKeywords || [],
     removedKeywords: keywordPool.removedKeywords || [],
-    rankSnapshots,
+    rankSnapshots: diagnosticEvidence.snapshots,
+    rankDiagnostic,
     releaseDraft: releaseResult.latest
       ? { name: releaseResult.latest.name, tag: releaseResult.latest.tag }
       : null,
     submissionDraft,
     submissionKeywords: project.submissionKeywords || [],
-    feedbackThemes,
     competitorDeltas: (() => {
       const competitors = (s.get("competitors") || {})[project.id] || [];
       const snapshots = (s.get("competitorSnapshots") || {})[project.id] || {};
@@ -540,11 +559,6 @@ export function registerProjectsHandlers(): void {
             : creds.ascIssuerId && creds.ascKeyId && creds.ascPrivateKeyPath
               ? "global"
               : null,
-        trafficError: (() => {
-          const dbOp = blobGet(sharedStore(), "opsStatus", project.id) as { trafficError?: unknown } | undefined;
-          if (dbOp && typeof dbOp === "object") return dbOp.trafficError ?? null;
-          return (s.get("opsStatus") || {})[project.id]?.trafficError ?? null;
-        })(),
       };
     });
   });
@@ -2178,11 +2192,13 @@ export function registerProjectsHandlers(): void {
       actionRuns: previous?.actionRuns || [],
       dismissedSuggestionIds: previous?.dismissedSuggestionIds || [],
       supersededSuggestionIds,
+      rankDiagnostic: input.rankDiagnostic,
     });
 
     return {
       suggestions,
       generatedAt,
+      rankDiagnostic: input.rankDiagnostic,
     };
   });
 
@@ -2205,6 +2221,7 @@ export function registerProjectsHandlers(): void {
         actionRuns: session.actionRuns || [],
         dismissedSuggestionIds: session.dismissedSuggestionIds || [],
         supersededSuggestionIds: session.supersededSuggestionIds || [],
+        rankDiagnostic: session.rankDiagnostic || null,
       };
     },
   );
@@ -2232,7 +2249,7 @@ export function registerProjectsHandlers(): void {
       const key = briefSessionKey(project.id, product.id);
       let session = getBriefSession(s, key);
       if (!session || session.expiresAt <= Date.now() || session.contextVersion !== BRIEF_CONTEXT_VERSION) {
-        const { briefContext, profile, evidenceContext } =
+        const { input, briefContext, profile, evidenceContext } =
           await buildOverviewBriefPayload(s, project, product);
         const contextId = new Date().toISOString();
         const contextSnapshot = { generatedAt: contextId, profile, evidenceContext, briefContext };
@@ -2254,6 +2271,7 @@ export function registerProjectsHandlers(): void {
                 contextId: suggestion.contextId || contextId,
               })),
               expiresAt: Date.now() + BRIEF_SESSION_TTL_MS,
+              rankDiagnostic: input.rankDiagnostic,
             }
           : {
               projectId: project.id,
@@ -2270,6 +2288,7 @@ export function registerProjectsHandlers(): void {
               actionRuns: [],
               dismissedSuggestionIds: [],
               supersededSuggestionIds: [],
+              rankDiagnostic: input.rankDiagnostic,
             };
         saveBriefSession(s, key, session);
       }

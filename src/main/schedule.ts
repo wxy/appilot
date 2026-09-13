@@ -304,8 +304,9 @@ export function opsSyncTaskId(projectId: string): string {
   return `ops-sync:${projectId}`;
 }
 
-export function reviewsSyncTaskId(productId: string): string {
-  return `reviews-sync:${productId}`;
+/** Remove persisted task kinds that no longer have a scheduler implementation. */
+export function removeRetiredScheduledTasks<T extends { kind?: unknown }>(tasks: T[]): T[] {
+  return tasks.filter((task) => task.kind !== "reviews-sync");
 }
 
 export function buildStatusTaskId(productId: string): string {

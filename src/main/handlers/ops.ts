@@ -1,6 +1,6 @@
 import { ipcMain } from "electron";
 import { runReadinessChecks, type ReadinessCheckItem } from "@appilot-labs/appilot-core/readiness-check";
-import { runBuildStatusNow, runOpsSyncNow, runReviewsSyncNow } from "../scheduler";
+import { runBuildStatusNow } from "../scheduler";
 import { findStoreSubmissionDraft, upsertStoreSubmissionDraft } from "../project-state";
 import { getStore } from "../store";
 import { sharedStore } from "../registry-sync";
@@ -144,31 +144,6 @@ async function fetchAlignmentStoreCopy(
 }
 
 export function registerOpsHandlers(): void {
-  ipcMain.handle("reviews:list", async (_event, productId: string) => {
-    productId = assertNonEmptyString(productId, "productId");
-    const s = await getStore();
-    const dbReviews = blobGet(sharedStore(), "reviews", productId) as Record<string, unknown> | undefined;
-    return dbReviews ?? (s.get("reviews") || {})[productId] ?? {};
-  });
-
-  ipcMain.handle("reviews:sync", async (_event, productId: string) => {
-    productId = assertNonEmptyString(productId, "productId");
-    return runReviewsSyncNow(productId);
-  });
-
-  ipcMain.handle("traffic:snapshots", async (_event, projectId: string) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
-    const s = await getStore();
-    const kvTraffic = (s.get("trafficSnapshots") || {})[projectId];
-    const dbTraffic = blobGet(sharedStore(), "trafficSnapshots", projectId);
-    return (Array.isArray(dbTraffic) ? dbTraffic : kvTraffic) || [];
-  });
-
-  ipcMain.handle("traffic:sync", async (_event, projectId: string) => {
-    projectId = assertNonEmptyString(projectId, "projectId");
-    return runOpsSyncNow(projectId);
-  });
-
   ipcMain.handle("activity:commits", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();

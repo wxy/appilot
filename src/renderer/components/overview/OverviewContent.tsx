@@ -10,11 +10,11 @@
  * 标题/产品选择 → 副驾入口（置顶宽条）
  * → 第一行：三张卡 md 三列（窄屏堆叠）：① 开发 → ② 发布 → ③ 上架
  * → 第二行：④ 竞品与表现独占一整行（宽卡，卡内 md 两栏分区）
- * → 排名分布（保留）→ 用户反馈（保持现状，置于页尾不强调）。
+ * → 排名分布。
  *
  * 防重复约定（阶段内分工，避免同一数字并排出现两次）：
  * - GitHub ↗ 外部链接 + GitHub 凭证就绪/去设置只在 ①开发 标题行右侧（顶部）；
- *   repo 分支/工作区状态、GitHub 流量异常（trafficError）归 ①开发卡底（仓库侧，
+ *   repo 分支/工作区状态归 ①开发卡底（仓库侧，
  *   一行小字无分隔横线；提交 sha 不重复展示，已在上次提交指标副注/tooltip）。
  * - ①开发「指标卡优先」：四枚等宽小指标 = 自上次发布以来提交（draft.commitCount）
  *   / PR（repoMetrics.pullsSince）/ 开放 Issue（repoMetrics.issues.open）/
@@ -27,8 +27,7 @@
  *   一句话而非指标卡呈现，避免视觉重复）只出现在 ②；语言进度 n/total 只在 ② 行内。
  * - ③上架：顶部版本不一致提示（商店已上架 vX ≠ 草稿目标 vY → 黄/红条）+ 一行式
  *   紧凑小格（横向 wrap，每格 title 说明）：商店当前版本 / 目标+审核状态
- *   （deriveVersionStatus）/ 最新构建状态与时间 / 商店评价（reviews:list 聚合的
- *   评分★与评论数，宿主未接线则不展示）/ App 商店 ↗（storeLinks[0]）/
+ *   （deriveVersionStatus）/ 最新构建状态与时间 / App 商店 ↗（storeLinks[0]）/
  *   信息更新于（fetchedAt）。App Store 凭证就绪/去设置只在 ③标题行右侧
  *   （与 ① GitHub 凭证位置风格一致）。不放关键词/竞品。
  * - ④竞品与表现（整行宽卡，卡内分区分层阅读）：顶部并排「关键词表现」与「竞品
@@ -53,7 +52,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { FeedbackTheme } from "@appilot-labs/appilot-core/feedback-inbox";
 import { storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
 import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
@@ -65,7 +63,6 @@ import { AppleIcon } from "../ui/Icons";
 import { EmptyState } from "../ui/EmptyState";
 import { StatusChip } from "../ui/StatusChip";
 import { btnSmPrimary, btnSmSecondary } from "../ui/styles";
-import { FeedbackThemesCard } from "./FeedbackThemesCard";
 import { activityHeatmap, overviewRankRows } from "./overviewData";
 import type {
   CompetitorAdvantage,
@@ -95,15 +92,6 @@ export interface OverviewRepoMetrics {
   error?: string;
 }
 
-/** ③上架的商店评价摘要（宿主经 reviews:list 聚合；recent30 = 近 30 天新增评论数）。 */
-export interface StoreReviewSummary {
-  total: number;
-  average: number | null;
-  recent30: number;
-  /** 任一商店最近一次评论同步时间（ISO；无 → null）。 */
-  lastSyncedAt: string | null;
-}
-
 export interface OverviewContentProps {
   project: Project | null;
   product: StoreProduct | null;
@@ -115,14 +103,10 @@ export interface OverviewContentProps {
   storeCurrentVersion: string | null;
   /** 可选注入：项目活跃数据（每日提交数 + 发布日），供 ①开发 的近 4 个月热力图使用；缺省则只显示 repo 状态。 */
   activityData?: { commits: Record<string, number>; releases: { tag: string; publishedAt: string | null }[] };
-  /** 可选注入：③上架的商店评价摘要（评分★/评论数）。undefined = 宿主未接线 → 不展示该格；null = 已接线但无数据。 */
-  storeReviews?: StoreReviewSummary | null;
   /** 可选注入：②发布卡按时间倒序的「文案」行（宿主从 project.storeSubmissionDrafts 聚合）；空 → 空态。 */
   drafts?: SubmissionDraftRow[];
   /** 可选注入：①开发卡 repo 指标（能力①：PR + issues）；null/未取数 → 不展示。 */
   repoMetrics?: OverviewRepoMetrics | null;
-  /** 可选注入：用户反馈聚类主题，供 FeedbackThemesCard 使用；缺省卡片内部取数。 */
-  feedbackThemes?: FeedbackTheme[];
   /** 可选注入：竞品概览聚合（Electron 宿主从 competitors:overview 聚合）；DSH 等无竞品数据宿主不传/null。 */
   competitorSummary?: CompetitorSummary | null;
   /** 可选注入：竞品优势聚合（能力②，computeCompetitorAdvantage 的产物）。 */
@@ -446,10 +430,8 @@ export function OverviewContent(props: OverviewContentProps) {
     ascInfo,
     storeCurrentVersion,
     activityData,
-    storeReviews,
     drafts,
     repoMetrics,
-    feedbackThemes,
     competitorSummary,
     competitorAdvantage,
     competitorHref,
@@ -618,7 +600,7 @@ export function OverviewContent(props: OverviewContentProps) {
     return `最新文案后又 ${parts.join(" · ")}`;
   })();
 
-  // ── ③ 上架：版本不一致提示 + 一行式（商店版本/目标审核/构建/评价/商店链接/更新于）──
+  // ── ③ 上架：版本不一致提示 + 一行式（商店版本/目标审核/构建/商店链接/更新于）──
   const liveStoreVersion = storeCurrentVersion || storeLiveVersion || null;
   const targetVersion = submissionDraft?.appVersion || null;
   const storeUnconfigured = !product.trackId && storeLinks.length === 0;
@@ -1052,14 +1034,6 @@ export function OverviewContent(props: OverviewContentProps) {
                   {repoMetricError}
                 </p>
               )}
-              {project.trafficError && (
-                <p
-                  className="truncate text-[11px] text-red-500 dark:text-red-400"
-                  title={project.trafficError}
-                >
-                  流量采集异常：{project.trafficError}
-                </p>
-              )}
             </div>
           </div>
         </StageCard>
@@ -1165,12 +1139,12 @@ export function OverviewContent(props: OverviewContentProps) {
           </div>
         </StageCard>
 
-        {/* ③ 上架：版本不一致提示 + 一行式紧凑小格（商店版本/目标审核/构建/评价/商店链接/更新于） */}
+        {/* ③ 上架：版本不一致提示 + 一行式紧凑小格（商店版本/目标审核/构建/商店链接/更新于） */}
         <StageCard
           step="3"
           stepClass="bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
           title="上架"
-          lead="商店版本、审核、评价与构建"
+          lead="商店版本、审核与构建"
           right={
             <div className="flex shrink-0 items-center gap-1.5 min-w-0">
               <span
@@ -1185,8 +1159,8 @@ export function OverviewContent(props: OverviewContentProps) {
                   className="inline-flex shrink-0 items-center rounded-full bg-emerald-50 dark:bg-emerald-500/10 px-2 h-5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
                   title={
                     project.ascSource
-                      ? `App Store Connect 凭证已配置（${project.ascSource === "global" ? "全局" : "项目覆盖"}），用于版本/审核状态回读、评论洞察`
-                      : "App Store Connect 凭证已配置，用于版本/审核状态回读、评论洞察"
+                      ? `App Store Connect 凭证已配置（${project.ascSource === "global" ? "全局" : "项目覆盖"}），用于版本/审核状态回读`
+                      : "App Store Connect 凭证已配置，用于版本/审核状态回读"
                   }
                 >
                   凭证就绪
@@ -1195,7 +1169,7 @@ export function OverviewContent(props: OverviewContentProps) {
                 <button
                   onClick={() => onOpenSettings(project.id)}
                   className="shrink-0 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 px-2 h-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400"
-                  title="未配置 App Store Connect 凭证（配置后可展示版本/构建/审核状态与评论洞察）"
+                  title="未配置 App Store Connect 凭证（配置后可展示版本/构建/审核状态）"
                 >
                   去设置
                 </button>
@@ -1253,39 +1227,6 @@ export function OverviewContent(props: OverviewContentProps) {
                   <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
                     v{targetVersion}
                   </span>
-                </FactCell>
-              )}
-
-              {storeReviews !== undefined && (
-                <FactCell
-                  label="商店评价"
-                  title={
-                    storeReviews && storeReviews.total > 0
-                      ? `App Store 客户评论：累计样本 ${storeReviews.total} 条 · 平均 ★${storeReviews.average ?? "—"} · 近 30 天 ${storeReviews.recent30} 条` +
-                        (storeReviews.lastSyncedAt
-                          ? ` · 同步于 ${formatHumanTime(storeReviews.lastSyncedAt)}`
-                          : "")
-                      : "尚未同步商店评论（去评论页同步后展示评分与评论数）"
-                  }
-                >
-                  {storeReviews && storeReviews.total > 0 ? (
-                    <>
-                      <span className="text-[12px] font-semibold text-amber-600 dark:text-amber-400">
-                        ★ {storeReviews.average ?? "—"}
-                      </span>
-                      <span className="text-[11px] text-zinc-600 dark:text-zinc-300">
-                        {storeReviews.total} 条
-                      </span>
-                    </>
-                  ) : (
-                    <LinkComponent
-                      to="/reviews"
-                      className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
-                      title="去评论页同步商店评论"
-                    >
-                      暂无评论 · 去评论页 ↗
-                    </LinkComponent>
-                  )}
                 </FactCell>
               )}
 
@@ -1616,15 +1557,6 @@ export function OverviewContent(props: OverviewContentProps) {
             </div>
           </div>
         )}
-      </div>
-
-      {/* 用户反馈（保持现状，置于页尾不强调） */}
-      <div>
-        <FeedbackThemesCard
-          project={project}
-          themes={feedbackThemes}
-          LinkComponent={LinkComponent}
-        />
       </div>
     </div>
   );

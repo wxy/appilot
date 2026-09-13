@@ -203,6 +203,7 @@ const deduped = parseBriefSuggestions(JSON.stringify({ suggestions: [
   { title: "补齐发布文案", reason: "3/8", action: "release", target: "v1.2.0" },
 ] }));
 assert(deduped.length === 2 && deduped[1].action === "release", "parse: duplicate actions for the same target are merged");
+assert(deduped[0].action === "keywords", "parse: removed trend action falls back to keywords");
 const qualityCandidates = parseBriefSuggestions(JSON.stringify({ suggestions: [
   {
     title: "暂停弱相关词",
@@ -308,7 +309,7 @@ const input: any = {
   },
   keywordRankDetails: [{ keyword: "night walk", language: "en", checkedStorefronts: 1, rankedStorefronts: 1, unrankedStorefronts: 0, top10Storefronts: 0, bestRanks: [{ storefront: "us", rank: 12 }], weakestRanks: [], latestCheckedAt: new Date().toISOString() }],
   rankMovers: [{ keyword: "night walk", language: "en", storefront: "us", previousRank: 5, currentRank: 12, delta: -7 }],
-  detectedIssues: [{ id: "rank-drop", category: "ranking", severity: "medium", title: "night walk 显著掉榜", evidence: "美区从第 5 名降至第 12 名", action: "trend", target: "night walk" }],
+  detectedIssues: [{ id: "rank-drop", category: "ranking", severity: "medium", title: "night walk 显著掉榜", evidence: "美区从第 5 名降至第 12 名", action: "keywords", target: "night walk" }],
   release: { tag: "v1.2.0", languageProgress: 3, languageTotal: 8, masterConfirmed: true, batchConfirmed: false, storeStatus: "prepared" },
   submissionKeywordCount: 12,
   uiLanguage: "zh-Hans",
@@ -326,16 +327,15 @@ assert(
   "buildBriefMessages: internal fields stay out of copy and only effective actions are offered",
 );
 
-// 4. buildBriefMessages with feedback themes + competitor deltas
+// 4. buildBriefMessages with competitor deltas
 const themedInput: any = {
   ...input,
-  feedbackThemes: [{ title: "夜间模式", evidenceCount: 3, topQuotes: ["太亮了"] }],
   competitorDeltas: [{ name: "Comp", change: "v1.0 → v1.1" }],
 };
 const themedMessages = buildBriefMessages(themedInput);
 const themedJoined = themedMessages.map((m) => m.content).join("\n");
-assert(themedJoined.includes("夜间模式") && themedJoined.includes("Comp"), "buildBriefMessages: 反馈主题与竞品动态嵌入上下文");
-assert(!themedMessages[0].content.includes("夜间模式") && themedMessages[1].content.includes("夜间模式"), "buildBriefMessages: volatile evidence stays out of cacheable system prefix");
+assert(themedJoined.includes("Comp"), "buildBriefMessages: competitor context is embedded");
+assert(!themedMessages[0].content.includes('"name": "Comp"') && themedMessages[1].content.includes('"name": "Comp"'), "buildBriefMessages: volatile evidence stays out of cacheable system prefix");
 
 // 3. Renderer rule signals
 const signals = briefRuleSignals({

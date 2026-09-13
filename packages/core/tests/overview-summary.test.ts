@@ -63,16 +63,14 @@ assert(input.detectedIssues.some((issue) => issue.category === "release" && issu
 assert(input.release?.tag === "v1.2.0", "buildBriefInput: release tag");
 assert(input.submissionKeywordCount === 2, "buildBriefInput: submission keyword count");
 
-const themed = buildBriefInput({
+const contextual = buildBriefInput({
   projectName: "P", productName: "GloWalk", description: "d", platform: "ios",
   supportedLanguages: ["en"], trackedKeywords: [], rankSnapshots: [],
   releaseDraft: null, submissionDraft: null, submissionKeywords: [],
-  feedbackThemes: [{ title: "夜间模式", evidenceCount: 3, topQuotes: ["太亮了"] }],
   competitorDeltas: [{ name: "Comp", change: "v1.0 → v1.1" }],
 });
-assert(themed.feedbackThemes?.length === 1 && themed.competitorDeltas?.[0]?.name === "Comp", "buildBriefInput: 反馈主题与竞品动态透传");
-assert(themed.detectedIssues.some((issue) => issue.category === "data-quality" && issue.severity === "high"), "buildBriefInput: empty keyword coverage becomes a high severity issue");
-assert(themed.detectedIssues.some((issue) => issue.category === "feedback" && issue.evidence.includes("3 条")), "buildBriefInput: repeated feedback becomes an evidence-backed issue");
+assert(contextual.competitorDeltas?.[0]?.name === "Comp", "buildBriefInput: competitor context is preserved");
+assert(contextual.detectedIssues.some((issue) => issue.category === "data-quality" && issue.severity === "high"), "buildBriefInput: empty keyword coverage becomes a high severity issue");
 
 const checkedButUnranked = buildBriefInput({
   projectName: "P", productName: "P", description: "", platform: "ios",

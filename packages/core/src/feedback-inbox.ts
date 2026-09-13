@@ -1,13 +1,13 @@
 import { getRemoteUrl, normalizeGitHubUrl } from "./git-info";
-import { fetchGitHubJson } from "./gh-traffic";
-import type { Review } from "./review-collector";
+import { fetchGitHubJson } from "./github-api";
 
+// `review` remains readable for historical inbox rows; new collection is issue-only.
 export type FeedbackSource = "review" | "issue";
 
 export interface FeedbackItem {
   source: FeedbackSource;
   sourceId: string;
-  /** Reviews carry the product id; issues are project-scoped (null). */
+  /** Legacy reviews carry a product id; current GitHub Issues are project-scoped. */
   productId: string | null;
   title: string;
   body: string;
@@ -15,15 +15,6 @@ export interface FeedbackItem {
   url: string;
   author: string;
   createdAt: string;
-}
-
-export interface FeedbackTheme {
-  title: string;
-  evidenceCount: number;
-  sampleQuotes: string[];
-  suggestedKeywords: string[];
-  suggestedDescriptionAngles: string[];
-  sourceBreakdown: { reviews: number; issues: number };
 }
 
 export interface GitHubIssue {
@@ -70,20 +61,6 @@ export function normalizeIssue(issue: GitHubIssue): FeedbackItem {
     author: String(issue.user?.login || ""),
     createdAt: String(issue.created_at || ""),
   };
-}
-
-export function reviewsToFeedbackItems(reviews: Review[], productId: string): FeedbackItem[] {
-  return reviews.map((review) => ({
-    source: "review" as const,
-    sourceId: review.id,
-    productId,
-    title: review.title,
-    body: review.body,
-    state: null,
-    url: "",
-    author: review.author,
-    createdAt: review.updatedAt,
-  }));
 }
 
 export function mergeFeedbackItems(

@@ -14,7 +14,6 @@ import { ALL_STOREFRONT_CODES, storefrontsForLanguage } from '@appilot-labs/appi
 import { listGitTags } from '@appilot-labs/appilot-core/release-watcher';
 import { listGitHubReleases } from '@appilot-labs/appilot-core/github-api';
 import { runReadinessChecks } from '@appilot-labs/appilot-core/readiness-check';
-import { fetchTrafficSnapshot } from '@appilot-labs/appilot-core/gh-traffic';
 import { createAscClient } from '@appilot-labs/appilot-core/asc-api';
 import { computeRankMovers, detectOverviewIssues, type OverviewBriefInput } from '@appilot-labs/appilot-core/overview-summary';
 import { AIProvider } from '@appilot-labs/appilot-core/ai/ai-provider';
@@ -59,12 +58,10 @@ function buildBriefInput(ov: {
       keywordStats,
       rankMovers,
       release: null,
-      feedbackThemes: [],
     }),
     release: null,
     submissionKeywordCount: 0,
     uiLanguage: 'zh',
-    feedbackThemes: [],
     competitorDeltas: [],
   };
 }
@@ -74,8 +71,7 @@ function buildBriefInput(ov: {
  *
  * - 仓库本地（无需凭据）：项目身份（platform/languages/repo 状态）、git tags、
  *   readiness 清单（MVP 语义：本地化/文案以空值传入，命中「缺失」检查项）。
- * - GitHub（公开仓库匿名可读；token 解锁私有/草稿/流量）：releases、
- *   traffic 快照。
+ * - GitHub（公开仓库匿名可读；token 解锁私有/草稿）：releases。
  * - App Store（免费 iTunes API，无需凭据）：README 里的商店链接 → trackId →
  *   商店元数据（名称/图标/bundleId）与当前线上版本；传 `keywords` 时按
  *   trackId 采集关键词在各商店的实时排名。
@@ -87,7 +83,7 @@ export function createAppilotOverviewTool(
   return defineTool({
     name: 'appilot_overview',
     description:
-      'Gather a full Appilot overview for a repository: project identity (platform/languages/repo state), release status (git tags + GitHub releases), release readiness checklist, and GitHub traffic (when a token is configured). Run this to refresh the Appilot workbench overview.',
+      'Gather a full Appilot overview for a repository: project identity (platform/languages/repo state), release status (git tags + GitHub releases), and release readiness checks. Run this to refresh the Appilot workbench overview.',
     parameters: {
       path: {
         type: 'string',
@@ -108,7 +104,7 @@ export function createAppilotOverviewTool(
       token: {
         type: 'string',
         description:
-          'Optional GitHub token for private repos, draft visibility, or traffic. Prefer configuring GITHUB_TOKEN via ctx.credentials; avoid passing secrets in the conversation.',
+          'Optional GitHub token for private repos or draft visibility. Prefer configuring GITHUB_TOKEN via ctx.credentials; avoid passing secrets in the conversation.',
       },
     },
     output: {
@@ -133,7 +129,6 @@ export function createAppilotOverviewTool(
         ascVersion: null,
         buildAttached: false,
       });
-      const traffic = await fetchTrafficSnapshot(path, token);
       const commits = await getCommitActivity(path);
 
       // 凭据状态（供客户端正确渲染 GitHub/App Store 能力徽标）。
@@ -333,8 +328,6 @@ export function createAppilotOverviewTool(
             tag: r.tag,
             publishedAt: r.publishedAt,
           })),
-          /** GitHub 流量（需要 token）。 */
-          traffic,
         },
         store,
         rank,
@@ -342,9 +335,6 @@ export function createAppilotOverviewTool(
         brief,
         credentials,
         skipped: {
-          traffic: token
-            ? undefined
-            : 'GitHub 流量需要 GITHUB_TOKEN（公开仓库匿名可读时跳过）',
           asc: asc ? undefined : '需要 App Store Connect 凭据（APP_STORE_CONNECT_ISSUER_ID / KEY_ID / PRIVATE_KEY）',
           brief: brief ? undefined : 'AI 简报需要 includeBrief=true 与 OPENAI_API_KEY',
         },

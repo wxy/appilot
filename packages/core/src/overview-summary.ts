@@ -3,6 +3,8 @@
  */
 
 import type { ProjectProfile } from "./project-profile";
+import type { DiagnosticPackage } from "./diagnostics/types";
+import type { RankDiagnosticCoverage } from "./diagnostics/rank";
 import { ALL_STOREFRONT_CODES, storefrontsForLanguage } from "./storefronts";
 
 export interface RankSnapshotLike {
@@ -41,7 +43,7 @@ export interface KeywordInventory {
 }
 
 export type OverviewIssueSeverity = "high" | "medium" | "low";
-export type OverviewIssueCategory = "data-quality" | "ranking" | "release" | "feedback";
+export type OverviewIssueCategory = "data-quality" | "ranking" | "release";
 
 export interface OverviewDetectedIssue {
   id: string;
@@ -49,7 +51,7 @@ export interface OverviewDetectedIssue {
   severity: OverviewIssueSeverity;
   title: string;
   evidence: string;
-  action: "keywords" | "release" | "trend";
+  action: "keywords" | "release";
   target: string | null;
 }
 
@@ -93,7 +95,6 @@ export function detectOverviewIssues(input: {
   keywordStats: { tracked: number; checked?: number; ranked: number; top10: number; paused: number };
   rankMovers: RankMover[];
   release: OverviewBriefInput["release"];
-  feedbackThemes: { title: string; evidenceCount: number; topQuotes: string[] }[];
 }): OverviewDetectedIssue[] {
   const issues: OverviewDetectedIssue[] = [];
   const { tracked, ranked } = input.keywordStats;
@@ -149,7 +150,7 @@ export function detectOverviewIssues(input: {
       severity: drop >= 10 ? "high" : "medium",
       title: `关键词「${mover.keyword}」显著掉榜`,
       evidence: `${mover.storefront} 商店从第 ${mover.previousRank} 名降至第 ${mover.currentRank} 名，下降 ${drop} 位。`,
-      action: "trend",
+      action: "keywords",
       target: mover.keyword,
     });
   }
@@ -170,21 +171,6 @@ export function detectOverviewIssues(input: {
     });
   }
 
-  const feedbackTheme = [...input.feedbackThemes]
-    .filter((theme) => theme.evidenceCount >= 2)
-    .sort((a, b) => b.evidenceCount - a.evidenceCount)[0];
-  if (feedbackTheme) {
-    issues.push({
-      id: `feedback-theme:${feedbackTheme.title}`,
-      category: "feedback",
-      severity: feedbackTheme.evidenceCount >= 5 ? "high" : "medium",
-      title: `用户反馈集中在「${feedbackTheme.title}」`,
-      evidence: `该主题包含 ${feedbackTheme.evidenceCount} 条反馈证据。`,
-      action: "trend",
-      target: feedbackTheme.title,
-    });
-  }
-
   const severityScore: Record<OverviewIssueSeverity, number> = { high: 3, medium: 2, low: 1 };
   return issues
     .sort((a, b) => severityScore[b.severity] - severityScore[a.severity])
@@ -202,6 +188,8 @@ export interface OverviewBriefInput {
   keywordInventory?: KeywordInventory;
   keywordRankDetails?: KeywordRankDetail[];
   rankMovers: RankMover[];
+  /** Deterministic data-quality boundary supplied before AI interpretation. */
+  rankDiagnostic?: DiagnosticPackage<RankDiagnosticCoverage>;
   detectedIssues: OverviewDetectedIssue[];
   release: {
     tag: string;
@@ -213,8 +201,6 @@ export interface OverviewBriefInput {
   } | null;
   submissionKeywordCount: number;
   uiLanguage: string;
-  /** 用户反馈主题（来自 feedback-inbox 聚类），供周报引用。 */
-  feedbackThemes?: { title: string; evidenceCount: number; topQuotes: string[] }[];
   /** 竞品近 7 天动态摘要。 */
   competitorDeltas?: { name: string; change: string }[];
   /** Shared stable archive; the brief uses it as the cache-friendly prefix. */
@@ -230,6 +216,7 @@ export function buildBriefInput(args: {
   trackedKeywords: { keyword?: string; language?: string; status?: string }[];
   removedKeywords?: { keyword?: string; language?: string; removedAt?: string }[];
   rankSnapshots: RankSnapshotLike[];
+  rankDiagnostic?: DiagnosticPackage<RankDiagnosticCoverage>;
   days?: number;
   releaseDraft: { name?: string | null; tag: string } | null;
   submissionDraft: {
@@ -242,7 +229,6 @@ export function buildBriefInput(args: {
     storeStatus?: string;
   } | null;
   submissionKeywords: { language?: string; text?: string }[];
-  feedbackThemes?: { title: string; evidenceCount: number; topQuotes: string[] }[];
   competitorDeltas?: { name: string; change: string }[];
   profile?: ProjectProfile;
 }): OverviewBriefInput {
@@ -354,7 +340,6 @@ export function buildBriefInput(args: {
         storeStatus: args.submissionDraft?.storeStatus ?? null,
       }
     : null;
-  const feedbackThemes = args.feedbackThemes || [];
   const storefrontCoverage = [...new Set(active.map((item) => item.language || "").filter(Boolean))]
     .map((language) => ({
       language,
@@ -373,11 +358,11 @@ export function buildBriefInput(args: {
     keywordInventory,
     keywordRankDetails,
     rankMovers,
-    detectedIssues: detectOverviewIssues({ keywordStats, rankMovers, release, feedbackThemes }),
+    rankDiagnostic: args.rankDiagnostic,
+    detectedIssues: detectOverviewIssues({ keywordStats, rankMovers, release }),
     release,
     submissionKeywordCount,
     uiLanguage: "zh-Hans",
-    feedbackThemes,
     competitorDeltas: args.competitorDeltas || [],
     profile: args.profile,
   };

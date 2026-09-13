@@ -10,9 +10,7 @@ import { ManageProjectsPage } from "./components/projects/ManageProjectsPage";
 import { OverviewPage } from "./components/overview/OverviewPage";
 import { CopilotPage } from "./components/copilot/CopilotPage";
 import { ReleasePage } from "./components/release/ReleasePage";
-import { ReviewsPage } from "./components/reviews/ReviewsPage";
 import { KeywordsPage } from "./components/keywords/KeywordsPage";
-import { TrendPage } from "./components/trend/TrendPage";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { ProjectSettingsPage } from "./components/settings/ProjectSettingsPage";
 import { DataSyncLayer } from "./components/ui/DataSyncLayer";
@@ -24,8 +22,6 @@ const PROJECT_NAV_ITEMS = [
   { to: "/copilot", label: "副驾", title: "AI 副驾工作台" },
   { to: "/release", label: "发布", title: "发布工作台" },
   { to: "/keywords", label: "排名", title: "关键词排名" },
-  { to: "/reviews", label: "评论", title: "评论" },
-  { to: "/trend", label: "趋势", title: "长期效果" },
 ];
 
 /* ── 左侧边栏：项目切换 + 项目页面导航 ── */
@@ -407,8 +403,6 @@ export function App() {
         <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/tasks" element={<TaskCenterPage />} />
         <Route path="/release" element={<ReleasePage />} />
-        <Route path="/reviews" element={<ReviewsPage />} />
-        <Route path="/trend" element={<TrendPage />} />
         <Route path="/projects" element={<ManageProjectsPage />} />
         <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

@@ -20,7 +20,6 @@ const KIND_LABELS: Record<string, string> = {
   'github-sync': 'GitHub 发布同步',
   rank: '排名采集',
   'ops-sync': '数据同步',
-  'reviews-sync': '评论采集',
   'build-status': '构建状态',
 };
 
@@ -36,7 +35,7 @@ const USAGE = [
   '  /appilot task clear            清除全部失败状态（按原排期自然重试）',
   '  /appilot task reschedule       清除失败并限速重排（30–210 分钟内温和重跑）',
   '',
-  '「项目」参数用注册仓库名（projects 首列）。评论/竞品等富数据仅存于 Electron，命令不提供。',
+  '「项目」参数用注册仓库名（projects 首列）。竞品等富数据仅存于 Electron，命令不提供。',
 ].join('\n');
 
 /** 稳定字符串哈希（id → 重排摊铺偏移）。 */

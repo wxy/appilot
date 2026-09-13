@@ -1,5 +1,5 @@
 import { normalizeGitHubUrl } from "./git-info";
-import { fetchGitHubJson } from "./gh-traffic";
+import { fetchGitHubJson } from "./github-api";
 import { isItunesSearchForbidden, itunesSearchApiError } from "./rank-collector";
 
 export interface Competitor {

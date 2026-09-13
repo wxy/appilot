@@ -30,10 +30,6 @@ check(
   "ops-sync 按项目分组",
 );
 check(
-  taskGroupKey({ ...base, kind: "reviews-sync", groupKey: undefined }) === "P\u0000AI Pulse\u0000reviews-sync",
-  "reviews-sync 按产品×类型分组",
-);
-check(
   taskGroupKey({ ...base, kind: "build-status", groupKey: undefined }) === "P\u0000AI Pulse\u0000build-status",
   "build-status 按产品×类型分组",
 );

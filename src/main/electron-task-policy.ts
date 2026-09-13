@@ -1,6 +1,5 @@
 export const ELECTRON_ONLY_TASK_KINDS = new Set([
   'ops-sync',
-  'reviews-sync',
   'build-status',
 ]);
 

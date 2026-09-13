@@ -102,7 +102,7 @@ async function main(): Promise<void> {
   // ops 历史执行：最早 08-10，用于 firstRunAt 兜底（electronJson.firstRunAt 为 null）。
   store.executions.add({ taskId: 'ops-sync:msszspx4', ts: '2026-08-10T08:00:00.000Z', status: 'success', durationMs: 120 });
   store.executions.add({ taskId: 'ops-sync:msszspx4', ts: '2026-08-11T08:00:00.000Z', status: 'success', durationMs: 90 });
-  // 产品级镜像行：reviews-sync 带 productId（`projId:platform` 惯例）但从未执行。
+  // 历史 reviews-sync 行可能在 reconcile 前短暂存在 DB，但不应再显示。
   store.tasks.upsert({
     id: 'reviews-sync:msszspx4:ios', title: '评价同步', intervalMinutes: 1440, lastRunAt: null, nextRunAt: d(1), lastStatus: 'never', lastSummary: null, runCount: 0, source: 'electron',
     electronJson: JSON.stringify({ id: 'reviews-sync:msszspx4:ios', kind: 'reviews-sync', productId: 'msszspx4:ios', intervalMinutes: 1440, executionCount: 0, enabled: true }),
@@ -120,10 +120,7 @@ async function main(): Promise<void> {
   assert.equal(ops3?.productId, null, 'ops 为项目级任务（无 productId）');
   assert.equal(ops3?.firstRunAt, '2026-08-10T08:00:00.000Z', 'electronJson/instance 无 firstRunAt → 用最早执行时间兜底');
   const rev3 = tasks3.find((t) => t.id === 'reviews-sync:msszspx4:ios');
-  assert.equal(rev3?.projectName, 'GloWalk', 'reviews-sync 按 productId 前缀归项目');
-  assert.equal(rev3?.productId, 'msszspx4:ios');
-  assert.equal(rev3?.platform, 'ios', 'productId 后缀推导平台（无 instance 时）');
-  assert.equal(rev3?.firstRunAt, null, '从未执行的产品任务无首次时间');
+  assert.equal(rev3, undefined, '任务中心不显示已下线的 reviews-sync 历史行');
   // 已执行任务仍优先 electronJson.firstRunAt（真实首次 > 执行记录兜底）
   store.tasks.upsert({
     id: 'build-status:msszspx4:ios', title: '构建状态', intervalMinutes: 60, lastRunAt: '2026-09-06T11:58:24.757Z', nextRunAt: null, lastStatus: 'ok', lastSummary: null, runCount: 1, source: 'electron',

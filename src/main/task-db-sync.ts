@@ -1,7 +1,7 @@
 /**
  * Electron 调度任务状态 → 共享 SQLite tasks 表镜像（Phase 4b 后半）。
  *
- * Electron 的动态任务（rank / github-sync / ops-sync / reviews-sync /
+ * Electron 的动态任务（rank / github-sync / ops-sync /
  * build-status，按产品×关键词拆分的数百个小任务）状态持久化在 electron-store
  * 的 'scheduledTasks'。这里把状态子集镜像进共享 DB tasks 表，使 DSH / CLI / MCP
  * （appilot-headless tasks list）能读到 Electron 的任务状态——任务真正执行仍由
@@ -35,7 +35,6 @@ const KIND_LABELS: Record<string, string> = {
   rank: '排名采集',
   'github-sync': 'GitHub 发布同步',
   'ops-sync': '数据同步',
-  'reviews-sync': '评价同步',
   'build-status': '构建状态',
 };
 
@@ -59,7 +58,7 @@ function taskInstance(t: ElectronTaskLike): Record<string, unknown> | null {
   if (kind === 'ops-sync' && typeof t.projectId === 'string') {
     return { projectId: t.projectId };
   }
-  if ((kind === 'reviews-sync' || kind === 'build-status') && typeof t.productId === 'string') {
+  if (kind === 'build-status' && typeof t.productId === 'string') {
     return { productId: t.productId };
   }
   if (kind === 'rank' && typeof t.productId === 'string') {
@@ -196,6 +195,8 @@ export function mirrorTasksToDb(store: AppilotStore, tasks: ElectronTaskLike[]):
   // 清理：DB 中 source='electron' 但已不在当前源的任务行。
   // github-sync 已切 DB reconcile 管理；其余 Electron 富数据实例以
   // scheduledTasks 为源，源里消失时必须清理，避免产品删除后留下幽灵任务。
+  // reviews-sync 已下线，但仍识别其旧镜像行：当 reconcile 从
+  // scheduledTasks 移除源任务后，这里会一并清理任务表中的幽灵行。
   const mirrorManagedKinds = new Set(['rank', 'ops-sync', 'reviews-sync', 'build-status']);
   let pruned = 0;
   for (const row of store.tasks.all()) {
