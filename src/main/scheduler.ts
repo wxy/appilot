@@ -233,11 +233,7 @@ function taskSeed(task: Pick<RankScheduledTask, "productId" | "keyword" | "query
  */
 const GITHUB_SYNC_CACHE_PR_SCHEMA = 3;
 
-/** Fresh pre-warmed GitHub data for a project, or null when stale/mismatched. */
-export function githubSyncCacheEntry(
-  s: any,
-  project: any,
-): {
+export interface GithubSyncCacheSnapshot {
   tag: string | null;
   release: any | null;
   pullRequests: any[];
@@ -247,7 +243,15 @@ export function githubSyncCacheEntry(
     tokenKind: "fine-grained" | "classic" | "none" | "unknown";
     contents: "read" | "write" | null;
   } | null;
-} | null {
+  syncedAt: string | null;
+  lastSeenSha: string | null;
+}
+
+/** Last saved GitHub inspection, including stale data for explicit local-only views. */
+export function githubSyncCacheSnapshot(
+  s: any,
+  project: any,
+): GithubSyncCacheSnapshot | null {
   const all = s.get("githubSyncCache") || {};
   // 读切 DB：release_cache（写侧已双写）优先，kv 兜底（迁移前存量）。
   const entry =
@@ -261,8 +265,6 @@ export function githubSyncCacheEntry(
       return all?.[project?.id] ?? null;
     })();
   if (!entry) return null;
-  if (new Date(entry.syncedAt).getTime() < Date.now() - 60 * 60_000) return null;
-  if ((entry.lastSeenSha || null) !== (project?.lastReleaseSha || null)) return null;
   const pullRequests =
     entry.prSchemaVersion === GITHUB_SYNC_CACHE_PR_SCHEMA
       ? entry.pullRequests || []
@@ -273,7 +275,38 @@ export function githubSyncCacheEntry(
     pullRequests,
     releases: Array.isArray(entry.releases) ? entry.releases : [],
     capabilities: entry.repoCapabilities ?? null,
+    syncedAt: typeof entry.syncedAt === "string" ? entry.syncedAt : null,
+    lastSeenSha: entry.lastSeenSha || null,
   };
+}
+
+/** Fresh pre-warmed GitHub data for background tasks, or null when stale/mismatched. */
+export function githubSyncCacheEntry(
+  s: any,
+  project: any,
+): GithubSyncCacheSnapshot | null {
+  const entry = githubSyncCacheSnapshot(s, project);
+  if (!entry?.syncedAt) return null;
+  if (new Date(entry.syncedAt).getTime() < Date.now() - 60 * 60_000) return null;
+  if (entry.lastSeenSha !== (project?.lastReleaseSha || null)) return null;
+  return entry;
+}
+
+export function saveGithubSyncCacheSnapshot(
+  project: any,
+  snapshot: Omit<GithubSyncCacheSnapshot, "lastSeenSha"> & { lastSeenSha?: string | null },
+): void {
+  if (!project?.name) return;
+  sharedStore().releaseCache.save(project.name, {
+    tag: snapshot.tag,
+    release: snapshot.release,
+    pullRequests: snapshot.pullRequests,
+    prSchemaVersion: GITHUB_SYNC_CACHE_PR_SCHEMA,
+    releases: snapshot.releases,
+    repoCapabilities: snapshot.capabilities,
+    lastSeenSha: snapshot.lastSeenSha ?? project.lastReleaseSha ?? null,
+    syncedAt: snapshot.syncedAt,
+  });
 }
 
 // 按产品平台决定搜索实体：macOS 商店用 macSoftware，iOS 商店用 software。

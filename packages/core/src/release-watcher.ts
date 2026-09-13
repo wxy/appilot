@@ -554,6 +554,8 @@ export async function checkForRelease(
   options: {
     sync?: boolean;
     force?: boolean;
+    /** False for local/cache-only workbench loading; prevents every GitHub request. */
+    allowNetwork?: boolean;
     githubCache?: GithubApiCache;
     githubReleases?: GitHubReleaseItem[] | null;
     onApiStats?: (requestBytes: number, responseBytes: number) => void;
@@ -678,18 +680,21 @@ export async function checkForRelease(
   // Only trust cached PR lists that actually carry data. An empty cached list
   // usually means the sync ran before PR enrichment existed (or the API was
   // down), so refetch instead of showing a blank summary.
+  const allowNetwork = options.allowNetwork !== false;
   const pullRequests =
     !options.force &&
     cacheMatches &&
     options.githubCache &&
     (options.githubCache.pullRequests?.length ?? 0) > 0
       ? options.githubCache.pullRequests
-      : await resolveReleasePullRequests(
-          localPath,
-          material,
-          githubToken,
-          options.onApiStats,
-        );
+      : allowNetwork
+        ? await resolveReleasePullRequests(
+            localPath,
+            material,
+            githubToken,
+            options.onApiStats,
+          )
+        : options.githubCache?.pullRequests || [];
 
   if (githubItems) {
     const coveredTags = new Set(
@@ -728,12 +733,14 @@ export async function checkForRelease(
         const enriched: ReleaseMaterial = {
           ...material,
           pullRequests,
-          githubRelease: await fetchGitHubRelease(
-            localPath,
-            tag.name,
-            githubToken,
-            options.onApiStats,
-          ),
+          githubRelease: allowNetwork
+            ? await fetchGitHubRelease(
+                localPath,
+                tag.name,
+                githubToken,
+                options.onApiStats,
+              )
+            : null,
         };
         return {
           id: `tag-${tag.sha}`,
@@ -766,12 +773,14 @@ export async function checkForRelease(
     githubRelease: cacheMatches
       ? (options.githubCache?.release ?? material.githubRelease)
       : releaseTag
-        ? await fetchGitHubRelease(
-            localPath,
-            releaseTag.name,
-            githubToken,
-            options.onApiStats,
-          )
+        ? allowNetwork
+          ? await fetchGitHubRelease(
+              localPath,
+              releaseTag.name,
+              githubToken,
+              options.onApiStats,
+            )
+          : null
         : material.githubRelease,
   };
   const release: ReleaseInfo = {

@@ -62,7 +62,7 @@ export function ReleasePage() {
   const [productId, setProductId] = useState(currentProductId || products[0]?.id || "");
   const [releases, setReleases] = useState<any[]>([]);
   const [githubCapabilities, setGithubCapabilities] = useState<{
-    repoPush: boolean | null;
+    push: boolean | null;
     tokenKind?: "fine-grained" | "classic" | "none" | "unknown";
     contents?: "read" | "write" | null;
   } | null>(null);
@@ -73,6 +73,7 @@ export function ReleasePage() {
   const [checking, setChecking] = useState(false);
   const [releasesLoaded, setReleasesLoaded] = useState(false);
   const [initialCheckPending, setInitialCheckPending] = useState(true);
+  const [githubLastCheckedAt, setGithubLastCheckedAt] = useState<string | null>(null);
   const initialCheckPendingRef = useRef(true);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
@@ -175,6 +176,7 @@ export function ReleasePage() {
     if (resetView) {
       initialCheckPendingRef.current = true;
       setInitialCheckPending(true);
+      setGithubLastCheckedAt(null);
     }
     // 只有切换项目/平台或首次加载时才清空旧数据走载入态；
     // 后台发布同步触发的刷新不清空，原地更新，避免整页闪成“正在检查发布状态”。
@@ -187,6 +189,7 @@ export function ReleasePage() {
       const next = await (window as any).appilot.release.list(project.id, force);
       setReleases(next.releases || []);
       setGithubCapabilities(next.githubCapabilities || null);
+      setGithubLastCheckedAt(next.githubLastCheckedAt || null);
       // 视图模式跟随工作目标：有尚未定稿的发布 → 工作视图；否则当前文案视图。
       // 仅在切项目/平台或首次载入时重置，后台刷新保留当前视图。
       if (resetView) {
@@ -295,10 +298,9 @@ export function ReleasePage() {
     // that replay from starting a second, cached release:list request beside
     // the authoritative live check.
     if (!resetView) return;
-    // Entering the workbench/project must verify GitHub live before revealing
-    // copy-planning data. The hourly background cache is useful elsewhere,
-    // but it can hide a release draft created moments ago.
-    void loadReleases(resetView, true, resetView);
+    // Entering the workbench reads the last saved GitHub snapshot and local
+    // repository state. Remote inspection is reserved for the explicit button.
+    void loadReleases(false, true, resetView);
     // 视图/发布切换只改变 selectedTag，由 release:context 增量加载对应发布
     // 的素材与草案；不整页重载 release.list，避免出现「检查发布状态」与
     // 长等待。首次进入或切项目/平台时才调用上面的 loadReleases。
@@ -314,9 +316,8 @@ export function ReleasePage() {
     const handler = (e: Event) => {
       const scope = (e as CustomEvent).detail;
       if (scope === "releases") {
-        // Background sync can emit while the initial live GitHub request is in
-        // flight. Do not let its older hourly cache overwrite the entry gate
-        // or select/load an older release draft.
+        // Background sync can emit while the initial saved snapshot is loading.
+        // Let that first load establish the selected release before refreshing.
         if (initialCheckPendingRef.current) return;
         void loadReleasesRef.current(false, false);
         setContextRevision((revision) => revision + 1);
@@ -581,10 +582,16 @@ export function ReleasePage() {
           </span>
         )
       )}
+      <span
+        className="w-full text-[10px] text-zinc-400 dark:text-zinc-500"
+        title={githubLastCheckedAt ? new Date(githubLastCheckedAt).toLocaleString() : undefined}
+      >
+        上次检查：{githubLastCheckedAt ? formatHumanTime(githubLastCheckedAt) : "尚未检查"}
+      </span>
     </>
   ) : null;
   const githubWarning =
-    githubCapabilities?.repoPush === false
+    githubCapabilities?.push === false
       ? githubCapabilities.tokenKind === "fine-grained"
         ? "GitHub Token（fine-grained）的 Contents 只有读取权限，发布草案不可见。请在 GitHub 设置中将 Contents 权限改为 Read and write，或改用带 repo 权限的 classic token"
         : githubCapabilities.tokenKind === "classic"
@@ -1573,10 +1580,10 @@ export function ReleasePage() {
       {initialCheckPending ? (
         <div className="py-16 text-center">
           <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
-            检查 GitHub 发布
+            载入发布工作台
           </p>
           <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-            正在获取最新发布草案、PR 与提交…
+            正在读取上次发布检查结果…
           </p>
         </div>
       ) : (
@@ -1591,8 +1598,9 @@ export function ReleasePage() {
             onAscRefresh={handleAscRefresh}
             ascRefreshing={ascRefreshing}
             ascInfo={ascInfo}
-            onCheckGithub={() => void loadReleases(true)}
+            onCheckGithub={() => void loadReleases(true, false)}
             checkingGithub={checking}
+            githubLastCheckedAt={githubLastCheckedAt}
             githubWarning={githubWarning}
             onToggleChecklist={() => setShowChecklist((value) => !value)}
             checklistOpen={showChecklist}
@@ -2079,10 +2087,21 @@ export function ReleasePage() {
                   正在检查发布状态…
                 </div>
               ) : (
-                <EmptyState
-                  title="尚未检测到新的发布"
-                  desc="可进入文案计划提前记录改进方向；有新提交、GitHub 发布草案或新 tag 后，再据此生成发布文案。"
-                />
+                <div className="space-y-3 text-center">
+                  <EmptyState
+                    title="尚未检测到新的发布"
+                    desc="可进入文案计划提前记录改进方向；需要获取新提交、GitHub 发布草案或新 tag 时，请手动检查。"
+                  />
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button type="button" onClick={() => void loadReleases(true)} disabled={checking} className={cn(btnSecondary, "disabled:cursor-not-allowed disabled:opacity-50")}>
+                      <GithubIcon className="h-3.5 w-3.5" />
+                      {checking ? "检查中…" : "检查 GitHub 发布"}
+                    </button>
+                    <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                      上次检查：{githubLastCheckedAt ? formatHumanTime(githubLastCheckedAt) : "尚未检查"}
+                    </span>
+                  </div>
+                </div>
               )
             ) : (
               <>

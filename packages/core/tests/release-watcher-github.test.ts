@@ -188,6 +188,47 @@ async function runTests() {
     }
   }
 
+  // Workbench startup can render saved GitHub data and local tags without any
+  // remote request. The explicit check button is the only network boundary.
+  {
+    const dir = setupRepo(["v1.0.0"]);
+    commit(dir, "b.txt", "feat: local change (#31)");
+    const origFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      throw new Error("unexpected GitHub request");
+    }) as any;
+    try {
+      const result = await checkForRelease(dir, null, "unused-token", {
+        sync: false,
+        allowNetwork: false,
+        githubReleases: [{
+          id: 11,
+          tag: "v1.1.0",
+          name: "v1.1.0",
+          body: "saved release",
+          draft: false,
+          prerelease: false,
+          createdAt: "2026-09-12T00:00:00Z",
+          publishedAt: "2026-09-12T00:00:00Z",
+          url: "https://github.com/owner/repo/releases/tag/v1.1.0",
+          viaToken: true,
+        }],
+        githubCache: {
+          tag: "v1.1.0",
+          release: null,
+          pullRequests: [],
+          releases: [],
+        },
+      });
+      check(fetchCalls === 0, "工作台本地载入不访问 GitHub");
+      check(result.releases[0]?.tag === "v1.1.0", "工作台本地载入保留上次 GitHub 发布快照");
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  }
+
   if (errors) process.exit(1);
   console.log("done");
 }

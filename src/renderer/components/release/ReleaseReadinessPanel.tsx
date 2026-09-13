@@ -13,6 +13,7 @@ export function ReleaseReadinessPanel({
   ascInfo,
   onCheckGithub,
   checkingGithub,
+  githubLastCheckedAt,
   githubWarning,
   onToggleChecklist,
   checklistOpen,
@@ -30,6 +31,7 @@ export function ReleaseReadinessPanel({
   ascInfo?: { fetchedAt?: string } | null;
   onCheckGithub?: () => void;
   checkingGithub?: boolean;
+  githubLastCheckedAt?: string | null;
   /** 权限等导致发布草案不可见时的提示（与当前发布节点是否已加载无关）。 */
   githubWarning?: ReactNode;
   /** 切换统一的发布检查面板。 */
@@ -104,6 +106,12 @@ export function ReleaseReadinessPanel({
                     {checkingGithub ? "检查中…" : "检查 GitHub 发布"}
                   </button>
                 )}
+                <span
+                  className="self-center text-[10px] text-zinc-400 dark:text-zinc-500"
+                  title={githubLastCheckedAt ? new Date(githubLastCheckedAt).toLocaleString() : undefined}
+                >
+                  上次检查：{githubLastCheckedAt ? formatHumanTime(githubLastCheckedAt) : "尚未检查"}
+                </span>
               </>
             }
           >
