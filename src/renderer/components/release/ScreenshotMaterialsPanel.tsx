@@ -118,13 +118,15 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
   );
 }
 
-export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedLanguages, defaultSourceLanguage, readOnly = false, onChange, onCommit, onGenerated, onDelete }: {
+export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedLanguages, defaultSourceLanguage, readOnly = false, allowArtifactGeneration = false, onChange, onCommit, onGenerated, onDelete }: {
   projectId?: string;
   draftId?: string;
   value?: ScreenshotCopySet | null;
   supportedLanguages: string[];
   defaultSourceLanguage: string;
   readOnly?: boolean;
+  /** 文案只读时仍可选择模板并生成 Keynote/PNG；模板路径不属于冻结内容。 */
+  allowArtifactGeneration?: boolean;
   onChange?: (value: ScreenshotCopySet) => void;
   onCommit?: (value: ScreenshotCopySet) => Promise<void> | void;
   onGenerated?: (draft: any) => void;
@@ -413,7 +415,7 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
           {onDelete && !masterConfirmed && <button type="button" onClick={() => { if (window.confirm("删除本版本的全部截图文案？商店文案不会受到影响。")) void onDelete(); }} className={cn(btnSecondary, "border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 dark:border-red-900/70 dark:text-red-400 dark:hover:bg-red-950/30")}>删除截图文案</button>}
         </div>
       </section>}
-      {!readOnly && <section className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-3.5 dark:border-zinc-700 dark:bg-zinc-800/20">
+      {(!readOnly || allowArtifactGeneration) && <section className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-3.5 dark:border-zinc-700 dark:bg-zinc-800/20">
         <h4 className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">成品生成</h4>
         <div className="grid items-center gap-2 border-b border-zinc-200/80 py-2.5 sm:grid-cols-[180px_minmax(0,1fr)] dark:border-zinc-700/80">
           <button type="button" onClick={() => void selectKeynoteTemplate()} className={cn(btnSecondary, "w-full justify-center")}>{screenshotCopy.keynoteTemplatePath ? "更换 Keynote 模板" : "选择 Keynote 模板"}</button>

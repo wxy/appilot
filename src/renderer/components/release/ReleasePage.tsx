@@ -542,6 +542,9 @@ export function ReleasePage() {
       : currentWorkspaceDraft.screenshotCopy.masterConfirmedAt
         ? { label: "截图文案 · 翻译中", tone: "amber" as const }
         : { label: "截图文案 · 编辑中", tone: "amber" as const };
+  const currentCopyFullyFinalized = Boolean(
+    currentCopy?.batchConfirmedAt && currentCopy?.screenshotCopy?.batchConfirmedAt,
+  );
   const orderedLanguages = availableLanguages.includes(UI_SOURCE_LANGUAGE)
     ? [
         UI_SOURCE_LANGUAGE,
@@ -556,25 +559,29 @@ export function ReleasePage() {
   const githubNode = githubStatus ? (
     <>
       <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
-      {selectedRelease?.tag && (
-        selectedRelease.url ? (
-          <button
-            type="button"
-            onClick={() => (window as any).appilot?.openExternal?.(selectedRelease.url)}
-            className="inline-flex min-w-0 items-center gap-1 truncate text-[10px] text-zinc-500 underline decoration-zinc-300 underline-offset-2 transition-colors hover:text-amber-600 dark:text-zinc-400 dark:decoration-zinc-600 dark:hover:text-amber-400"
-            title={`在 GitHub 打开 ${selectedRelease.tag}`}
-          >
-            <span className="truncate">{selectedRelease.tag}</span>
-            <span aria-hidden="true">↗</span>
-          </button>
-        ) : (
-          <span className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
-            {selectedRelease.tag}
-          </span>
-        )
-      )}
     </>
   ) : null;
+  const flowPrimaryButtonClass = cn(
+    btnPrimary,
+    "min-h-11 w-full justify-between px-3.5 disabled:bg-zinc-300 dark:disabled:bg-zinc-700",
+  );
+  const githubPrimaryAction = (
+    <button
+      type="button"
+      onClick={() => selectedRelease?.url && (window as any).appilot?.openExternal?.(selectedRelease.url)}
+      disabled={!selectedRelease?.url}
+      className={flowPrimaryButtonClass}
+      title={selectedRelease?.url ? `在 GitHub 打开 ${selectedRelease.tag || "发布公告"}` : "这个发布还没有 GitHub 公告链接"}
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <GithubIcon className="h-4 w-4 text-white" />
+        <span className="truncate">打开发布公告</span>
+      </span>
+      <span className="shrink-0 text-xs font-semibold">
+        {selectedRelease?.tag || "不可用"}{selectedRelease?.url ? " ↗" : ""}
+      </span>
+    </button>
+  );
   const githubWarning =
     githubCapabilities?.push === false
       ? githubCapabilities.tokenKind === "fine-grained"
@@ -587,16 +594,6 @@ export function ReleasePage() {
     <span className="text-[11px] text-zinc-400 dark:text-zinc-500">载入中…</span>
   ) : currentWorkspaceDraft || currentTargetVersion ? (
       <>
-        {currentTargetVersion && (
-          <button
-            type="button"
-            onClick={() => setShowCurrentDetails(true)}
-            className="text-[11px] font-medium text-zinc-700 underline decoration-zinc-300 underline-offset-2 transition-colors hover:text-amber-600 dark:text-zinc-200 dark:decoration-zinc-600 dark:hover:text-amber-400"
-            title="打开该版本的发布文案"
-          >
-            v{currentTargetVersion}
-          </button>
-        )}
         <StatusChip label={currentStoreCopyStatus.label} tone={currentStoreCopyStatus.tone} />
         <StatusChip label={currentScreenshotCopyStatus.label} tone={currentScreenshotCopyStatus.tone} />
         {currentWorkspaceDraft && (currentWorkspaceDraft.localizations || []).length > 0 && (
@@ -616,6 +613,25 @@ export function ReleasePage() {
         <StatusChip label={currentScreenshotCopyStatus.label} tone={currentScreenshotCopyStatus.tone} />
       </>
     );
+  const copyPrimaryAction = (
+    <button
+      type="button"
+      onClick={() => setShowCurrentDetails(true)}
+      className={flowPrimaryButtonClass}
+      title={currentWorkspaceDraft ? "打开该版本的发布文案" : "打开文案工作区"}
+    >
+      <span className="truncate">
+        {currentWorkspacePhase === "official"
+          ? "打开当前发布文案"
+          : currentWorkspacePhase === "editing"
+            ? "打开编辑中的文案"
+            : "打开文案工作区"}
+      </span>
+      <span className="shrink-0 text-xs font-semibold">
+        {currentTargetVersion ? `v${currentTargetVersion} →` : "→"}
+      </span>
+    </button>
+  );
   const storeNode = effectiveVersionStatus || buildInfo || (viewDraft?.appVersion && storeLiveVersion) ? (
     <>
       {effectiveVersionStatus && (
@@ -639,6 +655,25 @@ export function ReleasePage() {
       )}
     </>
   ) : null;
+  const storePageUrl = selectedProduct?.storeLinks?.[0]?.url
+    || (selectedProduct?.trackId ? `https://apps.apple.com/app/id${selectedProduct.trackId}` : "");
+  const storePrimaryAction = (
+    <button
+      type="button"
+      onClick={() => storePageUrl && (window as any).appilot?.openExternal?.(storePageUrl)}
+      disabled={!storePageUrl}
+      className={flowPrimaryButtonClass}
+      title={storePageUrl ? "打开 App Store 网页版" : "这个产品还没有 App Store 链接"}
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <AppleIcon className="h-4 w-4 text-white" />
+        <span className="truncate">打开商店页面</span>
+      </span>
+      <span className="shrink-0 text-xs font-semibold">
+        {storeLiveVersion ? `v${storeLiveVersion} ↗` : storePageUrl ? "打开 ↗" : "不可用"}
+      </span>
+    </button>
+  );
   const canRebuildFromStore =
     effectiveVersionStatus?.key === "ready-for-sale" && !storeAligned;
   const busy = generating || loadingDraft;
@@ -682,46 +717,8 @@ export function ReleasePage() {
       )}
     </>
   );
-  const screenshotBatchConfirmed = Boolean(currentWorkspaceDraft?.screenshotCopy?.batchConfirmedAt);
-  const copyWorkspaceComplete = Boolean(
-    currentWorkspaceDraft?.batchConfirmedAt && screenshotBatchConfirmed,
-  );
   const copyActions = (
     <>
-      {currentWorkspacePhase === "needs-creation" && (
-        <>
-          <button
-            type="button"
-            onClick={() => {
-              setShowCurrentDetails(true);
-              void handleCreateNew();
-            }}
-            disabled={busy && !generating}
-            className={cn(btnSmSecondary, "disabled:cursor-not-allowed disabled:opacity-50")}
-          >
-            {generating ? "生成中…" : "创建商店文案"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowCurrentDetails(true);
-              void handleCreateScreenshotDraft();
-            }}
-            className={btnSmSecondary}
-          >
-            创建截图文案
-          </button>
-        </>
-      )}
-      {currentWorkspaceDraft && !copyWorkspaceComplete && (
-        <button
-          type="button"
-          onClick={() => setShowCurrentDetails(true)}
-          className={btnSmSecondary}
-        >
-          继续完善文案
-        </button>
-      )}
       {draft && copyStoreActions}
       {(currentWorkspacePhase === "editing" || currentWorkspacePhase === "needs-creation") && currentCopy && (
         <button
@@ -1214,6 +1211,29 @@ export function ReleasePage() {
     }
   };
 
+  const persistReadOnlyScreenshotCopy = async (targetDraft: any, screenshotCopy: any) => {
+    if (!targetDraft?.id || !project?.id) return null;
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, {
+        ...targetDraft,
+        screenshotCopy,
+      });
+      setHistoryDraft((current: any) => current?.id === saved.id ? saved : current);
+      setActive((current: any) => current?.draft?.id === saved.id
+        ? { ...current, draft: saved }
+        : current);
+      setReleaseContext((current: any) => current ? {
+        ...current,
+        drafts: (current.drafts || []).map((item: any) => item.id === saved.id ? saved : item),
+      } : current);
+      attachSavedDraft(saved);
+      return saved;
+    } catch (e: any) {
+      setError(e?.message || "Keynote 模板保存失败。");
+      return null;
+    }
+  };
+
   const toggleSummaryItem = async (id: string) => {
     const next = new Set(summaryChecked);
     if (next.has(id)) next.delete(id);
@@ -1639,9 +1659,12 @@ export function ReleasePage() {
         <div className="mb-6">
           <ReleaseReadinessPanel
             githubNode={githubNode}
+            githubPrimaryAction={githubPrimaryAction}
             copyNode={copyNode}
+            copyPrimaryAction={copyPrimaryAction}
             copyActions={copyActions}
             storeNode={storeNode}
+            storePrimaryAction={storePrimaryAction}
             alerts={alerts}
             onAscRefresh={handleAscRefresh}
             ascRefreshing={ascRefreshing}
@@ -1663,17 +1686,6 @@ export function ReleasePage() {
               />
             </div>
           )}
-        </div>
-      )}
-      {isCurrentReleaseMode && showCurrentDetails && !showChecklist && (
-        <div className="mb-4">
-          <button
-            type="button"
-            onClick={() => setShowCurrentDetails(false)}
-            className={btnSmSecondary}
-          >
-            ← 返回发布流程
-          </button>
         </div>
       )}
       {releases.length > 0 && alignment && (
@@ -2036,7 +2048,11 @@ export function ReleasePage() {
               historyDraft ? (
                 <HistoryViewer
                   draft={historyDraft}
+                  projectId={project.id}
                   productTrackName={selectedProduct?.trackName}
+                  onSaveScreenshotCopy={(screenshotCopy) =>
+                    persistReadOnlyScreenshotCopy(historyDraft, screenshotCopy)
+                  }
                   onBack={handleBackFromHistory}
                 />
               ) : (
@@ -2048,6 +2064,18 @@ export function ReleasePage() {
                 />
               )
             ) : showChecklist ? null
+            : isCurrentReleaseMode && currentWorkspacePhase === "official" && currentCopyFullyFinalized && showCurrentDetails && currentCopy ? (
+              <HistoryViewer
+                draft={currentCopy}
+                projectId={project.id}
+                productTrackName={selectedProduct?.trackName}
+                onSaveScreenshotCopy={(screenshotCopy) =>
+                  persistReadOnlyScreenshotCopy(currentCopy, screenshotCopy)
+                }
+                onBack={() => setShowCurrentDetails(false)}
+                backLabel="返回发布流程"
+              />
+            )
             : isCurrentReleaseMode && releases.length > 0 && !showCurrentDetails ? null
             : releases.length === 0 ? (
               !releasesLoaded || checking ? (
@@ -2134,7 +2162,19 @@ export function ReleasePage() {
             ) : (
               <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
                 <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
-                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布文案</h3>
+                  <div className="flex min-w-0 flex-wrap items-center gap-3">
+                    <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布文案</h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentDetails(false)}
+                      className={btnSmSecondary}
+                    >
+                      ← 返回发布流程
+                    </button>
+                    <span className="truncate text-xs text-zinc-400 dark:text-zinc-500">
+                      {draftVersionLabel(draft)} · 更新于 {formatHumanTime(draft.updatedAt)}
+                    </span>
+                  </div>
                   <div className="inline-flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
                     {([
                       ["store", !storeCopyExists ? "商店文案 · 未创建" : batchConfirmed ? "商店文案 · 已完成" : masterConfirmed ? "商店文案 · 翻译中" : "商店文案 · 编辑中"],

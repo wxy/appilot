@@ -5,9 +5,12 @@ import { btnSmSecondary } from "../ui/styles";
 
 export function ReleaseReadinessPanel({
   githubNode,
+  githubPrimaryAction,
   copyNode,
+  copyPrimaryAction,
   copyActions,
   storeNode,
+  storePrimaryAction,
   alerts,
   onAscRefresh,
   ascRefreshing,
@@ -21,12 +24,18 @@ export function ReleaseReadinessPanel({
 }: {
   /** GitHub 发布节点内容。 */
   githubNode?: ReactNode;
+  /** GitHub 节点的主要打开动作。 */
+  githubPrimaryAction?: ReactNode;
   /** 本地文案草案节点内容。 */
   copyNode?: ReactNode;
+  /** 发布文案节点的主要打开动作。 */
+  copyPrimaryAction?: ReactNode;
   /** 发布文案节点中的查看、创建与维护动作。 */
   copyActions?: ReactNode;
   /** 商店版本节点内容。 */
   storeNode?: ReactNode;
+  /** 商店节点的主要打开动作。 */
+  storePrimaryAction?: ReactNode;
   /** 动态提醒与警告（未创建版本、上架提醒等）。 */
   alerts?: ReactNode;
   onAscRefresh?: () => Promise<void>;
@@ -48,11 +57,13 @@ export function ReleaseReadinessPanel({
     title,
     icon,
     children,
+    primaryAction,
     actions,
   }: {
     title: string;
     icon?: ReactNode;
     children: ReactNode;
+    primaryAction?: ReactNode;
     actions?: ReactNode;
   }) => (
     <div className="flex-1 min-w-0 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 p-3">
@@ -60,6 +71,7 @@ export function ReleaseReadinessPanel({
         {icon}
         {title}
       </div>
+      {primaryAction && <div className="mb-2.5">{primaryAction}</div>}
       <div className="flex flex-wrap items-center gap-1.5">{children}</div>
       {actions && (
         <div className="mt-2.5 pt-2.5 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap gap-1.5">
@@ -95,6 +107,7 @@ export function ReleaseReadinessPanel({
           <FlowNode
             title="GitHub 发布"
             icon={<GithubIcon className="w-3 h-3" />}
+            primaryAction={githubPrimaryAction}
             actions={
               <>
                 {onCheckGithub && (
@@ -128,7 +141,11 @@ export function ReleaseReadinessPanel({
           <div className="flex rotate-90 items-center justify-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0 lg:rotate-0" aria-hidden="true">
             →
           </div>
-          <FlowNode title="发布文案" actions={copyActions}>
+          <FlowNode
+            title="发布文案"
+            primaryAction={copyPrimaryAction}
+            actions={copyActions}
+          >
             {copyNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
           </FlowNode>
           <div className="flex rotate-90 items-center justify-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0 lg:rotate-0" aria-hidden="true">
@@ -137,6 +154,7 @@ export function ReleaseReadinessPanel({
           <FlowNode
             title="商店版本"
             icon={<AppleIcon className="w-3 h-3" />}
+            primaryAction={storePrimaryAction}
             actions={
               <>
                 {onAscRefresh && (
