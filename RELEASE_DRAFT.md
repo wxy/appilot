@@ -1,78 +1,67 @@
-# Appilot v0.4.4
+# Appilot v1.2.0 — Evidence to action
 
 ## What's New
 
-- Release workbench rebuilt around one work target per product, with a flow status bar
-  from GitHub release to store version
-- GitHub releases as the primary release source (git-tag fallback); draft copies identified
-  by appVersion with relinking and migration
-- Language tab strip for copy editing; one-click history viewer with language markers
-- Pre-release checklist: permission/capability audit, branch-language detection, screenshot
-  location, streaming AI character counts
-- Review insights: feedback inbox with AI theme clustering, overview feedback card,
-  competitor deltas, reviews and trend pages
-- Data layer: ASC read-only client (JWT), GitHub traffic and release-asset collectors,
-  App Store review RSS collector, deterministic release readiness checks
-- Per-platform competitors with rank seeding, keyword Ruby annotations, rank distribution
-  chart, keyword chips
-- Scheduler: acceleration mode to flush backlog, run-any-task-now button, task center
-  rework, live data-change push channel
-- Overview project activity card: commit heatmap with release markers
+- Copilot is now an actionable workspace: suggestions retain product and storefront context, support contextual follow-ups, define measurable outcomes, and dispatch only registered actions.
+- The release workbench now starts with a fresh GitHub release check, separates copy-plan and submission states, and makes release progress easier to verify.
+- Screenshot production now covers localized copy, Keynote document generation, image replacement, and localized PNG export.
+- Overview recommendations are grounded in current product and ranking evidence, while deterministic rank diagnostics explain actionable anomalies.
+- Task scheduling is safer: automatic work can be balanced earlier without delaying cadence, daemon restart is atomic, and schedule provenance survives restarts.
+- Trends and Reviews were removed because the available data did not yet justify standalone modules.
 
 ## Fixes & Engineering
 
-- Single code path for store-copy generation and revision (baseLocalization parameter)
-- Scheduler merge only writes back tasks actually executed; manual runs deduplicated
-  against scheduled ticks; concurrent read-modify-write safety
-- Store-copy field length limits enforced in inputs; monotonic AI progress with stop/retry
-- GitHub draft/release detection hardened; stale PR lists never trusted
-- Dead Traffic/CompetitorRadar overview cards removed
+- Release drafts, copy plans, checklists, and screenshot materials now use more stable product/version identities and migration paths.
+- Copilot suggestions preserve lifecycle state and avoid recomputing user-visible identities from list order.
+- Scheduler startup, self-update, signal handling, task execution facts, and Windows plugin build gates were hardened.
+- The package family and all internal `@appilot-labs/*` dependency ranges move together to 1.2.0.
 
 ## Deployment Notes
 
-- Version bumped to 0.4.4
-- No schema or migration required
-- macOS only this milestone (arm64 + x64 DMGs, Developer ID signed and notarized)
+- Target: `master` after the release pull request is merged.
+- Public packages: nine `@appilot-labs/*` packages, published through npm Trusted Publishing with provenance.
+- Database: schema 15 adds `tasks.scheduleJson`; migration runs automatically when the shared SQLite store opens.
+- macOS screenshot generation asks for Apple Events permission to automate Keynote.
+- Trends/reviews routes and their collectors are intentionally unavailable after upgrade.
 
 ## Verification
 
-- Tests: npm test (51 files)
-- Builds: npm run typecheck, npm run build
-- Smoke: docs/RELEASE.md checklist
+- Tests: `npm test` passed, including multiprocess, daemon, migration, Copilot, release-material, and Keynote automation coverage.
+- Typecheck: `npm run typecheck` passed.
+- Build: `npm run build` passed on macOS; GitHub Actions remains the merge gate.
+- Visual assets: all SVGs rendered successfully; hero and banner text bounds, icon edge alpha, XML validity, and README constraints passed.
 
 ---
 
-# Appilot v0.4.4
+# Appilot v1.2.0 — 从证据到行动
 
 ## 新增功能
 
-- 发布工作台重构为「单工作目标」，新增 GitHub release → 商店版本的流程状态栏
-- GitHub releases 作为主发布源（git tag 降级）；草稿文案按 appVersion 身份关联与迁移
-- 语言标签页编辑文案；历史查看器一键切换 + 语言标记
-- 发布清单：权限/能力审计、分支语言检测、截图位置、AI 流式字符
-- 评论洞察：反馈收件箱 + AI 主题聚类、总览反馈卡片、竞品差异、评论/趋势页
-- 数据层：ASC 只读客户端（JWT）、GitHub 流量与 release 资产采集、评论 RSS 采集器、
-  确定性 readiness 检查
-- Per-platform 竞品与排名种子、关键词 Ruby 标注、排名分布图、关键词 chip 样式
-- 调度：加速模式清积压、任务立即执行按钮、任务中心重构、数据变更实时推送
-- 总览项目活动卡片：提交热力图 + release 标记
+- 副驾升级为可执行工作区：建议会保留产品与商店上下文，支持上下文追问，定义可衡量结果，并且只分派已注册行动。
+- 发布工作台会先执行实时 GitHub 发布检查，区分文案计划与提交状态，并让发布进度更容易核验。
+- 截图生产流程覆盖本地化文案、Keynote 文稿生成、图片替换与多语言 PNG 导出。
+- 总览建议基于当前产品与排名证据；确定性排名诊断用于解释值得行动的异常。
+- 调度更加安全：自动任务可以提前削峰而不延后原节奏，守护进程原子重启，计划来源在重启后仍可追溯。
+- 趋势与评论模块已移除，因为当前可用数据尚不足以支撑独立模块。
 
 ## 修复与工程
 
-- 商店文案生成与修订合并为单一代码路径（baseLocalization 参数化）
-- 调度合并只回写实际执行的任务；立即执行与定时执行去重；并发读写安全
-- 文案字段长度限制、AI 进度单调展示 + 停止/重试
-- GitHub 草稿/release 检测强化，不信任过期 PR 列表
-- 移除死代码 Traffic/CompetitorRadar 总览卡片
+- 发布草稿、文案计划、检查清单和截图素材使用更稳定的产品/版本身份与迁移路径。
+- 副驾建议保留生命周期状态，不再从列表顺序重新计算用户可见身份。
+- 强化调度器启动、自更新、信号处理、任务执行事实与 Windows 插件构建门禁。
+- 包家族及全部内部 `@appilot-labs/*` 依赖范围统一升级到 1.2.0。
 
 ## 部署说明
 
-- 版本升级到 0.4.4
-- 无需数据库迁移
-- 本里程碑仅发布 macOS（arm64 + x64 DMG，Developer ID 签名并公证）
+- 目标：发布 PR 合并后的 `master`。
+- 公开包：9 个 `@appilot-labs/*` 包，通过 npm Trusted Publishing 携带 provenance 发布。
+- 数据库：schema 15 新增 `tasks.scheduleJson`；共享 SQLite 存储打开时会自动迁移。
+- macOS 截图生成会请求 Apple Events 权限以自动化 Keynote。
+- 升级后趋势/评论路由及其采集器将不可用，这是有意的产品收敛。
 
 ## 验证
 
-- 测试：npm test（51 个文件）
-- 构建：npm run typecheck、npm run build
-- 冒烟：docs/RELEASE.md 冒烟清单
+- 测试：`npm test` 已通过，覆盖多进程、守护进程、迁移、副驾、发布素材与 Keynote 自动化。
+- 类型检查：`npm run typecheck` 已通过。
+- 构建：`npm run build` 已在 macOS 通过；GitHub Actions 仍作为合并门禁。
+- 视觉资产：全部 SVG 已成功渲染，Hero/横幅文字边界、图标边缘 alpha、XML 有效性与 README 约束均已通过。

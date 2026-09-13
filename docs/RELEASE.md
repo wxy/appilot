@@ -1,4 +1,4 @@
-# 0.4.4 发布流程（本机打包，macOS）
+# macOS DMG 发布流程（当前里程碑 1.2.0）
 
 > 构建环境说明：Appilot 是 Electron 应用（TypeScript + React + electron-vite），
 > 不是 Xcode 工程。日常开发用 VS Code，打包用 npm + electron-builder 在本机完成，
@@ -21,6 +21,7 @@
 ## 本机打包
 
 ```bash
+export APPILOT_VERSION=1.2.0
 npm ci
 source .release.env
 npm run dist:mac -- -c.mac.notarize=true
@@ -28,8 +29,8 @@ npm run dist:mac -- -c.mac.notarize=true
 
 产出两个分架构 DMG（已 Developer ID 签名；`.app` 内部已公证 + staple）：
 
-- `dist/Appilot-0.4.4-arm64.dmg`（Apple Silicon）
-- `dist/Appilot-0.4.4-x64.dmg`（Intel）
+- `dist/Appilot-${APPILOT_VERSION}-arm64.dmg`（Apple Silicon）
+- `dist/Appilot-${APPILOT_VERSION}-x64.dmg`（Intel）
 
 > 实测（electron-builder 26.15.3）：`-c.mac.notarize=true` 只公证 `.app`，
 > DMG 本身无票，必须再手动公证 + 贴票，否则用户打开 DMG 仍有「来自互联网」提示。
@@ -37,8 +38,9 @@ npm run dist:mac -- -c.mac.notarize=true
 ### DMG 级公证 + 贴票（必须）
 
 ```bash
+export APPILOT_VERSION=1.2.0
 source .release.env
-for dmg in dist/Appilot-0.4.4-arm64.dmg dist/Appilot-0.4.4-x64.dmg; do
+for dmg in "dist/Appilot-${APPILOT_VERSION}-arm64.dmg" "dist/Appilot-${APPILOT_VERSION}-x64.dmg"; do
   xcrun notarytool submit "$dmg" \
     --apple-id "$APPLE_ID" \
     --password "$APPLE_APP_SPECIFIC_PASSWORD" \
@@ -51,10 +53,11 @@ done
 ## 验证
 
 ```bash
+export APPILOT_VERSION=1.2.0
 codesign --verify --deep --strict --verbose=2 "dist/mac-arm64/Appilot.app"
 xcrun stapler validate "dist/mac-arm64/Appilot.app"
-xcrun stapler validate "dist/Appilot-0.4.4-arm64.dmg"
-xcrun stapler validate "dist/Appilot-0.4.4-x64.dmg"
+xcrun stapler validate "dist/Appilot-${APPILOT_VERSION}-arm64.dmg"
+xcrun stapler validate "dist/Appilot-${APPILOT_VERSION}-x64.dmg"
 ```
 
 ## 冒烟清单
@@ -71,11 +74,14 @@ xcrun stapler validate "dist/Appilot-0.4.4-x64.dmg"
 ## 打 tag 与上传
 
 ```bash
-git tag -a v0.4.4 -m "v0.4.4: 里程碑版本"
-git push origin v0.4.4
-gh release create v0.4.4 \
-  dist/Appilot-0.4.4-arm64.dmg \
-  dist/Appilot-0.4.4-x64.dmg \
+export APPILOT_VERSION=1.2.0
+git tag -a "v${APPILOT_VERSION}" -m "v${APPILOT_VERSION}: 里程碑版本"
+git push origin "v${APPILOT_VERSION}"
+gh release create "v${APPILOT_VERSION}" \
+  "dist/Appilot-${APPILOT_VERSION}-arm64.dmg" \
+  "dist/Appilot-${APPILOT_VERSION}-x64.dmg" \
+  --title "Appilot ${APPILOT_VERSION}" \
+  --notes-file RELEASE_DRAFT.md \
   --draft
 ```
 
