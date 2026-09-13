@@ -6,6 +6,7 @@ import { btnSmSecondary } from "../ui/styles";
 export function ReleaseReadinessPanel({
   githubNode,
   copyNode,
+  copyActions,
   storeNode,
   alerts,
   onAscRefresh,
@@ -22,6 +23,8 @@ export function ReleaseReadinessPanel({
   githubNode?: ReactNode;
   /** 本地文案草案节点内容。 */
   copyNode?: ReactNode;
+  /** 发布文案节点中的查看、创建与维护动作。 */
+  copyActions?: ReactNode;
   /** 商店版本节点内容。 */
   storeNode?: ReactNode;
   /** 动态提醒与警告（未创建版本、上架提醒等）。 */
@@ -84,7 +87,7 @@ export function ReleaseReadinessPanel({
               title="检查代码、文案、目标版本、语言覆盖和构建挂载"
             >
               <AppleIcon className="w-3 h-3" />
-              {checklistOpen ? "返回工作单" : "发布检查"}
+              {checklistOpen ? "返回发布流程" : "发布检查"}
             </button>
           )}
         </div>
@@ -125,7 +128,7 @@ export function ReleaseReadinessPanel({
           <div className="flex rotate-90 items-center justify-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0 lg:rotate-0" aria-hidden="true">
             →
           </div>
-          <FlowNode title="发布文案">
+          <FlowNode title="发布文案" actions={copyActions}>
             {copyNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
           </FlowNode>
           <div className="flex rotate-90 items-center justify-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0 lg:rotate-0" aria-hidden="true">
@@ -144,7 +147,7 @@ export function ReleaseReadinessPanel({
                     className={actionButtonClass}
                   >
                     <AppleIcon className="w-3 h-3" />
-                    {ascRefreshing ? "刷新中…" : "刷新状态"}
+                    {ascRefreshing ? "检查中…" : "检查商店状态"}
                   </button>
                 )}
                 {ascInfo?.fetchedAt && (

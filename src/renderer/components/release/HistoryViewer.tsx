@@ -11,7 +11,7 @@ export function HistoryViewer({
   draft,
   productTrackName,
   onBack,
-  backLabel = "返回历史文案",
+  backLabel = "返回文案列表",
 }: {
   draft: any;
   productTrackName?: string | null;
