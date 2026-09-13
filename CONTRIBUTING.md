@@ -6,9 +6,9 @@ Thank you for helping improve Appilot. Keep changes scoped, preserve existing us
 
 ## Contributor License Agreement · 贡献者许可协议
 
-All human contributors must accept the [Appilot Contributor License Agreement v1.0](CLA.md) before a pull request can be merged. The CLA does not transfer copyright: contributors retain ownership while granting the Project the copyright and patent licenses needed to distribute and build upon their work under `GPL-3.0-or-later`.
+All third-party human contributors must accept the [Appilot Individual Contributor License Agreement v1.0](CLA.md) before a pull request can be merged. The CLA does not transfer copyright: contributors retain ownership while granting the Project broad, permanent copyright and patent licenses, including use in paid products and services.
 
-> 所有自然人贡献者都必须在拉取请求合并前接受 [Appilot 贡献者许可协议 1.0](CLA.zh-CN.md)。CLA 不转让版权：贡献者保留所有权，同时向项目授予按照 `GPL-3.0-or-later` 分发并继续开发其贡献所需的版权与专利许可。
+> 所有第三方自然人贡献者都必须在拉取请求合并前接受 [Appilot 个人贡献者许可协议 1.0](CLA.zh-CN.md)。CLA 不转让版权：贡献者保留所有权，同时向项目授予宽泛、永久的版权与专利许可，包括在付费产品与服务中使用。
 
 The CLA Assistant will comment when a signature is required. Read the authoritative English agreement, then post this exact comment on the pull request:
 
@@ -18,9 +18,9 @@ The CLA Assistant will comment when a signature is required. Read the authoritat
 I have read the CLA Document and I hereby sign the CLA
 ```
 
-The assistant records the GitHub identity, agreement version, pull request, and timestamp in the repository's dedicated `cla-signatures` branch. One signature covers past and future Contributions under version 1.0. A materially changed CLA requires a new acceptance.
+The assistant records the GitHub identity, agreement version, pull request, and timestamp in the repository's dedicated `cla-signatures` branch. One signature covers past and future Contributions under version 1.0. A materially changed CLA requires a new acceptance. The repository's merge rules require the `CLA Assistant` status check, so an unsigned third-party pull request cannot be merged.
 
-> 助手会在仓库专用的 `cla-signatures` 分支中记录 GitHub 身份、协议版本、拉取请求和时间。一次签署适用于 1.0 版下过去及未来的贡献；CLA 如有重大变更，需要重新接受。
+> 助手会在仓库专用的 `cla-signatures` 分支中记录 GitHub 身份、协议版本、拉取请求和时间。一次签署适用于 1.0 版下过去及未来的贡献；CLA 如有重大变更，需要重新接受。仓库合并规则要求 `CLA Assistant` 状态检查通过，因此未签署的第三方拉取请求不能合并。
 
 If an employer or another party may own rights in your work, obtain its permission before contributing. Identify third-party material and its license in the pull request; do not submit material you are not authorized to contribute.
 

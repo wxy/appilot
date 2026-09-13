@@ -165,9 +165,9 @@ Keep changes scoped, preserve existing data, and include current test or build e
 
 **Contributor agreement · 贡献者协议**
 
-External contributions require acceptance of the [Appilot Contributor License Agreement v1.0](CLA.md). Contributors retain copyright; the agreement grants the copyright and patent licenses needed for Appilot to distribute and build upon Contributions under `GPL-3.0-or-later`.
+External contributions require acceptance of the [Appilot Individual Contributor License Agreement v1.0](CLA.md). Contributors retain copyright while granting Appilot broad, permanent copyright and patent licenses, including use in paid products and services. The required CLA status check prevents unsigned pull requests from being merged.
 
-> 外部贡献需要接受 [Appilot 贡献者许可协议 1.0](CLA.zh-CN.md)。贡献者保留版权；该协议授予 Appilot 按照 `GPL-3.0-or-later` 分发并继续开发贡献所需的版权与专利许可。
+> 外部贡献需要接受 [Appilot 个人贡献者许可协议 1.0](CLA.zh-CN.md)。贡献者保留版权，同时向 Appilot 授予宽泛、永久的版权与专利许可，包括在付费产品与服务中使用。必需的 CLA 状态检查会阻止未签署的拉取请求合并。
 
 **License · 许可证**
 

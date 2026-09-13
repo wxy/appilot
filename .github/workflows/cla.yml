@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   cla:
+    name: CLA Assistant
     if: ${{ github.repository == 'wxy/appilot' }}
     runs-on: ubuntu-latest
     steps:
@@ -43,8 +44,10 @@ jobs:
           path-to-document: https://github.com/wxy/appilot/blob/master/CLA.md
           path-to-signatures: signatures/v1/cla.json
           branch: cla-signatures
-          allowlist: wxy,dependabot[bot],github-actions[bot]
+          allowlist: wxy,dependabot[bot],renovate[bot],github-actions[bot]
           create-file-commit-message: "legal: initialize Appilot CLA v1 signatures"
           signed-commit-message: "legal: record $contributorName CLA signature for $pullRequestNo"
           custom-notsigned-prcomment: "Thank you for contributing to Appilot. Please read $pathToCLADocument and post exactly: `I have read the CLA Document and I hereby sign the CLA`\n\n感谢贡献。请先阅读 CLA，然后发布上面的英文签署声明。"
+          custom-pr-sign-comment: "I have read the CLA Document and I hereby sign the CLA"
           custom-allsigned-prcomment: "Appilot CLA v1.0 accepted. Thank you for contributing. / Appilot CLA 1.0 已接受，感谢贡献。"
+          lock-pullrequest-aftermerge: true
