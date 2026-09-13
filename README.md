@@ -165,9 +165,9 @@ Keep changes scoped, preserve existing data, and include current test or build e
 
 **License · 许可证**
 
-No open-source license is currently published. Source visibility does not grant permission to reuse or redistribute the code.
+Copyright © 2026 Xingyu Wang. Appilot is licensed under [GNU GPL v3 or later](LICENSE) (`GPL-3.0-or-later`). A Contributor License Agreement has not been adopted; GPL licensing and any future CLA are separate decisions.
 
-> 当前未发布开源许可证。源码可见并不代表获得复用或再分发许可。
+> 版权所有 © 2026 Xingyu Wang。Appilot 按 [GNU GPL v3 或更高版本](LICENSE)（`GPL-3.0-or-later`）授权。目前尚未采用贡献者许可协议（CLA）；GPL 授权与未来是否采用 CLA 是两项独立决策。
 
 **Links · 链接**
 
