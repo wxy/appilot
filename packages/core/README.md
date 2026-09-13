@@ -15,7 +15,7 @@ lower layers (`headless`) provide persistence and scheduling.
 - **Rank collection** — App Store / iTunes search ranking collector (`/rank-collector`)
 - **Project sync** — GitHub release inspection & sync (`/project-sync`)
 - **Release & copy** — readiness checks, release drafts, store copy drafting
-- **Reviews** — review stats / clustering helpers
+- **Signals** — GitHub Issues inbox and competitor snapshots
 - **AI helpers & logger** — provider abstraction and structured logging (`/logger`)
 
 ## Install

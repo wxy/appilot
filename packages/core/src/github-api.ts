@@ -88,6 +88,28 @@ function githubHeaders(token?: string | null): Record<string, string> {
   };
 }
 
+/** Minimal authenticated GitHub JSON request shared by issue and competitor collectors. */
+export async function fetchGitHubJson(
+  url: string,
+  token?: string | null,
+  timeoutMs = 6000,
+): Promise<{ ok: boolean; json: any }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: githubHeaders(token),
+      signal: controller.signal,
+    });
+    if (!response.ok) return { ok: false, json: null };
+    return { ok: true, json: JSON.parse(await response.text()) };
+  } catch {
+    return { ok: false, json: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Check whether the saved token can see draft releases. GitHub hides drafts
  * from credentials without push/write access, and the value reported by

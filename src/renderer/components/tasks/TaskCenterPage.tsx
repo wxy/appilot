@@ -22,7 +22,6 @@ import { RankCoverageHeatmap } from "./RankCoverageHeatmap";
 const KIND_LABELS: Record<string, string> = {
   "github-sync": "GitHub 发布监听",
   "ops-sync": "数据同步",
-  "reviews-sync": "评论采集",
   "build-status": "构建状态",
   rank: "排名",
 };
@@ -107,7 +106,7 @@ export function TaskCenterPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
 
   // 任务行点击跳转到对应页面：排名 → 关键词矩阵；GitHub/构建状态 → 发布
-  // 工作台；评论 → 评论页；数据同步 → 总览。没有合适目标的类型不加链接。
+  // 工作台；数据同步 → 总览。没有合适目标的类型不加链接。
   const openTaskTarget = (group: any) => {
     const task = group?.tasks?.[0];
     if (!task) return;
@@ -124,10 +123,6 @@ export function TaskCenterPage() {
       select(task.projectId);
       if (task.productId) selectProduct(task.productId);
       navigate("/release");
-    } else if (group.kind === "reviews-sync" && task.productId) {
-      select(task.projectId);
-      selectProduct(task.productId);
-      navigate("/reviews");
     } else if (group.kind === "ops-sync" && task.projectId) {
       select(task.projectId);
       navigate("/overview");
@@ -382,7 +377,7 @@ export function TaskCenterPage() {
   }, [accel, accelRemainingMs]);
 
   // 不同类型任务适用的筛选条件不同：排名任务才有语言维度；GitHub/数据同步
-  // 是项目级任务（无平台/语言）；评论/构建状态是产品级（有平台、无语言）。
+  // 是项目级任务（无平台/语言）；构建状态是产品级（有平台、无语言）。
   const typeTasks =
     typeFilter === "all"
       ? data?.tasks || []
@@ -407,7 +402,6 @@ export function TaskCenterPage() {
   const typeSupportsPlatform =
     typeFilter === "all" ||
     typeFilter === "rank" ||
-    typeFilter === "reviews-sync" ||
     typeFilter === "build-status";
   const typeSupportsLanguage = typeFilter === "all" || typeFilter === "rank";
   const tasks = (data?.tasks || [])
@@ -891,7 +885,6 @@ export function TaskCenterPage() {
             if (
               value !== "all" &&
               value !== "rank" &&
-              value !== "reviews-sync" &&
               value !== "build-status"
             ) {
               setPlatformFilter("all");
@@ -903,7 +896,7 @@ export function TaskCenterPage() {
           className={inputLineClass + " max-w-36"}
         >
           <option value="all">全部类型</option>
-          {["rank", "github-sync", "ops-sync", "reviews-sync", "build-status"].map((kind) => (
+          {["rank", "github-sync", "ops-sync", "build-status"].map((kind) => (
             <option key={kind} value={kind}>
               {KIND_LABELS[kind] || kind}
             </option>

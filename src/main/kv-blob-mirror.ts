@@ -1,8 +1,8 @@
 /**
  * kv 的 Record<id, 数据> 类域 → project_blobs 镜像（纯逻辑，无 electron 依赖）。
  *
- * 镜像域：opsStatus / trafficSnapshots / ascCache / competitors /
- * competitorSnapshots / competitorRankSnapshots。kv 里这些 key 的值是
+ * 镜像域：ascCache / competitors / competitorSnapshots /
+ * competitorRankSnapshots / readinessChecks / feedback。kv 里这些 key 的值是
  * { 项目或产品 id: 数据 } 映射；每次整值写入后整体镜像到 project_blobs
  * （含陈旧 key 清理），双写期读侧仍走 kv。
  */
@@ -12,14 +12,11 @@ import type { AppilotStore } from '@appilot-labs/appilot-headless';
 export const KV_BLOB_IMPORT_MARK = '__kvBlobsImported';
 
 export const KV_BLOB_DOMAINS: Record<string, string> = {
-  opsStatus: 'opsStatus',
-  trafficSnapshots: 'trafficSnapshots',
   ascCache: 'ascCache',
   competitors: 'competitors',
   competitorSnapshots: 'competitorSnapshots',
   competitorRankSnapshots: 'competitorRankSnapshots',
   readinessChecks: 'readinessChecks',
-  reviews: 'reviews',
   feedback: 'feedback',
 };
 

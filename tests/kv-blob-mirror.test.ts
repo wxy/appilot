@@ -51,9 +51,9 @@ async function main() {
     console.log('✅ syncKvBlobMap：覆盖镜像 + 陈旧清理 + 清空');
   }
 
-  // 3. 镜像域清单完整（覆盖六个 kv 域）
+  // 3. 镜像域清单仅包含当前仍会写入的业务域
   {
-    const expect = ['opsStatus', 'trafficSnapshots', 'ascCache', 'competitors', 'competitorSnapshots', 'competitorRankSnapshots', 'readinessChecks', 'reviews', 'feedback'];
+    const expect = ['ascCache', 'competitors', 'competitorSnapshots', 'competitorRankSnapshots', 'readinessChecks', 'feedback'];
     assert.deepEqual(Object.values(KV_BLOB_DOMAINS).sort(), [...expect].sort());
     console.log('✅ KV_BLOB_DOMAINS 清单');
   }

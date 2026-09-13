@@ -59,28 +59,6 @@ contextBridge.exposeInMainWorld("appilot", {
     sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("competitors:sync", projectId),
   },
 
-  feedback: {
-    list: (projectId: string): Promise<any[]> => ipcRenderer.invoke("feedback:list", projectId),
-    themes: (projectId: string): Promise<any[]> => ipcRenderer.invoke("feedback:themes", projectId),
-    sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("feedback:sync", projectId),
-    cluster: (projectId: string, productId: string): Promise<any[]> =>
-      ipcRenderer.invoke("feedback:cluster", projectId, productId),
-    onClusterProgress: (callback: (progress: any) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
-      ipcRenderer.on("feedback:clusterProgress", listener);
-      return () => ipcRenderer.removeListener("feedback:clusterProgress", listener);
-    },
-  },
-
-  reviews: {
-    list: (productId: string): Promise<any> => ipcRenderer.invoke("reviews:list", productId),
-    sync: (productId: string): Promise<boolean> => ipcRenderer.invoke("reviews:sync", productId),
-  },
-
-  traffic: {
-    snapshots: (projectId: string): Promise<any[]> => ipcRenderer.invoke("traffic:snapshots", projectId),
-    sync: (projectId: string): Promise<boolean> => ipcRenderer.invoke("traffic:sync", projectId),
-  },
   activity: {
     commits: (projectId: string): Promise<Record<string, number>> =>
       ipcRenderer.invoke("activity:commits", projectId),

@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -7,6 +7,8 @@ import type {
   BriefSuggestion,
 } from "@appilot-labs/appilot-core/ai/overview-brief";
 import { briefActionCapability } from "@appilot-labs/appilot-core/ai/overview-brief";
+import type { DiagnosticPackage } from "@appilot-labs/appilot-core/diagnostics/types";
+import type { RankDiagnosticCoverage } from "@appilot-labs/appilot-core/diagnostics/rank";
 import { useProject, type StoreProduct } from "../../stores/project";
 import { formatHumanTime, platformLabel } from "../../lib/format";
 import { cn } from "../../lib/utils";
@@ -54,6 +56,7 @@ type Session = {
   actionRuns: ActionRun[];
   dismissedSuggestionIds: string[];
   supersededSuggestionIds: string[];
+  rankDiagnostic: DiagnosticPackage<RankDiagnosticCoverage> | null;
 };
 
 type TaskFeedback = {
@@ -88,6 +91,63 @@ const Markdown = memo(function Markdown({ children }: { children: string }) {
     >
       {children}
     </ReactMarkdown>
+  );
+});
+
+const RankEvidenceCard = memo(function RankEvidenceCard({
+  diagnostic,
+}: {
+  diagnostic: DiagnosticPackage<RankDiagnosticCoverage>;
+}) {
+  const coverage = diagnostic.coverage;
+  const severity = diagnostic.anomalies.some((item) => item.severity === "blocking")
+    ? "blocking"
+    : diagnostic.anomalies.some((item) => item.severity === "warning")
+      ? "warning"
+      : "ok";
+  const source = coverage.source === "sqlite"
+    ? "数据库"
+    : coverage.source === "project-fallback"
+      ? "项目缓存"
+      : coverage.source === "live-query"
+        ? "实时采集"
+        : "暂无数据";
+  const tone = severity === "blocking"
+    ? "border-red-200 bg-red-50/60 dark:border-red-500/20 dark:bg-red-500/5"
+    : severity === "warning"
+      ? "border-amber-200 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-500/5"
+      : "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5";
+  const label = severity === "blocking" ? "证据不足" : severity === "warning" ? "需要留意" : "证据可用";
+  return (
+    <div className={cn("mb-5 rounded-xl border p-4", tone)}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">排名证据 · {label}</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-600 dark:text-zinc-300">
+            来源：{source} · 已观测 {coverage.latestSeriesCount}/{coverage.expectedSeriesCount ?? "—"} 个目标 ·
+            新鲜 {coverage.freshSeriesCount} · 过期 {coverage.staleSeriesCount} ·
+            有排名 {coverage.latestRankedCount} · 未搜到 {coverage.latestUnrankedCount}
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-2 text-xs">
+          <Link to="/keywords" className="font-medium text-amber-700 hover:underline dark:text-amber-400">查看排名</Link>
+          <Link to="/tasks" className="font-medium text-amber-700 hover:underline dark:text-amber-400">任务中心</Link>
+        </div>
+      </div>
+      {diagnostic.anomalies.length > 0 && (
+        <div className="mt-3 space-y-1 border-t border-current/10 pt-2 text-xs leading-5 text-zinc-600 dark:text-zinc-300">
+          {diagnostic.anomalies.map((item) => (
+            <p key={item.id}><span className="font-medium">{item.statement}</span> {item.interpretation}</p>
+          ))}
+        </div>
+      )}
+      <details className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <summary className="cursor-pointer select-none">诊断边界</summary>
+        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+          {diagnostic.limitations.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      </details>
+    </div>
   );
 });
 
@@ -287,7 +347,6 @@ function actionDescription(action: BriefProposedAction): string {
   if (action.kind === "keyword.resume") return `恢复已暂停关键词 ${subject}`;
   if (action.kind === "rank.collect") return `${action.language || "当前语言"}${store} 排名由任务中心每日自动更新`;
   if (action.kind === "keyword.open") return `查看 ${subject || "关键词"} 的相关数据`;
-  if (action.kind === "trend.open") return "查看与建议有关的趋势信息";
   return "查看与建议有关的发布信息";
 }
 
@@ -326,6 +385,7 @@ export function CopilotPage() {
       actionRuns: value.actionRuns || [],
       dismissedSuggestionIds: value.dismissedSuggestionIds || [],
       supersededSuggestionIds: value.supersededSuggestionIds || [],
+      rankDiagnostic: value.rankDiagnostic || null,
     } : null);
   };
 
@@ -402,10 +462,8 @@ export function CopilotPage() {
       ...(selectedSuggestion?.proposedActions || []),
       ...visibleExchanges.flatMap((item) => item.proposedActions || []),
     ].filter((action) =>
-      action.kind !== "trend.open" && (
-        briefActionCapability(action.kind).recommendationEligible
-        || (session?.actionRuns || []).some((run) => run.action.id === action.id)
-      ),
+      briefActionCapability(action.kind).recommendationEligible
+      || (session?.actionRuns || []).some((run) => run.action.id === action.id),
     );
     return [...new Map(items.map((item) => [item.id, item])).values()];
   }, [selectedSuggestion, visibleExchanges, session?.actionRuns]);
@@ -712,7 +770,7 @@ export function CopilotPage() {
               <div className="flex h-full flex-col items-center justify-center text-center">
                 <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500 text-base font-bold text-white">AI</div>
                 <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-100">让副驾检查当前项目</h2>
-                <p className="mt-1 max-w-md text-sm leading-6 text-zinc-500 dark:text-zinc-400">它会读取排名、关键词状态、发布和反馈数据，形成可追问、可执行的工作项。</p>
+                <p className="mt-1 max-w-md text-sm leading-6 text-zinc-500 dark:text-zinc-400">它会读取排名、关键词状态和发布数据，形成可追问、可执行的工作项。</p>
               </div>
             ) : selectedSuggestion ? (
               <>
@@ -872,11 +930,14 @@ export function CopilotPage() {
                 )}
               </>
             ) : (
-              <div className="mb-5 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
-                {session && pendingCount === 0
-                  ? "当前没有证据充分、可直接执行并能复核效果的新建议。副驾不会用查看、检查或刷新数据来凑数。"
-                  : "这里用于讨论项目整体情况。选择左侧工作项，可以围绕具体证据继续深挖并执行动作。"}
-              </div>
+              <>
+                {session?.rankDiagnostic && <RankEvidenceCard diagnostic={session.rankDiagnostic} />}
+                <div className="mb-5 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+                  {session && pendingCount === 0
+                    ? "当前没有证据充分、可直接执行并能复核效果的新建议。副驾不会用查看、检查或刷新数据来凑数。"
+                    : "这里用于讨论项目整体情况。选择左侧工作项，可以围绕具体证据继续深挖并执行动作。"}
+                </div>
+              </>
             )}
 
             {visibleExchanges.map((entry, index) => (

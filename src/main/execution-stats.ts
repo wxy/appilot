@@ -36,7 +36,7 @@ export interface ExecutionRecord {
 
 /**
  * 该执行条目是否是一次「排名采集」（具备查排名的字段指纹）。
- * 非排名任务（github-sync / ops-sync / reviews-sync / build-status）的
+ * 非排名任务（github-sync / ops-sync / build-status）的
  * 执行记录没有 keyword / 语言×商店，kind 也不是 'rank'。
  */
 export function hasRankDimension(entry: ExecutionRecord | null | undefined): boolean {

@@ -192,7 +192,11 @@ export function taskRowToView(
 
 /** 组装任务中心列表（DB 实例行 → renderer 视图数组，按 kind/产品分组友好排序）。 */
 export function taskCenterTasksFromDb(store: AppilotStore): TaskCenterTaskView[] {
-  const rows = store.tasks.all();
+  // reviews-sync 已下线。reconcile 会删掉其持久化任务行，但在应用
+  // 刚启动、清理尚未执行的窗口内，任务中心也不应再暴露该入口。
+  const rows = store.tasks.all().filter(
+    (row) => (row.kind ?? inferKindFromId(row.id)) !== 'reviews-sync',
+  );
   const rankGroups = new Map<string, { ok: number; total: number }>();
   for (const g of createHeadlessService(store).tasks.rankProgress()) {
     rankGroups.set(g.groupKey, { ok: g.ok, total: g.total });

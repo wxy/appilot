@@ -342,7 +342,9 @@ export function briefSuggestionId(title: string, action: BriefAction, target: un
   return `brief-${hash.toString(36)}`;
 }
 
-const BRIEF_ACTIONS: BriefAction[] = ["keywords", "release", "trend"];
+// `trend` stays in BriefAction only so persisted historical sessions remain readable.
+// New model output cannot create a suggestion for the removed top-level module.
+const BRIEF_ACTIONS: BriefAction[] = ["keywords", "release"];
 const BRIEF_COMMANDS: BriefCommandKind[] = [
   "keyword.open", "keyword.track.add", "keyword.pause", "keyword.remove", "keyword.restore",
   "keyword.resume", "rank.collect", "release.open", "copy-plan.add",
@@ -522,10 +524,12 @@ export function buildBriefMessages(
     [
       "你是 Appilot 的运营副驾，为独立开发者的 App Store 增长给出简短、可执行的建议。",
       "你只能基于下面给定的真实数据输出建议，reason 必须引用数据，不得编造。",
+      "先检查 rankDiagnostic 的覆盖与新鲜度。latestUnrankedCount 只表示最新一次未搜到排名，不能自行解释为掉榜、排名下降或采集失败。数据陈旧、覆盖不足或诊断为 blocking 时，应先指出证据缺口，不能继续推断业务原因，也不能提出改变关键词状态的动作；这不妨碍基于独立发布证据提出发布动作。",
+      "rankDiagnostic.facts 是确定性事实；anomalies.interpretation 是允许的解释边界；limitations 必须遵守。",
       "detectedIssues 是确定性规则从现有数据中发现的问题。优先处理 high，其次 medium；不要用低价值建议挤占更高优先级问题。",
       "如果 detectedIssues 为空，不要假装发现缺陷；可基于其余数据给出优化建议，并明确这是机会而非已确认问题。",
-      "feedbackThemes 和 competitorDeltas 只作为补充依据；竞品更新本身不等于风险。",
-      "总览页已经展示关键词数量、排名分布、发布进度、仓库活动、评价和竞品概况。不要复述这些状态，也不要把同一问题拆成多条建议。",
+      "competitorDeltas 只作为补充依据；竞品更新本身不等于风险。",
+      "总览页已经展示关键词数量、排名分布、发布进度、仓库活动和竞品概况。不要复述这些状态，也不要把同一问题拆成多条建议。",
       "keywordInventory 和 keywordRankDetails 是数据库中的关键词级证据。涉及排名时先比较语言、商店和关键词差异；只有确实没有检查记录时，才能判断采集数据缺失。",
       "storefrontCoverage 是每种查询语言应覆盖的完整商店集合。checkedStorefronts 已等于对应集合数量时，覆盖已经完整；rank.collect 只能刷新已有目标商店，不能扩大覆盖，不得把刷新描述为补齐覆盖。",
       "rankDataReadiness 描述任务中心的每日采集状态。排名证据过期时，不要基于它提出关键词改变；等待任务中心按 nextScheduledAt 到 scheduledCoverageCompleteAt 的现有排期更新即可，不要生成额外采集动作。",
@@ -536,7 +540,7 @@ export function buildBriefMessages(
       "每条建议必须代表一个不同的决策：title 直接写要改变什么；reason 只解释为什么现在值得做，最多引用两个关键证据；expectedOutcome 写预期正向变化；successMetric 写之后如何判断有效；evaluateAfterDays 写复核天数。",
       "如果证据不足以支持改变，返回空 suggestions，不要用查看、检查、观察或刷新凑数。宁可没有建议，也不要输出没有明确收益和验证标准的建议。",
       "输出一个 JSON 对象：{\"suggestions\":[{\"title\":\"一句话动作\",\"reason\":\"引用数据的依据\",\"expectedOutcome\":\"预期变化\",\"successMetric\":\"可验证指标\",\"evaluateAfterDays\":7,\"action\":\"keywords\",\"target\":\"关键词或文案方向\",\"proposedActions\":[{\"kind\":\"keyword.track.add\",\"label\":\"添加跟踪关键词\",\"input\":{\"language\":\"en\",\"keyword\":\"walking light\",\"rationale\":\"与产品核心能力相关\"}}]}]}",
-      "最多 3 条，按价值排序。action 只能是 keywords、release、trend 之一。title 用中文。",
+      "最多 3 条，按价值排序。action 只能是 keywords、release 之一。title 用中文。",
     ].join("\n"),
     [JSON.stringify(taskData, null, 2)],
   );

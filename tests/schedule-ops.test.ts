@@ -2,7 +2,7 @@ import {
   buildStatusTaskId,
   IN_FLIGHT_STORE_STATUSES,
   opsSyncTaskId,
-  reviewsSyncTaskId,
+  removeRetiredScheduledTasks,
   seedScheduledTask,
 } from "../src/main/schedule";
 
@@ -13,7 +13,6 @@ function check(ok: boolean, msg: string) {
 }
 
 check(opsSyncTaskId("p1") === "ops-sync:p1", "ops-sync id 稳定");
-check(reviewsSyncTaskId("p1:ios") === "reviews-sync:p1:ios", "reviews-sync id 稳定");
 check(buildStatusTaskId("p1:ios") === "build-status:p1:ios", "build-status id 稳定");
 check(IN_FLIGHT_STORE_STATUSES.includes("submitted") && IN_FLIGHT_STORE_STATUSES.length === 4, "在途状态集合正确");
 
@@ -22,9 +21,14 @@ const existing = [
 ];
 const seeded = seedScheduledTask(existing, { id: "ops-sync:p1", kind: "ops-sync", projectId: "p1", intervalMinutes: 1440 });
 check(seeded.executionCount === 3 && seeded.lastRunAt === "2026-08-23T01:00:00Z", "seed 保留上次运行字段");
-const fresh = seedScheduledTask(existing, { id: "reviews-sync:p1:ios", kind: "reviews-sync", productId: "p1:ios", intervalMinutes: 1440 });
+const fresh = seedScheduledTask(existing, { id: "build-status:p1:ios", kind: "build-status", productId: "p1:ios", intervalMinutes: 60 });
 check(fresh.nextRunAt && fresh.firstRunAt === null && fresh.executionCount === 0, "新任务生成 nextRunAt 且无历史字段");
 check(new Date(fresh.nextRunAt).getTime() > Date.now(), "nextRunAt 在未来");
+const withoutRetired = removeRetiredScheduledTasks([
+  { kind: "ops-sync", id: "ops-sync:p1" },
+  { kind: "reviews-sync", id: "reviews-sync:p1:ios" },
+]);
+check(withoutRetired.length === 1 && withoutRetired[0].kind === "ops-sync", "reconcile 移除已下线的评论任务");
 
 if (errors) process.exit(1);
 console.log("done");

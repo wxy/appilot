@@ -130,7 +130,6 @@ const fullProps = {
   ascInfo: null,
   storeCurrentVersion: '1.0.0',
   activityData: { commits: { '2026-09-01': 5, '2026-08-31': 2 }, releases: [] },
-  feedbackThemes: [],
   briefState: { status: 'idle', suggestions: [], progress: null, error: '' },
   LinkComponent: (p) => React.createElement('span', { className: p.className }, p.children),
   onSelectProduct: () => {},

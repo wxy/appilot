@@ -10,7 +10,7 @@ App Store 运营领域纯函数库——被所有 Appilot 壳（Electron / DSH �
 - **排名采集**：App Store / iTunes 搜索排名采集（`/rank-collector`）
 - **项目同步**：GitHub 发布检测与同步（`/project-sync`）
 - **发布与文案**：readiness 检查、发布草稿、商店文案
-- **评论**：评论统计 / 聚类辅助
+- **信号**：GitHub Issues 收件箱与竞品快照
 - **AI 辅助与日志**：模型抽象与结构化日志（`/logger`）
 
 ## 安装
