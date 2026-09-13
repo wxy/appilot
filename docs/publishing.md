@@ -10,7 +10,7 @@
 
 **不发布**：根 desktop（Electron，private）、`packages/cli`（无 scope 本地启动器）。
 
-发布包间依赖用 `^<version>` 互相引用（如 headless → core ^1.1.0）——bump 时**必须同步所有 range**，否则消费方装到旧版。
+发布包间依赖用 `^<version>` 互相引用（如 headless → core ^1.2.0）——bump 时**必须同步所有 range**，否则消费方装到旧版。
 
 ## 2. 发布流程（每次发版）
 
@@ -22,7 +22,7 @@
 
 ### Step 2 — 推 tag 触发发布
 ```bash
-git tag v1.1.0 && git push origin v1.1.0
+git tag v1.2.0 && git push origin v1.2.0
 ```
 - `.github/workflows/publish.yml`：tag push → OIDC 认证（Node 24 / npm≥11.5.1）→ **自动生成 provenance**（无需 `--provenance` 标志）
 - 观察：`gh run list --limit 3` → publish job 全绿；registry API 验证：
@@ -32,7 +32,7 @@ git tag v1.1.0 && git push origin v1.1.0
 
 ### Step 3 — GitHub Release
 ```bash
-gh release create v1.1.0 --title "Appilot 1.1.0" --notes "..."
+gh release create v1.2.0 --title "Appilot 1.2.0" --notes-file RELEASE_DRAFT.md
 ```
 
 ### OIDC 现状（已配置，勿重复操作）
@@ -45,7 +45,7 @@ profile 是 pnpm（hoisted）工程：`~/.dsh/profiles/appilot/`
 
 ```bash
 cd ~/.dsh/profiles/appilot
-# package.json dependencies 里的 @appilot-labs/* 升到新版本（如 ^1.1.0）
+# package.json dependencies 里的 @appilot-labs/* 升到新版本（如 ^1.2.0）
 pnpm install          # 从 registry 替换（不再拷 dist）
 # 重启 3099（宿主装载插件 dist）
 ```
