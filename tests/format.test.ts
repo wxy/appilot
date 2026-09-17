@@ -39,8 +39,8 @@ async function runTests() {
   assert(formatDurationMs(3200) === "3.2 秒", "seconds");
   assert(formatDurationMs(90_000) === "1 分 30 秒", "minutes + seconds");
 
-  assert(formatKilo(0) === "0K字", "formatKilo zero");
-  assert(formatKilo(1000) === "1K字", "formatKilo exact K");
+  assert(formatKilo(0) === "0.0K字", "formatKilo zero（统一一位小数）");
+  assert(formatKilo(1000) === "1.0K字", "formatKilo exact K（统一一位小数）");
   assert(formatKilo(1250) === "1.3K字", "formatKilo decimal");
   assert(formatTokens(500) === "500", "formatTokens small");
   assert(formatTokens(2500) === "2.5K", "formatTokens K");

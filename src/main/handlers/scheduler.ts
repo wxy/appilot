@@ -455,8 +455,10 @@ export function registerSchedulerHandlers(): void {
     markDaemonStopped();
     // 等 daemon 进程退出（socket 移除）再返回——「重启」按钮的 stop→start 顺序
     // 依赖此保证：立即 start 不会复用到正在退出的旧 daemon。
+    // 停机是平滑的：daemon 会先排空在途执行（rank 采集等，上限 30s）再退出，
+    // 因此这里的等待窗口要盖过 drain 上限，避免壳先返回、旧 daemon 还没退。
     if (daemonStopped) {
-      await waitSchedulerDown(socketPath, 3000).catch(() => undefined);
+      await waitSchedulerDown(socketPath, 35_000).catch(() => undefined);
     }
     log.info(`appilot: 任务中心停止完成（daemonStopped=${daemonStopped} wasUp=${wasUp}）`);
     return {
@@ -577,7 +579,9 @@ export async function stopSchedulerForAppExit(): Promise<void> {
     /* 退出路径静默 */
   }
   try {
-    await waitSchedulerDown(daemonSocketPath(), 2500).catch(() => undefined);
+    // 应用退出不无限等：daemon 是 detached 常驻进程，即便壳先退出它也会
+    // 自行排空在途执行后退出（平滑停机在 daemon 侧完成）。
+    await waitSchedulerDown(daemonSocketPath(), 10_000).catch(() => undefined);
   } catch {
     /* 忽略等待超时 */
   }

@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
+import { rankBudgetAdmissible, rankBudgetStatus } from "@appilot-labs/appilot-core/rank-budget";
 import { languageLabel, platformLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import {
   matrixCellState,
@@ -26,8 +27,8 @@ import { useProject } from "../../stores/project";
 import { AIProgressButton } from "../ui/AIProgressButton";
 import { EmptyState } from "../ui/EmptyState";
 import { btnPrimary, btnSecondary } from "../ui/styles";
-import { CurationDialog } from "./CurationDialog";
-import type { KeywordGeneration, KeywordSuggestion } from "./keywordTypes";
+import { CurationDialog, type CurationResolved } from "./CurationDialog";
+import type { KeywordSuggestion } from "./keywordTypes";
 import { MatrixCellView, RankTooltip } from "./matrix";
 import { CompetitorPanel } from "./CompetitorPanel";
 import { KeywordRuby } from "../ui/KeywordRuby";
@@ -73,8 +74,8 @@ export function KeywordsPage() {
     return initial;
   });
   const [curation, setCuration] = useState<Record<string, {
-    removals: { keyword: string; reason: string; choice: "accept" | "ignore" }[];
-    adds: (KeywordSuggestion & { choice: "accept" | "ignore" })[];
+    removals: { keyword: string; reason: string; translation?: string }[];
+    adds: KeywordSuggestion[];
   }>>({});
   const [curationOpen, setCurationOpen] = useState(false);
   const [curationConfirm, setCurationConfirm] = useState<null | "apply" | "discard">(null);
@@ -101,6 +102,15 @@ export function KeywordsPage() {
   const [keywordProgress, setKeywordProgress] = useState<
     Record<string, { chars: number; phase: "reasoning" | "content" }>
   >({});
+  // 批量生成/整理的整体进度：母本(en) → 各语言本地化/整理，全部结果进建议弹窗。
+  const [batch, setBatch] = useState<{
+    total: number;
+    index: number;
+    lang: string;
+    stage: "generate" | "localize" | "curate";
+    opId: string;
+    status: Record<string, "running" | "done" | "failed">;
+  } | null>(null);
   const [showPaused, setShowPaused] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
   const [showPendingReview, setShowPendingReview] = useState(false);
@@ -271,6 +281,13 @@ export function KeywordsPage() {
       !(k.translation && String(k.translation).trim()),
   ).length;
   const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
+  // 采集预算：任务量 = 活跃关键词 × 语言覆盖的商店数（en 全局词按全部本地化计）。
+  // 建议采纳 / 候选加入 / 恢复暂停词都会受硬上限约束，软上限起提示作用。
+  const rankBudget = rankBudgetStatus(
+    product.supportedLanguages || [],
+    product.platform,
+    project.trackedKeywords || [],
+  );
   const storefronts = isGlobalView
     ? Array.from(
         new Set(
@@ -561,22 +578,28 @@ export function KeywordsPage() {
   const formatColumnTime = (iso: string) =>
     new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  const acceptedAdds = Object.values(curation).reduce(
-    (sum, data) => sum + data.adds.filter((item) => item.choice === "accept").length,
+  // 批量进行中按钮显示整体进度：字符数跨语言累计（各语言流各自累加，总和单调递增），
+  // 不再跟随当前查看的语言 —— 之前显示 currentLang 的流，跑到后面的语言时数字就“冻结”了。
+  const batchTotalChars = Object.values(keywordProgress).reduce(
+    (sum, p) => sum + (p?.chars || 0),
     0,
   );
-  const acceptedRemovals = Object.values(curation).reduce(
-    (sum, data) => sum + data.removals.filter((item) => item.choice === "accept").length,
-    0,
-  );
-  const ignoredCount = Object.values(curation).reduce(
-    (sum, data) =>
-      sum +
-      data.adds.filter((item) => item.choice === "ignore").length +
-      data.removals.filter((item) => item.choice === "ignore").length,
-    0,
-  );
-  const activeProgress = keywordProgress[currentLang];
+  const activeProgress = batch
+    ? {
+        chars: batchTotalChars,
+        phase: (keywordProgress[batch.lang]?.phase === "content"
+          ? "content"
+          : "reasoning") as "reasoning" | "content",
+      }
+    : keywordProgress[currentLang] || null;
+  const STAGE_LABELS: Record<string, string> = {
+    generate: "生成母本",
+    localize: "本地化",
+    curate: "整理",
+  };
+  const batchStatusLabel = batch
+    ? `${STAGE_LABELS[batch.stage]} ${languageLabel(batch.lang)} · ${batch.index + 1}/${batch.total}`
+    : undefined;
   const trackedCandidateKeywords = new Set(
     (project.trackedKeywords || [])
       .filter((k) => k.language === currentLang)
@@ -784,47 +807,10 @@ export function KeywordsPage() {
     setUnrankedSelected(new Set());
   };
 
-  const generateOne = async (lang: string): Promise<{ lang: string; gen: KeywordGeneration | null }> => {
-    try {
-      const gen: KeywordGeneration = await (window as any).appilot.projects.generateKeywords(product.id, lang);
-      return { lang, gen };
-    } catch (e: any) {
-      setError(e.message || "关键词生成失败。请先在设置里配置 AI。");
-      return { lang, gen: null };
-    }
-  };
-
-  const applyGenerations = async (results: { lang: string; gen: KeywordGeneration | null }[]) => {
-    const latestProject = useProject.getState().projects.find((p) => p.id === currentProjectId);
-    const latest = latestProject || project;
-    let trackedNext = [...(latest.trackedKeywords || [])];
-
-    for (const r of results) {
-      if (!r.gen) continue;
-      const existingKeys = new Set(trackedNext.map((k) => `${k.language}\u0000${k.keyword}`));
-      const removedKeys = new Set(
-        (latestProject?.removedKeywords || []).map((item) => `${item.language}\u0000${item.keyword}`),
-      );
-      const additions = r.gen.tracking
-        .filter((s) => {
-          const lang = s.language || r.lang;
-          return !existingKeys.has(`${lang}\u0000${s.keyword}`) && !removedKeys.has(`${lang}\u0000${s.keyword}`);
-        })
-        .map((s) => ({
-          language: s.language || r.lang,
-          keyword: s.keyword,
-          rationale: s.rationale,
-          translation: s.translation || "",
-        }));
-      trackedNext = [...trackedNext, ...additions];
-    }
-
-    if (results.some((r) => r.gen)) {
-      await (window as any).appilot.projects.saveTrackedKeywords(product.id, trackedNext);
-      updateTrackedKeywords(product.id, trackedNext);
-    }
-  };
-
+  // —— 批量生成 / 整理 ——
+  // 流程：英文（全局）词作母本；没有母本时先一步生成；
+  // 已有跟踪词的语言走「整理」复盘，没有词的语言从母本「本地化」；
+  // 所有语言（含新语言）的建议统一进建议弹窗，确认后才落库。
   const handleGenerateAll = async () => {
     setError("");
     setKeywordProgress({});
@@ -832,68 +818,138 @@ export function KeywordsPage() {
       setError("请先点亮至少一个语言（点 ★ 参与生成）。");
       return;
     }
-    const nextCuration: Record<string, any> = {};
-    setLoadingLangs(new Set(litLangs));
+    // 用最新项目状态判断各语言是否已有跟踪词（避免闭包里的旧快照）。
+    const latestProject = useProject.getState().projects.find((p) => p.id === currentProjectId) || project;
+    const trackedAll = latestProject?.trackedKeywords || [];
+    const hasKeywords = (lang: string) => trackedAll.some((k) => k.language === lang);
+    const enHasKeywords = trackedAll.some((k) => k.language === "en");
+
+    // 生成计划：母本优先（英文没有词时排第一步），其余语言按点亮顺序。
+    const needsMaster = litLangs.some((lang) => lang !== "en" && !hasKeywords(lang));
+    const plan: { lang: string; stage: "generate" | "localize" | "curate" }[] = [];
+    if (!enHasKeywords && (needsMaster || litLangs.includes("en"))) {
+      plan.push({ lang: "en", stage: "generate" });
+    }
     for (const lang of litLangs) {
-    const tracked = project.trackedKeywords || [];
-    const hasKeywords = tracked.some((k) => k.language === lang);
-    if (!hasKeywords) {
-      const result = await generateOne(lang);
-      await applyGenerations([result]);
-    } else {
+      if (lang === "en" && !enHasKeywords) continue; // 母本生成已在计划首位
+      plan.push({
+        lang,
+        stage: hasKeywords(lang) ? "curate" : lang === "en" ? "generate" : "localize",
+      });
+    }
+    if (plan.length === 0) {
+      setError("所选语言没有需要生成或整理的关键词。");
+      return;
+    }
+
+    // 母本词表：优先用已跟踪的 en 词；en 刚生成时用其建议（本地化 IPC 会优先采用传入的母本）。
+    let masterList: { keyword: string; translation?: string }[] = enHasKeywords
+      ? trackedAll
+          .filter((k) => k.language === "en" && k.status !== "paused")
+          .map((k) => ({ keyword: k.keyword, translation: k.translation || "" }))
+      : [];
+
+    const nextCuration: Record<
+      string,
+      {
+        removals: { keyword: string; reason: string; translation?: string }[];
+        adds: KeywordSuggestion[];
+      }
+    > = {};
+    const status: Record<string, "running" | "done" | "failed"> = {};
+    const baseOpId = crypto.randomUUID();
+    let cancelled = false;
+    setLoadingLangs(new Set(plan.map((p) => p.lang)));
+
+    for (let i = 0; i < plan.length; i++) {
+      if (cancelled) break;
+      const step = plan[i];
+      const opId = `${baseOpId}:${step.lang}`;
+      status[step.lang] = "running";
+      setBatch({
+        total: plan.length,
+        index: i,
+        lang: step.lang,
+        stage: step.stage,
+        opId,
+        status: { ...status },
+      });
       try {
-        const result = await (window as any).appilot.projects.curateKeywords(product.id, lang);
-        nextCuration[lang] = {
-          removals: (result.removals || []).map((item: any) => ({ ...item, choice: "accept" })),
-          adds: (result.adds || []).map((item: any) => ({ ...item, choice: "accept" })),
-        };
+        if (step.stage === "curate") {
+          const result = await (window as any).appilot.projects.curateKeywords(product.id, step.lang, opId);
+          // 移除建议补翻译标注：AI 只回关键词，译文从该语言已跟踪词里查。
+          const translationOf = (keyword: string) =>
+            trackedAll.find((k: any) => k.language === step.lang && k.keyword === keyword)?.translation || "";
+          nextCuration[step.lang] = {
+            removals: (result.removals || []).map((item: any) => ({
+              keyword: item.keyword,
+              reason: item.reason,
+              translation: translationOf(item.keyword) || undefined,
+            })),
+            adds: result.adds || [],
+          };
+        } else if (step.stage === "localize") {
+          if (masterList.length === 0) {
+            throw new Error("缺少英文母本，无法本地化；请先生成英文关键词。");
+          }
+          const gen = await (window as any).appilot.projects.localizeKeywords(product.id, step.lang, opId, masterList);
+          nextCuration[step.lang] = {
+            removals: [],
+            adds: gen.tracking || [],
+          };
+        } else {
+          const gen = await (window as any).appilot.projects.generateKeywords(product.id, step.lang, opId);
+          nextCuration[step.lang] = {
+            removals: [],
+            adds: gen.tracking || [],
+          };
+          if (step.lang === "en") {
+            masterList = (gen.tracking || []).map((s: KeywordSuggestion) => ({
+              keyword: s.keyword,
+              translation: s.translation || "",
+            }));
+          }
+        }
+        status[step.lang] = "done";
       } catch (e: any) {
-        setError(e.message || "关键词整理失败。");
+        status[step.lang] = "failed";
+        if (String(e?.message || "").includes("已取消")) {
+          cancelled = true;
+        } else {
+          setError(e.message || "关键词生成失败。");
+        }
       }
     }
-    }
-    setCuration((prev) => ({ ...prev, ...nextCuration }));
-    setCurationOpen(Object.keys(nextCuration).length > 0);
-    setCurationConfirm(null);
+
+    setBatch(null);
     setLoadingLangs(new Set());
     setKeywordProgress({});
+    // 空语言不进弹窗（如整理结果为空、本地化被跳过）。
+    const filtered = Object.fromEntries(
+      Object.entries(nextCuration).filter(
+        ([, data]) => data.removals.length > 0 || data.adds.length > 0,
+      ),
+    );
+    setCuration((prev) => ({ ...prev, ...filtered }));
+    if (Object.keys(filtered).length > 0) {
+      setCurationOpen(true);
+      setCurationConfirm(null);
+      if (cancelled) setError("已停止：仅保留已完成语言的建议。");
+    } else if (cancelled) {
+      setError("已停止，本次没有生成任何建议。");
+    }
   };
 
-  const setItemChoice = (
-    lang: string,
-    key: "removals" | "adds",
-    keyword: string,
-    choice: "accept" | "ignore",
+  const stopGenerateAll = () => {
+    // 中止当前语言的请求；循环收到「已取消」后跳出，剩余语言不再发起。
+    if (batch?.opId) void (window as any).appilot?.ai?.cancel(batch.opId);
+  };
+
+  // 选择状态内聚在 CurationDialog 内部：确认时回传带选择的完整数据，
+  // 避免每次点击「采纳/忽略」都重渲染整个关键词页面（矩阵 + 图表很重）。
+  const applyCuration = async (
+    resolved: Record<string, CurationResolved>,
   ) => {
-    setCuration((prev) => {
-      const langData = prev[lang];
-      if (!langData) return prev;
-      return {
-        ...prev,
-        [lang]: {
-          ...langData,
-          [key]: langData[key].map((item) =>
-            item.keyword === keyword ? { ...item, choice } : item,
-          ),
-        },
-      };
-    });
-  };
-
-  const selectAllCuration = (choice: "accept" | "ignore") => {
-    setCuration((prev) => {
-      const next: Record<string, any> = {};
-      for (const [lang, data] of Object.entries(prev)) {
-        next[lang] = {
-          removals: data.removals.map((item) => ({ ...item, choice })),
-          adds: data.adds.map((item) => ({ ...item, choice })),
-        };
-      }
-      return next;
-    });
-  };
-
-  const applyCuration = async () => {
     setCurationConfirm(null);
     const latest = useProject.getState().projects.find((p) => p.id === currentProjectId);
     const base = latest || project;
@@ -901,12 +957,38 @@ export function KeywordsPage() {
     const keys = new Set(
       currentKeywords.map((k: any) => `${k.language}\u0000${k.keyword}`),
     );
+    // 已删除的词不再复活：AI 有时不遵守“不要重复建议”的约束（尤其母本本地化）。
+    const removedKeys = new Set(
+      ((base as any).removedKeywords || []).map(
+        (r: any) => `${r.language}\u0000${r.keyword}`,
+      ),
+    );
     let changed = false;
-    for (const [lang, data] of Object.entries(curation)) {
+    // 采集预算：先按语言顺序收集待采纳新增，整体过一遍硬上限（超出的自动
+    // 不采纳并提示）——AI 建议一次可能给 11 种语言各 10-20 条，不做预算
+    // 约束会把任务量瞬间翻倍。
+    const pendingAdds: { lang: string; item: (typeof resolved)[string]["adds"][number] }[] = [];
+    for (const [lang, data] of Object.entries(resolved)) {
+      for (const item of data.adds) {
+        if (item.choice === "accept") pendingAdds.push({ lang, item });
+      }
+    }
+    const budget = rankBudgetAdmissible(
+      product.supportedLanguages || [],
+      product.platform,
+      currentKeywords,
+      pendingAdds.map(({ lang, item }) => ({ language: lang, keyword: item.keyword })),
+    );
+    const admissibleKeys = new Set(
+      budget.accepted.map((item) => `${item.language}\u0000${item.keyword}`),
+    );
+    const rejectedByBudget = budget.rejected.length;
+    for (const [lang, data] of Object.entries(resolved)) {
       for (const item of data.adds) {
         if (item.choice !== "accept") continue;
         const key = `${lang}\u0000${item.keyword}`;
-        if (keys.has(key)) continue;
+        if (keys.has(key) || removedKeys.has(key)) continue;
+        if (!admissibleKeys.has(key)) continue; // 预算外：不采纳
         currentKeywords.push({
           language: lang,
           keyword: item.keyword,
@@ -942,6 +1024,12 @@ export function KeywordsPage() {
     updateTrackedKeywords(product.id, currentKeywords);
     setCuration({});
     setCurationOpen(false);
+    if (rejectedByBudget > 0) {
+      setError(
+        `已采纳 ${admissibleKeys.size} 条；${rejectedByBudget} 条超出采集预算（每日 ${rankBudget.hardLimit} 实例）未采纳——` +
+          "建议先清理低价值关键词（连续未在榜会进入待复核），再重新生成建议。",
+      );
+    }
   };
 
   const discardCuration = () => {
@@ -1028,11 +1116,29 @@ export function KeywordsPage() {
         return !existingKeys.has(`${currentLang}\u0000${candidate.keyword}`);
       });
     if (toAdd.length === 0) return;
+    // 采集预算硬上限：核心词（商店关键词/名称/副标题）已按来源优先排序放行，
+    // 超出部分拒收并提示——任务堆积不如预算治理。
+    const admissible = rankBudgetAdmissible(
+      product.supportedLanguages || [],
+      product.platform,
+      current.trackedKeywords || [],
+      toAdd.map((candidate) => ({ language: currentLang, keyword: candidate.keyword })),
+    );
+    const rejectedCount = admissible.rejected.length;
+    const acceptedKeys = new Set(admissible.accepted.map((item) => item.keyword));
+    const acceptedToAdd = toAdd.filter((candidate) => acceptedKeys.has(candidate.keyword));
+    if (acceptedToAdd.length === 0) {
+      setError(
+        `已达采集预算上限（每日 ${rankBudget.hardLimit} 实例，当前 ${rankBudget.dailyInstances}）——` +
+          "请先清理低价值关键词（连续未在榜的词会进入待复核）再添加。",
+      );
+      return;
+    }
     setCandidatesAdding(true);
     try {
       const next = [
         ...(current.trackedKeywords || []),
-        ...toAdd.map((candidate) => ({
+        ...acceptedToAdd.map((candidate) => ({
           language: currentLang,
           keyword: candidate.keyword,
           rationale: candidate.rationale,
@@ -1043,9 +1149,14 @@ export function KeywordsPage() {
       ];
       await (window as any).appilot.projects.saveTrackedKeywords(product.id, next);
       updateTrackedKeywords(product.id, next);
-      const addedKeywords = new Set(toAdd.map((candidate) => candidate.keyword));
+      const addedKeywords = new Set(acceptedToAdd.map((candidate) => candidate.keyword));
       setCandidates((prev) => prev.filter((candidate) => !addedKeywords.has(candidate.keyword)));
       setRemovedCandidateKeys(new Set());
+      if (rejectedCount > 0) {
+        setError(
+          `已加入 ${acceptedToAdd.length} 个，${rejectedCount} 个超出采集预算（每日 ${rankBudget.hardLimit} 实例）未加入——请先清理低价值关键词。`,
+        );
+      }
     } catch (e: any) {
       setError(e.message || "一键加入失败。");
     } finally {
@@ -1162,7 +1273,24 @@ export function KeywordsPage() {
   }, []);
 
   const restoreTracked = async (language: string, kw: string) => {
+    // 恢复 = 重新参与采集：受采集预算硬上限约束。
+    if (!canReactivateKeyword(language)) return;
     await restoreTrackedKeyword(product.id, language, kw);
+  };
+
+  /** 恢复/重启采集前检查：该语言的商店成本是否还在硬预算内。 */
+  const canReactivateKeyword = (language: string): boolean => {
+    const { accepted } = rankBudgetAdmissible(
+      product.supportedLanguages || [],
+      product.platform,
+      project.trackedKeywords || [],
+      [{ language, keyword: "__budget_probe__" }],
+    );
+    if (accepted.length > 0) return true;
+    setError(
+      `已达采集预算上限（每日 ${rankBudget.hardLimit} 实例）——请先清理或忽略低价值关键词，再恢复采集。`,
+    );
+    return false;
   };
 
   const clearRemoved = async () => {
@@ -1403,16 +1531,35 @@ export function KeywordsPage() {
                   </div>
                   <AIProgressButton
                     onStart={() => void handleGenerateAll()}
-                    onStop={() => undefined}
-                    stopAvailable={false}
+                    onStop={stopGenerateAll}
                     loading={loadingLangs.size > 0}
                     progress={activeProgress}
+                    statusLabel={batchStatusLabel}
                     idleLabel="为所选语言生成 / 整理"
                   />
                 </div>
               </div>
-              <p className="mt-3 text-[11px] font-medium tracking-wider text-zinc-400 dark:text-zinc-500">
-                语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）
+              <p className="mt-3 text-[11px] font-medium tracking-wider text-zinc-400 dark:text-zinc-500 flex items-center gap-2">
+                <span>语言（点击切换查看；点 ★ 点亮/取消点亮，点亮语言参与生成）</span>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[10px] font-normal tracking-normal",
+                    rankBudget.state === "hard"
+                      ? "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400"
+                      : rankBudget.state === "soft"
+                        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400",
+                  )}
+                  title={
+                    rankBudget.state === "hard"
+                      ? "已达采集预算硬上限：新增/恢复采集任务将被拒绝，请清理低价值关键词"
+                      : rankBudget.state === "soft"
+                        ? "接近采集预算：建议先清理低价值关键词（连续未在榜会进入待复核）再加新的"
+                        : "采集预算（每日排名任务数 = 活跃关键词 × 语言覆盖的商店数）"
+                  }
+                >
+                  每日采集 {rankBudget.dailyInstances}/{rankBudget.hardLimit} · 关键词 {rankBudget.activeKeywords}
+                </span>
               </p>
               <div className="mt-1.5 flex flex-wrap gap-2">
                 <button
@@ -1433,6 +1580,8 @@ export function KeywordsPage() {
                 {languageOptions.map((option) => {
                   const lit = litLangs.includes(option.code);
                   const active = option.code === currentLang;
+                  // 批量进行中：该语言的执行状态点（排队不显示，运行中呼吸，结束落色）。
+                  const langBatchStatus = batch?.status?.[option.code];
                   return (
                     <div
                       key={option.code}
@@ -1449,12 +1598,35 @@ export function KeywordsPage() {
                         type="button"
                         // 只切换查看的语言；点亮/取消点亮只能点 ★（与按钮分离）。
                         onClick={() => setViewLang(option.code)}
-                        title={active ? "当前查看" : "点击查看该语言"}
+                        title={
+                          langBatchStatus === "running"
+                            ? "正在生成/整理该语言…"
+                            : langBatchStatus === "done"
+                              ? "该语言建议已生成，见建议弹窗"
+                              : langBatchStatus === "failed"
+                                ? "该语言生成失败"
+                                : active
+                                  ? "当前查看"
+                                  : "点击查看该语言"
+                        }
                         className={cn(
-                          "px-3 py-1.5 text-sm transition-colors",
+                          "px-3 py-1.5 text-sm transition-colors inline-flex items-center gap-1.5",
                           active ? "font-medium" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
                         )}
                       >
+                        {langBatchStatus && (
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "w-1.5 h-1.5 rounded-full shrink-0",
+                              langBatchStatus === "running"
+                                ? "bg-amber-500 animate-pulse"
+                                : langBatchStatus === "done"
+                                  ? "bg-emerald-500"
+                                  : "bg-red-500",
+                            )}
+                          />
+                        )}
                         {option.label}
                       </button>
                       <button
@@ -1623,7 +1795,11 @@ export function KeywordsPage() {
                                   >
                                     {item.keyword}
                                     <button
-                                      onClick={() => resumePausedKeyword(product.id, item.language, item.keyword)}
+                                      onClick={() => {
+                                        if (canReactivateKeyword(item.language)) {
+                                          void resumePausedKeyword(product.id, item.language, item.keyword);
+                                        }
+                                      }}
                                       className="text-amber-600 dark:text-amber-400 hover:underline"
                                       title="恢复采集"
                                     >
@@ -2073,16 +2249,10 @@ export function KeywordsPage() {
       <CurationDialog
         curation={curation}
         curationOpen={curationOpen}
-        acceptedAdds={acceptedAdds}
-        acceptedRemovals={acceptedRemovals}
-        ignoredCount={ignoredCount}
         curationConfirm={curationConfirm}
-        onItemChoice={(lang, kind, keyword, choice) =>
-          setItemChoice(lang, kind, keyword, choice)
-        }
-        onApply={() => applyCuration()}
+        budgetHint={`采集预算：每日 ${rankBudget.dailyInstances}/${rankBudget.hardLimit} 实例 · 剩余可采纳 ${rankBudget.remaining}（超限建议确认时会被自动裁剪）`}
+        onApply={(resolved) => void applyCuration(resolved)}
         onDiscard={() => discardCuration()}
-        onSelectAll={(choice) => selectAllCuration(choice)}
         onSetConfirm={setCurationConfirm}
       />
     </div>

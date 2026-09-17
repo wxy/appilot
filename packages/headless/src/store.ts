@@ -12,8 +12,39 @@ import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { migrate, type ProjectRow, type RankSnapshotRow, type TaskRow, type TaskSchedule, type ProjectMetaRow, type ProductRecordRow, type ReleaseCacheRow } from './schema.js';
 
-/** 等待写锁的毫秒数（并发进程写竞争时避免立刻报 busy）。 */
-const BUSY_TIMEOUT_MS = 5000;
+/** 等待写锁的毫秒数（并发进程写竞争时避免立刻报 busy）。系统唤醒后
+ * 壳镜像 + daemon 补跑会同时抢写，5s 曾不够（2026-09-17 database is locked）。 */
+const BUSY_TIMEOUT_MS = 10000;
+
+/** SQLITE_BUSY 专用重试（busy_timeout 之外的兜底：超长事务占锁）。 */
+const BUSY_RETRIES = 3;
+/** busy 重试退避基数（第 n 次重试等待 n×BASE ms）。 */
+const BUSY_RETRY_BACKOFF_MS = 200;
+
+/** 锁类错误（与 node:sqlite 的 SQLITE_BUSY 文案匹配；表级锁也覆盖）。 */
+function isBusyError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /database is locked|database table is locked/i.test(msg);
+}
+
+/** 同步等待（DatabaseSync 是同步 API，事务内不能 await）。 */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** 对一段有锁风险的 DB 操作做 busy 专用重试（打开库 / PRAGMA / migrate 用）。 */
+function retryBusy<T>(fn: () => T): T {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return fn();
+    } catch (err) {
+      attempt += 1;
+      if (attempt >= BUSY_RETRIES || !isBusyError(err)) throw err;
+      sleepSync(BUSY_RETRY_BACKOFF_MS * attempt);
+    }
+  }
+}
 
 export interface AppilotStore {
   readonly path: string;
@@ -134,8 +165,8 @@ export interface AppilotStore {
     heartbeat(leaderId: string): boolean;
     /** 当前主是谁（无主返回 null）。 */
     leader(): string | null;
-    /** 租约详情（leader + 最近心跳时间）；无主返回 null。 */
-    info(): { leaderId: string; heartbeatAt: string } | null;
+    /** 租约详情（leader + 最近心跳时间 + 持主 pid）；无主返回 null。 */
+    info(): { leaderId: string; heartbeatAt: string; leaderPid: number | null } | null;
     /**
      * 显式让位（自更新重启/升级用）：仅当前主可释放，立即删除租约行，
      * 让继任者无需等 TTL 即可接管。非当前主调用返回 false（无副作用）。
@@ -159,21 +190,37 @@ export function openStore(dbPath: string): AppilotStore {
     mkdirSync(dirname(dbPath), { recursive: true });
   }
   const db = new DatabaseSync(dbPath);
-  db.exec('PRAGMA journal_mode = WAL');
+  // busy_timeout 先设：后面的 WAL 设置与 migrate 都可能遇到并发锁。
   db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  // 唤醒风暴期另一连接可能正持写锁：journal_mode 切换需要锁，失败重试。
+  retryBusy(() => db.exec('PRAGMA journal_mode = WAL'));
   db.exec('PRAGMA foreign_keys = ON');
-  migrate(db);
+  retryBusy(() => migrate(db));
 
-  /** 事务包装。 */
+  /**
+   * 事务包装。BEGIN IMMEDIATE（而非 DEFERRED）：写事务在 BEGIN 时就取写锁，
+   * busy_timeout 生效于取锁等待——DEFERRED 下「先读后写」在 WAL 里会因快照
+   * 过期**立即**抛 SQLITE_BUSY（busy handler 不介入），这正是多进程并发下
+   * `database is locked` 泛滥的根源。锁类错误额外做有界重试兜底长事务。
+   */
   function tx<T>(fn: () => T): T {
-    db.exec('BEGIN');
-    try {
-      const result = fn();
-      db.exec('COMMIT');
-      return result;
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
+    let attempt = 0;
+    for (;;) {
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        const result = fn();
+        db.exec('COMMIT');
+        return result;
+      } catch (err) {
+        try {
+          db.exec('ROLLBACK');
+        } catch {
+          /* 无活动事务（BEGIN 本身失败） */
+        }
+        attempt += 1;
+        if (attempt >= BUSY_RETRIES || !isBusyError(err)) throw err;
+        sleepSync(BUSY_RETRY_BACKOFF_MS * attempt);
+      }
     }
   }
 
@@ -648,23 +695,34 @@ export function openStore(dbPath: string): AppilotStore {
           if (existing) {
             const heartbeat = new Date(existing.heartbeatAt).getTime();
             const fresh = now - heartbeat < ttlMs;
+            // 崩溃主检测：心跳新鲜但持主进程已死（旧行无 pid 则只能靠 TTL 兜底）。
+            // process.kill(pid,0)：ESRCH=不存在（已死）；EPERM=存在但属他人（视为活）。
+            const leaderPid = typeof existing.leaderPid === 'number' ? existing.leaderPid : null;
+            const leaderAlive =
+              leaderPid == null ||
+              (() => {
+                try {
+                  process.kill(leaderPid, 0);
+                  return true;
+                } catch (err: any) {
+                  return err?.code === 'EPERM';
+                }
+              })();
             if (existing.leaderId === leaderId) {
-              // 同 id：心跳新鲜 = 已有**同 id 活主**（如双 daemon 并存）→ 拒绝，
-              // 防第二个同 id 进程把活主心跳当"自己续租"而并跑（2026-09-04 事故）。
-              // 心跳过期（同 id 主崩溃）→ 允许接管。
-              if (fresh) return false;
-            } else if (fresh) {
+              // 同 id：心跳新鲜且进程活着 = 已有**同 id 活主**（如双 daemon 并存）→
+              // 拒绝，防第二个同 id 进程把活主心跳当"自己续租"而并跑（2026-09-04 事故）。
+              // 心跳过期（同 id 主崩溃）或进程已死 → 允许接管。
+              if (fresh && leaderAlive) return false;
+            } else if (fresh && leaderAlive) {
               return false; // 还有活主（异 id）
             }
-            db.prepare('UPDATE lease SET leaderId = ?, heartbeatAt = ? WHERE id = 1').run(
-              leaderId,
-              new Date(now).toISOString(),
-            );
+            db.prepare(
+              'UPDATE lease SET leaderId = ?, heartbeatAt = ?, leaderPid = ? WHERE id = 1',
+            ).run(leaderId, new Date(now).toISOString(), process.pid);
           } else {
-            db.prepare('INSERT INTO lease (id, leaderId, heartbeatAt) VALUES (1, ?, ?)').run(
-              leaderId,
-              new Date(now).toISOString(),
-            );
+            db.prepare(
+              'INSERT INTO lease (id, leaderId, heartbeatAt, leaderPid) VALUES (1, ?, ?, ?)',
+            ).run(leaderId, new Date(now).toISOString(), process.pid);
           }
           return true;
         });
@@ -684,8 +742,12 @@ export function openStore(dbPath: string): AppilotStore {
         return r ? r.leaderId : null;
       },
       info() {
-        const r = db.prepare('SELECT leaderId, heartbeatAt FROM lease WHERE id = 1').get() as any;
-        return r ? { leaderId: r.leaderId, heartbeatAt: r.heartbeatAt } : null;
+        const r = db
+          .prepare('SELECT leaderId, heartbeatAt, leaderPid FROM lease WHERE id = 1')
+          .get() as any;
+        return r
+          ? { leaderId: r.leaderId, heartbeatAt: r.heartbeatAt, leaderPid: r.leaderPid ?? null }
+          : null;
       },
       release(leaderId) {
         return tx(() => {

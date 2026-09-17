@@ -250,8 +250,11 @@ function leaseDiagnostic(socketPath: string): string {
     const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
     const db = new DatabaseSync(process.env.APPILOT_DB_FILE || join(dirname(socketPath), "appilot.db"), { readOnly: true });
     try {
-      const row = db.prepare("SELECT leaderId, heartbeatAt FROM lease WHERE id = 1").get();
-      return row ? JSON.stringify({ ...row, ageMs: Date.now() - Date.parse(String(row.heartbeatAt)) }) : "none";
+      // SELECT *（而非点名 leaderPid）：诊断要兼容未迁移 v16 的旧库（无该列）。
+      const row = db.prepare("SELECT * FROM lease WHERE id = 1").get() as Record<string, unknown> | undefined;
+      return row
+        ? JSON.stringify({ ...row, ageMs: Date.now() - Date.parse(String(row.heartbeatAt)) })
+        : "none";
     } finally { db.close(); }
   } catch (err) {
     return `unavailable: ${err instanceof Error ? err.message : String(err)}`;
@@ -426,6 +429,8 @@ export interface DaemonSelfState {
   holdingSleep?: boolean;
   /** 本机是否具备保持唤醒能力（macOS）。 */
   sleepHoldAvailable?: boolean;
+  /** 当前在途执行数（平滑停机排水进度；旧 daemon 无此字段）。 */
+  inflight?: number;
 }
 
 export async function readDaemonSelfState(

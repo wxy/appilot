@@ -3,7 +3,8 @@ import {
   // iTunes Search 403 熔断共享键名/冷却时长（headless 执行链同源，避免漂移——
   // 见 packages/core/src/rank-collector.ts 的熔断契约注释）。
   ITUNES_SEARCH_BLOCK_KV_KEY,
-  ITUNES_SEARCH_BLOCK_MS,
+  computeItunesSearchBlock,
+  itunesSearchBlockStateFromRaw,
 } from "@appilot-labs/appilot-core/rank-collector";
 import { notifyDataChanged } from "./data-sync";
 import {
@@ -146,12 +147,10 @@ export function schedulerStatusSnapshot(): {
 /** 熔断命中的调度任务类型：scheduler 内唯一走 iTunes Search API 的任务。 */
 const ITUNES_SEARCH_TASK_KINDS = new Set<string>(["rank"]);
 
-/** 读取熔断截止（ISO 字符串）；过期即视为已解除（到期自然恢复）。 */
+/** 读取熔断截止（ISO 字符串）；过期即视为已解除（到期自然恢复）。
+ * 兼容新旧 kv 值：旧 = ISO 字符串；新 = { until, level }（级别化冷却）。 */
 function itunesSearchBlockUntil(store: AppStore): string | null {
-  const raw = store.get(ITUNES_SEARCH_BLOCK_KV_KEY);
-  if (typeof raw !== "string" || raw.length === 0) return null;
-  const ts = new Date(raw).getTime();
-  return Number.isFinite(ts) && ts > Date.now() ? raw : null;
+  return itunesSearchBlockStateFromRaw(store.get(ITUNES_SEARCH_BLOCK_KV_KEY))?.untilIso ?? null;
 }
 
 /** 检测函数：kv 键（itunesSearchBlockedUntil）> now 即为熔断中（冷却中）。 */
@@ -175,7 +174,9 @@ export function itunesSearchBlockState(store: AppStore): {
 }
 
 /**
- * 触发熔断：检测到 403 时写入 until = now + BLOCK_MS，并记录触发点与冷却窗口。
+ * 触发熔断（级别化冷却）：检测到 403 时写入 {"until","level"}——解除后复发窗口
+ * 内再次 403 → 级别 +1、冷却翻倍（45→90→180→360min 封顶），避免「解除即全速
+ * 重试 → 又 403 → 再延 45 分钟」滚动。已在冷却期内保持原窗口不变。
  * 导出供主进程手动 /search 入口（handlers/competitors.ts、handlers/projects.ts）
  * 在自身 catch 命中 403 时复用——依赖方向 handlers → scheduler（scheduler 不反向
  * 引用任何 handler），键与 headless 侧同一 app_kv，任一侧触发全端生效。
@@ -183,11 +184,13 @@ export function itunesSearchBlockState(store: AppStore): {
 export function armItunesSearchBlock(store: AppStore, detail: string): void {
   // 已在冷却期内：保持首次触发的时间窗口，不因并发/重复 403 反复顺延。
   if (itunesSearchBlockUntil(store) !== null) return;
-  const until = new Date(Date.now() + ITUNES_SEARCH_BLOCK_MS);
-  store.set(ITUNES_SEARCH_BLOCK_KV_KEY, until.toISOString());
+  const computed = computeItunesSearchBlock(store.get(ITUNES_SEARCH_BLOCK_KV_KEY));
+  store.set(ITUNES_SEARCH_BLOCK_KV_KEY, computed.state);
+  const until = new Date(computed.untilIso);
   log.warn(
-    `appilot: iTunes Search 403 熔断触发（${detail}）——自动采集暂停，冷却至 ` +
-      `${formatClock(until)}（${Math.round(ITUNES_SEARCH_BLOCK_MS / 60_000)} 分钟后自动恢复）`,
+    `appilot: iTunes Search 403 熔断触发（${detail}）——自动采集暂停，冷却 ` +
+      `${Math.round(computed.durationMs / 60_000)} 分钟（级别 ${computed.state.level}）至 ` +
+      `${formatClock(until)}后自动恢复`,
   );
 }
 

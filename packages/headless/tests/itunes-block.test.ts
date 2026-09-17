@@ -66,7 +66,8 @@ async function main() {
     assert.equal(itunesSearchBlockedUntilStore(store), null, '空 kv → until null');
 
     const newly = armItunesSearchBlockStore(store);
-    assert.equal(newly, true, '首次触发返回新触发');
+    assert.equal(newly.newlyArmed, true, '首次触发返回新触发');
+    assert.equal(newly.level, 1, '首次触发 level=1');
     const untilIso = itunesSearchBlockedUntilStore(store);
     assert.ok(untilIso, '触发后键已写入');
     const untilMs = new Date(untilIso as string).getTime();
@@ -75,7 +76,7 @@ async function main() {
       '冷却窗口 = 45 分钟',
     );
     assert.equal(isItunesSearchBlockedStore(store), true, '写入后处于熔断');
-    assert.equal(armItunesSearchBlockStore(store), false, '重复触发幂等（不顺延窗口）');
+    assert.equal(armItunesSearchBlockStore(store).newlyArmed, false, '重复触发幂等（不顺延窗口）');
 
     // electron 主进程写入格式为 JSON.stringify(ISO)（带引号）——headless 读应兼容。
     store.kv.set(
@@ -93,7 +94,27 @@ async function main() {
       JSON.stringify(new Date(Date.now() - 1000).toISOString()),
     );
     assert.equal(isItunesSearchBlockedStore(store), false, '过期值 → 熔断解除（到期自然恢复）');
-    assert.equal(armItunesSearchBlockStore(store), true, '解除后可再次触发');
+    assert.equal(armItunesSearchBlockStore(store).newlyArmed, true, '解除后可再次触发');
+    store.close();
+  });
+
+  // ── 级别化冷却：解除后复发窗口内再次触发 → 升级翻倍；窗口外 → 回 level1 ──
+  await runCase('itunes-breaker: 复发升级（45→90 分钟）与窗口外回落', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'headless-block-escalate-'));
+    const store = openStore(join(dir, 'appilot.db'));
+    const base = Date.now();
+
+    const first = armItunesSearchBlockStore(store, base);
+    assert.equal(first.level, 1, '首次 level=1');
+    // 解除后 5 分钟（复发窗口 15 分钟内）再次 403 → level2、90 分钟。
+    const second = armItunesSearchBlockStore(store, base + 45 * 60_000 + 5 * 60_000);
+    assert.equal(second.newlyArmed, true, '解除后可再次触发');
+    assert.equal(second.level, 2, '复发升级 level=2');
+    assert.equal(second.durationMinutes, 90, 'level2 冷却 90 分钟');
+    // 解除很久之后 → 回 level1（不永久翻倍）。
+    store.kv.set('itunesSearchBlockedUntil', JSON.stringify({ until: new Date(base).toISOString(), level: 2 }));
+    const third = armItunesSearchBlockStore(store, base + 6 * 3600_000);
+    assert.equal(third.level, 1, '远离复发窗口 → 回 level1');
     store.close();
   });
 

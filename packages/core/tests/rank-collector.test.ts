@@ -2,6 +2,7 @@ import {
   ITUNES_SEARCH_BLOCK_KV_KEY,
   ITUNES_SEARCH_BLOCK_MS,
   collectKeywordRankings,
+  computeItunesSearchBlock,
   formatItunesBlockClock,
   isItunesSearchBlocked,
   isItunesSearchForbidden,
@@ -10,6 +11,7 @@ import {
   itunesSearchBlockUntilIso,
   itunesSearchBlockUntilIsoForNow,
   searchAppStoreRank,
+  setItunesSearchPacingForTests,
 } from "../src/rank-collector";
 
 let errors = 0;
@@ -39,6 +41,8 @@ function mockFetch(results: any[]) {
 }
 
 async function run() {
+  // 测试关闭全局节拍（否则 3.2s/请求会拖慢用例）。
+  setItunesSearchPacingForTests(0);
   mockFetch([
     { trackId: 111, trackName: "Other" },
     { trackId: 222, trackName: "Target" },
@@ -136,6 +140,53 @@ async function run() {
   assert(
     isItunesSearchForbidden(Object.assign(new Error("iTunes Search API 403"), {})) === true,
     "403 谓词兜底匹配文本",
+  );
+
+  // ── 级别化冷却：复发升级 + 新旧格式兼容 ──
+  const base = Date.parse("2026-09-17T03:00:00Z");
+  const first = computeItunesSearchBlock(undefined, base);
+  assert(first.state.level === 1 && !first.escalated, "首次熔断 level=1");
+  assert(
+    new Date(first.untilIso).getTime() === base + ITUNES_SEARCH_BLOCK_MS,
+    "level1 冷却 45 分钟",
+  );
+  assert(
+    isItunesSearchBlocked(JSON.stringify(first.state), base + 60_000) === true &&
+      isItunesSearchBlocked(first.state, base + 60_000) === true,
+    "新格式（文本/对象）冷却中判定",
+  );
+  // 冷却解除后 5 分钟复发 → 升 level2（90 分钟）
+  const recurrenceAt = base + ITUNES_SEARCH_BLOCK_MS + 5 * 60_000;
+  const kvText = JSON.stringify(first.state);
+  const second = computeItunesSearchBlock(kvText, recurrenceAt);
+  assert(second.state.level === 2 && second.escalated, "复发窗口内再次 403 → level2");
+  assert(
+    new Date(second.untilIso).getTime() === recurrenceAt + ITUNES_SEARCH_BLOCK_MS * 2,
+    "level2 冷却 90 分钟",
+  );
+  // 旧格式（裸 ISO）也参与复发升级
+  const legacy = computeItunesSearchBlock(
+    new Date(base + ITUNES_SEARCH_BLOCK_MS).toISOString(),
+    base + ITUNES_SEARCH_BLOCK_MS + 60_000,
+  );
+  assert(legacy.state.level === 2, "旧格式 ISO 同样识别复发升级");
+  // 解除很久之后 → 回 level1
+  const muchLater = new Date(second.untilIso).getTime() + 3600_000;
+  const third = computeItunesSearchBlock(JSON.stringify(second.state), muchLater);
+  assert(third.state.level === 1 && !third.escalated, "超过复发窗口 → 回 level1");
+  // 对象形态（electron store.get 反序列化后）
+  const viaObj = computeItunesSearchBlock(second.state, muchLater);
+  assert(viaObj.state.level === 1, "对象形态（store.get）同样解析并回落 level1");
+  // 级别封顶
+  const capped = computeItunesSearchBlock(
+    JSON.stringify({ until: new Date(base).toISOString(), level: 4 }),
+    base + 60_000,
+  );
+  assert(capped.state.level === 4, "level 封顶 4（3 小时）");
+  assert(
+    isItunesSearchBlocked(JSON.stringify({ until: new Date(base).toISOString(), level: 4 }), base + 60_000) ===
+      true,
+    "封顶级别仍是熔断中",
   );
 
   // ── 采集途中 403 → 整批中止并向上抛（供 projects:collectRanks 触发熔断） ──

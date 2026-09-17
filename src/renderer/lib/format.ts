@@ -81,8 +81,9 @@ export function formatDurationMs(ms?: number | null): string {
   return `${minutes} 分 ${seconds} 秒`;
 }
 
+/** 运行字符数（AI 按钮）：统一保留一位小数，如 0.8K字 / 12.3K字。 */
 export function formatKilo(chars: number): string {
-  return `${(chars / 1000).toFixed(1).replace(/\.0$/, "")}K字`;
+  return `${(chars / 1000).toFixed(1)}K字`;
 }
 
 export function formatTokens(n: number): string {

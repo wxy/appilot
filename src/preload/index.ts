@@ -122,8 +122,15 @@ contextBridge.exposeInMainWorld("appilot", {
     testAscKey: (projectId: string, params?: { issuerId?: string; keyId?: string; privateKeyPath?: string }): Promise<any> =>
       ipcRenderer.invoke("projects:testAscKey", projectId, params),
     selectAscKeyFile: (): Promise<string | null> => ipcRenderer.invoke("projects:selectAscKeyFile"),
-    generateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language),
-    curateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:curateKeywords", projectId, language),
+    generateKeywords: (projectId: string, language: string, operationId = ""): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language, operationId),
+    curateKeywords: (projectId: string, language: string, operationId = ""): Promise<any> => ipcRenderer.invoke("projects:curateKeywords", projectId, language, operationId),
+    localizeKeywords: (
+      projectId: string,
+      language: string,
+      operationId = "",
+      masterKeywords: { keyword: string; translation?: string }[] = [],
+    ): Promise<any> =>
+      ipcRenderer.invoke("projects:localizeKeywords", projectId, language, operationId, masterKeywords),
     getSubmissionReference: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:getSubmissionReference", projectId, language),
     extractSubmissionCandidates: (projectId: string, language: string, operationId = ""): Promise<any> =>
       ipcRenderer.invoke("projects:extractSubmissionCandidates", projectId, language, operationId),
@@ -376,5 +383,11 @@ contextBridge.exposeInMainWorld("appilot", {
 
   stats: {
     aiUsage: (): Promise<any> => ipcRenderer.invoke("stats:aiUsage"),
+    // 主进程每次 AI 记账后直连推送累计用量（确定性刷新，不等轮询）。
+    onAiUsage: (callback: (usage: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, usage: any) => callback(usage);
+      ipcRenderer.on("ai:usageUpdated", listener);
+      return () => ipcRenderer.removeListener("ai:usageUpdated", listener);
+    },
   },
 });

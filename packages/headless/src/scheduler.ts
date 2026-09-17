@@ -183,6 +183,15 @@ export interface LeaseSchedulerOptions {
 export interface LeaseScheduler {
   start(): void;
   dispose(): void;
+  /**
+   * 平滑停机：停止派发新任务后，等待**在途执行**（rank 采集 / github-sync 等
+   * 网络请求）完成或超时。daemon 停止/重启前必须先 drain——否则在途请求被
+   * process.exit 掐断，执行结果丢失（子任务是进程内异步请求，不是子进程，
+   * 无僵尸问题，但会被硬切）。
+   */
+  drain(timeoutMs?: number): Promise<{ drained: boolean; inflight: number }>;
+  /** 当前在途执行数（daemon status / 停机进度展示用）。 */
+  inflightCount(): number;
   isLeader(): boolean;
   /** 任务状态快照（db.tasks）。 */
   snapshot(): TaskRow[];
@@ -254,6 +263,17 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
   let timerMs: number | null = null;
   let accel = false;
   const running = new Set<string>();
+  // 在途执行 promise 集：dispose 只停派发，drain 靠它等待执行收尾。
+  const inflight = new Set<Promise<unknown>>();
+  /** 派发入口：把执行 promise 挂进在途集（完成后自动摘除，吞掉拒绝避免 unhandled）。 */
+  function track<T>(p: Promise<T>): Promise<T> {
+    inflight.add(p);
+    p.then(
+      () => inflight.delete(p),
+      () => inflight.delete(p),
+    );
+    return p;
+  }
   const now = opts.now ?? (() => Date.now());
   const sleepCfg = resolveSleepWindowOptions(opts.sleepWindow === false ? {} : (opts.sleepWindow ?? {}));
   const sleepTracker = opts.sleepWindow === false ? null : createSleepWindowTracker(sleepCfg);
@@ -272,6 +292,15 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       running.size > 0 &&
       sleepTracker.snapshot(now()).phase === 'window';
     sleepHold.setHold(holding);
+  }
+
+  /** 停止派发（清 tick timer、落为主、释放保持唤醒）。dispose 与 drain 共用。 */
+  function disposeScheduler(): void {
+    if (timer) clearInterval(timer);
+    timer = null;
+    leader = false;
+    accel = false;
+    sleepHold?.setHold(false);
   }
 
   // ── 执行统计（架构收敛 B：daemon 自维护状态在 headless 调度循环处的累计点）──
@@ -456,10 +485,12 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       // daemon 级失败计数仍 +1（运行确实以失败告终，与限流类同口径）；不影响
       // 任务行状态，因此任务中心失败列表/横幅不会再生。
       if (executor.hitsItunesSearch === true && isItunesSearchForbidden(err)) {
-        if (armItunesSearchBlockStore(store)) {
+        const arm = armItunesSearchBlockStore(store);
+        if (arm.newlyArmed) {
           log(
             `[scheduler:${leaderId}] iTunes Search 403 熔断触发（${task.id}）——` +
-              '暂停自动 rank 采集 45 分钟',
+              `暂停自动 rank 采集 ${arm.durationMinutes} 分钟（级别 ${arm.level}）` +
+              `，冷却至 ${formatItunesBlockClock(arm.untilIso)}`,
           );
         }
         const blockSummary = itunesSearchBlockSkipSummary(store);
@@ -612,14 +643,14 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
       return; // 存在活主，等待其过期
     }
     balanceFuture();
-    for (const job of dueJobs()) void execute(job);
+    for (const job of dueJobs()) track(execute(job));
     // 并发上限：避免网络型实例（github-sync/rank）执行堆积叠加触发上游限流
     // （教训 B——全量到期时 tick 叠加曾把 iTunes 打到 IP 级 403）。
     for (const inst of dueInstances()) {
       if (running.size >= MAX_INFLIGHT_INSTANCES) break;
       // 窗口末尾/系统休眠中：不再派发新请求（在途请求继续跑完）。
       if (sleepTracker && !sleepTracker.canDispatch(now())) break;
-      void executeInstance(inst);
+      track(executeInstance(inst));
     }
     // 节拍自适应：加速 > 休眠窗口（用满短暂窗口）> 心跳。
     syncTimerInterval();
@@ -674,12 +705,24 @@ export function createLeaseScheduler(opts: LeaseSchedulerOptions): LeaseSchedule
     isAccel() {
       return accel;
     },
-    dispose() {
-      if (timer) clearInterval(timer);
-      timer = null;
-      leader = false;
-      accel = false;
-      sleepHold?.setHold(false);
+    dispose: disposeScheduler,
+    inflightCount() {
+      return inflight.size;
+    },
+    async drain(timeoutMs = 30_000) {
+      // 先停止派发（清 tick timer / 释放保持唤醒），再等在途执行收尾。
+      disposeScheduler();
+      if (inflight.size === 0) return { drained: true, inflight: 0 };
+      const deadline = new Promise<false>((resolve) => {
+        // unref：排空提前完成时，超时定时器不得拖住进程退出。
+        const t = setTimeout(() => resolve(false), timeoutMs);
+        if (typeof t.unref === 'function') t.unref();
+      });
+      const drained = await Promise.race([
+        Promise.allSettled([...inflight]).then(() => true),
+        deadline,
+      ]);
+      return { drained, inflight: inflight.size };
     },
     isLeader() {
       return leader;
