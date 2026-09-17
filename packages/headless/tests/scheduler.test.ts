@@ -87,6 +87,87 @@ function main() {
     } catch (err) {
       fail("lease scheduler: single leader runs jobs, takeover after crash", err);
     }
+
+    // 平滑停机：drain 应等在途执行收尾后再返回（超时则放弃等待）。
+    try {
+      const drainDir = mkdtempSync(join(tmpdir(), "headless-drain-"));
+      const drainStore = openStore(join(drainDir, "appilot.db"));
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const sched = createLeaseScheduler({
+        store: drainStore,
+        leaderId: "drain-test",
+        jobs: [
+          {
+            id: "slow-job",
+            title: "slow",
+            intervalMinutes: 1,
+            run: async () => {
+              await gate;
+              return "done";
+            },
+          },
+        ],
+        heartbeatMs: 200,
+        ttlMs: 800,
+      });
+      sched.start();
+      await sleep(300);
+      assert.ok(sched.inflightCount() >= 1, "tick 派发后 slow-job 应在途");
+      let drained: { drained: boolean; inflight: number } | null = null;
+      const draining = sched.drain(5000).then((r) => (drained = r));
+      await sleep(150);
+      assert.equal(drained, null, "drain 应等待在途执行，而不是立即返回");
+      release();
+      const result = await draining;
+      assert.equal(result.drained, true, "执行收尾后 drain 应完成");
+      assert.equal(
+        drainStore.tasks.get("slow-job")?.lastStatus,
+        "ok",
+        "drain 完成时执行结果应已落库",
+      );
+      sched.dispose();
+      drainStore.close();
+      pass("drain: waits for inflight executions before returning");
+    } catch (err) {
+      fail("drain: waits for inflight executions before returning", err);
+    }
+
+    // drain 超时：执行挂死时按上限放弃等待（不永久卡住停机）。
+    try {
+      const drainDir = mkdtempSync(join(tmpdir(), "headless-drain-timeout-"));
+      const drainStore = openStore(join(drainDir, "appilot.db"));
+      let release2: (() => void) | null = null;
+      const gate2 = new Promise<void>((r) => (release2 = r));
+      const sched = createLeaseScheduler({
+        store: drainStore,
+        leaderId: "drain-timeout-test",
+        jobs: [
+          {
+            id: "hang-job",
+            title: "hang",
+            intervalMinutes: 1,
+            run: async () => {
+              await gate2;
+              return "x";
+            },
+          },
+        ],
+        heartbeatMs: 200,
+        ttlMs: 800,
+      });
+      sched.start();
+      await sleep(300);
+      const result = await sched.drain(200);
+      assert.equal(result.drained, false, "执行挂死时 drain 应按上限超时");
+      assert.ok(result.inflight >= 1, "超时后应报告仍在途的执行数");
+      release2?.();
+      sched.dispose();
+      drainStore.close();
+      pass("drain: gives up after timeout with hung execution");
+    } catch (err) {
+      fail("drain: gives up after timeout with hung execution", err);
+    }
     if (failures > 0) {
       console.error(`\n${failures} test(s) FAILED`);
       process.exit(1);

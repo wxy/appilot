@@ -383,5 +383,11 @@ contextBridge.exposeInMainWorld("appilot", {
 
   stats: {
     aiUsage: (): Promise<any> => ipcRenderer.invoke("stats:aiUsage"),
+    // 主进程每次 AI 记账后直连推送累计用量（确定性刷新，不等轮询）。
+    onAiUsage: (callback: (usage: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, usage: any) => callback(usage);
+      ipcRenderer.on("ai:usageUpdated", listener);
+      return () => ipcRenderer.removeListener("ai:usageUpdated", listener);
+    },
   },
 });

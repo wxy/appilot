@@ -10,10 +10,10 @@
  */
 import {
   ITUNES_SEARCH_BLOCK_KV_KEY,
+  computeItunesSearchBlock,
   formatItunesBlockClock,
   isItunesSearchBlocked,
-  itunesSearchBlockUntilIso,
-  itunesSearchBlockUntilIsoForNow,
+  itunesSearchBlockStateFromRaw,
 } from '@appilot-labs/appilot-core/rank-collector';
 import type { AppilotStore } from './store.js';
 
@@ -24,7 +24,7 @@ export function itunesSearchBlockedUntilStore(
   store: AppilotStore,
   nowMs: number = Date.now(),
 ): string | null {
-  return itunesSearchBlockUntilIso(store.kv.get(ITUNES_SEARCH_BLOCK_KV_KEY), nowMs);
+  return itunesSearchBlockStateFromRaw(store.kv.get(ITUNES_SEARCH_BLOCK_KV_KEY), nowMs)?.untilIso ?? null;
 }
 
 /** 共享 store 当前是否处于 iTunes Search 403 熔断（冷却中）。 */
@@ -36,17 +36,33 @@ export function isItunesSearchBlockedStore(
 }
 
 /**
- * 触发熔断：写入 until = now + 45 分钟（与主进程同键）。已在冷却期内不再
- * 重复顺延（保持首次触发的时间窗口）。返回是否本次**新触发**。
+ * 触发熔断（级别化冷却）：写入 {"until","level"}。解除后复发窗口内（15min）
+ * 再次 403 → 级别 +1、冷却翻倍（45→90→180→360min 封顶），打破「解除即全速
+ * 重试 → 又 403 → 再延 45 分钟」的滚动延期；已在冷却期内保持原窗口不变。
+ * 返回本次写入的冷却信息（newlyArmed=false 表示冷却已在进行、未改动）。
  */
 export function armItunesSearchBlockStore(
   store: AppilotStore,
   nowMs: number = Date.now(),
-): boolean {
-  if (itunesSearchBlockedUntilStore(store, nowMs) !== null) return false;
-  // 与主进程 getStore().set 一致：kv 值 JSON.stringify(iso)（核心判定兼容裸 ISO）。
-  store.kv.set(ITUNES_SEARCH_BLOCK_KV_KEY, JSON.stringify(itunesSearchBlockUntilIsoForNow(nowMs)));
-  return true;
+): { newlyArmed: boolean; level: number; untilIso: string; durationMinutes: number } {
+  const existing = itunesSearchBlockStateFromRaw(store.kv.get(ITUNES_SEARCH_BLOCK_KV_KEY), nowMs);
+  if (existing) {
+    return {
+      newlyArmed: false,
+      level: existing.level,
+      untilIso: existing.untilIso,
+      durationMinutes: 0,
+    };
+  }
+  const computed = computeItunesSearchBlock(store.kv.get(ITUNES_SEARCH_BLOCK_KV_KEY), nowMs);
+  // 与主进程 store.set 的 kv 落盘形态一致（JSON 文本；core 判定兼容两种来源）。
+  store.kv.set(ITUNES_SEARCH_BLOCK_KV_KEY, JSON.stringify(computed.state));
+  return {
+    newlyArmed: true,
+    level: computed.state.level,
+    untilIso: computed.untilIso,
+    durationMinutes: Math.round(computed.durationMs / 60_000),
+  };
 }
 
 /** 熔断中跳过实例的 lastSummary 文案（不改变状态/排期，仅提示）。 */

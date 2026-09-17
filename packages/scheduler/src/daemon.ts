@@ -28,6 +28,8 @@ export const SCHEDULER_LEADER_ID = 'scheduler';
 export const RECONCILE_INTERVAL_MS = 60_000;
 export const DEFAULT_HEARTBEAT_MS = 15_000;
 export const DEFAULT_TTL_MS = 60_000;
+/** 停机/重启前排空在途执行的等待上限（rank 请求 ~12s 超时，30s 足够覆盖）。 */
+export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
 /** 代码自检周期：部署新 dist 后至多这么久即自重启加载新代码。 */
 export const DEFAULT_UPDATE_CHECK_INTERVAL_MS = 60_000;
 
@@ -85,6 +87,8 @@ export interface DaemonSelfStatus {
   holdingSleep: boolean;
   /** 本机是否具备保持唤醒能力（macOS 且有 caffeinate）。 */
   sleepHoldAvailable: boolean;
+  /** 当前在途执行数（平滑停机排水进度可观察）。 */
+  inflight: number;
 }
 
 /** 默认 socket 路径（与共享 DB 同目录：scheduler.sock）。 */
@@ -98,6 +102,8 @@ export interface DaemonOptions {
   reconcileIntervalMs?: number;
   heartbeatMs?: number;
   ttlMs?: number;
+  /** 停机/重启前排空在途执行的等待上限（默认 30s；超时则放弃等待继续停机）。 */
+  drainTimeoutMs?: number;
   /**
    * 代码自检周期（默认 60s；0 = 关闭）。daemon 对比启动时磁盘代码指纹，
    * 发现更新即自重启加载新代码（见 self-update.ts）。
@@ -138,8 +144,10 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   if (!store.lease.acquire(SCHEDULER_LEADER_ID, opts.ttlMs ?? DEFAULT_TTL_MS)) {
     const info = store.lease.info();
     store.close();
+    // 能走到这里 = 持主心跳新鲜**且进程存活**（崩溃主的租约已在 acquire 里按
+    // leaderPid 存活检测立即接管，不再空等 TTL）。
     throw new Error(
-      `已有调度主在跑（leader=${info?.leaderId ?? '?'} @ ${info?.heartbeatAt ?? '?'}，heartbeat 新鲜）——` +
+      `已有调度主在跑（leader=${info?.leaderId ?? '?'} pid=${info?.leaderPid ?? '?'} @ ${info?.heartbeatAt ?? '?'}，heartbeat 新鲜且进程存活）——` +
         'daemon 单例仲裁退出（若刚重启壳，是壳调度先抢到租约的启动竞态，属正常让位）',
     );
   }
@@ -208,6 +216,8 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       sleep: typeof (scheduler as { sleep?: unknown }).sleep === 'function' ? scheduler.sleep() : null,
       holdingSleep: sleepHold.isHolding(),
       sleepHoldAvailable: sleepHold.isAvailable(),
+      // 在途执行数：平滑停机排水时 UI/日志可观察「还剩几个没收尾」。
+      inflight: scheduler.inflightCount(),
     };
   };
 
@@ -305,6 +315,16 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     stopped = true;
     clearInterval(reconcileTimer);
     if (updateTimer) clearInterval(updateTimer);
+    // 平滑停机：先等在途执行（rank 采集 / github-sync 等网络请求）收尾，
+    // 再拆 socket / 释放租约——否则请求被 process.exit 掐断、结果丢失。
+    const drain = await scheduler
+      .drain(opts.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS)
+      .catch(() => ({ drained: false, inflight: -1 }));
+    log(
+      drain.drained
+        ? 'drained: 在途执行已全部收尾'
+        : `drain 超时：仍有 ~${drain.inflight} 个在途执行未结束，继续停机`,
+    );
     scheduler.dispose();
     sleepHold.dispose(); // 释放「保持唤醒」，避免残留断言阻止系统休眠
     // 先摘除本进程的 socket 名称，再等待现有连接关闭。不能在 close 完成后才按

@@ -117,6 +117,16 @@ async function main(): Promise<void> {
   assert.equal(cAcquire.leader, 'process-C');
   console.log('✓ 主崩溃后从者接管（TTL 过期，接管判定用与主一致的 TTL 窗口）');
 
+  // 5. 崩溃主按 leaderPid 立即接管：A 取得租约后进程退出（心跳仍“新鲜”），
+  //    B 用远大于 TTL 的窗口也应立即接管——不再空等整个 TTL（2026-09-17：
+  //    daemon 崩溃后壳空转 3×20s 的教训）。
+  const ghost = JSON.parse(runSync('acquire', dbPath, 'ghost-A', '60000', '0').stdout);
+  assert.equal(ghost.ok, true, 'ghost-A 应取得租约');
+  const takeover = JSON.parse(runSync('acquire', dbPath, 'shell-B', '60000', '0').stdout);
+  assert.equal(takeover.ok, true, '持主进程已死（心跳仍新鲜）应立即接管');
+  assert.equal(takeover.leader, 'shell-B');
+  console.log('✓ 崩溃主按 leaderPid 立即接管（不空等 TTL）');
+
   console.log('多进程集成测试全部通过 ✓');
 }
 

@@ -1,6 +1,6 @@
 import { normalizeGitHubUrl } from "./git-info";
 import { fetchGitHubJson } from "./github-api";
-import { isItunesSearchForbidden, itunesSearchApiError } from "./rank-collector";
+import { isItunesSearchForbidden, itunesSearchApiError, paceItunesSearch } from "./rank-collector";
 
 export interface Competitor {
   id: string;
@@ -146,6 +146,8 @@ export async function searchCompetitorCandidates(opts: {
   url.searchParams.set("country", opts.country.toUpperCase());
   url.searchParams.set("entity", opts.entity || "software");
   url.searchParams.set("limit", "50");
+  // 与 rank 采集共享全局节拍：/search 的 403 封禁按调用方 IP 计，不分用途。
+  await paceItunesSearch();
   const res = await fetchWithTimeout(url.toString());
   if (!res.ok) throw itunesSearchApiError(res.status);
   const data = JSON.parse(await res.text());

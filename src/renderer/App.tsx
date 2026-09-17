@@ -3,7 +3,7 @@ import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom"
 import { useTheme } from "./stores/theme";
 import { useProject } from "./stores/project";
 import { cn } from "./lib/utils";
-import { platformLabel, formatTokens } from "./lib/format";
+import { platformLabel } from "./lib/format";
 import { HomePage } from "./components/home/HomePage";
 import { TaskCenterPage } from "./components/tasks/TaskCenterPage";
 import { ManageProjectsPage } from "./components/projects/ManageProjectsPage";
@@ -201,7 +201,7 @@ function ProjectSidebar() {
 function Layout({ children }: { children: React.ReactNode }) {
   const { projects, currentProjectId, currentProductId, loading, load } = useProject();
   const location = useLocation();
-  const [aiUsage, setAiUsage] = useState<{ totalTokens: number; cachedTokens: number } | null>(null);
+  const [aiUsage, setAiUsage] = useState<{ totalTokens: number; cachedTokens: number; calls?: number } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
@@ -222,6 +222,7 @@ function Layout({ children }: { children: React.ReactNode }) {
           setAiUsage({
             totalTokens: u?.totalTokens ?? 0,
             cachedTokens: u?.cachedTokens ?? 0,
+            calls: u?.calls ?? 0,
           }),
         )
         .catch(() => setAiUsage(null));
@@ -232,9 +233,19 @@ function Layout({ children }: { children: React.ReactNode }) {
       if ((e as CustomEvent).detail === "ai-usage") refresh();
     };
     window.addEventListener("appilot:data-changed", handler);
+    // 主进程记账后的直连推送：跳过 data-changed → CustomEvent → 再 IPC 三跳，
+    // 每次请求完成都确定性更新胶囊（此前这条中转链上更新不可见）。
+    const offUsage = (window as any).appilot?.stats?.onAiUsage?.((usage: any) => {
+      setAiUsage({
+        totalTokens: usage?.totalTokens ?? 0,
+        cachedTokens: usage?.cachedTokens ?? 0,
+        calls: usage?.calls ?? 0,
+      });
+    });
     const timer = setInterval(refresh, 30_000);
     return () => {
       window.removeEventListener("appilot:data-changed", handler);
+      offUsage?.();
       clearInterval(timer);
     };
   }, []);
@@ -287,13 +298,17 @@ function Layout({ children }: { children: React.ReactNode }) {
         <div className="ml-auto flex items-center gap-2">
           <div
             className="flex items-center gap-1.5 px-2.5 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400"
-            title="AI 消耗 Token（其中缓存命中多少）"
+            title={
+              aiUsage
+                ? `AI 消耗：累计 ${aiUsage.calls ?? "—"} 次请求 · ${aiUsage.totalTokens.toLocaleString()} token（其中缓存命中 ${aiUsage.cachedTokens.toLocaleString()}）`
+                : "AI 消耗 Token（其中缓存命中多少）"
+            }
           >
             <span className="hidden sm:inline">AI 用量</span>
             <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
               {aiUsage === null
                 ? "—"
-                : `${formatTokens(aiUsage.totalTokens)} · 缓存 ${formatTokens(aiUsage.cachedTokens)}`}
+                : `${aiUsage.totalTokens.toLocaleString()} · 缓存 ${aiUsage.cachedTokens.toLocaleString()}`}
             </span>
           </div>
 

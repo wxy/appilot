@@ -57,8 +57,40 @@ function uninstallLaunchAgent(): void {
 }
 
 import { sendSchedulerCommand } from './client.js';
+import { appendFileSync, statSync, truncateSync } from 'node:fs';
+
+/**
+ * daemon 文件日志：壳以 detached + stdio ignore 拉起本进程，stdout/stderr
+ * 无人接收——daemon 的活动日志与崩溃栈只能落这个文件，否则出现「退出
+ * code=1 但日志里查无原因」（2026-09-17 database is locked 崩溃即此）。
+ */
+function logDaemonLine(line: string): void {
+  try {
+    const p = join(dirname(process.env.APPILOT_DB_FILE || defaultDbPath()), 'scheduler-daemon.log');
+    // 尺寸上限：超过 1MB 重开（单 daemon 写，无并发竞争）。
+    try {
+      if (statSync(p).size > 1024 * 1024) truncateSync(p, 0);
+    } catch {
+      /* 文件尚不存在 */
+    }
+    appendFileSync(p, `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    /* 日志失败不碍调度 */
+  }
+}
 
 async function main(): Promise<void> {
+  // 崩溃可见性先行注册：任何阶段（含 runDaemon 内部）的未捕获错误都留痕。
+  process.on('uncaughtException', (err) => {
+    logDaemonLine(`FATAL uncaughtException: ${err?.stack || String(err)}`);
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    // 瞬态异步错误（如偶发 SQLITE_BUSY）：记录但不杀进程（保持调度连续性）。
+    logDaemonLine(
+      `unhandledRejection: ${reason instanceof Error ? (reason.stack || reason.message) : String(reason)}`,
+    );
+  });
   const args = process.argv.slice(2);
   if (args[0] === 'install') {
     installLaunchAgent();
@@ -153,7 +185,14 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ checked: Boolean(res?.ok), ...(res ?? {}) }, null, 2));
     return;
   }
-  const opts: DaemonOptions = { dbPath };
+  const opts: DaemonOptions = {
+    dbPath,
+    // daemon 活动日志 tee 到文件（console 在 detached+stdio ignore 下无人接收）。
+    log: (msg: string) => {
+      logDaemonLine(msg);
+      console.log(`[appilot-scheduler] ${msg}`);
+    },
+  };
   // 代码自检可配（测试/运维）：周期毫秒 + 监控目录（, 或 ; 分隔）。
   const checkMs = process.env.APPILOT_SCHEDULER_UPDATE_CHECK_MS;
   if (checkMs) {
@@ -171,6 +210,7 @@ async function main(): Promise<void> {
     reportStartup({ ok: true, pid: process.pid });
   } catch (err: any) {
     reportStartup({ ok: false, pid: process.pid, error: err?.message || String(err) });
+    logDaemonLine(`startup failed: ${err?.message || String(err)}`);
     // 单例仲裁退出：已有调度者（另一 daemon / Electron / DSH 壳内调度）。若持主者
     // 刚退出，租约 TTL（默认 60s）未过也会拒绝——提示等 TTL 或查 status。
     console.log(`[appilot-scheduler] ${err?.message || String(err)}`);
@@ -187,6 +227,7 @@ async function main(): Promise<void> {
 
 main().catch((err: any) => {
   reportStartup({ ok: false, pid: process.pid, error: err?.message || String(err) });
+  logDaemonLine(`fatal: ${err?.stack || err?.message || String(err)}`);
   console.error(`[appilot-scheduler] fatal: ${err?.message || String(err)}`);
   process.exit(1);
 });

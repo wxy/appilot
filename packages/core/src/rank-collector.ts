@@ -38,6 +38,32 @@ export interface RankProgress {
 
 const ITUNES_SEARCH_URL = "https://itunes.apple.com/search";
 
+// ── 全局请求节奏（2026-09-17 排查教训）──
+// iTunes Search 无官方配额，实测约 20 req/min 以上开始 429，持续 ~45 req/min
+// 五分钟即升级为 403 封禁。采集实例在 daemon 里最高 10 并发派发，无节流时
+// 波峰 50 req/min——这是今天 403 反复触发的根因。所有走 /search 的调用
+// （rank 采集、竞品雷达、手动采集）经同一 FIFO 节拍器串行放行，
+// 最小间隔 3.2s ≈ 18.7 req/min，低于实测阈值并留余量。
+const ITUNES_SEARCH_MIN_INTERVAL_MS = 3_200;
+let itunesSearchMinIntervalMs = ITUNES_SEARCH_MIN_INTERVAL_MS;
+let paceTail: Promise<void> = Promise.resolve();
+let lastSearchStartedAt = 0;
+/** 测试/特殊场景注入：调整全局最小间隔（毫秒；0 = 关闭节拍）。 */
+export function setItunesSearchPacingForTests(intervalMs: number): void {
+  itunesSearchMinIntervalMs = intervalMs;
+}
+
+/** 全局节拍：调用方在发起 /search 请求前 await（含竞品雷达的直连搜索）。 */
+export async function paceItunesSearch(): Promise<void> {
+  const run = paceTail.then(async () => {
+    const waitMs = lastSearchStartedAt + itunesSearchMinIntervalMs - Date.now();
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    lastSearchStartedAt = Date.now();
+  });
+  paceTail = run.catch(() => {});
+  await run;
+}
+
 function entityForProductType(productType?: string | null): string {
   return productType === "macos" ? "macSoftware" : "software";
 }
@@ -86,52 +112,128 @@ export function isItunesSearchForbidden(err: unknown): boolean {
 // 键名与冷却时长由**主进程 scheduler**（src/main/scheduler.ts）与 **headless
 // 执行链**（packages/headless 的 scheduler/executor）共用——两端读写同一个
 // app_kv 表（同一 appilot.db），任一侧触发熔断后全端生效。统一放在本模块
-// （core），避免键名/45 分钟在两处漂移。判定函数只吃 kv 原始值：
-// - electron 侧经 getStore().set → kv.set(key, JSON.stringify(v)) 存入的是
-//   **带 JSON 引号的 ISO 字符串**；
-// - headless 直写 app_kv 时可能是裸 ISO。
-// 两种存法都兼容（见 itunesSearchBlockUntilIso 的引号剥离）。
+// （core），避免键名/冷却时长在两处漂移。判定函数只吃 kv 原始值。
+//
+// 存储格式（2026-09-17 起支持级别化冷却，兼容旧值）：
+// - 旧格式：ISO 字符串（electron 侧经 JSON.stringify 存入带引号；headless 裸 ISO）；
+// - 新格式：{"until":"<ISO>","level":N}（kv 文本或 store.get 反序列化后的对象）。
+//   level=冷却倍率：同一冷却解除后短时间内（复发窗口）再次 403 → 级别 +1、
+//   冷却翻倍——否则「解除即全速重试 → 又 403 → 再延 45 分钟」无限滚动。
 // ────────────────────────────────────────────────────────────────────────────
 /** 熔断状态 kv 键：值为「熔断解除时刻」（ISO 字符串；未来时间 = 熔断中）。 */
 export const ITUNES_SEARCH_BLOCK_KV_KEY = "itunesSearchBlockedUntil";
-/** iTunes Search 403 后的冷却时长：45 分钟（主进程与 headless 共用，勿单侧改动）。 */
+/** iTunes Search 403 基础冷却：45 分钟（level=1；主进程与 headless 共用，勿单侧改动）。 */
 export const ITUNES_SEARCH_BLOCK_MS = 45 * 60_000;
+/** 冷却最高级别（level × 45min；4 级 = 3 小时封顶）。 */
+export const ITUNES_SEARCH_BLOCK_MAX_LEVEL = 4;
+/** 复发窗口：解除后这么短的时间内再次 403 视为「上游惩罚未解除」→ 升一级。 */
+export const ITUNES_SEARCH_RECURRENCE_WINDOW_MS = 15 * 60_000;
 
-/** 剥掉 electron 侧 JSON.stringify 产生的引号，得到可解析的 ISO 文本。 */
-function blockIsoFromRaw(raw: unknown): string | null {
-  if (typeof raw !== "string" || raw.length === 0) return null;
-  let text = raw;
-  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
-    try {
-      const parsed = JSON.parse(text);
-      if (typeof parsed === "string") text = parsed;
-      else return null;
-    } catch {
-      text = text.slice(1, -1);
+export interface ItunesSearchBlockState {
+  untilIso: string;
+  /** 冷却倍率（1 = 基础 45 分钟；复发逐级翻倍）。 */
+  level: number;
+}
+
+/** 剥掉 electron 侧 JSON.stringify 产生的引号，得到可解析文本。 */
+function blockTextFromRaw(raw: unknown): string | null {
+  if (typeof raw === "string" && raw.length > 0) {
+    let text = raw;
+    if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+      try {
+        const parsed = JSON.parse(text);
+        if (typeof parsed === "string") text = parsed;
+        else return null;
+      } catch {
+        text = text.slice(1, -1);
+      }
     }
+    return text;
+  }
+  return null;
+}
+
+/** kv/store 原始值 → 上一次熔断（**含已解除**；复发升级判定用）。无记录返回 null。 */
+export function lastItunesSearchBlockFromRaw(raw: unknown): ItunesSearchBlockState | null {
+  // 新格式对象（electron store.get 反序列化后的形态）。
+  if (raw && typeof raw === "object") {
+    const obj = raw as { until?: unknown; level?: unknown };
+    if (typeof obj.until === "string" && Number.isFinite(new Date(obj.until).getTime())) {
+      return {
+        untilIso: obj.until,
+        level: Math.min(Math.max(1, Math.floor(Number(obj.level) || 1)), ITUNES_SEARCH_BLOCK_MAX_LEVEL),
+      };
+    }
+    return null;
+  }
+  const text = blockTextFromRaw(raw);
+  if (!text) return null;
+  // 新格式文本（headless kv.get 的形态）：{"until":"...","level":N}
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && typeof parsed.until === "string") {
+      return lastItunesSearchBlockFromRaw(parsed);
+    }
+  } catch {
+    /* 旧格式：裸 ISO 文本 */
   }
   const ts = new Date(text).getTime();
-  return Number.isFinite(ts) ? text : null;
+  return Number.isFinite(ts) ? { untilIso: text, level: 1 } : null;
+}
+
+/** kv/store 原始值 → 当前生效的熔断（未来时刻才返回；已解除/非法返回 null）。 */
+export function itunesSearchBlockStateFromRaw(
+  raw: unknown,
+  nowMs: number = Date.now(),
+): ItunesSearchBlockState | null {
+  const state = lastItunesSearchBlockFromRaw(raw);
+  return state && new Date(state.untilIso).getTime() > nowMs ? state : null;
 }
 
 /**
- * 熔断截止（ISO）：kv 原始值解析为**未来**时刻时返回该 ISO，否则（未写入 /
- * 已过期 / 非法）返回 null。nowMs 可注入便于测试。
+ * 计算一次新熔断：距上次解除 ≤ 复发窗口 → 级别 +1（冷却翻倍），否则回到 1 级。
+ * 返回 level 化的持久化状态（electron store.set 直接存对象；headless 需自行
+ * JSON.stringify 后写 kv）与文案所需的 until/时长。
  */
-export function itunesSearchBlockUntilIso(
-  raw: unknown,
+export function computeItunesSearchBlock(
+  prevRaw: unknown,
   nowMs: number = Date.now(),
-): string | null {
-  const iso = blockIsoFromRaw(raw);
-  return iso && new Date(iso).getTime() > nowMs ? iso : null;
+): {
+  state: { until: string; level: number };
+  untilIso: string;
+  durationMs: number;
+  escalated: boolean;
+} {
+  const prev = lastItunesSearchBlockFromRaw(prevRaw);
+  let level = 1;
+  let escalated = false;
+  if (prev) {
+    const sinceExpiryMs = nowMs - new Date(prev.untilIso).getTime();
+    if (sinceExpiryMs >= 0 && sinceExpiryMs <= ITUNES_SEARCH_RECURRENCE_WINDOW_MS) {
+      level = Math.min(prev.level + 1, ITUNES_SEARCH_BLOCK_MAX_LEVEL);
+      escalated = level > 1;
+    }
+  }
+  const durationMs = ITUNES_SEARCH_BLOCK_MS * level;
+  const untilIso = new Date(nowMs + durationMs).toISOString();
+  // 持久化形态：{ until, level }（解析端 lastItunesSearchBlockFromRaw 的对象分支与此对应）。
+  return { state: { until: untilIso, level }, untilIso, durationMs, escalated };
 }
 
 /** kv 原始值 → 是否处于 iTunes Search 403 熔断（冷却中）。 */
 export function isItunesSearchBlocked(raw: unknown, nowMs: number = Date.now()): boolean {
-  return itunesSearchBlockUntilIso(raw, nowMs) !== null;
+  return itunesSearchBlockStateFromRaw(raw, nowMs) !== null;
 }
 
-/** 本次熔断的解除时刻 ISO（now + ITUNES_SEARCH_BLOCK_MS；写入方统一用它）。 */
+/** 兼容旧签名：当前生效熔断的解除时刻 ISO（未熔断返回 null）。 */
+export function itunesSearchBlockUntilIso(
+  raw: unknown,
+  nowMs: number = Date.now(),
+): string | null {
+  return itunesSearchBlockStateFromRaw(raw, nowMs)?.untilIso ?? null;
+}
+
+/** 兼容旧签名：以基础 45 分钟计算「现在触发」的解除时刻（降级路径用）。 */
 export function itunesSearchBlockUntilIsoForNow(nowMs: number = Date.now()): string {
   return new Date(nowMs + ITUNES_SEARCH_BLOCK_MS).toISOString();
 }
@@ -175,6 +277,8 @@ export async function searchAppStoreRank(opts: {
   const requestBytes = Buffer.byteLength(url.toString());
   let lastStatus = 0;
   for (let attempt = 1; attempt <= 3; attempt++) {
+    // 每次尝试（含 429 重试）都过全局节拍，避免并发调用方挤在同一毫秒。
+    await paceItunesSearch();
     const res = await fetchWithTimeout(url);
     lastStatus = res.status;
     if (res.status === 429 && attempt < 3) {

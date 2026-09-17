@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 /** 项目注册表行（与旧 registry.json 记录对齐，新增 updatedAt/artworkUrl）。 */
 export interface ProjectRow {
@@ -253,7 +253,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS lease (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   leaderId TEXT NOT NULL,
-  heartbeatAt TEXT NOT NULL
+  heartbeatAt TEXT NOT NULL,
+  leaderPid INTEGER
 );
 `;
 
@@ -617,6 +618,13 @@ export function migrate(db: {
     const cols = db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>;
     if (!cols.some(c => c.name === 'scheduleJson')) db.exec('ALTER TABLE tasks ADD COLUMN scheduleJson TEXT');
     db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '15') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
+  if (ver < 16) {
+    // v15→v16：lease 记 leaderPid——仲裁时对「心跳新鲜但进程已死」的崩溃主
+    // 立即接管，不再空等整个 TTL（旧行无 pid 仍按 TTL 兜底，向后兼容）。
+    const leaseCols = db.prepare('PRAGMA table_info(lease)').all() as Array<{ name: string }>;
+    if (!leaseCols.some(c => c.name === 'leaderPid')) db.exec('ALTER TABLE lease ADD COLUMN leaderPid INTEGER');
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schemaVersion', '16') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 
 }
