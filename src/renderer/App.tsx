@@ -10,6 +10,7 @@ import { ManageProjectsPage } from "./components/projects/ManageProjectsPage";
 import { OverviewPage } from "./components/overview/OverviewPage";
 import { CopilotPage } from "./components/copilot/CopilotPage";
 import { ReleasePage } from "./components/release/ReleasePage";
+import { PromotionPage } from "./components/promotion/PromotionPage";
 import { KeywordsPage } from "./components/keywords/KeywordsPage";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { ProjectSettingsPage } from "./components/settings/ProjectSettingsPage";
@@ -21,6 +22,7 @@ const PROJECT_NAV_ITEMS = [
   { to: "/overview", label: "总览", title: "项目总览" },
   { to: "/copilot", label: "副驾", title: "AI 副驾工作台" },
   { to: "/release", label: "发布", title: "发布工作台" },
+  { to: "/promotion", label: "推广", title: "上架后推广" },
   { to: "/keywords", label: "排名", title: "关键词排名" },
 ];
 
@@ -173,7 +175,7 @@ function ProjectSidebar() {
         {/* 项目页面：与项目下拉在同一区块内 */}
         <nav className="border-t border-zinc-100 dark:border-zinc-800 p-1 space-y-0.5">
           {PROJECT_NAV_ITEMS.map((item) => {
-            const active = location.pathname === item.to;
+            const active = location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
             return (
               <Link
                 key={item.to}
@@ -418,6 +420,8 @@ export function App() {
         <Route path="/keywords" element={<KeywordsPage />} />
         <Route path="/tasks" element={<TaskCenterPage />} />
         <Route path="/release" element={<ReleasePage />} />
+        <Route path="/promotion" element={<PromotionPage />} />
+        <Route path="/promotion/:campaignId" element={<PromotionPage />} />
         <Route path="/projects" element={<ManageProjectsPage />} />
         <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
