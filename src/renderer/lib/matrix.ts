@@ -1,30 +1,39 @@
 /**
  * Pure helpers for the tracking-keyword matrix view.
  *
- * `language: "en"` is treated as GLOBAL keywords: they are tracked in every
- * storefront and shown in every language view with a "全局" badge.
+ * `language: "en"` is treated as GLOBAL keywords: English is the universal
+ * search language (non-localized storefronts fall back to the English
+ * localization), so en keywords have exactly one home — the 全局 card
+ * (en keywords × all storefronts). Language cards show ONLY their own
+ * language's keywords; en keywords are never mixed in.
  */
 import { languageLabel } from "./format";
 
+/**
+ * 本地语言选项：仅产品自身支持的本地化语言（en 除外——en 是全局卡，不是本地语言 chip）。
+ * 按汉语拼音音序排列（zh-CN localeCompare），与全应用语言标签一致。
+ */
 export function trackingLanguageOptions(
   supported: { code: string; name: string }[],
 ): { code: string; label: string }[] {
-  const options = supported.map((language) => ({
-    code: language.code,
-    label: languageLabel(language.code),
-  }));
-  if (!supported.some((language) => language.code === "en")) {
-    options.push({ code: "en", label: languageLabel("en") });
-  }
-  // 与全应用语言标签一致：按汉语拼音音序排列（zh-CN localeCompare）。
-  return options.sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
+  return supported
+    .filter((language) => language.code !== "en")
+    .map((language) => ({
+      code: language.code,
+      label: languageLabel(language.code),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
 }
 
+/**
+ * 当前卡片的行 = 恰好该语言的关键词。全局（en）词只在全局卡（viewLang 为
+ * "en"/"global"）出现，不再混入各语言卡。
+ */
 export function matrixFilterKeywords<T extends { language: string }>(
   keywords: T[],
   viewLang: string,
 ): T[] {
-  return keywords.filter((keyword) => keyword.language === viewLang || keyword.language === "en");
+  return keywords.filter((keyword) => keyword.language === viewLang);
 }
 
 export const STALE_MS = 36 * 60 * 60 * 1000;

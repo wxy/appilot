@@ -8,22 +8,22 @@ import {
   STALE_MS,
 } from "../src/renderer/lib/matrix";
 
-console.log("✅ PASS: trackingLanguageOptions sorts by zh-CN pinyin and labels en 英文");
+console.log("✅ PASS: trackingLanguageOptions excludes en (global card) and sorts by zh-CN pinyin");
 const opts = trackingLanguageOptions([
   { code: "zh-Hans", name: "简体中文" },
+  { code: "de", name: "德文" },
   { code: "en", name: "英文" },
 ]);
-// 语言标签按汉语拼音音序排列（简 jiǎn < 英 yīng），en 不再置顶。
+// en 是全局卡（英文关键词 × 全部商店），不再作为本地语言选项；其余按汉语拼音音序排列（德 dé < 简 jiǎn）。
 assert.deepEqual(opts, [
+  { code: "de", label: "德文" },
   { code: "zh-Hans", label: "简体中文" },
-  { code: "en", label: "英文" },
 ]);
 assert.deepEqual(trackingLanguageOptions([{ code: "zh-Hans", name: "简体中文" }]), [
   { code: "zh-Hans", label: "简体中文" },
-  { code: "en", label: "英文" },
 ]);
 
-console.log("✅ PASS: matrixFilterKeywords includes viewLang and global en");
+console.log("✅ PASS: matrixFilterKeywords returns only the view language (en lives in the global card)");
 const filtered = matrixFilterKeywords(
   [
     { language: "zh-Hans" },
@@ -32,7 +32,12 @@ const filtered = matrixFilterKeywords(
   ],
   "zh-Hans",
 );
-assert.deepEqual(filtered, [{ language: "zh-Hans" }, { language: "en" }]);
+assert.deepEqual(filtered, [{ language: "zh-Hans" }]);
+// 全局卡（en）只含 en 词，不再混入其他语言。
+assert.deepEqual(
+  matrixFilterKeywords([{ language: "zh-Hans" }, { language: "en" }], "en"),
+  [{ language: "en" }],
+);
 
 console.log("✅ PASS: matrixCellState reports rank, delta and beyond200");
 const snap = [
