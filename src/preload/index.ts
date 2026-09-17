@@ -84,6 +84,13 @@ contextBridge.exposeInMainWorld("appilot", {
   store: {
     currentVersion: (productId: string): Promise<{ version: string; currentVersionReleaseDate: string | null } | null> =>
       ipcRenderer.invoke("store:currentVersion", productId),
+    check: (productId: string): Promise<{
+      currentVersion: { version: string; currentVersionReleaseDate: string | null } | null;
+      ascInfo: any;
+      checkedAt: string;
+    }> => ipcRenderer.invoke("store:check", productId),
+    lastCheckedAt: (productId: string): Promise<string | null> =>
+      ipcRenderer.invoke("store:lastCheckedAt", productId),
   },
 
   readiness: {
@@ -339,6 +346,74 @@ contextBridge.exposeInMainWorld("appilot", {
         sourceLanguage,
         operationId,
       ),
+  },
+
+  promotion: {
+    list: (projectId: string, productId: string): Promise<any> =>
+      ipcRenderer.invoke("promotion:list", projectId, productId),
+    saveProfile: (projectId: string, productId: string, value: any): Promise<any> =>
+      ipcRenderer.invoke("promotion:saveProfile", projectId, productId, value),
+    suggestRedditCommunities: (
+      projectId: string,
+      productId: string,
+      context: { audienceNotes?: string; existingCommunities?: string[] },
+      operationId: string,
+    ): Promise<any[]> =>
+      ipcRenderer.invoke("promotion:suggestRedditCommunities", projectId, productId, context, operationId),
+    analyze: (projectId: string, productId: string, releaseTag: string, operationId: string): Promise<any> =>
+      ipcRenderer.invoke("promotion:analyze", projectId, productId, releaseTag, operationId),
+    saveCampaign: (projectId: string, value: any): Promise<any> =>
+      ipcRenderer.invoke("promotion:saveCampaign", projectId, value),
+    skip: (projectId: string, campaignId: string, reason?: string): Promise<any> =>
+      ipcRenderer.invoke("promotion:skip", projectId, campaignId, reason),
+    importAssets: (projectId: string, campaignId: string, role: "screenshot" | "generated"): Promise<any> =>
+      ipcRenderer.invoke("promotion:importAssets", projectId, campaignId, role),
+    assetPreview: (projectId: string, campaignId: string, assetId: string): Promise<string | null> =>
+      ipcRenderer.invoke("promotion:assetPreview", projectId, campaignId, assetId),
+    removeAsset: (projectId: string, campaignId: string, assetId: string): Promise<any> =>
+      ipcRenderer.invoke("promotion:removeAsset", projectId, campaignId, assetId),
+    generate: (projectId: string, campaignId: string, operationId: string): Promise<any> =>
+      ipcRenderer.invoke("promotion:generate", projectId, campaignId, operationId),
+    generateSeriesPlan: (projectId: string, campaignId: string, operationId: string): Promise<any> =>
+      ipcRenderer.invoke("promotion:generateSeriesPlan", projectId, campaignId, operationId),
+    generateSeriesItem: (projectId: string, campaignId: string, itemId: string, operationId: string): Promise<any> =>
+      ipcRenderer.invoke("promotion:generateSeriesItem", projectId, campaignId, itemId, operationId),
+    markSeriesItemPublished: (
+      projectId: string,
+      campaignId: string,
+      itemId: string,
+      published: boolean,
+    ): Promise<any> =>
+      ipcRenderer.invoke("promotion:markSeriesItemPublished", projectId, campaignId, itemId, published),
+    regenerateDelivery: (
+      projectId: string,
+      campaignId: string,
+      platform: "x" | "reddit" | "facebook",
+      feedback: string,
+      operationId: string,
+    ): Promise<any> =>
+      ipcRenderer.invoke(
+        "promotion:regenerateDelivery",
+        projectId,
+        campaignId,
+        platform,
+        feedback,
+        operationId,
+      ),
+    markPublished: (
+      projectId: string,
+      campaignId: string,
+      platform: "x" | "reddit" | "facebook",
+      published: boolean,
+    ): Promise<any> =>
+      ipcRenderer.invoke("promotion:markPublished", projectId, campaignId, platform, published),
+    platformUrl: (platform: "x" | "reddit" | "facebook", targetLabel?: string): Promise<string> =>
+      ipcRenderer.invoke("promotion:platformUrl", platform, targetLabel),
+    onProgress: (callback: (progress: any) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress);
+      ipcRenderer.on("promotion:progress", listener);
+      return () => ipcRenderer.removeListener("promotion:progress", listener);
+    },
   },
 
   storage: {

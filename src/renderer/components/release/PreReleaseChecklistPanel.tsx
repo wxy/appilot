@@ -117,7 +117,7 @@ export function PreReleaseChecklistPanel({
           <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
             {lastCheckedAt
               ? `上次检查于 ${formatHumanTime(lastCheckedAt)}`
-              : "检查代码、发布文案和 App Store 提交条件"}
+              : "检查代码、商店文案和 App Store 提交条件"}
           </p>
         </div>
         <button
@@ -152,7 +152,7 @@ export function PreReleaseChecklistPanel({
           </div>
           <CheckList
             checks={storeChecks}
-            empty="生成或恢复发布文案后，可检查商店提交条件。"
+            empty="生成或恢复商店文案后，可检查商店提交条件。"
           />
         </section>
       </div>

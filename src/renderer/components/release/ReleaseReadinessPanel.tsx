@@ -14,7 +14,7 @@ export function ReleaseReadinessPanel({
   alerts,
   onAscRefresh,
   ascRefreshing,
-  ascInfo,
+  storeLastCheckedAt,
   onCheckGithub,
   checkingGithub,
   githubLastCheckedAt,
@@ -26,11 +26,11 @@ export function ReleaseReadinessPanel({
   githubNode?: ReactNode;
   /** GitHub 节点的主要打开动作。 */
   githubPrimaryAction?: ReactNode;
-  /** 本地文案草案节点内容。 */
+  /** 商店文案节点内容。 */
   copyNode?: ReactNode;
-  /** 发布文案节点的主要打开动作。 */
+  /** 商店文案节点的主要打开动作。 */
   copyPrimaryAction?: ReactNode;
-  /** 发布文案节点中的查看、创建与维护动作。 */
+  /** 商店文案节点中的查看、创建与维护动作。 */
   copyActions?: ReactNode;
   /** 商店版本节点内容。 */
   storeNode?: ReactNode;
@@ -40,7 +40,7 @@ export function ReleaseReadinessPanel({
   alerts?: ReactNode;
   onAscRefresh?: () => Promise<void>;
   ascRefreshing?: boolean;
-  ascInfo?: { fetchedAt?: string } | null;
+  storeLastCheckedAt?: string | null;
   onCheckGithub?: () => void;
   checkingGithub?: boolean;
   githubLastCheckedAt?: string | null;
@@ -66,15 +66,15 @@ export function ReleaseReadinessPanel({
     primaryAction?: ReactNode;
     actions?: ReactNode;
   }) => (
-    <div className="flex-1 min-w-0 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 p-3">
+    <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 dark:border-zinc-800 dark:bg-zinc-800/30">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 mb-2">
         {icon}
         {title}
       </div>
       {primaryAction && <div className="mb-2.5">{primaryAction}</div>}
-      <div className="flex flex-wrap items-center gap-1.5">{children}</div>
+      <div className="flex min-h-6 flex-wrap items-center gap-1.5">{children}</div>
       {actions && (
-        <div className="mt-2.5 pt-2.5 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap gap-1.5">
+        <div className="mt-auto flex flex-wrap gap-1.5 border-t border-zinc-100 pt-2.5 dark:border-zinc-800">
           {actions}
         </div>
       )}
@@ -88,7 +88,7 @@ export function ReleaseReadinessPanel({
           <div>
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布流程</h3>
             <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
-              GitHub 发布、发布文案与商店状态
+              GitHub 发布、商店文案与商店版本
             </p>
           </div>
           {onToggleChecklist && (
@@ -119,15 +119,11 @@ export function ReleaseReadinessPanel({
                     title="从 GitHub 检测新的发布草案、已发布或提交变化"
                   >
                     <GithubIcon className="w-3 h-3" />
-                    {checkingGithub ? "检查中…" : "检查 GitHub 发布"}
+                    {checkingGithub
+                      ? "检查中…"
+                      : `检查 GitHub 发布（${githubLastCheckedAt ? `上次：${formatHumanTime(githubLastCheckedAt)}` : "尚未检查"}）`}
                   </button>
                 )}
-                <span
-                  className="self-center text-[10px] text-zinc-400 dark:text-zinc-500"
-                  title={githubLastCheckedAt ? new Date(githubLastCheckedAt).toLocaleString() : undefined}
-                >
-                  上次检查：{githubLastCheckedAt ? formatHumanTime(githubLastCheckedAt) : "尚未检查"}
-                </span>
               </>
             }
           >
@@ -142,7 +138,7 @@ export function ReleaseReadinessPanel({
             →
           </div>
           <FlowNode
-            title="发布文案"
+            title="商店文案"
             primaryAction={copyPrimaryAction}
             actions={copyActions}
           >
@@ -165,13 +161,10 @@ export function ReleaseReadinessPanel({
                     className={actionButtonClass}
                   >
                     <AppleIcon className="w-3 h-3" />
-                    {ascRefreshing ? "检查中…" : "检查商店状态"}
+                    {ascRefreshing
+                      ? "检查中…"
+                      : `检查商店状态（${storeLastCheckedAt ? `上次：${formatHumanTime(storeLastCheckedAt)}` : "尚未检查"}）`}
                   </button>
-                )}
-                {ascInfo?.fetchedAt && (
-                  <span className="self-center text-[10px] text-zinc-400 dark:text-zinc-500">
-                    更新于 {formatHumanTime(ascInfo.fetchedAt)}
-                  </span>
                 )}
               </>
             }

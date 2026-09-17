@@ -25,7 +25,7 @@ export function HistoryPanel({
         <div>
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案列表</h2>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            查看当前与历史的已定稿发布文案，并在需要时作为新版本的参考。
+            查看当前与历史的已定稿商店文案，并在需要时作为新版本的参考。
           </p>
         </div>
         <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">

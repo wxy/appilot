@@ -115,6 +115,8 @@ export function ReleasePage() {
   const [showBaseline, setShowBaseline] = useState(false);
   const [showCurrentDetails, setShowCurrentDetails] = useState(false);
   const [storeCurrentVersion, setStoreCurrentVersion] = useState<string | null>(null);
+  const [storeReleaseDate, setStoreReleaseDate] = useState<string | null>(null);
+  const [storeLastCheckedAt, setStoreLastCheckedAt] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [confirmingMaster, setConfirmingMaster] = useState(false);
   const [confirmingBatch, setConfirmingBatch] = useState(false);
@@ -150,22 +152,29 @@ export function ReleasePage() {
     try {
       const info = await (window as any).appilot?.store?.currentVersion(productId);
       setStoreCurrentVersion(info?.version || null);
+      setStoreReleaseDate(info?.currentVersionReleaseDate || null);
     } catch {
       setStoreCurrentVersion(null);
+      setStoreReleaseDate(null);
     }
   };
   useEffect(() => {
+    if (!productId) return;
     void loadStoreCurrentVersion();
+    (window as any).appilot?.store?.lastCheckedAt(productId)
+      .then((value: string | null) => setStoreLastCheckedAt(value || null))
+      .catch(() => setStoreLastCheckedAt(null));
   }, [productId]);
 
   const handleAscRefresh = async () => {
     if (!productId || ascRefreshing) return;
     setAscRefreshing(true);
     try {
-      await (window as any).appilot?.asc?.sync(productId);
-      const info = await (window as any).appilot?.asc?.status(productId);
-      setAscInfo(info || null);
-      void loadStoreCurrentVersion();
+      const result = await (window as any).appilot?.store?.check(productId);
+      setAscInfo(result?.ascInfo || null);
+      setStoreCurrentVersion(result?.currentVersion?.version || null);
+      setStoreReleaseDate(result?.currentVersion?.currentVersionReleaseDate || null);
+      setStoreLastCheckedAt(result?.checkedAt || null);
     } finally {
       setAscRefreshing(false);
     }
@@ -427,6 +436,10 @@ export function ReleasePage() {
     storeCurrentVersion,
   });
   const storeLiveVersion = ascStoreLiveVersion(ascInfo?.versions);
+  const ascStoreLiveDate = [...(ascInfo?.versions || [])]
+    .filter((item: any) => item?.appStoreState === "READY_FOR_SALE")
+    .sort((a: any, b: any) => String(b?.createdDate || "").localeCompare(String(a?.createdDate || "")))[0]
+    ?.createdDate || null;
   // ASC configured but not synced yet → "待同步", never "未配置".
   const ascPending = ascConfigured && !ascInfo && versionQuery;
   const effectiveVersionStatus = ascPending
@@ -561,6 +574,9 @@ export function ReleasePage() {
       <StatusChip label={githubStatus.label} tone={githubStatus.tone} />
     </>
   ) : null;
+  const githubTimeLabel = release?.publishedAt
+    ? `${release.githubDraft === true ? "创建于" : "发布于"}${formatHumanTime(release.publishedAt)}`
+    : "时间未知";
   const flowPrimaryButtonClass = cn(
     btnPrimary,
     "min-h-11 w-full justify-between px-3.5 disabled:bg-zinc-300 dark:disabled:bg-zinc-700",
@@ -577,8 +593,8 @@ export function ReleasePage() {
         <GithubIcon className="h-4 w-4 text-white" />
         <span className="truncate">打开发布公告</span>
       </span>
-      <span className="shrink-0 text-xs font-semibold">
-        {selectedRelease?.tag || "不可用"}{selectedRelease?.url ? " ↗" : ""}
+      <span className="shrink-0 text-[11px] font-semibold">
+        {selectedRelease?.tag || "不可用"}（{githubTimeLabel}）{selectedRelease?.url ? " ↗" : ""}
       </span>
     </button>
   );
@@ -596,16 +612,6 @@ export function ReleasePage() {
       <>
         <StatusChip label={currentStoreCopyStatus.label} tone={currentStoreCopyStatus.tone} />
         <StatusChip label={currentScreenshotCopyStatus.label} tone={currentScreenshotCopyStatus.tone} />
-        {currentWorkspaceDraft && (currentWorkspaceDraft.localizations || []).length > 0 && (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-            {(currentWorkspaceDraft.localizations || []).length}/{availableLanguages.length} 语言
-          </span>
-        )}
-        {currentWorkspaceDraft?.updatedAt && (
-          <span className="w-full text-[10px] text-zinc-400 dark:text-zinc-500">
-            更新于 {formatHumanTime(currentWorkspaceDraft.updatedAt)}
-          </span>
-        )}
       </>
     ) : (
       <>
@@ -618,40 +624,36 @@ export function ReleasePage() {
       type="button"
       onClick={() => setShowCurrentDetails(true)}
       className={flowPrimaryButtonClass}
-      title={currentWorkspaceDraft ? "打开该版本的发布文案" : "打开文案工作区"}
+      title={currentWorkspaceDraft ? "打开该版本的商店文案" : "打开商店文案工作区"}
     >
       <span className="truncate">
         {currentWorkspacePhase === "official"
-          ? "打开当前发布文案"
+          ? "打开当前商店文案"
           : currentWorkspacePhase === "editing"
             ? "打开编辑中的文案"
             : "打开文案工作区"}
       </span>
-      <span className="shrink-0 text-xs font-semibold">
-        {currentTargetVersion ? `v${currentTargetVersion} →` : "→"}
+      <span className="shrink-0 text-[11px] font-semibold">
+        {currentTargetVersion ? `v${currentTargetVersion}` : "未定版本"}（{currentWorkspaceDraft?.updatedAt ? `更新于${formatHumanTime(currentWorkspaceDraft.updatedAt)}` : "尚未更新"}） →
       </span>
     </button>
   );
+  const storeVersionMatches = Boolean(versionQuery && storeLiveVersion && storeLiveVersion === versionQuery);
   const storeNode = effectiveVersionStatus || buildInfo || (viewDraft?.appVersion && storeLiveVersion) ? (
     <>
       {effectiveVersionStatus && (
         <ValueFlash value={effectiveVersionStatus.key} mode="text">
-          <StatusChip label={effectiveVersionStatus.label} tone={effectiveVersionStatus.tone} />
+          <StatusChip
+            label={`${effectiveVersionStatus.label}${storeVersionMatches ? " · 版本一致" : ""}`}
+            tone={effectiveVersionStatus.tone}
+          />
         </ValueFlash>
       )}
       {buildInfo && (
         <StatusChip label={buildInfo.label} tone={buildTone} />
       )}
-      {draft?.appVersion && storeLiveVersion && (
-        storeLiveVersion === draft.appVersion ? (
-          <span className="text-[10px] text-emerald-600 dark:text-emerald-500">
-            商店版本一致
-          </span>
-        ) : (
-          <span className="text-[10px] text-amber-600 dark:text-amber-500">
-            商店 v{storeLiveVersion} ≠ 目标 v{draft.appVersion}
-          </span>
-        )
+      {versionQuery && storeLiveVersion && !storeVersionMatches && (
+        <StatusChip label={`商店 v${storeLiveVersion} ≠ 目标 v${versionQuery}`} tone="amber" />
       )}
     </>
   ) : null;
@@ -669,8 +671,8 @@ export function ReleasePage() {
         <AppleIcon className="h-4 w-4 text-white" />
         <span className="truncate">打开商店页面</span>
       </span>
-      <span className="shrink-0 text-xs font-semibold">
-        {storeLiveVersion ? `v${storeLiveVersion} ↗` : storePageUrl ? "打开 ↗" : "不可用"}
+      <span className="shrink-0 text-[11px] font-semibold">
+        {storeLiveVersion ? `v${storeLiveVersion}` : storePageUrl ? "当前版本" : "不可用"}（{storeReleaseDate || ascStoreLiveDate ? `上架于${formatHumanTime(storeReleaseDate || ascStoreLiveDate)}` : "上架时间未知"}）{storePageUrl ? " ↗" : ""}
       </span>
     </button>
   );
@@ -688,7 +690,9 @@ export function ReleasePage() {
           title="把本地文案与商店实际文案逐语言比对（有 ASC 凭证时完整字段；否则公开商店的描述/新增内容）"
         >
           <AppleIcon className="w-3 h-3" />
-          {aligning ? "比对中…" : "比对商店文案"}
+          {aligning
+            ? "比对中…"
+            : `比对上架文案（${currentWorkspaceDraft?.alignmentCheckedAt ? `上次：${formatHumanTime(currentWorkspaceDraft.alignmentCheckedAt)}` : "尚未比对"}）`}
         </button>
       )}
       {canRebuildFromStore && (
@@ -1001,6 +1005,12 @@ export function ReleasePage() {
         draft.releaseTag,
       );
       setAlignment(result || null);
+      if (result?.checkedAt) {
+        setActive((previous: any) => previous?.draft
+          ? { ...previous, draft: { ...previous.draft, alignmentCheckedAt: result.checkedAt } }
+          : previous);
+        setContextRevision((revision) => revision + 1);
+      }
     } catch (e: any) {
       setError(e.message || "对齐校验失败。");
     } finally {
@@ -1319,7 +1329,7 @@ export function ReleasePage() {
       if (String(e?.message || "").includes("已取消")) {
         // 用户主动停止：不算错误，静默清理。
       } else {
-        setError(e.message || "发布文案加载失败。");
+        setError(e.message || "商店文案加载失败。");
         if (force) setGenerateFailed(true);
       }
     } finally {
@@ -1668,7 +1678,7 @@ export function ReleasePage() {
             alerts={alerts}
             onAscRefresh={handleAscRefresh}
             ascRefreshing={ascRefreshing}
-            ascInfo={ascInfo}
+            storeLastCheckedAt={storeLastCheckedAt}
             onCheckGithub={() => void loadReleases(true, false)}
             checkingGithub={checking}
             githubLastCheckedAt={githubLastCheckedAt}
@@ -1724,7 +1734,7 @@ export function ReleasePage() {
             <div className="p-4">
               {!alignment.versionMatched ? (
                 <p className="text-xs text-amber-600 dark:text-amber-500">
-                  商店当前版本与这份发布文案的版本不一致，无法核对（可先刷新 App Store 状态）。
+                  商店当前版本与这份商店文案的版本不一致，无法核对（可先刷新 App Store 状态）。
                 </p>
               ) : alignment.diffs.length === 0 ? (
                 <p className="text-xs text-emerald-600 dark:text-emerald-500">
@@ -2163,7 +2173,7 @@ export function ReleasePage() {
               <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
                 <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
                   <div className="flex min-w-0 flex-wrap items-center gap-3">
-                    <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布文案</h3>
+                    <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店文案</h3>
                     <button
                       type="button"
                       onClick={() => setShowCurrentDetails(false)}

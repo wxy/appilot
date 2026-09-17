@@ -3,6 +3,9 @@ import {
   formatVersionDate,
   mergeHistoryDrafts,
 } from "../src/renderer/components/release/releaseFormat";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { HistoryViewer } from "../src/renderer/components/release/HistoryViewer";
 
 let errors = 0;
 function assert(condition: boolean, msg: string) {
@@ -45,6 +48,22 @@ async function runTests() {
   ]);
   assert(merged2.length === 2, "merge keeps distinct tags separate");
   assert(merged2[0].releaseTag === "v1.1", "merge sorts newest first");
+
+  const historyMarkup = renderToStaticMarkup(createElement(HistoryViewer, {
+    draft: {
+      id: "draft-1",
+      releaseTag: "v1.2.0",
+      updatedAt: "2026-09-15T00:00:00Z",
+      localizations: [
+        { language: "en", name: "App", description: "English" },
+        { language: "ja", name: "アプリ", description: "日本語" },
+      ],
+    },
+  }));
+  assert(
+    (historyMarkup.match(/text-emerald-500/g) || []).length === 2,
+    "历史商店文案为每个已有翻译显示勾选标记",
+  );
 
   if (errors === 0) console.log("\n🎉 All release-format tests passed!");
   else process.exitCode = 1;

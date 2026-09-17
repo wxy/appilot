@@ -17,3 +17,6 @@ export type { Logger, LogLevel } from "./logger";
 // AI (Task 0.5-0.8)
 export { AIProvider } from "./ai/ai-provider";
 export type { ChatMessage, TokenUsage, AIProviderConfig } from "./ai/ai-provider";
+
+// Post-release promotion
+export * from "./promotion";

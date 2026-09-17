@@ -119,7 +119,7 @@ export function CopyPlanPanel({
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">文案计划</h3>
             <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{items.length}</span>
           </div>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">长期保存的改进方向，会像 README 一样自动作为发布文案生成素材。</p>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">长期保存的改进方向，会像 README 一样自动作为商店文案生成素材。</p>
         </div>
         <button type="button" onClick={() => setDraft(emptyDraft())} disabled={busy || Boolean(draft)} className={cn(btnSmPrimary, "disabled:opacity-50")}>
           添加计划
