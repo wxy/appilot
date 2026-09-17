@@ -86,9 +86,24 @@ export function formatKilo(chars: number): string {
   return `${(chars / 1000).toFixed(1)}K字`;
 }
 
+/** Token 用量紧凑格式：500 → "500"、2500 → "2.5K"、1.5M、2.5G、5T。
+ *  ≥100 进为整数，其余保留一位小数；进位边界（如 999,999）向上取整档显示为 1M。 */
 export function formatTokens(n: number): string {
+  if (!Number.isFinite(n)) return "—";
   if (n < 1000) return `${Math.round(n)}`;
-  return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}K`;
+  const units = ["K", "M", "G", "T"];
+  let v = n;
+  let u = -1;
+  while (v >= 1000 && u < units.length - 1) {
+    v /= 1000;
+    u++;
+  }
+  if (Math.round(v) >= 1000 && u < units.length - 1) {
+    v /= 1000;
+    u++;
+  }
+  const body = v >= 100 ? String(Math.round(v)) : v.toFixed(1).replace(/\.0$/, "");
+  return `${body}${units[u]}`;
 }
 
 export function formatBytes(bytes: number): string {

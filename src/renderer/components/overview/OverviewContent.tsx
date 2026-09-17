@@ -906,37 +906,15 @@ export function OverviewContent(props: OverviewContentProps) {
           title="开发"
           lead="上次发布以来提交/PR、Issue 与近 4 个月活跃"
           right={
-            repoGithubUrl || project.hasGithubToken ? (
+            repoGithubUrl ? (
               <div className="flex shrink-0 items-center gap-1.5 min-w-0">
-                {repoGithubUrl && (
-                  <button
-                    onClick={() => onOpenExternal(repoGithubUrl)}
-                    className="shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline"
-                    title="打开 GitHub 仓库"
-                  >
-                    GitHub ↗
-                  </button>
-                )}
-                {project.hasGithubToken ? (
-                  <span
-                    className="inline-flex shrink-0 items-center rounded-full bg-emerald-50 dark:bg-emerald-500/10 px-2 h-5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
-                    title={
-                      project.githubSource
-                        ? `GitHub 凭证已配置（${project.githubSource === "global" ? "全局" : "项目覆盖"}），用于 PR/Issue/私有发布统计`
-                        : "GitHub 凭证已配置，用于 PR/Issue/私有发布统计"
-                    }
-                  >
-                    凭证就绪
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => onOpenSettings(project.id)}
-                    className="shrink-0 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 px-2 h-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400"
-                    title="未配置 GitHub 凭证（配置后可展示 PR/Issue 与私有/草案发布统计）"
-                  >
-                    去设置
-                  </button>
-                )}
+                <button
+                  onClick={() => onOpenExternal(repoGithubUrl)}
+                  className="shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline"
+                  title="打开 GitHub 仓库"
+                >
+                  GitHub ↗
+                </button>
               </div>
             ) : undefined
           }
@@ -1154,26 +1132,6 @@ export function OverviewContent(props: OverviewContentProps) {
                 <AppleIcon className="w-3 h-3 text-current" />
                 App Store
               </span>
-              {ascConfigured ? (
-                <span
-                  className="inline-flex shrink-0 items-center rounded-full bg-emerald-50 dark:bg-emerald-500/10 px-2 h-5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
-                  title={
-                    project.ascSource
-                      ? `App Store Connect 凭证已配置（${project.ascSource === "global" ? "全局" : "项目覆盖"}），用于版本/审核状态回读`
-                      : "App Store Connect 凭证已配置，用于版本/审核状态回读"
-                  }
-                >
-                  凭证就绪
-                </span>
-              ) : (
-                <button
-                  onClick={() => onOpenSettings(project.id)}
-                  className="shrink-0 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 px-2 h-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400"
-                  title="未配置 App Store Connect 凭证（配置后可展示版本/构建/审核状态）"
-                >
-                  去设置
-                </button>
-              )}
             </div>
           }
         >
