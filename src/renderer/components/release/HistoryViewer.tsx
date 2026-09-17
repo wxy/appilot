@@ -46,7 +46,7 @@ export function HistoryViewer({
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm">
       <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">发布文案</h3>
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">商店文案</h3>
           {onBack && (
             <button
               type="button"
@@ -74,6 +74,7 @@ export function HistoryViewer({
               localization={loc}
               readOnly
               productTrackName={productTrackName}
+              generatedLanguages={tabLanguages}
             /> : <p className="py-10 text-center text-sm text-zinc-400 dark:text-zinc-500">这个版本没有商店文案。</p>
           : hasScreenshotCopy ? <ScreenshotMaterialsPanel
               projectId={projectId}

@@ -694,6 +694,7 @@ export function registerReleaseHandlers(): void {
           masterConfirmedAt: draft.masterConfirmedAt || "",
           batchConfirmedAt: draft.batchConfirmedAt || "",
           ascSyncedAt: draft.ascSyncedAt || "",
+          alignmentCheckedAt: draft.alignmentCheckedAt || "",
           screenshotCopy: draft.screenshotCopy,
         }))
         // Identity by appVersion: one entry per target version, newest first.

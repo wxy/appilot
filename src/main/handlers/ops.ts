@@ -184,6 +184,36 @@ export function registerOpsHandlers(): void {
     return null;
   });
 
+  // 发布工作台的显式商店检查。与页面载入时的公开查询分开记录，保证
+  // “上次检查”只代表用户点击按钮后完成的处理时间。
+  ipcMain.handle("store:check", async (_event, productId: string) => {
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    await runBuildStatusNow(productId);
+    const projects: any[] = s.get("projects") || [];
+    let currentVersion = null;
+    for (const project of projects) {
+      const product = (project.storeProducts || []).find((item: any) => item.id === productId);
+      if (!product?.trackId) continue;
+      const { fetchStoreCurrentVersion } = await import("@appilot-labs/appilot-core/app-store-discovery");
+      currentVersion = await fetchStoreCurrentVersion(product.trackId);
+      break;
+    }
+    const checkedAt = new Date().toISOString();
+    const checks: Record<string, string> = s.get("releaseStoreChecks") || {};
+    checks[productId] = checkedAt;
+    s.set("releaseStoreChecks", checks);
+    const kvAsc = (s.get("ascCache") || {})[productId];
+    const ascInfo = (blobGet(sharedStore(), "ascCache", productId) as any) ?? kvAsc ?? null;
+    return { currentVersion, ascInfo, checkedAt };
+  });
+
+  ipcMain.handle("store:lastCheckedAt", async (_event, productId: string) => {
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    return (s.get<Record<string, string>>("releaseStoreChecks") || {})[productId] || null;
+  });
+
   ipcMain.handle("readiness:get", async (_event, projectId: string, draftId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     draftId = assertNonEmptyString(draftId, "draftId");
@@ -259,7 +289,11 @@ export function registerOpsHandlers(): void {
       const copy = await fetchAlignmentStoreCopy(s, project, product, draft);
       const { diffDraftAgainstStore } = await import("@appilot-labs/appilot-core/store-submission");
       const diffs = diffDraftAgainstStore(draft, copy.storeByLanguage);
-      return { mode: copy.mode, versionMatched: copy.versionMatched, diffs };
+      const checkedAt = new Date().toISOString();
+      draft.alignmentCheckedAt = checkedAt;
+      upsertStoreSubmissionDraft(project, draft);
+      s.set("projects", projects);
+      return { mode: copy.mode, versionMatched: copy.versionMatched, diffs, checkedAt };
     },
   );
 

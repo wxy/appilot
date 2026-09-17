@@ -61,6 +61,8 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   ascSyncedAt?: string;
   /** 无 ASC 凭证时，按商店公开信息（iTunes description/releaseNotes）部分冻结的时间。 */
   storeSyncedAt?: string;
+  /** 最近一次由用户发起“比对上架文案”并完成读取的时间。 */
+  alignmentCheckedAt?: string;
   /** 变更摘要中已由用户确认为覆盖的条目 id（用于 what's-new 覆盖核对）。 */
   summaryChecklist?: string[];
   createdAt: string;
