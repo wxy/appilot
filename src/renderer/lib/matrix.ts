@@ -16,10 +16,8 @@ export function trackingLanguageOptions(
   if (!supported.some((language) => language.code === "en")) {
     options.push({ code: "en", label: languageLabel("en") });
   }
-  return [
-    ...options.filter((option) => option.code === "en"),
-    ...options.filter((option) => option.code !== "en"),
-  ];
+  // 与全应用语言标签一致：按汉语拼音音序排列（zh-CN localeCompare）。
+  return options.sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
 }
 
 export function matrixFilterKeywords<T extends { language: string }>(

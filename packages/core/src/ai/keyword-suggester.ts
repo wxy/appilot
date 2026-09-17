@@ -57,6 +57,7 @@ export async function generateKeywords(
     profile?: ProjectProfile;
   },
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<KeywordGeneration> {
   log.info(`Generating ASO keywords for ${context.name} (${context.language})`);
 
@@ -93,13 +94,93 @@ export async function generateKeywords(
       thinking: "low",
       retryWithoutThinking: true,
       onProgress,
+      signal,
     });
     return normalizeKeywordGeneration(data, context.language);
   } catch (err: any) {
+    // 用户主动取消：原样上抛，渲染层按「已取消」静默处理。
+    if (err?.code === "AI_CANCELLED" || String(err?.message || "").includes("已取消")) throw err;
     log.warn(
       `Keyword generation failed for ${context.name}: ${err.message}`,
     );
     throw new Error("AI 关键词响应无法解析，请重试。");
+  }
+}
+
+/**
+ * 母本本地化：把英文（全局）母本关键词集改写为目标语言的搜索短语。
+ * 与 generateKeywords 的“从零头脑风暴”不同，这里以母本为基准一一对应：
+ * 输出更小更快，各语言词表天然对齐（同一套搜索意图），英文短语不再被
+ * 每种语言重复生成一遍。
+ */
+export async function localizeKeywords(
+  provider: AIProvider,
+  context: {
+    name: string;
+    subtitle?: string;
+    description: string;
+    productType: string;
+    language: string;
+    uiLanguage: string;
+    /** 英文（全局）母本关键词集，本地化的基准。 */
+    masterKeywords: { keyword: string; translation?: string }[];
+    existingKeywords?: { keyword: string }[];
+    removedKeywords?: string[];
+    profile?: ProjectProfile;
+  },
+  onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
+): Promise<KeywordGeneration> {
+  log.info(
+    `Localizing ASO keywords for ${context.name} (${context.language}) from ${context.masterKeywords.length} masters`,
+  );
+
+  const messages = buildArchiveMessages(
+    context.profile,
+    [
+      "You are Appilot's ASO keyword localizer. The app already tracks a master set of English (global) search phrases. Localize that master set into the target localization language.",
+      "1. `tracking`: for EACH master phrase, give the search phrase a real user of the target locale would type (2-4 words, spaces allowed). Keep the same search intent — do not invent unrelated phrases. You may DROP a master phrase only when it makes no sense for this locale, and add at most 3 locale-specific variant phrases users there would actually type.",
+      "Each item needs a `language` (the target localization language), a `keyword` in the target language, a `translation` of that keyword into the UI language, and a `rationale` written in the UI language (mention which master phrase it maps to).",
+      "Do not repeat existing or removed keywords. Do not include competitor brand names. Keep total items close to the master count (at most master count + 3).",
+      'Respond ONLY with a JSON object in this exact shape:',
+      '{"tracking":[{"language":"de","keyword":"...","translation":"...","rationale":"..."}]}',
+    ].join("\n"),
+    [
+      `Target localization (keywords must be in this language): ${context.language}`,
+      `UI language (write the translation and rationale in this language): ${context.uiLanguage}`,
+      `Master phrases (localize each one; format: keyword | UI-language gloss):\n${context.masterKeywords
+        .map((k) => `${k.keyword}${k.translation ? ` | ${k.translation}` : ""}`)
+        .join("\n") || "N/A"}`,
+      `Existing tracked keywords in this language (do not repeat): ${(context.existingKeywords || [])
+        .map((item) => item.keyword)
+        .join(", ") || "N/A"}`,
+      `Removed keywords (do not re-suggest): ${(context.removedKeywords || []).join(", ") || "N/A"}`,
+    ],
+    [
+      `App name: ${context.name}`,
+      `App subtitle: ${context.subtitle || "N/A"}`,
+      `Platform: ${context.productType}`,
+      `Description: ${context.description || "N/A"}`,
+    ],
+  );
+
+  try {
+    const data = await requestJson(provider, messages, {
+      temperature: 0.4,
+      maxTokens: MAX_OUTPUT_TOKENS,
+      thinking: "low",
+      retryWithoutThinking: true,
+      onProgress,
+      signal,
+    });
+    return normalizeKeywordGeneration(data, context.language);
+  } catch (err: any) {
+    // 用户主动取消：原样上抛，渲染层按「已取消」静默处理。
+    if (err?.code === "AI_CANCELLED" || String(err?.message || "").includes("已取消")) throw err;
+    log.warn(
+      `Keyword localization failed for ${context.name}: ${err.message}`,
+    );
+    throw new Error("AI 关键词本地化结果无法解析，请重试。");
   }
 }
 
@@ -156,6 +237,7 @@ export async function curateKeywords(
     profile?: ProjectProfile;
   },
   onProgress?: (received: { chars: number; phase: "reasoning" | "content" }) => void,
+  signal?: AbortSignal,
 ): Promise<KeywordCuration> {
   const messages = buildArchiveMessages(
     context.profile,
@@ -188,9 +270,12 @@ export async function curateKeywords(
       thinking: "low",
       retryWithoutThinking: true,
       onProgress,
+      signal,
     });
     return normalizeKeywordCuration(data, context.language);
   } catch (err: any) {
+    // 用户主动取消：原样上抛，渲染层按「已取消」静默处理。
+    if (err?.code === "AI_CANCELLED" || String(err?.message || "").includes("已取消")) throw err;
     log.warn(
       `Keyword curation failed for ${context.name}: ${err.message}`,
     );

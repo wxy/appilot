@@ -1080,7 +1080,7 @@ export function registerProjectsHandlers(): void {
     return true;
   });
 
-  ipcMain.handle("projects:generateKeywords", async (_event, productId: string, language: string) => {
+  ipcMain.handle("projects:generateKeywords", async (_event, productId: string, language: string, operationId = "") => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
@@ -1093,27 +1093,28 @@ export function registerProjectsHandlers(): void {
 
     const description = readRepoDescription(context.project.localPath);
     const profile = await buildProjectProfileFor(context.project, context.product);
-    const result = await generateKeywords(provider, {
-      name: context.product.trackName || context.project.name,
-      description,
-      productType: context.product.platform || "unknown",
-      language,
-      uiLanguage: "zh-Hans",
-      profile,
-    }, (received) => {
-      if (!_event.sender.isDestroyed()) {
-        _event.sender.send("projects:keywordProgress", {
-          productId,
-          language,
-          chars: received.chars,
-          phase: received.phase,
-        });
-      }
-    });
-    return result;
+    return withAiOperation(operationId, (signal) =>
+      generateKeywords(provider, {
+        name: context.product.trackName || context.project.name,
+        description,
+        productType: context.product.platform || "unknown",
+        language,
+        uiLanguage: "zh-Hans",
+        profile,
+      }, (received) => {
+        if (!_event.sender.isDestroyed()) {
+          _event.sender.send("projects:keywordProgress", {
+            productId,
+            language,
+            chars: received.chars,
+            phase: received.phase,
+          });
+        }
+      }, signal),
+    );
   });
 
-  ipcMain.handle("projects:curateKeywords", async (_event, productId: string, language: string) => {
+  ipcMain.handle("projects:curateKeywords", async (_event, productId: string, language: string, operationId = "") => {
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
@@ -1149,26 +1150,93 @@ export function registerProjectsHandlers(): void {
       .map((item: any) => item.keyword);
     const profile = await buildProjectProfileFor(project, product, loc?.subtitle || "");
 
-    return curateKeywords(provider, {
-      name: product.trackName || project.name,
-      subtitle: loc?.subtitle || "",
-      description: readRepoDescription(project.localPath),
-      language,
-      uiLanguage: "zh-Hans",
-      existingKeywords,
-      submissionKeywords,
-      removedKeywords,
-      profile,
-    }, (received) => {
-      if (!_event.sender.isDestroyed()) {
-        _event.sender.send("projects:keywordProgress", {
-          productId,
-          language,
-          chars: received.chars,
-          phase: received.phase,
-        });
-      }
-    });
+    return withAiOperation(operationId, (signal) =>
+      curateKeywords(provider, {
+        name: product.trackName || project.name,
+        subtitle: loc?.subtitle || "",
+        description: readRepoDescription(project.localPath),
+        language,
+        uiLanguage: "zh-Hans",
+        existingKeywords,
+        submissionKeywords,
+        removedKeywords,
+        profile,
+      }, (received) => {
+        if (!_event.sender.isDestroyed()) {
+          _event.sender.send("projects:keywordProgress", {
+            productId,
+            language,
+            chars: received.chars,
+            phase: received.phase,
+          });
+        }
+      }, signal),
+    );
+  });
+
+  // 母本本地化：以英文（全局）词为母本，为目标语言生成本地化搜索短语。
+  // 母本优先用渲染层传入的 masterKeywords（批量流程中 en 母本可能刚生成、尚未落库），
+  // 未传入时回退到项目已跟踪的 en 词。只生成建议（统一进建议弹窗确认），不直接落库。
+  ipcMain.handle("projects:localizeKeywords", async (_event, productId: string, language: string, operationId = "", masterOverride: any[] = []) => {
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    if (!language) throw new Error("Missing language");
+    const { project, product } = context;
+
+    const overrideMaster = (Array.isArray(masterOverride) ? masterOverride : [])
+      .filter((item: any) => item && typeof item.keyword === "string" && item.keyword.trim())
+      .map((item: any) => ({ keyword: item.keyword.trim(), translation: String(item.translation || "") }));
+    const masterKeywords = overrideMaster.length > 0
+      ? overrideMaster
+      : (project.trackedKeywords || [])
+          .filter((item: any) => item.language === "en" && item.keyword && item.status !== "paused")
+          .map((item: any) => ({ keyword: item.keyword as string, translation: item.translation || "" }));
+    if (masterKeywords.length === 0) {
+      throw new Error("暂无英文（全局）关键词可作母本，请先点亮英文并生成全局关键词。");
+    }
+
+    const provider = await createAiProvider(s);
+    const { localizeKeywords } = await import("@appilot-labs/appilot-core/ai/keyword-suggester");
+    const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
+
+    const drafts = getStoreSubmissionDrafts(project)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    const latest = drafts[0];
+    const loc = latest?.localizations?.find((item: any) => item.language === language)
+      || latest?.localizations?.[0];
+    const existingKeywords = (project.trackedKeywords || [])
+      .filter((item: any) => item.language === language)
+      .map((item: any) => ({ keyword: item.keyword as string }));
+    const removedKeywords = (project.removedKeywords || [])
+      .filter((item: any) => item.language === language)
+      .map((item: any) => item.keyword as string);
+    const profile = await buildProjectProfileFor(project, product, loc?.subtitle || "");
+
+    return withAiOperation(operationId, (signal) =>
+      localizeKeywords(provider, {
+        name: product.trackName || project.name,
+        subtitle: loc?.subtitle || "",
+        description: readRepoDescription(project.localPath),
+        productType: product.platform || "unknown",
+        language,
+        uiLanguage: "zh-Hans",
+        masterKeywords,
+        existingKeywords,
+        removedKeywords,
+        profile,
+      }, (received) => {
+        if (!_event.sender.isDestroyed()) {
+          _event.sender.send("projects:keywordProgress", {
+            productId,
+            language,
+            chars: received.chars,
+            phase: received.phase,
+          });
+        }
+      }, signal),
+    );
   });
 
   ipcMain.handle("projects:getSubmissionReference", async (_event, productId: string, language: string) => {

@@ -19,6 +19,7 @@ export function AIProgressButton({
   stopAvailable = true,
   retry = false,
   retrying = false,
+  statusLabel,
 }: {
   onStart: () => void;
   onStop: () => void;
@@ -32,6 +33,8 @@ export function AIProgressButton({
   retry?: boolean;
   /** 正在进行自动修复/重试（JSON 修复或安全网强制重写）：运行图标变黄。 */
   retrying?: boolean;
+  /** 批量任务的阶段文案（如「本地化 de · 3/11」），替代默认的思考中/生成中。 */
+  statusLabel?: string;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const [peakChars, setPeakChars] = useState(0);
@@ -69,7 +72,7 @@ export function AIProgressButton({
               >
                 ■
               </span>
-              {retrying ? "修复中" : progress?.phase === "content" ? "生成中" : "思考中"}
+              {retrying ? "修复中" : statusLabel || (progress?.phase === "content" ? "生成中" : "思考中")}
             </span>
             <span className="mt-0.5 font-mono">{formatKilo(shownChars)} · {formatElapsed(elapsed)}</span>
           </span>

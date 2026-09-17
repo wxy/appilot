@@ -122,8 +122,15 @@ contextBridge.exposeInMainWorld("appilot", {
     testAscKey: (projectId: string, params?: { issuerId?: string; keyId?: string; privateKeyPath?: string }): Promise<any> =>
       ipcRenderer.invoke("projects:testAscKey", projectId, params),
     selectAscKeyFile: (): Promise<string | null> => ipcRenderer.invoke("projects:selectAscKeyFile"),
-    generateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language),
-    curateKeywords: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:curateKeywords", projectId, language),
+    generateKeywords: (projectId: string, language: string, operationId = ""): Promise<any> => ipcRenderer.invoke("projects:generateKeywords", projectId, language, operationId),
+    curateKeywords: (projectId: string, language: string, operationId = ""): Promise<any> => ipcRenderer.invoke("projects:curateKeywords", projectId, language, operationId),
+    localizeKeywords: (
+      projectId: string,
+      language: string,
+      operationId = "",
+      masterKeywords: { keyword: string; translation?: string }[] = [],
+    ): Promise<any> =>
+      ipcRenderer.invoke("projects:localizeKeywords", projectId, language, operationId, masterKeywords),
     getSubmissionReference: (projectId: string, language: string): Promise<any> => ipcRenderer.invoke("projects:getSubmissionReference", projectId, language),
     extractSubmissionCandidates: (projectId: string, language: string, operationId = ""): Promise<any> =>
       ipcRenderer.invoke("projects:extractSubmissionCandidates", projectId, language, operationId),

@@ -8,18 +8,19 @@ import {
   STALE_MS,
 } from "../src/renderer/lib/matrix";
 
-console.log("✅ PASS: trackingLanguageOptions puts en first and labels it 英文");
+console.log("✅ PASS: trackingLanguageOptions sorts by zh-CN pinyin and labels en 英文");
 const opts = trackingLanguageOptions([
   { code: "zh-Hans", name: "简体中文" },
   { code: "en", name: "英文" },
 ]);
+// 语言标签按汉语拼音音序排列（简 jiǎn < 英 yīng），en 不再置顶。
 assert.deepEqual(opts, [
-  { code: "en", label: "英文" },
   { code: "zh-Hans", label: "简体中文" },
+  { code: "en", label: "英文" },
 ]);
 assert.deepEqual(trackingLanguageOptions([{ code: "zh-Hans", name: "简体中文" }]), [
-  { code: "en", label: "英文" },
   { code: "zh-Hans", label: "简体中文" },
+  { code: "en", label: "英文" },
 ]);
 
 console.log("✅ PASS: matrixFilterKeywords includes viewLang and global en");
