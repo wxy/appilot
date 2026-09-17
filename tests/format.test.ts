@@ -44,6 +44,11 @@ async function runTests() {
   assert(formatKilo(1250) === "1.3K字", "formatKilo decimal");
   assert(formatTokens(500) === "500", "formatTokens small");
   assert(formatTokens(2500) === "2.5K", "formatTokens K");
+  assert(formatTokens(999) === "999", "formatTokens just under K");
+  assert(formatTokens(999_999) === "1M", "formatTokens K→M carry boundary");
+  assert(formatTokens(1_500_000) === "1.5M", "formatTokens M");
+  assert(formatTokens(2_500_000_000) === "2.5G", "formatTokens G");
+  assert(formatTokens(5_000_000_000_000) === "5T", "formatTokens T");
   assert(formatBytes(0) === "0B", "formatBytes zero");
   assert(formatBytes(512) === "512B", "formatBytes bytes");
   assert(formatBytes(2048) === "2.0KB", "formatBytes KB");

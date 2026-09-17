@@ -3,7 +3,8 @@ import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom"
 import { useTheme } from "./stores/theme";
 import { useProject } from "./stores/project";
 import { cn } from "./lib/utils";
-import { platformLabel } from "./lib/format";
+import { formatTokens, platformLabel } from "./lib/format";
+import { CredentialIndicator } from "./components/ui/CredentialIndicator";
 import { HomePage } from "./components/home/HomePage";
 import { TaskCenterPage } from "./components/tasks/TaskCenterPage";
 import { ManageProjectsPage } from "./components/projects/ManageProjectsPage";
@@ -26,9 +27,9 @@ const PROJECT_NAV_ITEMS = [
   { to: "/keywords", label: "排名", title: "关键词排名" },
 ];
 
-/* ── 左侧边栏：项目切换 + 项目页面导航 ── */
+/* ── 左侧浮动面板：项目切换 + 项目页面导航 ── */
 
-function ProjectSidebar() {
+function ProjectSidebar({ open }: { open: boolean }) {
   const { projects, currentProjectId, currentProductId, select, selectProduct, addByFolder } =
     useProject();
   const location = useLocation();
@@ -69,9 +70,23 @@ function ProjectSidebar() {
     : "选择项目";
 
   return (
-    <aside className="shrink-0 w-32 border-r border-zinc-200/70 dark:border-zinc-800/70 bg-white/60 dark:bg-zinc-900/40 p-2">
+    <aside
+      className={cn(
+        // 浮动面板：位于底栏上方区域内，上/左/下各留 16px 外边距、圆角 20、低透明度柔和投影。
+        // 常驻挂载，开合用 transform + opacity 过渡（reduced-motion 时全局规则将其压成瞬切）。
+        "absolute left-4 top-4 bottom-[72px] z-40 w-32 rounded-[20px]",
+        "border border-zinc-200/80 dark:border-zinc-800/80",
+        "bg-white/75 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150",
+        "shadow-[0_2px_6px_rgba(0,0,0,0.04),0_16px_40px_-8px_rgba(0,0,0,0.08)]",
+        "dark:shadow-[0_2px_6px_rgba(0,0,0,0.4),0_16px_40px_-8px_rgba(0,0,0,0.5)]",
+        "flex flex-col p-2 transition-all duration-300 ease-out",
+        open
+          ? "translate-x-0 opacity-100 visible"
+          : "pointer-events-none invisible -translate-x-[150%] opacity-0",
+      )}
+    >
       {/* 单一区块：先选项目（下拉），其下即是该项目的页面 */}
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-visible shadow-sm">
+      <div className="shrink-0">
         <div ref={menuRef} className="relative">
           <button
             onClick={() => setMenuOpen((v) => !v)}
@@ -90,7 +105,7 @@ function ProjectSidebar() {
           </button>
 
           {menuOpen && (
-            <div className="absolute left-0 top-full mt-1 z-40 w-60 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1 max-h-[70vh] overflow-auto">
+            <div className="absolute left-0 top-full mt-1 z-40 w-60 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl shadow-[0_12px_32px_rgba(0,0,0,0.12)] dark:shadow-[0_12px_32px_rgba(0,0,0,0.5)] py-1 max-h-[70vh] overflow-auto">
               {projects.length === 0 && (
                 <div className="px-3 py-2 text-xs text-zinc-400 dark:text-zinc-500">
                   还没有项目，先添加一个。
@@ -172,8 +187,8 @@ function ProjectSidebar() {
           )}
         </div>
 
-        {/* 项目页面：与项目下拉在同一区块内 */}
-        <nav className="border-t border-zinc-100 dark:border-zinc-800 p-1 space-y-0.5">
+        {/* 项目页面：与项目下拉在同一面板内 */}
+        <nav className="mt-1 border-t border-zinc-200/70 dark:border-zinc-800/70 p-1 space-y-0.5">
           {PROJECT_NAV_ITEMS.map((item) => {
             const active = location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
             return (
@@ -198,7 +213,7 @@ function ProjectSidebar() {
   );
 }
 
-/* ── 顶部全局栏 + 内容区 ── */
+/* ── 底部全局栏 + 内容区 ── */
 
 function Layout({ children }: { children: React.ReactNode }) {
   const { projects, currentProjectId, currentProductId, loading, load } = useProject();
@@ -267,11 +282,44 @@ function Layout({ children }: { children: React.ReactNode }) {
     | undefined;
 
   return (
-    <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950">
+    <div className="relative h-screen overflow-hidden bg-zinc-50 dark:bg-zinc-950">
       <DataSyncLayer />
 
-      {/* 顶部横栏：全局菜单（不再混入项目导航） */}
-      <header className="shrink-0 z-30 flex items-center gap-2.5 px-3 h-14 border-b border-zinc-200/60 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
+      {/* 主内容区：占据底栏（状态栏）以上的空间，为浮动侧栏让位（16+128+16=160px）；
+          底部再留 16px，避免内容贴死状态栏上缘 */}
+      <main
+        className={cn(
+          "absolute inset-x-0 top-0 bottom-14 overflow-auto pb-4 transition-[padding] duration-300 ease-out",
+          sidebarOpen ? "pl-[160px]" : "pl-4",
+        )}
+      >
+        {copilotReturn && location.pathname !== "/copilot" && (
+          <div className="sticky top-0 z-20 flex h-10 items-center gap-3 border-b border-amber-200/70 dark:border-amber-500/20 bg-amber-50/95 dark:bg-zinc-900/95 px-4 backdrop-blur">
+            <Link
+              to={copilotReturn.to || "/copilot"}
+              className="text-xs font-medium text-amber-700 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300"
+            >
+              ← {copilotReturn.label || "返回副驾"}
+            </Link>
+            <span className="text-[11px] text-zinc-400">你正在查看该建议对应的完整功能页</span>
+          </div>
+        )}
+        {loading && projects.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
+            <span className="w-5 h-5 rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-transparent animate-spin" />
+            正在载入…
+          </div>
+        ) : (
+          children
+        )}
+      </main>
+
+      {/* 左侧浮动面板：项目切换 + 项目页面导航（常驻挂载，开合走过渡） */}
+      <ProjectSidebar open={sidebarOpen} />
+
+      {/* 底部状态栏：固定占据窗口底部整行（侧栏与内容区都在其上方），
+          承载全局状态 + 全局功能入口 */}
+      <footer className="absolute inset-x-0 bottom-0 z-30 flex h-14 items-center gap-2.5 px-3 border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
         <button
           onClick={() => setSidebarOpen((v) => !v)}
           title={sidebarOpen ? "收起左侧栏" : "展开左侧栏"}
@@ -296,8 +344,25 @@ function Layout({ children }: { children: React.ReactNode }) {
           </span>
         )}
 
-        {/* 右侧：全局操作与全局入口 */}
+        {/* 右侧：全局状态与全局入口 */}
         <div className="ml-auto flex items-center gap-2">
+          {/* 凭据状态标志：项目级覆盖 → 绿色；全局 → 中性；未设置 → 虚线。
+              点击前往对应管理页；替代原先散在各功能页的“凭据已设置”标志 */}
+          {currentProject && (
+            <div className="flex items-center gap-1.5">
+              <CredentialIndicator
+                kind="github"
+                source={currentProject.githubSource ?? null}
+                projectId={currentProject.id}
+              />
+              <CredentialIndicator
+                kind="asc"
+                source={currentProject.ascSource ?? null}
+                projectId={currentProject.id}
+              />
+            </div>
+          )}
+
           <div
             className="flex items-center gap-1.5 px-2.5 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400"
             title={
@@ -310,7 +375,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
               {aiUsage === null
                 ? "—"
-                : `${aiUsage.totalTokens.toLocaleString()} · 缓存 ${aiUsage.cachedTokens.toLocaleString()}`}
+                : `${formatTokens(aiUsage.totalTokens)} · 缓存 ${formatTokens(aiUsage.cachedTokens)}`}
             </span>
           </div>
 
@@ -341,33 +406,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             <span className="hidden lg:inline">设置</span>
           </Link>
         </div>
-      </header>
-
-      {/* 左侧栏 + 内容 */}
-      <div className="flex flex-1 min-h-0">
-        {sidebarOpen && <ProjectSidebar />}
-        <main className="flex-1 overflow-auto min-w-0">
-          {copilotReturn && location.pathname !== "/copilot" && (
-            <div className="sticky top-0 z-20 flex h-10 items-center gap-3 border-b border-amber-200/70 dark:border-amber-500/20 bg-amber-50/95 dark:bg-zinc-900/95 px-4 backdrop-blur">
-              <Link
-                to={copilotReturn.to || "/copilot"}
-                className="text-xs font-medium text-amber-700 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300"
-              >
-                ← {copilotReturn.label || "返回副驾"}
-              </Link>
-              <span className="text-[11px] text-zinc-400">你正在查看该建议对应的完整功能页</span>
-            </div>
-          )}
-          {loading && projects.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
-              <span className="w-5 h-5 rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-transparent animate-spin" />
-              正在载入…
-            </div>
-          ) : (
-            children
-          )}
-        </main>
-      </div>
+      </footer>
     </div>
   );
 }

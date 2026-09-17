@@ -19,7 +19,6 @@ import {
   type ChangeSummaryItem,
 } from "../../lib/release-summary";
 import { AIProgressButton } from "../ui/AIProgressButton";
-import { CredentialBadge } from "../ui/CredentialBadge";
 import { EmptyState } from "../ui/EmptyState";
 import { FieldBlock } from "../ui/Fields";
 import { AppleIcon, GithubIcon } from "../ui/Icons";
@@ -1572,20 +1571,7 @@ export function ReleasePage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <CredentialBadge
-              kind="github"
-              enabled={Boolean(project.hasGithubToken)}
-              projectId={project.id}
-              source={project.githubSource}
-            />
-            <CredentialBadge
-              kind="asc"
-              enabled={Boolean(project.hasAscKey)}
-              projectId={project.id}
-              source={project.ascSource}
-            />
-          </div>
+          {/* 凭据设置状态已收拢到底部状态栏的凭据标志，页面不再重复展示 */}
           {products.length > 0 && (
             <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-zinc-800/80 p-1 gap-1">
               {products.map((product) => (
