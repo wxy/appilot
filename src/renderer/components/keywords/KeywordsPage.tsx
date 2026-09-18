@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Area,
@@ -15,7 +15,7 @@ import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/app
 import { rankBudgetAdmissible, rankBudgetStatus } from "@appilot-labs/appilot-core/rank-budget";
 import { languageLabel, platformLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import {
-  matrixCellState,
+  buildCellIndex,
   matrixColumnMeta,
   matrixFilterKeywords,
   matrixRowGroups,
@@ -264,13 +264,22 @@ export function KeywordsPage() {
   // 每张卡只查自己的语言：全局卡 = en（× 全部商店）；语言卡 = 该语言（× 该语言商店）。
   // en 全局词不再跟随语言卡查询——它们只在全局卡出现。
   const queryLanguages = [currentLang];
-  const tracked = (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
-  const trackedActive = tracked.filter((k) => k.status !== "paused");
-  const pausedForCurrent = tracked.filter(
-    (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
+  // —— 派生链全部 memo 化：勾选/切标签只改轻量状态，不应重扫全量排名快照 ——
+  const tracked = useMemo(
+    () => (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language)),
+    [project.trackedKeywords, currentLang],
   );
-  const pendingForCurrent = tracked.filter((k) =>
-    (k.pendingPausePlatforms || []).includes(product.platform),
+  const trackedActive = useMemo(() => tracked.filter((k) => k.status !== "paused"), [tracked]);
+  const pausedForCurrent = useMemo(
+    () =>
+      tracked.filter(
+        (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
+      ),
+    [tracked, product.platform],
+  );
+  const pendingForCurrent = useMemo(
+    () => tracked.filter((k) => (k.pendingPausePlatforms || []).includes(product.platform)),
+    [tracked, product.platform],
   );
   const missingTranslationCount = (project.trackedKeywords || []).filter(
     (k) =>
@@ -278,7 +287,10 @@ export function KeywordsPage() {
       k.language !== "zh-Hant" &&
       !(k.translation && String(k.translation).trim()),
   ).length;
-  const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
+  const removedForCurrent = useMemo(
+    () => (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language)),
+    [project.removedKeywords, currentLang],
+  );
   // 采集预算：任务量 = 活跃关键词 × 语言覆盖的商店数（en 全局词按全部本地化计）。
   // 建议采纳 / 候选加入 / 恢复暂停词都会受硬上限约束，软上限起提示作用。
   const rankBudget = rankBudgetStatus(
@@ -287,22 +299,30 @@ export function KeywordsPage() {
     project.trackedKeywords || [],
   );
   // 产品全部本地化覆盖的商店（去重）：全局卡列序与分布页签共用。
-  const productStorefronts = Array.from(
-    new Set(
-      (product?.supportedLanguages || []).flatMap((lang) =>
-        storefrontsForLanguage(lang.code),
+  const productStorefronts = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (product?.supportedLanguages || []).flatMap((lang) =>
+            storefrontsForLanguage(lang.code),
+          ),
+        ),
       ),
-    ),
+    [product],
   );
-  const enStorefronts = new Set(storefrontsForLanguage("en"));
-  const storefronts = isGlobalView
-    ? [
-        ...productStorefronts.filter((storefront) => enStorefronts.has(storefront)),
-        ...productStorefronts.filter((storefront) => !enStorefronts.has(storefront)),
-      ]
-    : storefrontsForLanguage(currentLang);
+  const enStorefronts = useMemo(() => new Set(storefrontsForLanguage("en")), []);
+  const storefronts = useMemo(
+    () =>
+      isGlobalView
+        ? [
+            ...productStorefronts.filter((storefront) => enStorefronts.has(storefront)),
+            ...productStorefronts.filter((storefront) => !enStorefronts.has(storefront)),
+          ]
+        : storefrontsForLanguage(currentLang),
+    [isGlobalView, currentLang, productStorefronts, enStorefronts],
+  );
   // 全局卡表头分组（相邻同组合并）：英语商店 | 其他语言商店。
-  const globalColumnGroups = (() => {
+  const globalColumnGroups = useMemo(() => {
     if (!isGlobalView) return [];
     const groups: { label: string; span: number }[] = [];
     for (const storefront of storefronts) {
@@ -312,13 +332,23 @@ export function KeywordsPage() {
       else groups.push({ label, span: 1 });
     }
     return groups;
-  })();
-  const rankSnapshots = product.rankSnapshots || [];
-  const matrixRows = matrixFilterKeywords(trackedActive, currentLang);
-  const matrixColumns = storefronts.map((storefront) => ({
-    storefront,
-    meta: matrixColumnMeta(rankSnapshots, storefront),
-  }));
+  }, [isGlobalView, storefronts, enStorefronts]);
+  // 快照索引：一次 O(快照数) 预计算每格 cell，渲染期 O(1) 查询（matrixCellState
+  // 每次全量过滤快照，行×列 次调用在快照上万后是纯卡顿来源）。
+  const rankSnapshots = useMemo(() => product.rankSnapshots || [], [product]);
+  const cellIndex = useMemo(() => buildCellIndex(rankSnapshots), [rankSnapshots]);
+  const matrixRows = useMemo(
+    () => matrixFilterKeywords(trackedActive, currentLang),
+    [trackedActive, currentLang],
+  );
+  const matrixColumns = useMemo(
+    () =>
+      storefronts.map((storefront) => ({
+        storefront,
+        meta: matrixColumnMeta(rankSnapshots, storefront),
+      })),
+    [storefronts, rankSnapshots],
+  );
   const storeGridTemplate = `repeat(${matrixColumns.length}, 88px)`;
   const RANK_BUCKETS = [
     { key: "top10", label: "TOP10", color: "#15803d", opacity: 1 },
@@ -350,10 +380,14 @@ export function KeywordsPage() {
   // 分布是独立「分布」页签的整体视角：全部语言的关键词 × 全部商店，与当前卡片无关。
   // 平台暂停的关键词（pausedPlatforms 含当前产品平台）不计入分布，避免
   // 把“未采集”虚构成“未进榜”。仅在该页签激活时计算（逐格查快照较重）。
-  const distributionKeywords = (project.trackedKeywords || []).filter(
-    (k: any) =>
-      k.status !== "paused" &&
-      !(k.pausedPlatforms || []).includes(product.platform),
+  const distributionKeywords = useMemo(
+    () =>
+      (project.trackedKeywords || []).filter(
+        (k: any) =>
+          k.status !== "paused" &&
+          !(k.pausedPlatforms || []).includes(product.platform),
+      ),
+    [project.trackedKeywords, product.platform],
   );
   const distributionData: {
     storefront: string;
@@ -362,8 +396,9 @@ export function KeywordsPage() {
     r51_100: number;
     r101_200: number;
     unranked: number;
-  }[] = pageTab === "distribution"
-    ? productStorefronts
+  }[] = useMemo(() => {
+    if (pageTab !== "distribution") return [];
+    return productStorefronts
         .map((storefront) => {
           const buckets: Record<string, number> = {
             top10: 0,
@@ -373,7 +408,7 @@ export function KeywordsPage() {
             unranked: 0,
           };
           for (const row of distributionKeywords) {
-            const cell = matrixCellState(rankSnapshots, row.keyword, storefront);
+            const cell = cellIndex(row.keyword, storefront);
             const rank = cell.rank;
             if (rank == null || cell.beyond200) buckets.unranked += 1;
             else if (rank <= 10) buckets.top10 += 1;
@@ -394,9 +429,12 @@ export function KeywordsPage() {
           (a, b) =>
             (b.top10 * 100 + b.r11_50 * 50 + b.r51_100 * 20 + b.r101_200 * 5) -
             (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
-        )
-    : [];
-  const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
+        );
+  }, [pageTab, productStorefronts, distributionKeywords, cellIndex]);
+  const { ranked, unranked } = useMemo(
+    () => matrixRowGroups(matrixRows, matrixColumns, cellIndex),
+    [matrixRows, matrixColumns, cellIndex],
+  );
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
   const showUnrankedRows =
@@ -418,26 +456,37 @@ export function KeywordsPage() {
   const chartKeywordMeta = matrixRows.find(
     (keyword) => keyword.keyword === chartKeyword,
   );
-  const chartSnapshots = rankSnapshots
-    .filter(
-      (snapshot) =>
-        queryLanguages.includes(snapshot.language) &&
-        storefronts.includes(snapshot.storefront) &&
-        snapshot.keyword === chartKeyword,
-    )
-    .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
-  const chartSeriesMeta = Array.from(
-    new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys(),
-  ).map((storefront) => ({ storefront, label: storefrontDisplayName(storefront) }));
+  const chartSnapshots = useMemo(
+    () =>
+      rankSnapshots
+        .filter(
+          (snapshot) =>
+            snapshot.language === currentLang &&
+            storefronts.includes(snapshot.storefront) &&
+            snapshot.keyword === chartKeyword,
+        )
+        .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime()),
+    [rankSnapshots, currentLang, storefronts, chartKeyword],
+  );
+  const chartSeriesMeta = useMemo(
+    () =>
+      Array.from(
+        new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys(),
+      ).map((storefront) => ({ storefront, label: storefrontDisplayName(storefront) })),
+    [chartSnapshots],
+  );
   // 组关键词 = 当前卡片矩阵里全部可见的激活关键词（全局卡 = en 词；语言卡 = 该语言词）。
   // 带按 (语言 × 商店) 分别绘制：每个商店（如 中国大陆/新加坡）各自一条带，
   // 只统计本卡语言的关键词在该商店的快照；其他语言的关键词与本卡的带无关。
-  const groupBandKeywords = Array.from(new Set(matrixRows.map((row) => row.keyword)));
+  const groupBandKeywords = useMemo(
+    () => Array.from(new Set(matrixRows.map((row) => row.keyword))),
+    [matrixRows],
+  );
   // 时间轴 = 按天（与组快照粒度一致）：行覆盖「组数据活动日 ∪ 选中词采样日」的连续日期。
   // 带挂在固定日期轴上，与选中哪个词无关：切换关键词只改变曲线取值，带的形状保持不变。
   // 带 = 该商店整组关键词当天的 P25–P75：每词每天取最后一次在榜快照；未进榜（>200 / null）
   // 与当天未检查的词不参与；当天在榜词 < GROUP_BAND_MIN_N 视为无组数据，用前后真实日连接。
-  const chartData = (() => {
+  const chartData = useMemo(() => {
     const groupSet = new Set(groupBandKeywords);
     const storefrontSet = new Set(storefronts);
 
@@ -446,7 +495,7 @@ export function KeywordsPage() {
     const latestMs = new Map<string, number>();
     for (const snapshot of rankSnapshots) {
       if (!groupSet.has(snapshot.keyword)) continue;
-      if (!queryLanguages.includes(snapshot.language)) continue;
+      if (snapshot.language !== currentLang) continue;
       if (!storefrontSet.has(snapshot.storefront)) continue;
       const key = `${snapshot.storefront}\u0000${localDayKey(snapshot.checkedAt)}\u0000${snapshot.keyword}`;
       const ms = new Date(snapshot.checkedAt).getTime();
@@ -572,7 +621,7 @@ export function KeywordsPage() {
       }
     }
     return rows;
-  })();
+  }, [chartKeyword, groupBandKeywords, chartSnapshots, storefronts, currentLang, rankSnapshots]);
   // 覆盖提示：该商店最终没有绘制整组带（整组极少同日有多词进前 200）→ 图例处提示
   const noBandStorefronts = chartSeriesMeta.filter(
     (meta) => !chartData.some((row) => row[`${meta.storefront}:p25`] != null),
@@ -740,7 +789,7 @@ export function KeywordsPage() {
       style={{ gridTemplateColumns: storeGridTemplate }}
     >
       {matrixColumns.map((column) => {
-        const cell = matrixCellState(rankSnapshots, keyword.keyword, column.storefront);
+        const cell = cellIndex(keyword.keyword, column.storefront);
         return (
           <div
             key={column.storefront}

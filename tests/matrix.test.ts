@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  buildCellIndex,
   matrixCellState,
   matrixColumnMeta,
   matrixFilterKeywords,
@@ -69,15 +70,29 @@ const metaStale = matrixColumnMeta([{ storefront: "us", checkedAt: staleTime }],
 assert.equal(metaStale.stale, true);
 assert.equal(metaStale.lastCheckedAt, staleTime);
 
+console.log("✅ PASS: buildCellIndex O(1) lookup matches matrixCellState");
+const indexSnapshots = [
+  { keyword: "night walk", storefront: "us", rank: 5, totalResults: 200, checkedAt: "2026-08-18T10:00:00.000Z" },
+  { keyword: "night walk", storefront: "us", rank: 3, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
+  { keyword: "night walk", storefront: "cn", rank: 40, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
+];
+const index = buildCellIndex(indexSnapshots);
+const indexed = index("night walk", "us");
+assert.equal(indexed.rank, 3, "index returns latest rank");
+assert.equal(indexed.delta, 2, "index keeps delta vs previous");
+assert.equal(indexed.trend, "up");
+assert.equal(index("night walk", "gb").rank, null, "missing cell falls back to empty");
+assert.deepEqual(index("night walk", "us"), matrixCellState(indexSnapshots, "night walk", "us"), "index agrees with matrixCellState");
+
 console.log("✅ PASS: matrixRowGroups splits ranked (best first) and unranked");
 const groups = matrixRowGroups(
   [{ keyword: "deep link" }, { keyword: "记账" }, { keyword: "night walk" }],
   [{ storefront: "us" }, { storefront: "cn" }],
-  [
+  buildCellIndex([
     { keyword: "night walk", storefront: "us", rank: 5, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
     { keyword: "记账", storefront: "cn", rank: 2, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
     { keyword: "deep link", storefront: "us", rank: null, totalResults: 200, checkedAt: "2026-08-19T10:00:00.000Z" },
-  ],
+  ]),
 );
 assert.deepEqual(
   groups.ranked.map((item) => item.row.keyword),
