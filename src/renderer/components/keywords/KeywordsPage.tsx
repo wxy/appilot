@@ -151,6 +151,7 @@ export function KeywordsPage() {
   const urlKeyword = searchParams.get("keyword") || "";
   const urlLang = searchParams.get("lang") || "";
   const urlScope = searchParams.get("scope") || "";
+  const urlTab = searchParams.get("tab") || "";
 
   const languages = product?.supportedLanguages || [];
   const languageOptions = trackingLanguageOptions(languages);
@@ -256,7 +257,25 @@ export function KeywordsPage() {
     if (urlScope === "paused") {
       setShowPaused(true);
     }
-  }, [product?.id, urlKeyword, urlLang, urlScope]);
+    // 待处理暂停 / 已删除：一次性打开对应弹层后消费掉 scope 参数，
+    // 避免同页其他参数变化时重复弹出的循环。
+    if (urlScope === "pending") {
+      void openPendingReview();
+      const next = new URLSearchParams(searchParams);
+      next.delete("scope");
+      setSearchParams(next, { replace: true });
+    }
+    if (urlScope === "deleted") {
+      setShowDeleted(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("scope");
+      setSearchParams(next, { replace: true });
+    }
+    // 页签深链：总览等入口可直达 竞品 / 分布 页签。
+    if (urlTab === "competitor" || urlTab === "distribution") {
+      setPageTab(urlTab);
+    }
+  }, [product?.id, urlKeyword, urlLang, urlScope, urlTab]);
 
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;

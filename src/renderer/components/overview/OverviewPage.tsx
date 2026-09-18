@@ -331,7 +331,7 @@ export function OverviewPage() {
       repoMetrics={repoMetrics}
       competitorSummary={competitorSummary}
       competitorAdvantage={competitorAdvantage}
-      competitorHref="/keywords"
+      competitorHref="/keywords?tab=competitor"
       copilotSummary={copilotSummary}
       onSelectProduct={selectProduct}
       onOpenExternal={(url) => (window as any).appilot?.openExternal(url)}

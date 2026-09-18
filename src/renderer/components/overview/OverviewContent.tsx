@@ -43,17 +43,9 @@
  */
 import type { ComponentType, ReactNode } from "react";
 import { Link } from "react-router-dom";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
+import { rankBudgetStatus } from "@appilot-labs/appilot-core/rank-budget";
 import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
 import { useMemo } from "react";
 import { buildCellIndex, STALE_MS } from "../../lib/matrix";
@@ -493,34 +485,76 @@ export function OverviewContent(props: OverviewContentProps) {
         : [],
     [trackedActive, product],
   );
-  const distributionData = useMemo(() => {
+
+  // 词池健康：待复核（连续未在榜等人处理）、采集预算水位、进榜词数。
+  const pendingReviewCount = useMemo(
+    () =>
+      trackedKeywords.filter((k) =>
+        (k.pendingPausePlatforms || []).includes(product ? product.platform : ""),
+      ).length,
+    [trackedKeywords, product],
+  );
+  const rankedWordCount = useMemo(
+    () => rankRows.filter((row) => row.bestRank != null && row.bestRank <= 200).length,
+    [rankRows],
+  );
+  const rankBudget = useMemo(
+    () =>
+      rankBudgetStatus(
+        product?.supportedLanguages || [],
+        product?.platform || "unknown",
+        trackedKeywords,
+      ),
+    [product, trackedKeywords],
+  );
+  // 市场组聚合进榜率：英文市场与母语外市场的竞争结构天差地别，混合口径
+  // 会把「英文市场几乎全灭、其他市场表现好」这一关键信号平均掉。
+  const marketPerformance = useMemo(() => {
     if (!product) return [];
-    return allStorefronts
-      .map((storefront) => {
-        const buckets = { top10: 0, r11_50: 0, r51_100: 0, r101_200: 0, unranked: 0 };
-        for (const row of distributionKeywords) {
-          const cell = cellIndex(row.keyword, storefront);
-          const rank = cell.rank;
-          if (rank == null || cell.beyond200) buckets.unranked += 1;
-          else if (rank <= 10) buckets.top10 += 1;
-          else if (rank <= 50) buckets.r11_50 += 1;
-          else if (rank <= 100) buckets.r51_100 += 1;
-          else buckets.r101_200 += 1;
+    const enNative = storefrontsForLanguage("en");
+    const chinese = ["cn", "sg", "tw", "hk", "mo"];
+    const groups = [
+      {
+        label: "英文本土",
+        list: allStorefronts.filter((storefront) => enNative.includes(storefront)),
+      },
+      {
+        label: "华人市场",
+        list: allStorefronts.filter((storefront) => chinese.includes(storefront)),
+      },
+      {
+        label: "其他市场",
+        list: allStorefronts.filter(
+          (storefront) => !enNative.includes(storefront) && !chinese.includes(storefront),
+        ),
+      },
+    ];
+    return groups
+      .map(({ label, list }) => {
+        let total = 0;
+        let ranked = 0;
+        let top10 = 0;
+        for (const storefront of list) {
+          for (const row of distributionKeywords) {
+            const cell = cellIndex(row.keyword, storefront);
+            if (cell.checkedAt == null) continue; // 从未查询的格不计入分母
+            total += 1;
+            if (cell.rank != null) {
+              ranked += 1;
+              if (cell.rank <= 10) top10 += 1;
+            }
+          }
         }
         return {
-          storefront: storefrontDisplayName(storefront),
-          top10: buckets.top10,
-          r11_50: buckets.r11_50,
-          r51_100: buckets.r51_100,
-          r101_200: buckets.r101_200,
-          unranked: buckets.unranked,
+          label,
+          storefronts: list.length,
+          total,
+          ranked,
+          top10,
+          rate: total > 0 ? ranked / total : null,
         };
       })
-      .sort(
-        (a, b) =>
-          (b.top10 * 100 + b.r11_50 * 50 + b.r51_100 * 20 + b.r101_200 * 5) -
-          (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
-      );
+      .filter((group) => group.storefronts > 0);
   }, [product, allStorefronts, distributionKeywords, cellIndex]);
 
   if (!project || !product) {
@@ -532,34 +566,6 @@ export function OverviewContent(props: OverviewContentProps) {
   const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
   const bestRankRow = rankRows[0] || null;
   const dataStale = newestCheckedAt ? Date.now() - new Date(newestCheckedAt).getTime() > STALE_MS : false;
-  // 全局排名分布（最新快照）：全部关键词 × 当前产品全部商店。
-  const RANK_BUCKETS = [
-    { key: "top10", label: "TOP10", color: "#15803d", opacity: 1 },
-    { key: "r11_50", label: "11–50", color: "#22c55e", opacity: 0.9 },
-    { key: "r51_100", label: "51–100", color: "#a3e635", opacity: 0.75 },
-    { key: "r101_200", label: "101–200", color: "#facc15", opacity: 0.6 },
-    { key: "unranked", label: "未进榜", color: "#a1a1aa", opacity: 0.35 },
-  ] as const;
-  const DistributionTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload?.length) return null;
-    return (
-      <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow px-3 py-2 text-xs">
-        <p className="font-medium mb-1">{label}</p>
-        {RANK_BUCKETS.map((bucket) => {
-          const item = payload.find((p: any) => p.dataKey === bucket.key);
-          return (
-            <div key={bucket.key} className="flex items-center gap-2 py-0.5">
-              <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: bucket.color }} />
-              <span className="text-zinc-600 dark:text-zinc-300">{bucket.label}</span>
-              <span className="ml-auto pl-3 font-medium text-zinc-800 dark:text-zinc-100">
-                {item?.value ?? 0}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
 
   // ── 版本/文案数据（②③ 共用基础）──
   const repoGithubUrl = project.repo?.githubUrl || null;
@@ -806,6 +812,65 @@ export function OverviewContent(props: OverviewContentProps) {
 
   const advantageWordsTotal = advantage?.advantageKeywords.length ?? 0;
   const disadvantageWordsTotal = advantage?.disadvantageKeywords.length ?? 0;
+
+  // 词池健康条：散在排名页各处的词池状态收成一眼视图，每格深链到处理入口。
+  const budgetTone =
+    rankBudget.state === "hard"
+      ? "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 ring-red-500/40"
+      : rankBudget.state === "soft"
+        ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 ring-amber-500/40"
+        : "bg-zinc-50 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-300 ring-zinc-200 dark:border-zinc-700";
+  const poolHealthStrip = (
+    <div className="mb-3 flex flex-wrap items-center gap-1.5">
+      <span className="mr-1 text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+        词池健康
+      </span>
+      <LinkComponent
+        to="/keywords"
+        className="inline-flex items-center gap-1 rounded-full bg-zinc-50 px-2.5 py-0.5 text-[10px] font-medium text-zinc-600 ring-1 ring-zinc-200 transition-colors hover:bg-zinc-100 dark:bg-zinc-800/60 dark:text-zinc-300 dark:ring-zinc-700 dark:hover:bg-zinc-800"
+        title="当前激活的跟踪关键词数"
+      >
+        活跃词 {trackedActive.length}
+      </LinkComponent>
+      <LinkComponent
+        to="/keywords"
+        className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-500/30 transition-colors hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20"
+        title="最新快照中有前 200 名次的词数 / 活跃词数"
+      >
+        进榜词 {rankedWordCount}/{trackedActive.length}
+      </LinkComponent>
+      <LinkComponent
+        to="/keywords?scope=pending"
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-medium ring-1 transition-colors",
+          pendingReviewCount > 0
+            ? "bg-amber-50 text-amber-700 ring-amber-500/40 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20"
+            : "bg-zinc-50 text-zinc-400 ring-zinc-200 dark:bg-zinc-800/60 dark:ring-zinc-700",
+        )}
+        title="连续未在榜、等待人工分类（恢复 / 暂停 / 移除）的关键词数"
+      >
+        {pendingReviewCount > 0 && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />}
+        待复核 {pendingReviewCount}
+      </LinkComponent>
+      <LinkComponent
+        to="/keywords?scope=deleted"
+        className="inline-flex items-center gap-1 rounded-full bg-zinc-50 px-2.5 py-0.5 text-[10px] font-medium text-zinc-500 ring-1 ring-zinc-200 transition-colors hover:bg-zinc-100 dark:bg-zinc-800/60 dark:text-zinc-400 dark:ring-zinc-700 dark:hover:bg-zinc-800"
+        title="手动删除的关键词数（保留用于阻止 AI 重新建议，可恢复）"
+      >
+        已删除 {project.removedKeywords?.length ?? 0}
+      </LinkComponent>
+      <LinkComponent
+        to="/keywords"
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-medium ring-1 transition-colors",
+          budgetTone,
+        )}
+        title={`每日采集任务数 / 硬上限（活跃关键词 × 语言覆盖的商店数）`}
+      >
+        采集预算 {rankBudget.dailyInstances}/{rankBudget.hardLimit}
+      </LinkComponent>
+    </div>
+  );
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -1294,6 +1359,7 @@ export function OverviewContent(props: OverviewContentProps) {
           ) : undefined
         }
       >
+        {poolHealthStrip}
         {hasCompetitorData ? (
           <div className="min-w-0 space-y-4">
             {/* 顶部：关键词表现 / 竞品概况 并排状态条（一眼总数） */}
@@ -1461,10 +1527,10 @@ export function OverviewContent(props: OverviewContentProps) {
         )}
       </StageCard>
 
-      {/* 排名分布（全局，最新快照 × 全部商店） */}
+      {/* 排名分布（按市场组聚合；逐店明细在排名页「分布」页签） */}
       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mt-4 mb-4">
         <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名分布</h3>
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">排名分布 · 按市场组</h3>
           <div className="flex items-center gap-2.5 shrink-0">
             <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
               {newestCheckedAt ? (
@@ -1477,61 +1543,56 @@ export function OverviewContent(props: OverviewContentProps) {
             </span>
           </div>
         </div>
-        {trackedActive.length === 0 || distributionData.length === 0 ? (
-          <div className="h-56 flex flex-col items-center justify-center gap-3">
+        {trackedActive.length === 0 || marketPerformance.every((group) => group.total === 0) ? (
+          <div className="h-40 flex flex-col items-center justify-center gap-3">
             <p className="text-sm text-zinc-400 dark:text-zinc-500">
-              {trackedActive.length === 0
-                ? "还没有跟踪关键词"
-                : "暂无排名数据"}
+              {trackedActive.length === 0 ? "还没有跟踪关键词" : "暂无排名数据"}
             </p>
             <LinkComponent to="/keywords" className={btnSmSecondary}>
               {trackedActive.length === 0 ? "去生成关键词" : "去排名页"}
             </LinkComponent>
           </div>
         ) : (
-          <div className="p-3">
-            <ResponsiveContainer width="100%" height={224}>
-              <AreaChart data={distributionData} margin={{ top: 8, right: 16, left: -18, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                <XAxis
-                  dataKey="storefront"
-                  tick={{ fontSize: 10, fill: "#a1a1aa" }}
-                  tickLine={false}
-                  axisLine={false}
-                  minTickGap={28}
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tick={{ fontSize: 10, fill: "#a1a1aa" }}
-                  tickLine={false}
-                  axisLine={false}
-                  width={44}
-                />
-                <Tooltip content={<DistributionTooltip />} />
-                {RANK_BUCKETS.map((bucket) => (
-                  <Area
-                    key={bucket.key}
-                    type="monotone"
-                    dataKey={bucket.key}
-                    stackId="1"
-                    stroke="none"
-                    fill={bucket.color}
-                    fillOpacity={bucket.opacity}
-                    name={bucket.label}
-                  />
-                ))}
-              </AreaChart>
-            </ResponsiveContainer>
-            <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-              {RANK_BUCKETS.map((bucket) => (
-                <span
-                  key={bucket.key}
-                  className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
-                >
-                  <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: bucket.color }} />
-                  {bucket.label}
-                </span>
-              ))}
+          <div className="p-4 space-y-3.5">
+            {marketPerformance.map((group) => {
+              const ratePct = group.rate != null ? Math.round(group.rate * 100) : 0;
+              const rateColor =
+                group.rate == null
+                  ? "#d4d4d8"
+                  : group.rate >= 0.6
+                    ? "#16a34a"
+                    : group.rate >= 0.3
+                      ? "#d97706"
+                      : "#dc2626";
+              return (
+                <div key={group.label}>
+                  <div className="flex items-baseline justify-between gap-2 text-[11px]">
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                      {group.label}
+                      <span className="ml-1 text-zinc-400 dark:text-zinc-500">{group.storefronts} 店</span>
+                    </span>
+                    <span className="text-zinc-500 dark:text-zinc-400">
+                      进榜 {group.ranked}/{group.total}（{ratePct}%）· TOP10 {group.top10}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{ width: `${ratePct}%`, backgroundColor: rateColor }}
+                      title={`${group.label}：${group.ranked}/${group.total} 个词×店组合进前 200（${ratePct}%）`}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            <div className="flex items-center justify-between gap-2 pt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+              <span>进榜率 = 该市场组内「词 × 商店」组合中进入前 200 的占比（从未查询的组合不计入）</span>
+              <LinkComponent
+                to="/keywords?tab=distribution"
+                className="shrink-0 font-medium text-amber-600 transition-colors hover:text-amber-700 hover:underline dark:text-amber-400"
+              >
+                逐店明细 →
+              </LinkComponent>
             </div>
           </div>
         )}
