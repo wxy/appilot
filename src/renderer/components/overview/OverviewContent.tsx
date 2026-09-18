@@ -55,7 +55,8 @@ import {
 import { storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
 import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
-import { matrixCellState, STALE_MS } from "../../lib/matrix";
+import { useMemo } from "react";
+import { buildCellIndex, STALE_MS } from "../../lib/matrix";
 import { formatHumanTime, languageLabel, platformLabel } from "../../lib/format";
 import { localizationList } from "../../lib/release-localization";
 import { cn } from "../../lib/utils";
@@ -443,26 +444,93 @@ export function OverviewContent(props: OverviewContentProps) {
     onOpenSettings,
   } = props;
 
+  // —— 快照派生链（hooks 必须在 early return 之前）——
+  // 父组件的每个异步 state 落定都会重渲染本组件；词×店×快照 的扫描只应
+  // 在数据变化时发生，而不是每次渲染。格值走 buildCellIndex 预计算索引。
+  const trackedKeywords = useMemo(() => project?.trackedKeywords || [], [project]);
+  const trackedActive = useMemo(
+    () => trackedKeywords.filter((k) => k.status !== "paused"),
+    [trackedKeywords],
+  );
+  const rankSnapshots = useMemo(() => product?.rankSnapshots || [], [product]);
+  const cellIndex = useMemo(() => buildCellIndex(rankSnapshots), [rankSnapshots]);
+  const rankRows = useMemo(
+    () => overviewRankRows(trackedActive, rankSnapshots),
+    [trackedActive, rankSnapshots],
+  );
+  const newestCheckedAt = useMemo(() => {
+    let newest: RankSnapshot | null = null;
+    for (const snapshot of rankSnapshots) {
+      if (
+        !newest ||
+        new Date(snapshot.checkedAt).getTime() > new Date(newest.checkedAt).getTime()
+      ) {
+        newest = snapshot;
+      }
+    }
+    return newest?.checkedAt || null;
+  }, [rankSnapshots]);
+  const allStorefronts = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (product?.supportedLanguages || []).flatMap((lang: any) =>
+            storefrontsForLanguage(lang.code),
+          ),
+        ),
+      ),
+    [product],
+  );
+  // 分布词源 = 项目级共享关键词池（与排名页「排名分布」同源）。不能取
+  // product.trackedKeywords：多产品项目里非主产品副本可能为空（DB product_records
+  // 无该平台的词，如 ai-pulse-macos 的 iOS 产品 0 词但快照存在），按产品副本取数
+  // 会导致 iOS 分布整列空白。平台维度由当前产品的 rankSnapshots/supportedLanguages
+  // 表达；平台暂停的关键词不计入分布（矩阵仍显示，调度不采集）。
+  const distributionKeywords = useMemo(
+    () =>
+      product
+        ? trackedActive.filter((k) => !(k.pausedPlatforms || []).includes(product.platform))
+        : [],
+    [trackedActive, product],
+  );
+  const distributionData = useMemo(() => {
+    if (!product) return [];
+    return allStorefronts
+      .map((storefront) => {
+        const buckets = { top10: 0, r11_50: 0, r51_100: 0, r101_200: 0, unranked: 0 };
+        for (const row of distributionKeywords) {
+          const cell = cellIndex(row.keyword, storefront);
+          const rank = cell.rank;
+          if (rank == null || cell.beyond200) buckets.unranked += 1;
+          else if (rank <= 10) buckets.top10 += 1;
+          else if (rank <= 50) buckets.r11_50 += 1;
+          else if (rank <= 100) buckets.r51_100 += 1;
+          else buckets.r101_200 += 1;
+        }
+        return {
+          storefront: storefrontDisplayName(storefront),
+          top10: buckets.top10,
+          r11_50: buckets.r11_50,
+          r51_100: buckets.r51_100,
+          r101_200: buckets.r101_200,
+          unranked: buckets.unranked,
+        };
+      })
+      .sort(
+        (a, b) =>
+          (b.top10 * 100 + b.r11_50 * 50 + b.r51_100 * 20 + b.r101_200 * 5) -
+          (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
+      );
+  }, [product, allStorefronts, distributionKeywords, cellIndex]);
+
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目，副驾帮你看路。" />;
   }
 
   const languages = product.supportedLanguages || [];
   const storeLinks = product.storeLinks || [];
-  const trackedKeywords = project.trackedKeywords || [];
-  const trackedActive = trackedKeywords.filter((k) => k.status !== "paused");
-  const rankSnapshots = product.rankSnapshots || [];
-  const rankRows = overviewRankRows(trackedActive, rankSnapshots);
   const top10Count = rankRows.filter((row) => row.bestRank <= 10).length;
   const bestRankRow = rankRows[0] || null;
-  const newestSnapshot = rankSnapshots.reduce<RankSnapshot | null>(
-    (latest, snapshot) =>
-      !latest || new Date(snapshot.checkedAt).getTime() > new Date(latest.checkedAt).getTime()
-        ? snapshot
-        : latest,
-    null,
-  );
-  const newestCheckedAt = newestSnapshot?.checkedAt || null;
   const dataStale = newestCheckedAt ? Date.now() - new Date(newestCheckedAt).getTime() > STALE_MS : false;
   // 全局排名分布（最新快照）：全部关键词 × 当前产品全部商店。
   const RANK_BUCKETS = [
@@ -472,54 +540,6 @@ export function OverviewContent(props: OverviewContentProps) {
     { key: "r101_200", label: "101–200", color: "#facc15", opacity: 0.6 },
     { key: "unranked", label: "未进榜", color: "#a1a1aa", opacity: 0.35 },
   ] as const;
-  const allStorefronts = Array.from(
-    new Set(
-      (product.supportedLanguages || []).flatMap((lang: any) =>
-        storefrontsForLanguage(lang.code),
-      ),
-    ),
-  );
-  // 分布词源 = 项目级共享关键词池（与排名页「排名分布」同源）。不能取
-  // product.trackedKeywords：多产品项目里非主产品副本可能为空（DB product_records
-  // 无该平台的词，如 ai-pulse-macos 的 iOS 产品 0 词但快照存在），按产品副本取数
-  // 会导致 iOS 分布整列空白。平台维度由当前产品的 rankSnapshots/supportedLanguages
-  // 表达；平台暂停的关键词不计入分布（矩阵仍显示，调度不采集）。
-  const distributionKeywords = trackedActive.filter(
-    (k) => !(k.pausedPlatforms || []).includes(product.platform),
-  );
-  const distributionData: {
-    storefront: string;
-    top10: number;
-    r11_50: number;
-    r51_100: number;
-    r101_200: number;
-    unranked: number;
-  }[] = allStorefronts
-    .map((storefront) => {
-      const buckets = { top10: 0, r11_50: 0, r51_100: 0, r101_200: 0, unranked: 0 };
-      for (const row of distributionKeywords) {
-        const cell = matrixCellState(rankSnapshots, row.keyword, storefront);
-        const rank = cell.rank;
-        if (rank == null || cell.beyond200) buckets.unranked += 1;
-        else if (rank <= 10) buckets.top10 += 1;
-        else if (rank <= 50) buckets.r11_50 += 1;
-        else if (rank <= 100) buckets.r51_100 += 1;
-        else buckets.r101_200 += 1;
-      }
-      return {
-        storefront: storefrontDisplayName(storefront),
-        top10: buckets.top10,
-        r11_50: buckets.r11_50,
-        r51_100: buckets.r51_100,
-        r101_200: buckets.r101_200,
-        unranked: buckets.unranked,
-      };
-    })
-    .sort(
-      (a, b) =>
-        (b.top10 * 100 + b.r11_50 * 50 + b.r51_100 * 20 + b.r101_200 * 5) -
-        (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
-    );
   const DistributionTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
     return (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { storefrontDisplayName } from "@appilot-labs/appilot-core/storefronts";
 import { useProject } from "../../stores/project";
@@ -378,39 +378,59 @@ export function TaskCenterPage() {
 
   // 不同类型任务适用的筛选条件不同：排名任务才有语言维度；GitHub/数据同步
   // 是项目级任务（无平台/语言）；构建状态是产品级（有平台、无语言）。
-  const typeTasks =
-    typeFilter === "all"
-      ? data?.tasks || []
-      : (data?.tasks || []).filter((task: any) => task.kind === typeFilter);
-  const projectOptions = Array.from(
-    new Set(
-      typeTasks
-        .map((task: any) => task.projectName)
-        .filter((name: string) => name && name !== "已删除项目"),
-    ),
-  ).sort();
-  const platformOptions = Array.from(
-    new Set(typeTasks.map((task: any) => task.platform).filter(Boolean)),
-  ).sort();
-  const languageOptions = Array.from(
-    new Set(
-      typeTasks
-        .map((task: any) => task.queryLanguage)
-        .filter((lang: string) => Boolean(lang)),
-    ),
-  ).sort();
+  // 派生链 memo 化：加速模式期间倒计时每秒触发整页重渲染，筛选/排序
+  // 只应在任务数据或筛选条件变化时重算，而不是每秒。
+  const allTasks = useMemo(() => data?.tasks || [], [data]);
+  const typeTasks = useMemo(
+    () =>
+      typeFilter === "all"
+        ? allTasks
+        : allTasks.filter((task: any) => task.kind === typeFilter),
+    [allTasks, typeFilter],
+  );
+  const projectOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          typeTasks
+            .map((task: any) => task.projectName)
+            .filter((name: string) => name && name !== "已删除项目"),
+        ),
+      ).sort(),
+    [typeTasks],
+  );
+  const platformOptions = useMemo(
+    () =>
+      Array.from(new Set(typeTasks.map((task: any) => task.platform).filter(Boolean))).sort(),
+    [typeTasks],
+  );
+  const languageOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          typeTasks
+            .map((task: any) => task.queryLanguage)
+            .filter((lang: string) => Boolean(lang)),
+        ),
+      ).sort(),
+    [typeTasks],
+  );
   const typeSupportsPlatform =
     typeFilter === "all" ||
     typeFilter === "rank" ||
     typeFilter === "build-status";
   const typeSupportsLanguage = typeFilter === "all" || typeFilter === "rank";
-  const tasks = (data?.tasks || [])
-    .filter((task) => projectFilter === "all" || task.projectName === projectFilter)
-    .filter((task) => platformFilter === "all" || task.platform === platformFilter)
-    .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter)
-    .filter((task) => typeFilter === "all" || task.kind === typeFilter);
-  const pending = tasks.filter((task) => task.enabled);
-  const failed = tasks.filter((task) => task.lastStatus === "failed");
+  const tasks = useMemo(
+    () =>
+      allTasks
+        .filter((task) => projectFilter === "all" || task.projectName === projectFilter)
+        .filter((task) => platformFilter === "all" || task.platform === platformFilter)
+        .filter((task) => languageFilter === "all" || task.queryLanguage === languageFilter)
+        .filter((task) => typeFilter === "all" || task.kind === typeFilter),
+    [allTasks, projectFilter, platformFilter, languageFilter, typeFilter],
+  );
+  const pending = useMemo(() => tasks.filter((task) => task.enabled), [tasks]);
+  const failed = useMemo(() => tasks.filter((task) => task.lastStatus === "failed"), [tasks]);
 
   const pendingGroups = groupTasks(pending);
   const failedGroups = groupTasks(failed);

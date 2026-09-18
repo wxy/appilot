@@ -416,6 +416,16 @@ export function CopilotPage() {
     () => new Set(session?.supersededSuggestionIds || []),
     [session],
   );
+  // 每个 run 的排名复核摘要一次算好（O(runs × 快照) 只在 session/快照变化时发生）；
+  // AI 流式逐 token 重渲染时只做 Map 查询，不再每次全量过滤快照。
+  const rankRunSummaries = useMemo(() => {
+    const snapshots = product?.rankSnapshots || [];
+    const map = new Map<string, string | null>();
+    for (const run of session?.actionRuns || []) {
+      map.set(run.id, completedRankRunSummary(run, snapshots));
+    }
+    return map;
+  }, [session?.actionRuns, product?.rankSnapshots]);
   const orderedSuggestions = useMemo(() => [...(session?.suggestions || [])]
     .map((item, index) => ({ item, index }))
     .sort((a, b) => {
@@ -891,7 +901,7 @@ export function CopilotPage() {
                               </div>
                             )}
                             {actionRuns.map((run, runIndex) => {
-                              const rankResult = completedRankRunSummary(run, product.rankSnapshots || []);
+                              const rankResult = rankRunSummaries.get(run.id) ?? null;
                               return (
                               <div key={run.id} className={cn(
                                 "mt-2 border-t pt-2 text-[11px]",
