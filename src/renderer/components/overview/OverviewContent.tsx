@@ -104,6 +104,10 @@ export interface OverviewContentProps {
   competitorSummary?: CompetitorSummary | null;
   /** 可选注入：竞品优势聚合（能力②，computeCompetitorAdvantage 的产物）。 */
   competitorAdvantage?: CompetitorAdvantage | null;
+  /** 可选注入：调度器脉搏（system 脉搏条）；null → 显示「未知」。 */
+  schedulerStatus?: { enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null;
+  /** 可选注入：推广活动（X 系列帖子状态机）；空 → 推广卡显示空态。 */
+  promotionCampaigns?: any[] | null;
   /** 可选注入：去竞品页的跳转地址（宿主约定）；缺省/空则竞品卡只展示文字入口。 */
   competitorHref?: string;
   copilotSummary?: { pending: number; completed: number; generatedAt: string | null } | null;
@@ -117,6 +121,14 @@ export interface OverviewContentProps {
 
 const CHIP_BASE =
   "inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0";
+
+/** 本地日历日键（与排名页趋势图同口径）。 */
+function dayKeyOf(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
 
 /** 阶段卡内小标题（与旧 SummaryCard/健康块一致的标签样式）。 */
 const STAGE_LABEL =
@@ -427,6 +439,8 @@ export function OverviewContent(props: OverviewContentProps) {
     repoMetrics,
     competitorSummary,
     competitorAdvantage,
+    schedulerStatus,
+    promotionCampaigns,
     competitorHref,
     copilotSummary,
     LinkComponent = Link,
@@ -556,6 +570,44 @@ export function OverviewContent(props: OverviewContentProps) {
       })
       .filter((group) => group.storefronts > 0);
   }, [product, allStorefronts, distributionKeywords, cellIndex]);
+
+  // 进榜词数 30 天走势：每天统计当日有任意商店进前 200 的去重词数（全语言）。
+  const rankedWordsTrend = useMemo(() => {
+    const cutoffMs = Date.now() - 30 * 86400000;
+    const byDay = new Map<string, Set<string>>();
+    for (const snapshot of rankSnapshots) {
+      if (snapshot.rank == null || snapshot.rank > 200) continue;
+      if (new Date(snapshot.checkedAt).getTime() < cutoffMs) continue;
+      const day = dayKeyOf(snapshot.checkedAt);
+      const words = byDay.get(day);
+      if (words) words.add(snapshot.keyword);
+      else byDay.set(day, new Set([snapshot.keyword]));
+    }
+    return [...byDay.keys()].sort().map((day) => ({ day, count: byDay.get(day)!.size }));
+  }, [rankSnapshots]);
+
+  // 推广漏斗：最新 campaign 的 X 帖子状态机计数（planned/ready/published/skipped）。
+  const promotionFunnel = useMemo(() => {
+    const campaigns = promotionCampaigns || [];
+    if (campaigns.length === 0) return null;
+    const latest = [...campaigns].sort((a, b) =>
+      String(b.storePublishedAt || b.appVersion || "").localeCompare(
+        String(a.storePublishedAt || a.appVersion || ""),
+      ),
+    )[0];
+    const counts = { published: 0, ready: 0, planned: 0, skipped: 0 };
+    let latestPublishedAt: string | null = null;
+    for (const item of latest?.seriesItems || []) {
+      const status = item?.status as keyof typeof counts | undefined;
+      if (status && status in counts) counts[status] += 1;
+      if (item?.status === "published" && item.publishedAt) {
+        if (!latestPublishedAt || item.publishedAt > latestPublishedAt) {
+          latestPublishedAt = item.publishedAt;
+        }
+      }
+    }
+    return { latest, counts, total: (latest?.seriesItems || []).length, latestPublishedAt };
+  }, [promotionCampaigns]);
 
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目，副驾帮你看路。" />;
@@ -872,6 +924,56 @@ export function OverviewContent(props: OverviewContentProps) {
     </div>
   );
 
+  // L1 分诊区条目：只收「有明确动作」的异常，评估性信息不进这里。
+  const attentionItems: {
+    tone: "amber" | "red";
+    text: string;
+    actionLabel: string;
+    to: string;
+  }[] = [];
+  if (pendingReviewCount > 0) {
+    attentionItems.push({
+      tone: "amber",
+      text: `${pendingReviewCount} 个关键词连续未在榜，等待复核分类（恢复 / 暂停 / 移除）`,
+      actionLabel: "去复核",
+      to: "/keywords?scope=pending",
+    });
+  }
+  if (dataStale) {
+    attentionItems.push({
+      tone: "amber",
+      text: "排名数据已超过 36 小时未更新，可能存在采集异常",
+      actionLabel: "去排名页",
+      to: "/keywords",
+    });
+  }
+  if (versionMismatch) {
+    attentionItems.push({
+      tone: versionMismatch.downgrade ? "red" : "amber",
+      text: `商店已上架 v${versionMismatch.live}，草稿目标 v${versionMismatch.target}${
+        versionMismatch.downgrade ? "（目标低于当前版本，注意核对）" : "（尚未上架，待提审）"
+      }`,
+      actionLabel: "去发布页",
+      to: releaseCardTo,
+    });
+  }
+  if (promotionFunnel && promotionFunnel.counts.ready > 0) {
+    attentionItems.push({
+      tone: "amber",
+      text: `v${promotionFunnel.latest.appVersion} 有 ${promotionFunnel.counts.ready} 条 X 帖子文案已就绪待发布`,
+      actionLabel: "去推广",
+      to: "/promotion",
+    });
+  }
+  if (schedulerStatus && schedulerStatus.failed > 0) {
+    attentionItems.push({
+      tone: "red",
+      text: `调度器有 ${schedulerStatus.failed} 个任务处于失败状态`,
+      actionLabel: "去任务中心",
+      to: "/tasks",
+    });
+  }
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       {/* App identity */}
@@ -961,6 +1063,100 @@ export function OverviewContent(props: OverviewContentProps) {
             )}
           </div>
         </div>
+      </div>
+
+      {/* L0 系统脉搏条：采集新鲜度 / 调度器 / 预算，一眼确认系统自身健康 */}
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[10px]">
+        <span className="mr-1 font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+          系统
+        </span>
+        <LinkComponent
+          to="/keywords"
+          className={cn(
+            CHIP_BASE,
+            "px-2.5 py-0.5 ring-1 transition-colors",
+            dataStale
+              ? "bg-amber-50 text-amber-700 ring-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400"
+              : "bg-emerald-50 text-emerald-700 ring-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/30",
+          )}
+          title={newestCheckedAt ? `最近一次排名采集 ${newestCheckedAt}` : "尚无排名数据"}
+        >
+          <span
+            className={cn(
+              "h-1.5 w-1.5 rounded-full",
+              dataStale ? "bg-amber-500" : "bg-emerald-500",
+            )}
+          />
+          数据截至 {newestCheckedAt ? formatHumanTime(newestCheckedAt) : "—"}
+        </LinkComponent>
+        <LinkComponent
+          to="/tasks"
+          className={cn(
+            CHIP_BASE,
+            "px-2.5 py-0.5 ring-1 transition-colors",
+            schedulerStatus && !schedulerStatus.enabled
+              ? "bg-zinc-50 text-zinc-400 ring-zinc-200 dark:bg-zinc-800/60 dark:ring-zinc-700"
+              : "bg-sky-50 text-sky-700 ring-sky-500/30 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-500/30",
+          )}
+          title={
+            schedulerStatus
+              ? schedulerStatus.enabled
+                ? `常驻调度 daemon 运行中${schedulerStatus.due > 0 ? `，${schedulerStatus.due} 个任务待执行` : ""}`
+                : "调度器已停止（可在任务中心启动）"
+              : "调度器状态未知"
+          }
+        >
+          调度器 {schedulerStatus ? (schedulerStatus.enabled ? "运行中" : "已停止") : "未知"}
+          {schedulerStatus && schedulerStatus.due > 0 ? ` · 待执行 ${schedulerStatus.due}` : ""}
+        </LinkComponent>
+        {schedulerStatus && schedulerStatus.failed > 0 && (
+          <LinkComponent
+            to="/tasks"
+            className={cn(CHIP_BASE, "bg-red-50 px-2.5 py-0.5 text-red-600 ring-1 ring-red-500/40 dark:bg-red-500/10 dark:text-red-400")}
+            title="处于失败状态的任务数"
+          >
+            失败 {schedulerStatus.failed}
+          </LinkComponent>
+        )}
+        <LinkComponent
+          to="/keywords"
+          className={cn(CHIP_BASE, "px-2.5 py-0.5 ring-1 transition-colors", budgetTone)}
+          title="每日采集任务数 / 硬上限"
+        >
+          采集预算 {rankBudget.dailyInstances}/{rankBudget.hardLimit}
+        </LinkComponent>
+      </div>
+
+      {/* L1 分诊区：需要你注意的事（无异常时收起为一行绿字） */}
+      <div className="mb-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-2 shadow-sm">
+        {attentionItems.length === 0 ? (
+          <p className="flex items-center gap-2 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            一切正常，没有待处理事项
+          </p>
+        ) : (
+          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {attentionItems.map((item, index) => (
+              <li key={index} className="flex items-center gap-2.5 py-1.5 first:pt-0.5 last:pb-0.5">
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    item.tone === "red" ? "bg-red-500" : "bg-amber-500",
+                  )}
+                />
+                <span className="min-w-0 flex-1 truncate text-xs text-zinc-700 dark:text-zinc-200">
+                  {item.text}
+                </span>
+                <LinkComponent
+                  to={item.to}
+                  className="shrink-0 text-[11px] font-medium text-amber-600 transition-colors hover:underline dark:text-amber-400"
+                >
+                  {item.actionLabel} →
+                </LinkComponent>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* Copilot stays visible as a compact project signal; conversation lives on its own page. */}
@@ -1114,6 +1310,64 @@ export function OverviewContent(props: OverviewContentProps) {
           }
         >
           <div className="space-y-2 min-w-0">
+            {/* 发布管线节点灯：提交 → 文案 → 提审 → 上架（状态可视化，替代文字罗列） */}
+            <div className="flex flex-wrap items-center gap-x-1 gap-y-1.5 pb-1 border-b border-zinc-100 dark:border-zinc-800">
+              {(
+                [
+                  {
+                    label: "提交",
+                    value: pendingCommits != null ? `${pendingCommits}` : "—",
+                    state: pendingCommits ? "done" : "idle",
+                    title: "自上次发布以来的新提交数（① 开发卡同源）",
+                  },
+                  {
+                    label: "文案",
+                    value: submissionDraft ? `v${submissionDraft.appVersion}` : "—",
+                    state: submissionDraft ? "done" : "idle",
+                    title: submissionDraft ? "最新商店文案已生成" : "尚未生成商店文案",
+                  },
+                  {
+                    label: "提审",
+                    value: effectiveVersionStatus?.label ?? "—",
+                    state: storeLiveVersion ? "done" : effectiveVersionStatus ? "current" : "idle",
+                    title: effectiveVersionStatus ? `审核/提审状态：${effectiveVersionStatus.label}` : "尚未提审",
+                  },
+                  {
+                    label: "上架",
+                    value: storeLiveVersion ? `v${storeLiveVersion}` : "—",
+                    state: storeLiveVersion ? "done" : "idle",
+                    title: storeLiveVersion ? `App Store 当前上架 ${storeLiveVersion}` : "商店尚未上架该版本",
+                  },
+                ] as { label: string; value: string; state: "done" | "current" | "idle"; title: string }[]
+              ).map((node, index) => (
+                <div key={node.label} className="flex items-center gap-1 min-w-0" title={node.title}>
+                  {index > 0 && <span className="h-px w-3 shrink-0 bg-zinc-200 dark:bg-zinc-700" />}
+                  <span
+                    className={cn(
+                      "h-2 w-2 shrink-0 rounded-full",
+                      node.state === "done"
+                        ? "bg-emerald-500"
+                        : node.state === "current"
+                          ? "bg-amber-500 animate-pulse"
+                          : "border border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-800",
+                    )}
+                  />
+                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+                    {node.label}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-[10px] font-medium whitespace-nowrap",
+                      node.state === "idle"
+                        ? "text-zinc-400 dark:text-zinc-500"
+                        : "text-zinc-700 dark:text-zinc-200",
+                    )}
+                  >
+                    {node.value}
+                  </span>
+                </div>
+              ))}
+            </div>
             {latestCopyNote && (
               <p
                 className="text-[11px] font-medium text-amber-600 dark:text-amber-500"
@@ -1527,6 +1781,83 @@ export function OverviewContent(props: OverviewContentProps) {
         )}
       </StageCard>
 
+      {/* 推广：最新版本 campaign 的 X 帖子发布漏斗（planned/ready/published/skipped） */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mb-4">
+        <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">推广</h3>
+          <LinkComponent
+            to="/promotion"
+            className="shrink-0 text-[11px] font-medium text-amber-600 transition-colors hover:text-amber-700 hover:underline dark:text-amber-400"
+          >
+            管理推广 →
+          </LinkComponent>
+        </div>
+        {!promotionFunnel ? (
+          <div className="px-5 py-5">
+            <p className="text-xs text-zinc-400 dark:text-zinc-500">
+              尚无推广活动。版本上架后，可在推广页基于发布内容生成 X 系列帖子。
+            </p>
+          </div>
+        ) : (
+          <div className="px-5 py-4 space-y-2.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 text-[11px]">
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                v{promotionFunnel.latest.appVersion} X 系列
+                <span className="ml-1.5 font-normal text-zinc-400 dark:text-zinc-500">
+                  {promotionFunnel.total} 帖
+                </span>
+              </span>
+              <span className="text-zinc-400 dark:text-zinc-500">
+                {promotionFunnel.latestPublishedAt
+                  ? `最近发布于 ${formatHumanTime(promotionFunnel.latestPublishedAt)}`
+                  : "尚未发布"}
+              </span>
+            </div>
+            <div className="flex h-3 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+              {(
+                [
+                  { key: "published" as const, color: "#10b981", label: "已发布" },
+                  { key: "ready" as const, color: "#f59e0b", label: "待发布" },
+                  { key: "planned" as const, color: "#a1a1aa", label: "规划中" },
+                  { key: "skipped" as const, color: "#e4e4e7", label: "跳过" },
+                ]
+              ).map((segment) => {
+                const value = promotionFunnel.counts[segment.key];
+                if (!value) return null;
+                return (
+                  <div
+                    key={segment.key}
+                    className="h-full first:rounded-l-full last:rounded-r-full"
+                    style={{ width: `${(value / promotionFunnel.total) * 100}%`, backgroundColor: segment.color }}
+                    title={`${segment.label} ${value} 帖`}
+                  />
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#10b981" }} />
+                已发布 {promotionFunnel.counts.published}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#f59e0b" }} />
+                待发布 {promotionFunnel.counts.ready}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#a1a1aa" }} />
+                规划中 {promotionFunnel.counts.planned}
+              </span>
+              {promotionFunnel.counts.skipped > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#e4e4e7" }} />
+                  跳过 {promotionFunnel.counts.skipped}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 排名分布（按市场组聚合；逐店明细在排名页「分布」页签） */}
       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm mt-4 mb-4">
         <div className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 flex items-center justify-between gap-3">
@@ -1554,6 +1885,34 @@ export function OverviewContent(props: OverviewContentProps) {
           </div>
         ) : (
           <div className="p-4 space-y-3.5">
+            {rankedWordsTrend.length >= 2 && (
+              <div className="flex items-center justify-end gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                <span>进榜词数 · 近 30 天</span>
+                {(() => {
+                  const w = 150;
+                  const h = 26;
+                  const max = Math.max(...rankedWordsTrend.map((point) => point.count), 1);
+                  const step = w / (rankedWordsTrend.length - 1);
+                  const points = rankedWordsTrend
+                    .map(
+                      (point, index) =>
+                        `${(index * step).toFixed(1)},${(h - 2 - (point.count / max) * (h - 4)).toFixed(1)}`,
+                    )
+                    .join(" ");
+                  const lastPoint = rankedWordsTrend[rankedWordsTrend.length - 1];
+                  const lastY = h - 2 - (lastPoint.count / max) * (h - 4);
+                  return (
+                    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
+                      <polyline points={points} fill="none" stroke="#10b981" strokeWidth="1.5" />
+                      <circle cx={w} cy={lastY.toFixed(1)} r="2" fill="#10b981" />
+                    </svg>
+                  );
+                })()}
+                <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                  {rankedWordsTrend[rankedWordsTrend.length - 1].count}
+                </span>
+              </div>
+            )}
             {marketPerformance.map((group) => {
               const ratePct = group.rate != null ? Math.round(group.rate * 100) : 0;
               const rateColor =
