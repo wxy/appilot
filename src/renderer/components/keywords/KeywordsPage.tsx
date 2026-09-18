@@ -127,7 +127,7 @@ export function KeywordsPage() {
   // 页面二级标签：关键词矩阵 | 竞品 | 排名分布（分布为整体视角，独立于各卡片）。
   const [pageTab, setPageTab] = useState<"keywords" | "competitor" | "distribution">("keywords");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
-  const deletedPopoverRef = useRef<HTMLSpanElement>(null);
+  const deletedPopoverRef = useRef<HTMLDivElement>(null);
 
   // Close keyword popovers when clicking anywhere outside them.
   useEffect(() => {
@@ -1837,7 +1837,7 @@ export function KeywordsPage() {
                     全局关键词（英文）× 全部商店
                   </div>
                 )}
-                <div className="h-6 flex items-center justify-between gap-1.5 px-4 whitespace-nowrap">
+                <div className="h-7 flex items-center justify-between gap-1.5 px-4 whitespace-nowrap">
                   <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 shrink-0">
                     关键词（{trackedActive.length}）
                   </span>
@@ -1868,7 +1868,11 @@ export function KeywordsPage() {
                       </button>
                   </div>
                 </div>
-                <div className="h-6 flex items-center gap-1.5 px-4 whitespace-nowrap overflow-x-auto scrollbar-hidden">
+                {/* 第二行：勾选批量删除 + 补全译文/已删除（浮层挂在本行，relative + 无 overflow 裁剪） */}
+                <div
+                  className="relative h-9 flex items-center gap-1.5 px-4 whitespace-nowrap"
+                  ref={deletedPopoverRef}
+                >
                   {urlScope === "top10" && (
                     <button
                       type="button"
@@ -1941,10 +1945,9 @@ export function KeywordsPage() {
                         : `补全译文 ${missingTranslationCount}`}
                     </button>
                   </span>
-                  {/* 已删除：常驻占位（无已删除时隐藏） */}
+                  {/* 已删除：常驻占位（无已删除时隐藏）；浮层挂在本行右侧 */}
                   <span
-                    className={cn("relative shrink-0", removedForCurrent.length === 0 && "invisible")}
-                    ref={deletedPopoverRef}
+                    className={cn("shrink-0 inline-flex", removedForCurrent.length === 0 && "invisible")}
                   >
                     <button
                       type="button"
@@ -1958,36 +1961,36 @@ export function KeywordsPage() {
                     >
                       已删除 {removedForCurrent.length}
                     </button>
-                    {showDeleted && removedForCurrent.length > 0 && (
-                      <div className="absolute right-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-                            已删除（手动）
-                          </p>
-                          <button onClick={clearRemoved} className="text-[10px] text-zinc-400 hover:text-red-500">
-                            清空
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {removedForCurrent.map((item) => (
-                            <span
-                              key={`${item.language}:${item.keyword}`}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
-                            >
-                              {item.keyword}
-                              <button
-                                onClick={() => restoreTracked(item.language, item.keyword)}
-                                className="text-amber-600 dark:text-amber-400 hover:underline"
-                                title="恢复"
-                              >
-                                恢复
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </span>
+                  {showDeleted && removedForCurrent.length > 0 && (
+                    <div className="absolute right-4 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                          已删除（手动）
+                        </p>
+                        <button onClick={clearRemoved} className="text-[10px] text-zinc-400 hover:text-red-500">
+                          清空
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {removedForCurrent.map((item) => (
+                          <span
+                            key={`${item.language}:${item.keyword}`}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
+                          >
+                            {item.keyword}
+                            <button
+                              onClick={() => restoreTracked(item.language, item.keyword)}
+                              className="text-amber-600 dark:text-amber-400 hover:underline"
+                              title="恢复"
+                            >
+                              恢复
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               {rowsToRender.length === 0 ? (
@@ -2032,7 +2035,7 @@ export function KeywordsPage() {
                 <div
                   key={column.storefront}
                   className={cn(
-                    "px-3 py-2 text-right border-l border-zinc-100 dark:border-zinc-800",
+                    "h-16 px-3 text-right border-l border-zinc-100 dark:border-zinc-800 flex flex-col justify-center",
                     column.meta.stale && "opacity-60",
                   )}
                 >
