@@ -664,17 +664,20 @@ export function KeywordsPage() {
   if (chartTicks[chartTicks.length - 1] !== chartMaxRank) chartTicks.push(chartMaxRank);
 
   // 多词对比模式数据：每词一条曲线 = 该词当日在这张卡全部商店中的最优名次。
-  // 一次快照扫描建 (日 × 词) → 最优名次，日轴连续（无数据日断点由 connectNulls 连接）。
+  // 同时预计算「同口径组带」：整卡词池当日跨店最优的 P25–P75——带与线同为
+  // 跨店最优口径，对比才有意义（勾选的词相对整卡词池处于什么位置）。
+  // 一次快照扫描建 (日 × 词) → 最优名次，日轴连续（无数据日由 connectNulls 连接）。
   const compareChart = useMemo(() => {
     if (!compareMode) return { rows: [] as Record<string, any>[], words: [] as string[] };
     const words = comparedKeywords.map((k) => k.keyword);
     const wordSet = new Set(words);
+    const cardSet = new Set(groupBandKeywords);
     const best = new Map<string, Map<string, number>>();
     for (const snapshot of rankSnapshots) {
-      if (!wordSet.has(snapshot.keyword)) continue;
       if (snapshot.language !== currentLang) continue;
       if (!storefronts.includes(snapshot.storefront)) continue;
       if (snapshot.rank == null || snapshot.rank > 200) continue;
+      if (!wordSet.has(snapshot.keyword) && !cardSet.has(snapshot.keyword)) continue;
       const day = localDayKey(snapshot.checkedAt);
       let perWord = best.get(day);
       if (!perWord) {
@@ -695,17 +698,28 @@ export function KeywordsPage() {
       const row: Record<string, any> = { time: dayIso };
       const perWord = best.get(day);
       for (const word of words) row[word] = perWord?.get(word) ?? null;
+      // 同口径组带：全卡词当日跨店最优的 P25–P75（当天不足 2 个词有数据则不画）
+      const values: number[] = [];
+      if (perWord) {
+        for (const value of perWord.values()) values.push(value);
+      }
+      if (values.length >= GROUP_BAND_MIN_N) {
+        values.sort((a, b) => a - b);
+        row.p25 = percentileOf(values, 0.25);
+        row.p75 = percentileOf(values, 0.75);
+      }
       rows.push(row);
       if (day >= last) break;
       cursor.setDate(cursor.getDate() + 1);
     }
     return { rows, words };
-  }, [compareMode, comparedKeywords, rankSnapshots, currentLang, storefronts]);
+  }, [compareMode, comparedKeywords, groupBandKeywords, rankSnapshots, currentLang, storefronts]);
   const compareMaxRank = compareChart.rows.reduce((max, row) => {
     for (const word of compareChart.words) {
       const value = row[word];
       if (typeof value === "number" && value > max) max = value;
     }
+    if (typeof row.p75 === "number" && row.p75 > max) max = row.p75;
     return max;
   }, 1);
   const compareStep = Math.max(1, Math.ceil(compareMaxRank / 5));
@@ -2187,6 +2201,18 @@ export function KeywordsPage() {
                         width={34}
                       />
                       <Tooltip />
+                      <Area
+                        dataKey={(row: any) =>
+                          row.p25 != null && row.p75 != null ? [row.p25, row.p75] : null
+                        }
+                        type="monotone"
+                        connectNulls
+                        stroke="none"
+                        fill="#a1a1aa"
+                        fillOpacity={0.18}
+                        isAnimationActive={false}
+                        name="整卡跨店最优 P25–P75"
+                      />
                       {compareChart.words.map((word, index) => (
                         <Line
                           key={word}
@@ -2204,6 +2230,10 @@ export function KeywordsPage() {
                   </ResponsiveContainer>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+                    <span className="w-2 h-2 rounded-sm bg-zinc-400/50" />
+                    整卡词池跨店最优 P25–P75
+                  </span>
                   {compareChart.words.map((word, index) => (
                     <span
                       key={word}
@@ -2217,7 +2247,7 @@ export function KeywordsPage() {
                     </span>
                   ))}
                   <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                    勾选多个词即可对比（当日跨店最优名次）；取消勾选恢复单词逐店视图
+                    勾选多个词即可对比（当日跨店最优名次）；灰带 = 整卡词池同口径分位，词线出带即优于 3/4 的词池；取消勾选恢复单词逐店视图
                   </span>
                 </div>
               </div>
