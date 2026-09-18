@@ -36,6 +36,8 @@ import { KeywordRuby } from "../ui/KeywordRuby";
 /** 组包络带（P25–P75）的参与关键词数下限：某商店某天在榜词数低于此值即视为“无组数据日”
  *（由前后真实日连接）。取 2 而非更高，避免稀疏商店（每天仅 1–2 个词在榜）整条带不显示。 */
 const GROUP_BAND_MIN_N = 2;
+/** 多词对比模式的曲线上限：调色板恰好 6 色，再多曲线互相覆盖且无法辨色。 */
+const MAX_COMPARE_WORDS = 6;
 /** 某商店要画整组带，至少需要有这么多“真实带日”（当天在榜词 ≥ GROUP_BAND_MIN_N）。
  * 避免整组几乎不进前 200 的商店，因孤立的 1–2 天数据被“连接/延展”成贯穿全图的假带。 */
 const GROUP_BAND_MIN_DAYS = 3;
@@ -450,9 +452,32 @@ export function KeywordsPage() {
   );
   const allRowsSelected =
     visibleRows.length > 0 && selectedVisibleRows.length === visibleRows.length;
-  const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
-    ? selectedKeyword
-    : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
+  // 勾选的词（当前卡片内）：按最优名次排序。≥2 个 → 趋势图进入对比模式，
+  // 每词一条曲线（当日跨店最优名次，与在榜判定同口径）。
+  const checkedRows = useMemo(() => {
+    const bestByKey = new Map(
+      ranked.map((item) => [`${item.row.language}\u0000${item.row.keyword}`, item.bestRank] as const),
+    );
+    return trackedActive
+      .filter((k) => rowSelected.has(selKey(k.language, k.keyword)))
+      .map((k) => ({
+        ...k,
+        bestRank: bestByKey.get(`${k.language}\u0000${k.keyword}`) ?? null,
+      }))
+      .sort((a, b) => (a.bestRank ?? Infinity) - (b.bestRank ?? Infinity));
+  }, [ranked, trackedActive, rowSelected]);
+  const compareMode = checkedRows.length >= 2;
+  // 对比模式最多取最优前 MAX_COMPARE_WORDS 个：调色板 6 色，再多互相覆盖且无法辨色。
+  const comparedKeywords = useMemo(
+    () => checkedRows.slice(0, MAX_COMPARE_WORDS),
+    [checkedRows],
+  );
+  const chartKeyword =
+    checkedRows.length === 1
+      ? checkedRows[0].keyword
+      : matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
+        ? selectedKeyword
+        : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
   const chartKeywordMeta = matrixRows.find(
     (keyword) => keyword.keyword === chartKeyword,
   );
@@ -637,6 +662,56 @@ export function KeywordsPage() {
   const chartTicks: number[] = [];
   for (let rank = 1; rank <= chartMaxRank; rank += chartStep) chartTicks.push(rank);
   if (chartTicks[chartTicks.length - 1] !== chartMaxRank) chartTicks.push(chartMaxRank);
+
+  // 多词对比模式数据：每词一条曲线 = 该词当日在这张卡全部商店中的最优名次。
+  // 一次快照扫描建 (日 × 词) → 最优名次，日轴连续（无数据日断点由 connectNulls 连接）。
+  const compareChart = useMemo(() => {
+    if (!compareMode) return { rows: [] as Record<string, any>[], words: [] as string[] };
+    const words = comparedKeywords.map((k) => k.keyword);
+    const wordSet = new Set(words);
+    const best = new Map<string, Map<string, number>>();
+    for (const snapshot of rankSnapshots) {
+      if (!wordSet.has(snapshot.keyword)) continue;
+      if (snapshot.language !== currentLang) continue;
+      if (!storefronts.includes(snapshot.storefront)) continue;
+      if (snapshot.rank == null || snapshot.rank > 200) continue;
+      const day = localDayKey(snapshot.checkedAt);
+      let perWord = best.get(day);
+      if (!perWord) {
+        perWord = new Map();
+        best.set(day, perWord);
+      }
+      const prev = perWord.get(snapshot.keyword);
+      if (prev == null || snapshot.rank < prev) perWord.set(snapshot.keyword, snapshot.rank);
+    }
+    if (best.size === 0) return { rows: [] as Record<string, any>[], words };
+    const sortedDays = [...best.keys()].sort();
+    const rows: Record<string, any>[] = [];
+    const cursor = new Date(`${sortedDays[0]}T00:00:00`);
+    const last = sortedDays[sortedDays.length - 1];
+    for (;;) {
+      const dayIso = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate()).toISOString();
+      const day = localDayKey(dayIso);
+      const row: Record<string, any> = { time: dayIso };
+      const perWord = best.get(day);
+      for (const word of words) row[word] = perWord?.get(word) ?? null;
+      rows.push(row);
+      if (day >= last) break;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return { rows, words };
+  }, [compareMode, comparedKeywords, rankSnapshots, currentLang, storefronts]);
+  const compareMaxRank = compareChart.rows.reduce((max, row) => {
+    for (const word of compareChart.words) {
+      const value = row[word];
+      if (typeof value === "number" && value > max) max = value;
+    }
+    return max;
+  }, 1);
+  const compareStep = Math.max(1, Math.ceil(compareMaxRank / 5));
+  const compareTicks: number[] = [];
+  for (let rank = 1; rank <= compareMaxRank; rank += compareStep) compareTicks.push(rank);
+  if (compareTicks[compareTicks.length - 1] !== compareMaxRank) compareTicks.push(compareMaxRank);
 
   const formatColumnTime = (iso: string) =>
     new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -2071,7 +2146,84 @@ export function KeywordsPage() {
 
             </div>
 
-            {chartKeyword && chartData.length > 0 ? (
+            {compareMode && compareChart.rows.length > 0 ? (
+            <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5">
+              <div>
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                  <h4 className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    关键词对比趋势（{compareChart.words.length} 个词 · 当日跨店最优名次）
+                  </h4>
+                  {checkedRows.length > compareChart.words.length && (
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                      已勾选 {checkedRows.length} 个词，仅显示最优前 {MAX_COMPARE_WORDS} 个
+                    </span>
+                  )}
+                </div>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={compareChart.rows} margin={{ top: 12, right: 16, bottom: 4, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={(iso: string) => {
+                          const dt = new Date(iso);
+                          return `${dt.getMonth() + 1}/${dt.getDate()}`;
+                        }}
+                        tick={{ fontSize: 10 }}
+                        tickLine={false}
+                        axisLine={false}
+                        minTickGap={40}
+                        height={26}
+                      />
+                      <YAxis
+                        reversed
+                        domain={[1, compareMaxRank]}
+                        allowDecimals={false}
+                        ticks={compareTicks}
+                        tick={{ fontSize: 11 }}
+                        tickMargin={8}
+                        tickLine={false}
+                        axisLine={false}
+                        width={34}
+                      />
+                      <Tooltip />
+                      {compareChart.words.map((word, index) => (
+                        <Line
+                          key={word}
+                          dataKey={word}
+                          name={word}
+                          type="monotone"
+                          stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                          strokeWidth={2}
+                          connectNulls
+                          dot={{ r: 2.5 }}
+                          activeDot={{ r: 4 }}
+                        />
+                      ))}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {compareChart.words.map((word, index) => (
+                    <span
+                      key={word}
+                      className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                      />
+                      {word}
+                    </span>
+                  ))}
+                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                    勾选多个词即可对比（当日跨店最优名次）；取消勾选恢复单词逐店视图
+                  </span>
+                </div>
+              </div>
+
+            </div>
+            ) : chartKeyword && chartData.length > 0 ? (
             <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5">
                   <div>
                     <div className="h-56">
