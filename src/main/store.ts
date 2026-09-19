@@ -2,7 +2,7 @@ import { app } from "electron";
 import path from "path";
 import { log } from "@appilot-labs/appilot-core/logger";
 import { sharedStore } from "./registry-sync";
-import { migrateConfigJsonIntoKv } from "./kv-migrate";
+import { cleanupMigrationArtifacts, migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
 import { mirrorTasksToDb, electronTasksFromRows, backfillTaskHistoryOnce, purgeOrphanProjectTasks } from "./task-db-sync";
@@ -77,6 +77,11 @@ export async function getStore(): Promise<AppStore> {
       }
     } catch (err: any) {
       log.error(`config.json → SQLite app_kv 迁移失败（下次启动重试）: ${err.message}`);
+    }
+    // 迁移产物清理：.bak-* / .migrated-* 可能含迁移前明文凭据，保留 14 天后启动时清除。
+    const removedArtifacts = cleanupMigrationArtifacts(app.getPath("userData"));
+    if (removedArtifacts.length > 0) {
+      log.info(`appilot: 已清理过期迁移备份 ${removedArtifacts.length} 个: ${removedArtifacts.join(", ")}`);
     }
     const kv = shared.kv;
     // projects 已切 DB 源（默认开启）：注册表有项目行时删除 kv 遗留 projects 键。

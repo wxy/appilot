@@ -9,9 +9,11 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { mkdtempSync } from 'node:fs';
 import { openStore } from '@appilot-labs/appilot-headless';
 import {
+  cleanupMigrationArtifacts,
   KV_MIGRATE_MARK,
   migrateConfigJsonIntoKv,
 } from '../src/main/kv-migrate';
@@ -117,3 +119,31 @@ main().catch((err) => {
   console.error('kv-migrate 测试失败:', err);
   process.exit(1);
 });
+
+
+// ── cleanupMigrationArtifacts：过期迁移产物清理（含明文凭据的旧备份）──
+{
+  const dir = mkdtempSync(path.join(tmpdir(), "kv-migrate-cleanup-"));
+  const mk = (name: string, ageDays: number) => {
+    const full = path.join(dir, name);
+    fs.writeFileSync(full, "x");
+    fs.utimesSync(full, new Date(Date.now() - ageDays * 86400000), new Date(Date.now() - ageDays * 86400000));
+    return full;
+  };
+  const expiredBak = mk("config.json.bak-20260825-1", 30);
+  const expiredMigrated = mk("config.json.migrated-2026-09-06T09-38-54-537Z", 30);
+  const freshBak = mk("config.json.bak-recent", 2);
+  const untouched = mk("other.json", 30);
+
+  const removed = cleanupMigrationArtifacts(dir, Date.now(), 14, fs);
+
+  assert.deepEqual(removed.sort(), [
+    "config.json.bak-20260825-1",
+    "config.json.migrated-2026-09-06T09-38-54-537Z",
+  ].sort(), "只清过期的 bak-/migrated- 产物");
+  assert.ok(!fs.existsSync(expiredBak), "过期 bak 已删除");
+  assert.ok(!fs.existsSync(expiredMigrated), "过期 migrated 已删除");
+  assert.ok(fs.existsSync(freshBak), "未过期产物保留");
+  assert.ok(fs.existsSync(untouched), "非迁移产物不清理");
+  console.log("✅ cleanupMigrationArtifacts 清理口径正确");
+}

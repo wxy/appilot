@@ -56,3 +56,39 @@ export function migrateConfigJsonIntoKv(
   kv.set(KV_MIGRATE_MARK, new Date().toISOString());
   return { imported, archivedTo, alreadyDone: false };
 }
+
+/** 迁移产物保留期（默认 14 天）：过期后启动时自动清理。 */
+export const MIGRATION_ARTIFACT_RETENTION_DAYS = 14;
+
+/** config.json 迁移产物（.bak-* / .migrated-*）——可能含迁移前明文凭据，到期即清。 */
+export function cleanupMigrationArtifacts(
+  dir: string,
+  nowMs: number = Date.now(),
+  retentionDays: number = MIGRATION_ARTIFACT_RETENTION_DAYS,
+  fsApi: {
+    existsSync(p: string): boolean;
+    readdirSync(p: string): string[];
+    statSync(p: string): { mtimeMs: number };
+    unlinkSync(p: string): void;
+  } = fs,
+): string[] {
+  const removed: string[] = [];
+  try {
+    if (!fsApi.existsSync(dir)) return removed;
+    const cutoffMs = nowMs - Math.max(1, retentionDays) * 86400000;
+    for (const file of fsApi.readdirSync(dir)) {
+      if (!/^config\.json\.(bak-|migrated-)/.test(file)) continue;
+      const full = `${dir.replace(/\/$/, "")}/${file}`;
+      try {
+        if (fsApi.statSync(full).mtimeMs >= cutoffMs) continue;
+        fsApi.unlinkSync(full);
+        removed.push(file);
+      } catch {
+        // 单个文件失败不阻塞其余清理
+      }
+    }
+  } catch {
+    // best effort
+  }
+  return removed;
+}
