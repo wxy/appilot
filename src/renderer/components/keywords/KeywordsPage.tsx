@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Area,
@@ -15,7 +15,7 @@ import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/app
 import { rankBudgetAdmissible, rankBudgetStatus } from "@appilot-labs/appilot-core/rank-budget";
 import { languageLabel, platformLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import {
-  matrixCellState,
+  buildCellIndex,
   matrixColumnMeta,
   matrixFilterKeywords,
   matrixRowGroups,
@@ -36,6 +36,8 @@ import { KeywordRuby } from "../ui/KeywordRuby";
 /** 组包络带（P25–P75）的参与关键词数下限：某商店某天在榜词数低于此值即视为“无组数据日”
  *（由前后真实日连接）。取 2 而非更高，避免稀疏商店（每天仅 1–2 个词在榜）整条带不显示。 */
 const GROUP_BAND_MIN_N = 2;
+/** 多词对比模式的曲线上限：调色板恰好 6 色，再多曲线互相覆盖且无法辨色。 */
+const MAX_COMPARE_WORDS = 6;
 /** 某商店要画整组带，至少需要有这么多“真实带日”（当天在榜词 ≥ GROUP_BAND_MIN_N）。
  * 避免整组几乎不进前 200 的商店，因孤立的 1–2 天数据被“连接/延展”成贯穿全图的假带。 */
 const GROUP_BAND_MIN_DAYS = 3;
@@ -127,18 +129,13 @@ export function KeywordsPage() {
   // 页面二级标签：关键词矩阵 | 竞品 | 排名分布（分布为整体视角，独立于各卡片）。
   const [pageTab, setPageTab] = useState<"keywords" | "competitor" | "distribution">("keywords");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
-  const deletedPopoverRef = useRef<HTMLSpanElement>(null);
 
-  // Close keyword popovers when clicking anywhere outside them.
+  // 已暂停气泡：点外部任意处收起。「已删除」是页面级模态，由遮罩点击自行关闭。
   useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      const inside = [pausedPopoverRef, deletedPopoverRef].some(
-        (ref) => ref.current?.contains(target),
-      );
-      if (!inside) {
+      if (!(pausedPopoverRef.current?.contains(target) ?? false)) {
         setShowPaused(false);
-        setShowDeleted(false);
       }
     };
     document.addEventListener("mousedown", onMouseDown);
@@ -154,6 +151,7 @@ export function KeywordsPage() {
   const urlKeyword = searchParams.get("keyword") || "";
   const urlLang = searchParams.get("lang") || "";
   const urlScope = searchParams.get("scope") || "";
+  const urlTab = searchParams.get("tab") || "";
 
   const languages = product?.supportedLanguages || [];
   const languageOptions = trackingLanguageOptions(languages);
@@ -259,7 +257,25 @@ export function KeywordsPage() {
     if (urlScope === "paused") {
       setShowPaused(true);
     }
-  }, [product?.id, urlKeyword, urlLang, urlScope]);
+    // 待处理暂停 / 已删除：一次性打开对应弹层后消费掉 scope 参数，
+    // 避免同页其他参数变化时重复弹出的循环。
+    if (urlScope === "pending") {
+      void openPendingReview();
+      const next = new URLSearchParams(searchParams);
+      next.delete("scope");
+      setSearchParams(next, { replace: true });
+    }
+    if (urlScope === "deleted") {
+      setShowDeleted(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("scope");
+      setSearchParams(next, { replace: true });
+    }
+    // 页签深链：总览等入口可直达 竞品 / 分布 页签。
+    if (urlTab === "competitor" || urlTab === "distribution") {
+      setPageTab(urlTab);
+    }
+  }, [product?.id, urlKeyword, urlLang, urlScope, urlTab]);
 
   if (!project || !product) {
     return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
@@ -269,13 +285,22 @@ export function KeywordsPage() {
   // 每张卡只查自己的语言：全局卡 = en（× 全部商店）；语言卡 = 该语言（× 该语言商店）。
   // en 全局词不再跟随语言卡查询——它们只在全局卡出现。
   const queryLanguages = [currentLang];
-  const tracked = (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language));
-  const trackedActive = tracked.filter((k) => k.status !== "paused");
-  const pausedForCurrent = tracked.filter(
-    (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
+  // —— 派生链全部 memo 化：勾选/切标签只改轻量状态，不应重扫全量排名快照 ——
+  const tracked = useMemo(
+    () => (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language)),
+    [project.trackedKeywords, currentLang],
   );
-  const pendingForCurrent = tracked.filter((k) =>
-    (k.pendingPausePlatforms || []).includes(product.platform),
+  const trackedActive = useMemo(() => tracked.filter((k) => k.status !== "paused"), [tracked]);
+  const pausedForCurrent = useMemo(
+    () =>
+      tracked.filter(
+        (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
+      ),
+    [tracked, product.platform],
+  );
+  const pendingForCurrent = useMemo(
+    () => tracked.filter((k) => (k.pendingPausePlatforms || []).includes(product.platform)),
+    [tracked, product.platform],
   );
   const missingTranslationCount = (project.trackedKeywords || []).filter(
     (k) =>
@@ -283,7 +308,10 @@ export function KeywordsPage() {
       k.language !== "zh-Hant" &&
       !(k.translation && String(k.translation).trim()),
   ).length;
-  const removedForCurrent = (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language));
+  const removedForCurrent = useMemo(
+    () => (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language)),
+    [project.removedKeywords, currentLang],
+  );
   // 采集预算：任务量 = 活跃关键词 × 语言覆盖的商店数（en 全局词按全部本地化计）。
   // 建议采纳 / 候选加入 / 恢复暂停词都会受硬上限约束，软上限起提示作用。
   const rankBudget = rankBudgetStatus(
@@ -292,22 +320,30 @@ export function KeywordsPage() {
     project.trackedKeywords || [],
   );
   // 产品全部本地化覆盖的商店（去重）：全局卡列序与分布页签共用。
-  const productStorefronts = Array.from(
-    new Set(
-      (product?.supportedLanguages || []).flatMap((lang) =>
-        storefrontsForLanguage(lang.code),
+  const productStorefronts = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (product?.supportedLanguages || []).flatMap((lang) =>
+            storefrontsForLanguage(lang.code),
+          ),
+        ),
       ),
-    ),
+    [product],
   );
-  const enStorefronts = new Set(storefrontsForLanguage("en"));
-  const storefronts = isGlobalView
-    ? [
-        ...productStorefronts.filter((storefront) => enStorefronts.has(storefront)),
-        ...productStorefronts.filter((storefront) => !enStorefronts.has(storefront)),
-      ]
-    : storefrontsForLanguage(currentLang);
+  const enStorefronts = useMemo(() => new Set(storefrontsForLanguage("en")), []);
+  const storefronts = useMemo(
+    () =>
+      isGlobalView
+        ? [
+            ...productStorefronts.filter((storefront) => enStorefronts.has(storefront)),
+            ...productStorefronts.filter((storefront) => !enStorefronts.has(storefront)),
+          ]
+        : storefrontsForLanguage(currentLang),
+    [isGlobalView, currentLang, productStorefronts, enStorefronts],
+  );
   // 全局卡表头分组（相邻同组合并）：英语商店 | 其他语言商店。
-  const globalColumnGroups = (() => {
+  const globalColumnGroups = useMemo(() => {
     if (!isGlobalView) return [];
     const groups: { label: string; span: number }[] = [];
     for (const storefront of storefronts) {
@@ -317,13 +353,23 @@ export function KeywordsPage() {
       else groups.push({ label, span: 1 });
     }
     return groups;
-  })();
-  const rankSnapshots = product.rankSnapshots || [];
-  const matrixRows = matrixFilterKeywords(trackedActive, currentLang);
-  const matrixColumns = storefronts.map((storefront) => ({
-    storefront,
-    meta: matrixColumnMeta(rankSnapshots, storefront),
-  }));
+  }, [isGlobalView, storefronts, enStorefronts]);
+  // 快照索引：一次 O(快照数) 预计算每格 cell，渲染期 O(1) 查询（matrixCellState
+  // 每次全量过滤快照，行×列 次调用在快照上万后是纯卡顿来源）。
+  const rankSnapshots = useMemo(() => product.rankSnapshots || [], [product]);
+  const cellIndex = useMemo(() => buildCellIndex(rankSnapshots), [rankSnapshots]);
+  const matrixRows = useMemo(
+    () => matrixFilterKeywords(trackedActive, currentLang),
+    [trackedActive, currentLang],
+  );
+  const matrixColumns = useMemo(
+    () =>
+      storefronts.map((storefront) => ({
+        storefront,
+        meta: matrixColumnMeta(rankSnapshots, storefront),
+      })),
+    [storefronts, rankSnapshots],
+  );
   const storeGridTemplate = `repeat(${matrixColumns.length}, 88px)`;
   const RANK_BUCKETS = [
     { key: "top10", label: "TOP10", color: "#15803d", opacity: 1 },
@@ -355,10 +401,14 @@ export function KeywordsPage() {
   // 分布是独立「分布」页签的整体视角：全部语言的关键词 × 全部商店，与当前卡片无关。
   // 平台暂停的关键词（pausedPlatforms 含当前产品平台）不计入分布，避免
   // 把“未采集”虚构成“未进榜”。仅在该页签激活时计算（逐格查快照较重）。
-  const distributionKeywords = (project.trackedKeywords || []).filter(
-    (k: any) =>
-      k.status !== "paused" &&
-      !(k.pausedPlatforms || []).includes(product.platform),
+  const distributionKeywords = useMemo(
+    () =>
+      (project.trackedKeywords || []).filter(
+        (k: any) =>
+          k.status !== "paused" &&
+          !(k.pausedPlatforms || []).includes(product.platform),
+      ),
+    [project.trackedKeywords, product.platform],
   );
   const distributionData: {
     storefront: string;
@@ -367,8 +417,9 @@ export function KeywordsPage() {
     r51_100: number;
     r101_200: number;
     unranked: number;
-  }[] = pageTab === "distribution"
-    ? productStorefronts
+  }[] = useMemo(() => {
+    if (pageTab !== "distribution") return [];
+    return productStorefronts
         .map((storefront) => {
           const buckets: Record<string, number> = {
             top10: 0,
@@ -378,7 +429,7 @@ export function KeywordsPage() {
             unranked: 0,
           };
           for (const row of distributionKeywords) {
-            const cell = matrixCellState(rankSnapshots, row.keyword, storefront);
+            const cell = cellIndex(row.keyword, storefront);
             const rank = cell.rank;
             if (rank == null || cell.beyond200) buckets.unranked += 1;
             else if (rank <= 10) buckets.top10 += 1;
@@ -399,9 +450,12 @@ export function KeywordsPage() {
           (a, b) =>
             (b.top10 * 100 + b.r11_50 * 50 + b.r51_100 * 20 + b.r101_200 * 5) -
             (a.top10 * 100 + a.r11_50 * 50 + a.r51_100 * 20 + a.r101_200 * 5),
-        )
-    : [];
-  const { ranked, unranked } = matrixRowGroups(matrixRows, matrixColumns, rankSnapshots);
+        );
+  }, [pageTab, productStorefronts, distributionKeywords, cellIndex]);
+  const { ranked, unranked } = useMemo(
+    () => matrixRowGroups(matrixRows, matrixColumns, cellIndex),
+    [matrixRows, matrixColumns, cellIndex],
+  );
   const scopeFilteredRanked =
     urlScope === "top10" ? ranked.filter((item) => item.bestRank <= 10) : ranked;
   const showUnrankedRows =
@@ -417,32 +471,66 @@ export function KeywordsPage() {
   );
   const allRowsSelected =
     visibleRows.length > 0 && selectedVisibleRows.length === visibleRows.length;
-  const chartKeyword = matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
-    ? selectedKeyword
-    : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
+  // 勾选的词（当前卡片内）：按最优名次排序。≥2 个 → 趋势图进入对比模式，
+  // 每词一条曲线（当日跨店最优名次，与在榜判定同口径）。
+  const checkedRows = useMemo(() => {
+    const bestByKey = new Map(
+      ranked.map((item) => [`${item.row.language}\u0000${item.row.keyword}`, item.bestRank] as const),
+    );
+    return trackedActive
+      .filter((k) => rowSelected.has(selKey(k.language, k.keyword)))
+      .map((k) => ({
+        ...k,
+        bestRank: bestByKey.get(`${k.language}\u0000${k.keyword}`) ?? null,
+      }))
+      .sort((a, b) => (a.bestRank ?? Infinity) - (b.bestRank ?? Infinity));
+  }, [ranked, trackedActive, rowSelected]);
+  const compareMode = checkedRows.length >= 2;
+  // 对比模式最多取最优前 MAX_COMPARE_WORDS 个：调色板 6 色，再多互相覆盖且无法辨色。
+  const comparedKeywords = useMemo(
+    () => checkedRows.slice(0, MAX_COMPARE_WORDS),
+    [checkedRows],
+  );
+  const chartKeyword =
+    checkedRows.length === 1
+      ? checkedRows[0].keyword
+      : matrixRows.some((keyword) => keyword.keyword === selectedKeyword)
+        ? selectedKeyword
+        : (ranked[0]?.row.keyword || trackedActive[0]?.keyword || "");
   const chartKeywordMeta = matrixRows.find(
     (keyword) => keyword.keyword === chartKeyword,
   );
-  const chartSnapshots = rankSnapshots
-    .filter(
-      (snapshot) =>
-        queryLanguages.includes(snapshot.language) &&
-        storefronts.includes(snapshot.storefront) &&
-        snapshot.keyword === chartKeyword,
-    )
-    .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
-  const chartSeriesMeta = Array.from(
-    new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys(),
-  ).map((storefront) => ({ storefront, label: storefrontDisplayName(storefront) }));
+  const chartSnapshots = useMemo(
+    () =>
+      rankSnapshots
+        .filter(
+          (snapshot) =>
+            snapshot.language === currentLang &&
+            storefronts.includes(snapshot.storefront) &&
+            snapshot.keyword === chartKeyword,
+        )
+        .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime()),
+    [rankSnapshots, currentLang, storefronts, chartKeyword],
+  );
+  const chartSeriesMeta = useMemo(
+    () =>
+      Array.from(
+        new Map(chartSnapshots.map((s) => [s.storefront, s.storefront])).keys(),
+      ).map((storefront) => ({ storefront, label: storefrontDisplayName(storefront) })),
+    [chartSnapshots],
+  );
   // 组关键词 = 当前卡片矩阵里全部可见的激活关键词（全局卡 = en 词；语言卡 = 该语言词）。
   // 带按 (语言 × 商店) 分别绘制：每个商店（如 中国大陆/新加坡）各自一条带，
   // 只统计本卡语言的关键词在该商店的快照；其他语言的关键词与本卡的带无关。
-  const groupBandKeywords = Array.from(new Set(matrixRows.map((row) => row.keyword)));
+  const groupBandKeywords = useMemo(
+    () => Array.from(new Set(matrixRows.map((row) => row.keyword))),
+    [matrixRows],
+  );
   // 时间轴 = 按天（与组快照粒度一致）：行覆盖「组数据活动日 ∪ 选中词采样日」的连续日期。
   // 带挂在固定日期轴上，与选中哪个词无关：切换关键词只改变曲线取值，带的形状保持不变。
   // 带 = 该商店整组关键词当天的 P25–P75：每词每天取最后一次在榜快照；未进榜（>200 / null）
   // 与当天未检查的词不参与；当天在榜词 < GROUP_BAND_MIN_N 视为无组数据，用前后真实日连接。
-  const chartData = (() => {
+  const chartData = useMemo(() => {
     const groupSet = new Set(groupBandKeywords);
     const storefrontSet = new Set(storefronts);
 
@@ -451,7 +539,7 @@ export function KeywordsPage() {
     const latestMs = new Map<string, number>();
     for (const snapshot of rankSnapshots) {
       if (!groupSet.has(snapshot.keyword)) continue;
-      if (!queryLanguages.includes(snapshot.language)) continue;
+      if (snapshot.language !== currentLang) continue;
       if (!storefrontSet.has(snapshot.storefront)) continue;
       const key = `${snapshot.storefront}\u0000${localDayKey(snapshot.checkedAt)}\u0000${snapshot.keyword}`;
       const ms = new Date(snapshot.checkedAt).getTime();
@@ -577,7 +665,7 @@ export function KeywordsPage() {
       }
     }
     return rows;
-  })();
+  }, [chartKeyword, groupBandKeywords, chartSnapshots, storefronts, currentLang, rankSnapshots]);
   // 覆盖提示：该商店最终没有绘制整组带（整组极少同日有多词进前 200）→ 图例处提示
   const noBandStorefronts = chartSeriesMeta.filter(
     (meta) => !chartData.some((row) => row[`${meta.storefront}:p25`] != null),
@@ -593,6 +681,70 @@ export function KeywordsPage() {
   const chartTicks: number[] = [];
   for (let rank = 1; rank <= chartMaxRank; rank += chartStep) chartTicks.push(rank);
   if (chartTicks[chartTicks.length - 1] !== chartMaxRank) chartTicks.push(chartMaxRank);
+
+  // 多词对比模式数据：每词一条曲线 = 该词当日在这张卡全部商店中的最优名次。
+  // 同时预计算「同口径组带」：整卡词池当日跨店最优的 P25–P75——带与线同为
+  // 跨店最优口径，对比才有意义（勾选的词相对整卡词池处于什么位置）。
+  // 一次快照扫描建 (日 × 词) → 最优名次，日轴连续（无数据日由 connectNulls 连接）。
+  const compareChart = useMemo(() => {
+    if (!compareMode) return { rows: [] as Record<string, any>[], words: [] as string[] };
+    const words = comparedKeywords.map((k) => k.keyword);
+    const wordSet = new Set(words);
+    const cardSet = new Set(groupBandKeywords);
+    const best = new Map<string, Map<string, number>>();
+    for (const snapshot of rankSnapshots) {
+      if (snapshot.language !== currentLang) continue;
+      if (!storefronts.includes(snapshot.storefront)) continue;
+      if (snapshot.rank == null || snapshot.rank > 200) continue;
+      if (!wordSet.has(snapshot.keyword) && !cardSet.has(snapshot.keyword)) continue;
+      const day = localDayKey(snapshot.checkedAt);
+      let perWord = best.get(day);
+      if (!perWord) {
+        perWord = new Map();
+        best.set(day, perWord);
+      }
+      const prev = perWord.get(snapshot.keyword);
+      if (prev == null || snapshot.rank < prev) perWord.set(snapshot.keyword, snapshot.rank);
+    }
+    if (best.size === 0) return { rows: [] as Record<string, any>[], words };
+    const sortedDays = [...best.keys()].sort();
+    const rows: Record<string, any>[] = [];
+    const cursor = new Date(`${sortedDays[0]}T00:00:00`);
+    const last = sortedDays[sortedDays.length - 1];
+    for (;;) {
+      const dayIso = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate()).toISOString();
+      const day = localDayKey(dayIso);
+      const row: Record<string, any> = { time: dayIso };
+      const perWord = best.get(day);
+      for (const word of words) row[word] = perWord?.get(word) ?? null;
+      // 同口径组带：全卡词当日跨店最优的 P25–P75（当天不足 2 个词有数据则不画）
+      const values: number[] = [];
+      if (perWord) {
+        for (const value of perWord.values()) values.push(value);
+      }
+      if (values.length >= GROUP_BAND_MIN_N) {
+        values.sort((a, b) => a - b);
+        row.p25 = percentileOf(values, 0.25);
+        row.p75 = percentileOf(values, 0.75);
+      }
+      rows.push(row);
+      if (day >= last) break;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return { rows, words };
+  }, [compareMode, comparedKeywords, groupBandKeywords, rankSnapshots, currentLang, storefronts]);
+  const compareMaxRank = compareChart.rows.reduce((max, row) => {
+    for (const word of compareChart.words) {
+      const value = row[word];
+      if (typeof value === "number" && value > max) max = value;
+    }
+    if (typeof row.p75 === "number" && row.p75 > max) max = row.p75;
+    return max;
+  }, 1);
+  const compareStep = Math.max(1, Math.ceil(compareMaxRank / 5));
+  const compareTicks: number[] = [];
+  for (let rank = 1; rank <= compareMaxRank; rank += compareStep) compareTicks.push(rank);
+  if (compareTicks[compareTicks.length - 1] !== compareMaxRank) compareTicks.push(compareMaxRank);
 
   const formatColumnTime = (iso: string) =>
     new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -745,7 +897,7 @@ export function KeywordsPage() {
       style={{ gridTemplateColumns: storeGridTemplate }}
     >
       {matrixColumns.map((column) => {
-        const cell = matrixCellState(rankSnapshots, keyword.keyword, column.storefront);
+        const cell = cellIndex(keyword.keyword, column.storefront);
         return (
           <div
             key={column.storefront}
@@ -1309,6 +1461,7 @@ export function KeywordsPage() {
 
   const clearRemoved = async () => {
     await clearRemovedKeywords(product.id, queryLanguages);
+    setShowDeleted(false);
   };
 
   const renderPageTabs = () => (
@@ -1837,7 +1990,7 @@ export function KeywordsPage() {
                     全局关键词（英文）× 全部商店
                   </div>
                 )}
-                <div className="h-6 flex items-center justify-between gap-1.5 px-4 whitespace-nowrap">
+                <div className="h-7 flex items-center justify-between gap-1.5 px-4 whitespace-nowrap">
                   <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 shrink-0">
                     关键词（{trackedActive.length}）
                   </span>
@@ -1868,7 +2021,8 @@ export function KeywordsPage() {
                       </button>
                   </div>
                 </div>
-                <div className="h-6 flex items-center gap-1.5 px-4 whitespace-nowrap overflow-x-auto scrollbar-hidden">
+                {/* 第二行：勾选批量删除 + 补全译文/已删除（「已删除」点击打开页面级模态） */}
+                <div className="h-9 flex items-center gap-1.5 px-4 whitespace-nowrap">
                   {urlScope === "top10" && (
                     <button
                       type="button"
@@ -1941,14 +2095,13 @@ export function KeywordsPage() {
                         : `补全译文 ${missingTranslationCount}`}
                     </button>
                   </span>
-                  {/* 已删除：常驻占位（无已删除时隐藏） */}
+                  {/* 已删除：常驻占位（无已删除时隐藏）；点击打开页面级已删除模态 */}
                   <span
-                    className={cn("relative shrink-0", removedForCurrent.length === 0 && "invisible")}
-                    ref={deletedPopoverRef}
+                    className={cn("shrink-0 inline-flex", removedForCurrent.length === 0 && "invisible")}
                   >
                     <button
                       type="button"
-                      onClick={() => setShowDeleted((v) => !v)}
+                      onClick={() => setShowDeleted(true)}
                       className={cn(
                         "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
                         showDeleted
@@ -1958,35 +2111,6 @@ export function KeywordsPage() {
                     >
                       已删除 {removedForCurrent.length}
                     </button>
-                    {showDeleted && removedForCurrent.length > 0 && (
-                      <div className="absolute right-0 top-full mt-1.5 z-30 w-80 max-h-72 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-                            已删除（手动）
-                          </p>
-                          <button onClick={clearRemoved} className="text-[10px] text-zinc-400 hover:text-red-500">
-                            清空
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {removedForCurrent.map((item) => (
-                            <span
-                              key={`${item.language}:${item.keyword}`}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
-                            >
-                              {item.keyword}
-                              <button
-                                onClick={() => restoreTracked(item.language, item.keyword)}
-                                className="text-amber-600 dark:text-amber-400 hover:underline"
-                                title="恢复"
-                              >
-                                恢复
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </span>
                 </div>
               </div>
@@ -2032,7 +2156,7 @@ export function KeywordsPage() {
                 <div
                   key={column.storefront}
                   className={cn(
-                    "px-3 py-2 text-right border-l border-zinc-100 dark:border-zinc-800",
+                    "h-16 px-3 text-right border-l border-zinc-100 dark:border-zinc-800 flex flex-col justify-center",
                     column.meta.stale && "opacity-60",
                   )}
                 >
@@ -2055,7 +2179,100 @@ export function KeywordsPage() {
 
             </div>
 
-            {chartKeyword && chartData.length > 0 ? (
+            {compareMode && compareChart.rows.length > 0 ? (
+            <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5">
+              <div>
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                  <h4 className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    关键词对比趋势（{compareChart.words.length} 个词 · 当日跨店最优名次）
+                  </h4>
+                  {checkedRows.length > compareChart.words.length && (
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                      已勾选 {checkedRows.length} 个词，仅显示最优前 {MAX_COMPARE_WORDS} 个
+                    </span>
+                  )}
+                </div>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={compareChart.rows} margin={{ top: 12, right: 16, bottom: 4, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={(iso: string) => {
+                          const dt = new Date(iso);
+                          return `${dt.getMonth() + 1}/${dt.getDate()}`;
+                        }}
+                        tick={{ fontSize: 10 }}
+                        tickLine={false}
+                        axisLine={false}
+                        minTickGap={40}
+                        height={26}
+                      />
+                      <YAxis
+                        reversed
+                        domain={[1, compareMaxRank]}
+                        allowDecimals={false}
+                        ticks={compareTicks}
+                        tick={{ fontSize: 11 }}
+                        tickMargin={8}
+                        tickLine={false}
+                        axisLine={false}
+                        width={34}
+                      />
+                      <Tooltip />
+                      <Area
+                        dataKey={(row: any) =>
+                          row.p25 != null && row.p75 != null ? [row.p25, row.p75] : null
+                        }
+                        type="monotone"
+                        connectNulls
+                        stroke="none"
+                        fill="#a1a1aa"
+                        fillOpacity={0.18}
+                        isAnimationActive={false}
+                        name="整卡跨店最优 P25–P75"
+                      />
+                      {compareChart.words.map((word, index) => (
+                        <Line
+                          key={word}
+                          dataKey={word}
+                          name={word}
+                          type="monotone"
+                          stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                          strokeWidth={2}
+                          connectNulls
+                          dot={{ r: 2.5 }}
+                          activeDot={{ r: 4 }}
+                        />
+                      ))}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+                    <span className="w-2 h-2 rounded-sm bg-zinc-400/50" />
+                    整卡词池跨店最优 P25–P75
+                  </span>
+                  {compareChart.words.map((word, index) => (
+                    <span
+                      key={word}
+                      className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                      />
+                      {word}
+                    </span>
+                  ))}
+                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                    勾选多个词即可对比（当日跨店最优名次）；灰带 = 整卡词池同口径分位，词线出带即优于 3/4 的词池；取消勾选恢复单词逐店视图
+                  </span>
+                </div>
+              </div>
+
+            </div>
+            ) : chartKeyword && chartData.length > 0 ? (
             <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden shadow-sm px-5 pt-5 pb-5">
                   <div>
                     <div className="h-56">
@@ -2165,6 +2382,69 @@ export function KeywordsPage() {
             ) : null}
 
         </>
+      )}
+
+      {showDeleted && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6"
+          onClick={() => setShowDeleted(false)}
+        >
+          <div
+            className="w-full max-w-md max-h-[80vh] overflow-auto rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                已删除的关键词（手动）· {languageLabel(currentLang)}
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void clearRemoved()}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium text-red-600 dark:text-red-400 ring-1 ring-red-500/40 hover:bg-red-500/10 transition-colors"
+                  title="永久清空当前卡片已删除的关键词（不可恢复）"
+                >
+                  清空
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleted(false)}
+                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="p-4">
+              {removedForCurrent.length === 0 ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-6 text-center">
+                  暂无已删除关键词。
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {removedForCurrent.map((item) => (
+                    <span
+                      key={`${item.language}:${item.keyword}`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400"
+                    >
+                      {item.keyword}
+                      <button
+                        onClick={() => restoreTracked(item.language, item.keyword)}
+                        className="text-amber-600 dark:text-amber-400 hover:underline"
+                        title="恢复到关键词列表并重新参与采集（受采集预算硬上限检查）"
+                      >
+                        恢复
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">
+                已删除的词不再参与采集与排名统计；「恢复」会重新过一遍采集预算硬上限。
+              </p>
+            </div>
+          </div>
+        </div>
       )}
 
       {showPendingReview && (

@@ -63,16 +63,24 @@ export function matrixCellState(
   const list = snapshots
     .filter((snapshot) => snapshot.keyword === keyword && snapshot.storefront === storefront)
     .sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
+  return cellStateFromList(list);
+}
+
+/** 无任何快照时的空格子（共享只读对象，调用方只读不写）。 */
+const EMPTY_CELL: MatrixCell = {
+  rank: null,
+  beyond200: false,
+  delta: null,
+  trend: "none",
+  checkedAt: null,
+  totalResults: null,
+};
+
+/** 由按时间升序的同格快照列表计算 cell（含与上一次的 delta/trend）。 */
+function cellStateFromList(list: MatrixSnapshot[]): MatrixCell {
   const latest = list[list.length - 1];
   if (!latest) {
-    return {
-      rank: null,
-      beyond200: false,
-      delta: null,
-      trend: "none",
-      checkedAt: null,
-      totalResults: null,
-    };
+    return { ...EMPTY_CELL };
   }
   const previous = list[list.length - 2];
   let delta: number | null = null;
@@ -94,6 +102,30 @@ export function matrixCellState(
   };
 }
 
+/**
+ * O(快照数) 一次性索引：每个 (keyword, storefront) 格的最终 cell 预先算好，
+ * 查询 O(1)。矩阵视图每次重渲染要读 行×列 个格子，直接调 matrixCellState
+ * 会变成 O(行×列×快照数)（勾选一次都卡），渲染期必须走这个索引。
+ */
+export type CellLookup = (keyword: string, storefront: string) => MatrixCell;
+
+export function buildCellIndex(snapshots: MatrixSnapshot[]): CellLookup {
+  const byKey = new Map<string, MatrixSnapshot[]>();
+  for (const snapshot of snapshots) {
+    const key = `${snapshot.keyword}\u0000${snapshot.storefront}`;
+    const list = byKey.get(key);
+    if (list) list.push(snapshot);
+    else byKey.set(key, [snapshot]);
+  }
+  const cells = new Map<string, MatrixCell>();
+  for (const [key, list] of byKey) {
+    list.sort((a, b) => new Date(a.checkedAt).getTime() - new Date(b.checkedAt).getTime());
+    cells.set(key, cellStateFromList(list));
+  }
+  return (keyword: string, storefront: string) =>
+    cells.get(`${keyword}\u0000${storefront}`) ?? EMPTY_CELL;
+}
+
 export function matrixColumnMeta(
   snapshots: { storefront: string; checkedAt: string }[],
   storefront: string,
@@ -112,15 +144,15 @@ export function matrixColumnMeta(
 export function matrixRowGroups<T extends { keyword: string }>(
   rows: T[],
   columns: { storefront: string }[],
-  snapshots: MatrixSnapshot[],
+  cell: CellLookup,
 ): { ranked: { row: T; bestRank: number }[]; unranked: T[] } {
   const ranked: { row: T; bestRank: number }[] = [];
   const unranked: T[] = [];
   for (const row of rows) {
     let best = Number.POSITIVE_INFINITY;
     for (const column of columns) {
-      const cell = matrixCellState(snapshots, row.keyword, column.storefront);
-      if (cell.rank != null && cell.rank < best) best = cell.rank;
+      const state = cell(row.keyword, column.storefront);
+      if (state.rank != null && state.rank < best) best = state.rank;
     }
     if (best === Number.POSITIVE_INFINITY) unranked.push(row);
     else ranked.push({ row, bestRank: best });

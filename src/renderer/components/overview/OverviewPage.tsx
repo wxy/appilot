@@ -69,6 +69,35 @@ export function OverviewPage() {
     completed: number;
     generatedAt: string | null;
   } | null>(null);
+  // L0 系统脉搏条：调度器状态（60s 轮询 + data-changed 时机由任务中心维护）。
+  const [schedulerStatus, setSchedulerStatus] = useState<{
+    enabled: boolean;
+    total: number;
+    due: number;
+    failed: number;
+    nextDueAt: string | null;
+  } | null>(null);
+  // 推广卡：推广活动列表（X 系列帖子状态机），与推广页同源 IPC。
+  const [promotionCampaigns, setPromotionCampaigns] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    const refresh = () => {
+      (window as any).appilot?.scheduler?.status()
+        .then((status: any) => setSchedulerStatus(status || null))
+        .catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => window.clearInterval(timer);
+  }, [project?.id]);
+
+  useEffect(() => {
+    setPromotionCampaigns(null);
+    if (!project?.id || !product?.id) return;
+    (window as any).appilot?.promotion?.list(project.id, product.id)
+      .then((result: any) => setPromotionCampaigns(result?.campaigns || []))
+      .catch(() => setPromotionCampaigns([]));
+  }, [project?.id, product?.id]);
 
   useEffect(() => {
     setCopilotSummary(null);
@@ -331,7 +360,9 @@ export function OverviewPage() {
       repoMetrics={repoMetrics}
       competitorSummary={competitorSummary}
       competitorAdvantage={competitorAdvantage}
-      competitorHref="/keywords"
+      schedulerStatus={schedulerStatus}
+      promotionCampaigns={promotionCampaigns}
+      competitorHref="/keywords?tab=competitor"
       copilotSummary={copilotSummary}
       onSelectProduct={selectProduct}
       onOpenExternal={(url) => (window as any).appilot?.openExternal(url)}
