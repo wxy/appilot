@@ -110,6 +110,7 @@ export class AIProvider {
     const thinkingEffort: ThinkingEffort = opts?.thinking ?? (isDeepSeek ? "low" : "disabled");
     const maxAttempts = 3;
     let maxTokens = opts?.maxTokens ?? 2000;
+    let lengthRetryUsed = false;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (opts?.signal?.aborted) {
@@ -294,12 +295,17 @@ export class AIProvider {
       log.warn(
         `AI returned empty content (attempt ${attempt}/${maxAttempts}, finish_reason=${finishReason})`,
       );
-      // The response was cut off before producing any text (reasoning consumed
-      // the whole budget). Double the cap on the next attempt so the model has
-      // room to finish, capped to avoid runaway cost.
-      if (finishReason === "length" && maxTokens < 64000) {
-        maxTokens = Math.min(maxTokens * 2, 64000);
+      // 截断（length）只允许一次「加倍上限」的加价重试（审计 M-2：避免同一
+      // 请求反复计费）；第二次仍为空则直接失败并给出可执行建议。
+      const next = nextMaxTokensAfterEmpty(finishReason, maxTokens, lengthRetryUsed);
+      if (next == null) {
+        throw new EngineError(
+          "AI 输出超出 token 预算被截断（已尝试加倍上限仍为空）。请缩小任务范围、减少输出要求后重试。",
+          "AI_TRUNCATED",
+        );
       }
+      if (next !== maxTokens) lengthRetryUsed = true;
+      maxTokens = next;
       if (attempt < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
       }
@@ -332,4 +338,19 @@ export class AIProvider {
   get baseURL(): string {
     return this.config.baseURL;
   }
+}
+
+/** 审计 M-2：空内容后的重试决策。返回下一次的 maxTokens；null = 放弃重试。
+ *  finish_reason=length（截断）只允许一次「加倍上限」的加价重试——
+ *  第二次仍为空说明任务超出模型能力，继续重试只是重复计费。 */
+export function nextMaxTokensAfterEmpty(
+  finishReason: string | undefined,
+  maxTokens: number,
+  lengthRetryUsed: boolean,
+): number | null {
+  if (finishReason === "length") {
+    if (lengthRetryUsed || maxTokens >= 64000) return null;
+    return Math.min(maxTokens * 2, 64000);
+  }
+  return maxTokens;
 }
