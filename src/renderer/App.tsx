@@ -3,6 +3,7 @@ import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom"
 import { useTheme } from "./stores/theme";
 import { useProject } from "./stores/project";
 import { cn } from "./lib/utils";
+import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { formatTokens, platformLabel } from "./lib/format";
 import { CredentialIndicator } from "./components/ui/CredentialIndicator";
 import { HomePage } from "./components/home/HomePage";
@@ -310,7 +311,9 @@ function Layout({ children }: { children: React.ReactNode }) {
             正在载入…
           </div>
         ) : (
-          children
+          <ErrorBoundary label="页面">
+            {children}
+          </ErrorBoundary>
         )}
       </main>
 
