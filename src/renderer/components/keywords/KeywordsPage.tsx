@@ -129,6 +129,9 @@ export function KeywordsPage() {
   // 页面二级标签：关键词矩阵 | 竞品 | 排名分布（分布为整体视角，独立于各卡片）。
   const [pageTab, setPageTab] = useState<"keywords" | "competitor" | "distribution">("keywords");
   const pausedPopoverRef = useRef<HTMLSpanElement>(null);
+  const leftScrollRef = useRef<HTMLDivElement>(null);
+  const rightScrollRef = useRef<HTMLDivElement>(null);
+  const syncingScroll = useRef(false);
 
   // 已暂停气泡：点外部任意处收起。「已删除」是页面级模态，由遮罩点击自行关闭。
   useEffect(() => {
@@ -140,6 +143,17 @@ export function KeywordsPage() {
     };
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
+  useEffect(() => {
+    const off = (window as any).appilot?.projects?.onTranslateKeywordsProgress?.(
+      (progress: any) => {
+        if (progress && typeof progress.done === "number") {
+          setTranslateProgress(progress);
+        }
+      },
+    );
+    return () => off?.();
   }, []);
   const [error, setError] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string>("");
@@ -915,9 +929,6 @@ export function KeywordsPage() {
   );
 
   // 左右两块各自垂直滚动，滚动位置互相同步，保证表头各自冻结且行对齐。
-  const leftScrollRef = useRef<HTMLDivElement>(null);
-  const rightScrollRef = useRef<HTMLDivElement>(null);
-  const syncingScroll = useRef(false);
   const syncScroll = (source: "left" | "right") => {
     if (syncingScroll.current) return;
     syncingScroll.current = true;
@@ -1427,16 +1438,6 @@ export function KeywordsPage() {
     }
   };
 
-  useEffect(() => {
-    const off = (window as any).appilot?.projects?.onTranslateKeywordsProgress?.(
-      (progress: any) => {
-        if (progress && typeof progress.done === "number") {
-          setTranslateProgress(progress);
-        }
-      },
-    );
-    return () => off?.();
-  }, []);
 
   const restoreTracked = async (language: string, kw: string) => {
     // 恢复 = 重新参与采集：受采集预算硬上限约束。
