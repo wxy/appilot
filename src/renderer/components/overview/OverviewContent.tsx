@@ -106,6 +106,8 @@ export interface OverviewContentProps {
   competitorAdvantage?: CompetitorAdvantage | null;
   /** 可选注入：调度器脉搏（system 脉搏条）；null → 显示「未知」。 */
   schedulerStatus?: { enabled: boolean; total: number; due: number; failed: number; nextDueAt: string | null } | null;
+  /** 可选注入：kv → DB 镜像健康（进程内跟踪）；空 → 「数据同步」chip 不展示。 */
+  dataSyncHealth?: { healthy: boolean; failingDomains: string[] } | null;
   /** 可选注入：推广活动（X 系列帖子状态机）；空 → 推广卡显示空态。 */
   promotionCampaigns?: any[] | null;
   /** 可选注入：去竞品页的跳转地址（宿主约定）；缺省/空则竞品卡只展示文字入口。 */
@@ -443,6 +445,7 @@ export function OverviewContent(props: OverviewContentProps) {
     competitorAdvantage,
     schedulerStatus,
     promotionCampaigns,
+    dataSyncHealth,
     competitorHref,
     copilotSummary,
     LinkComponent = Link,
@@ -1444,6 +1447,14 @@ export function OverviewContent(props: OverviewContentProps) {
                 失败 {schedulerStatus.failed}
               </LinkComponent>
             )}
+        {dataSyncHealth && !dataSyncHealth.healthy && (
+          <span
+            className={cn(CHIP_BASE, "bg-red-50 px-2.5 py-0.5 text-red-600 ring-1 ring-red-500/40 dark:bg-red-500/10 dark:text-red-400")}
+            title={`kv → DB 镜像连续失败的域：${dataSyncHealth.failingDomains.join("、")}（轮询兜底会重试，持续出现请反馈）`}
+          >
+            数据同步异常：{dataSyncHealth.failingDomains.join("、")}
+          </span>
+        )}
             <LinkComponent
               to="/keywords"
               className={cn(CHIP_BASE, "px-2.5 py-0.5 ring-1 transition-colors", budgetTone)}

@@ -2,7 +2,8 @@ import { app } from "electron";
 import path from "path";
 import { log } from "@appilot-labs/appilot-core/logger";
 import { sharedStore } from "./registry-sync";
-import { migrateConfigJsonIntoKv } from "./kv-migrate";
+import { recordMirrorFailure, recordMirrorSuccess } from "./data-sync-health";
+import { cleanupMigrationArtifacts, migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
 import { mirrorTasksToDb, electronTasksFromRows, backfillTaskHistoryOnce, purgeOrphanProjectTasks } from "./task-db-sync";
@@ -20,6 +21,7 @@ const DEFAULTS: Record<string, unknown> = {
   aiApiKey: "",
   aiModel: "gpt-4o",
   rankRunsPerDay: 1,
+  rankRetentionDays: 180,
 };
 
 let store: AppStore | null = null;
@@ -40,10 +42,12 @@ function syncProjectsToDb(projects: unknown): void {
         syncProjectToDb(shared, project);
       } catch (err: any) {
         log.warn(`projects → DB 镜像失败（${project?.name ?? "?"}）: ${err.message}`);
+          recordMirrorFailure("projects", err.message);
       }
     }
   } catch (err: any) {
     log.warn(`projects → DB 镜像失败: ${err.message}`);
+      recordMirrorSuccess("projects");
   }
 }
 
@@ -55,8 +59,10 @@ function syncProjectsToDb(projects: unknown): void {
 function syncTasksToDb(tasks: unknown): void {
   try {
     mirrorTasksToDb(sharedStore(), (tasks as any[]) || []);
+    recordMirrorSuccess("tasks");
   } catch (err: any) {
     log.warn(`scheduledTasks → DB 镜像失败: ${err.message}`);
+    recordMirrorFailure("tasks", err.message);
   }
 }
 
@@ -76,6 +82,11 @@ export async function getStore(): Promise<AppStore> {
       }
     } catch (err: any) {
       log.error(`config.json → SQLite app_kv 迁移失败（下次启动重试）: ${err.message}`);
+    }
+    // 迁移产物清理：.bak-* / .migrated-* 可能含迁移前明文凭据，保留 14 天后启动时清除。
+    const removedArtifacts = cleanupMigrationArtifacts(app.getPath("userData"));
+    if (removedArtifacts.length > 0) {
+      log.info(`appilot: 已清理过期迁移备份 ${removedArtifacts.length} 个: ${removedArtifacts.join(", ")}`);
     }
     const kv = shared.kv;
     // projects 已切 DB 源（默认开启）：注册表有项目行时删除 kv 遗留 projects 键。
