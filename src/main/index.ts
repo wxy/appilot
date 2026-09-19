@@ -3,7 +3,7 @@ import path from "path";
 import log from "electron-log";
 import { getStore } from "./store";
 import { registerIpcHandlers } from "./ipc";
-import { startRegistrySync, releaseElectronLease } from "./registry-sync";
+import { sharedStore, startRegistrySync, releaseElectronLease } from "./registry-sync";
 import { isTaskCenterStopped, startElectronOnlyScheduler } from "./scheduler";
 import { stopSchedulerForAppExit, notifyDaemonPowerState } from "./handlers/scheduler";
 import { ensureSchedulerDaemon, startSchedulerWatchdog } from "./daemon-manager";
@@ -11,6 +11,12 @@ import { registerHeadlessReadIpc } from "./headless-ipc";
 import { registerDbAdminHandlers } from "./db-admin";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
 import { runDataRetention } from "./data-retention";
+import {
+  migrateCompetitorRankSnapshotsFromKv,
+  pruneCompetitorRankRowsOlderThanForApp,
+  retireCompetitorRankSnapshotsKv,
+} from "./competitor-rank-store";
+import { rankRetentionCutoffIso } from "@appilot-labs/appilot-core/data-retention";
 import { setupLogger } from "./logger";
 import { installHupRestart } from "./hup-restart";
 import { isAllowedRendererNavigation, safeHttpUrl } from "./url-policy";
@@ -139,11 +145,28 @@ app.whenReady().then(async () => {
   }
   // 数据保留：清理过期排名快照（kv 与 DB 同口径）。启动时执行一次，
   // 之后每 12 小时重跑（长驻场景下表增长不止于启动时清理）。
+  // 竞品排名快照迁移（Phase C）：kv JSON → 行表，幂等；成功后退役 kv 键。
+  void (async () => {
+    try {
+      const saved = migrateCompetitorRankSnapshotsFromKv(await getStore());
+      if (saved > 0) log.info(`appilot: 竞品排名快照迁移 kv → 行表 ${saved} 行`);
+      retireCompetitorRankSnapshotsKv(sharedStore());
+    } catch (err: any) {
+      log.warn(`appilot: 竞品快照迁移失败（下次启动重试）: ${err.message}`);
+    }
+  })();
+
   const runRetention = async () => {
     try {
       const result = await runDataRetention(await getStore());
       if (result.removedKv > 0 || result.removedDb > 0) {
         log.info(`appilot: retention 完成 kv -${result.removedKv} 条 · DB -${result.removedDb} 行`);
+      }
+      // 竞品排名快照（Phase C 行表）同节奏保留清理
+      const cutoffIso = rankRetentionCutoffIso(Date.now(), 180);
+      const removedCompetitor = pruneCompetitorRankRowsOlderThanForApp(cutoffIso);
+      if (removedCompetitor > 0) {
+        log.info(`appilot: 竞品快照清理 -${removedCompetitor} 行`);
       }
     } catch (err: any) {
       log.warn(`appilot: retention 清理失败（下次启动重试）: ${err.message}`);

@@ -1,4 +1,5 @@
 import { ipcMain } from "electron";
+import { loadCompetitorRankMapForApp, saveCompetitorRankRowsForApp } from "../competitor-rank-store";
 import {
   createCompetitor,
   findCompetitorByName,
@@ -106,6 +107,13 @@ function mergeCompetitorInto(list: any[], competitor: any): { next: any[]; merge
 }
 
 export function registerCompetitorsHandlers(): void {
+  /** 竞品排名读取：行表（新）优先，旧 kv / project_blobs 兜底（迁移过渡期兼容）。 */
+  const ranksForCompetitor = (s: any, projectId: string, competitorId: string): any[] => {
+    const fromTable = loadCompetitorRankMapForApp(projectId)[competitorId] || [];
+    if (fromTable.length > 0) return fromTable;
+    return ranksForCompetitor(s, projectId, competitorId);
+  };
+
   ipcMain.handle("competitors:list", async (_event, projectId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     const s = await getStore();
@@ -153,6 +161,19 @@ export function registerCompetitorsHandlers(): void {
       rankById[savedId] = nextRanks.slice(-300);
       ranksAll[projectId] = rankById;
       s.set("competitorRankSnapshots", ranksAll);
+      // 行表双写（迁移过渡期）：行表为主数据源，旧 kv/blob 保留为回退。
+      saveCompetitorRankRowsForApp(
+        seedRanks.map((seed: any) => ({
+          projectId,
+          competitorId: savedId,
+          keyword: seed.keyword,
+          language: seed.language || "en",
+          storefront: seed.storefront,
+          platform: seed.platform === "macos" ? "macos" : "ios",
+          rank: typeof seed.rank === "number" ? seed.rank : null,
+          checkedAt: new Date().toISOString(),
+        })),
+      );
     }
     notifyDataChanged("competitors");
     return { list: next, merged };
@@ -254,11 +275,9 @@ export function registerCompetitorsHandlers(): void {
       return Array.isArray(product?.rankSnapshots) ? product.rankSnapshots : [];
     })();
     const list = competitorsFor(s, projectId).map(migrateCompetitor);
-    const kvInnerR = (s.get("competitorRankSnapshots") || {})[projectId] || {};
-    const dbInnerR = blobGet(sharedStore(), "competitorRankSnapshots", projectId) as Record<string, unknown> | undefined;
     const { buildCompetitorIntel, competitorIndexHistory, competitorFaceEvents } = await import("../competitor-intel");
     const profiles = list.map((competitor: any) => {
-      const ranks: any[] = dbInnerR?.[competitor.id] ?? kvInnerR?.[competitor.id] ?? [];
+      const ranks: any[] = ranksForCompetitor(s, projectId, competitor.id);
       const linked = Array.isArray(competitor.linkedKeywords)
         ? competitor.linkedKeywords
         : undefined;
