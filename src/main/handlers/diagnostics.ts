@@ -1,5 +1,6 @@
 import { ipcMain } from "electron";
 import { log } from "@appilot-labs/appilot-core/logger";
+import { getDataSyncHealth } from "../data-sync-health";
 
 /**
  * 渲染层诊断上报：ErrorBoundary / window.onerror / unhandledrejection
@@ -16,4 +17,6 @@ export function registerDiagnosticsHandlers(): void {
     log.error(`[renderer:${s}] ${msg}${stackText}`);
     return true;
   });
+
+  ipcMain.handle("app:dataSyncHealth", () => getDataSyncHealth());
 }

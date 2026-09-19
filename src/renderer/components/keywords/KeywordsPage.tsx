@@ -132,6 +132,8 @@ export function KeywordsPage() {
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
   const syncingScroll = useRef(false);
+  // 待复核弹层加载序号：切换卡片后旧响应不再覆盖（审计 M-4）。
+  const pendingSeqRef = useRef(0);
 
   // 已暂停气泡：点外部任意处收起。「已删除」是页面级模态，由遮罩点击自行关闭。
   useEffect(() => {
@@ -1350,8 +1352,10 @@ export function KeywordsPage() {
     if (pendingLoading) return;
     setPendingLoading(true);
     try {
+      const seq = ++pendingSeqRef.current;
       const entries =
-        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+        ((await (window as any).appilot?.projects?.pendingPauseList(project.id)) || []) as any[];
+      if (seq !== pendingSeqRef.current) return;
       setPendingEntries(
         entries.filter((entry: any) => entry.platform === product.platform),
       );
@@ -1389,8 +1393,10 @@ export function KeywordsPage() {
         ),
       );
       await useProject.getState().load();
+      const seq = ++pendingSeqRef.current;
       const entries =
-        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+        ((await (window as any).appilot?.projects?.pendingPauseList(project.id)) || []) as any[];
+      if (seq !== pendingSeqRef.current) return;
       setPendingEntries(
         entries.filter((item: any) => item.platform === product.platform),
       );
@@ -1410,8 +1416,10 @@ export function KeywordsPage() {
         entry.language,
         entry.keyword,
       );
+      const seq = ++pendingSeqRef.current;
       const entries =
-        (await (window as any).appilot?.projects?.pendingPauseList(project.id)) || [];
+        ((await (window as any).appilot?.projects?.pendingPauseList(project.id)) || []) as any[];
+      if (seq !== pendingSeqRef.current) return;
       setPendingEntries(
         entries.filter((item: any) => item.platform === product.platform),
       );

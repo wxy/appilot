@@ -2,6 +2,7 @@ import { app } from "electron";
 import path from "path";
 import { log } from "@appilot-labs/appilot-core/logger";
 import { sharedStore } from "./registry-sync";
+import { recordMirrorFailure, recordMirrorSuccess } from "./data-sync-health";
 import { cleanupMigrationArtifacts, migrateConfigJsonIntoKv } from "./kv-migrate";
 import { syncProjectToDb } from "./project-write-sync";
 import { KV_BLOB_DOMAINS, syncKvBlobMap } from "./kv-blob-mirror";
@@ -41,10 +42,12 @@ function syncProjectsToDb(projects: unknown): void {
         syncProjectToDb(shared, project);
       } catch (err: any) {
         log.warn(`projects → DB 镜像失败（${project?.name ?? "?"}）: ${err.message}`);
+          recordMirrorFailure("projects", err.message);
       }
     }
   } catch (err: any) {
     log.warn(`projects → DB 镜像失败: ${err.message}`);
+      recordMirrorSuccess("projects");
   }
 }
 
@@ -56,8 +59,10 @@ function syncProjectsToDb(projects: unknown): void {
 function syncTasksToDb(tasks: unknown): void {
   try {
     mirrorTasksToDb(sharedStore(), (tasks as any[]) || []);
+    recordMirrorSuccess("tasks");
   } catch (err: any) {
     log.warn(`scheduledTasks → DB 镜像失败: ${err.message}`);
+    recordMirrorFailure("tasks", err.message);
   }
 }
 
