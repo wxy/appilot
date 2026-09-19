@@ -20,6 +20,7 @@ const DEFAULTS: Record<string, unknown> = {
   aiApiKey: "",
   aiModel: "gpt-4o",
   rankRunsPerDay: 1,
+  rankRetentionDays: 180,
 };
 
 let store: AppStore | null = null;

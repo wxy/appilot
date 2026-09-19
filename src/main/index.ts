@@ -10,6 +10,7 @@ import { ensureSchedulerDaemon, startSchedulerWatchdog } from "./daemon-manager"
 import { registerHeadlessReadIpc } from "./headless-ipc";
 import { registerDbAdminHandlers } from "./db-admin";
 import { setMenuStoreProvider, startMenuAutoRefresh } from "./menu";
+import { runDataRetention } from "./data-retention";
 import { setupLogger } from "./logger";
 import { installHupRestart } from "./hup-restart";
 import { isAllowedRendererNavigation, safeHttpUrl } from "./url-policy";
@@ -136,6 +137,17 @@ app.whenReady().then(async () => {
   if (process.platform === "darwin" && app.dock) {
     app.dock.setIcon(path.join(__dirname, "../../resources/icon_1024.png"));
   }
+  // 数据保留：清理过期排名快照（kv 与 DB 同口径），启动时执行一次。
+  void (async () => {
+    try {
+      const result = runDataRetention(await getStore());
+      if (result.removedKv > 0 || result.removedDb > 0) {
+        log.info(`appilot: retention 完成 kv -${result.removedKv} 条 · DB -${result.removedDb} 行`);
+      }
+    } catch (err: any) {
+      log.warn(`appilot: retention 清理失败（下次启动重试）: ${err.message}`);
+    }
+  })();
   createWindow();
   setMenuStoreProvider(() => getStore());
   startMenuAutoRefresh();
