@@ -137,18 +137,22 @@ app.whenReady().then(async () => {
   if (process.platform === "darwin" && app.dock) {
     app.dock.setIcon(path.join(__dirname, "../../resources/icon_1024.png"));
   }
-  // 数据保留：清理过期排名快照（kv 与 DB 同口径），启动时执行一次。
-  void (async () => {
+  // 数据保留：清理过期排名快照（kv 与 DB 同口径）。启动时执行一次，
+  // 之后每 12 小时重跑（长驻场景下表增长不止于启动时清理）。
+  const runRetention = async () => {
     try {
-      const result = runDataRetention(await getStore());
+      const result = await runDataRetention(await getStore());
       if (result.removedKv > 0 || result.removedDb > 0) {
         log.info(`appilot: retention 完成 kv -${result.removedKv} 条 · DB -${result.removedDb} 行`);
       }
     } catch (err: any) {
       log.warn(`appilot: retention 清理失败（下次启动重试）: ${err.message}`);
     }
-  })();
+  };
+  void runRetention();
+  const retentionTimer = setInterval(() => void runRetention(), 12 * 3600 * 1000);
   createWindow();
+  app.on("will-quit", () => clearInterval(retentionTimer));
   setMenuStoreProvider(() => getStore());
   startMenuAutoRefresh();
 });
