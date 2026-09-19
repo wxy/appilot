@@ -1188,22 +1188,30 @@ export function OverviewContent(props: OverviewContentProps) {
       </div>
 
       {/* 仪表盘 Row A：关键词与市场 | 竞品 */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 mb-3">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 mb-3 items-start">
                 <div className="lg:col-span-3 min-w-0">
           <StageCard
             title="关键词与市场"
             lead="进榜率 · 市场组 · 词池健康"
             right={
-              <LinkComponent
-                to="/keywords"
-                className="shrink-0 text-[11px] font-medium text-amber-600 transition-colors hover:text-amber-700 hover:underline dark:text-amber-400"
-              >
-                去排名页 →
-              </LinkComponent>
+              <div className="flex shrink-0 items-center gap-3">
+                <LinkComponent
+                  to="/keywords?tab=distribution"
+                  className="text-[11px] text-zinc-400 transition-colors hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+                >
+                  逐店明细 →
+                </LinkComponent>
+                <LinkComponent
+                  to="/keywords"
+                  className="text-[11px] font-medium text-amber-600 transition-colors hover:text-amber-700 hover:underline dark:text-amber-400"
+                >
+                  去排名页 →
+                </LinkComponent>
+              </div>
             }
           >
             {keywordPerformanceBlock}
-            <div className="mt-3 space-y-3">
+            <div className="mt-2.5 space-y-2.5">
               {rankedWordsTrend.length >= 2 && (
                 <div className="flex items-center justify-end gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
                   <span>进榜词数 · 近 30 天</span>
@@ -1292,8 +1300,8 @@ export function OverviewContent(props: OverviewContentProps) {
                   <p className={STAGE_LABEL}>TOP 词走势 · 跨店最优（30 天，越高越好）</p>
                   <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
                     {topWordTrends.map((trend) => {
-                      const w = 110;
-                      const h = 24;
+                      const w = 96;
+                      const h = 22;
                       const valid = trend.series.filter((value): value is number => value != null);
                       const max = Math.max(...valid, 2);
                       const min = Math.min(...valid, 1);
@@ -1330,14 +1338,6 @@ export function OverviewContent(props: OverviewContentProps) {
                   </div>
                 </div>
               )}
-              <div className="pt-1 text-right">
-                <LinkComponent
-                  to="/keywords?tab=distribution"
-                  className="text-[11px] font-medium text-amber-600 transition-colors hover:text-amber-700 hover:underline dark:text-amber-400"
-                >
-                  逐店明细 →
-                </LinkComponent>
-              </div>
             </div>
             <div className="mt-3">{poolHealthStrip}</div>
           </StageCard>
@@ -1472,7 +1472,7 @@ export function OverviewContent(props: OverviewContentProps) {
       </div>
 
       {/* 仪表盘 Row B：工程 | 版本与发布（原 ②③ 合并为同列） */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 mb-4">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 mb-4 items-start">
         <div className="lg:col-span-3 min-w-0">
         {/* ① 开发：四指标 + GitHub 活跃热力图 + repo 状态（卡底） */}
         <StageCard
@@ -1913,7 +1913,7 @@ export function OverviewContent(props: OverviewContentProps) {
             </p>
           </div>
         ) : (
-          <div className="px-5 py-4 space-y-2.5">
+          <div className="px-5 py-3 space-y-2">
             <div className="flex flex-wrap items-baseline justify-between gap-2 text-[11px]">
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
                 v{promotionFunnel.latest.appVersion} X 系列
