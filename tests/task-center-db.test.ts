@@ -131,6 +131,35 @@ async function main(): Promise<void> {
   assert.equal(build4?.firstRunAt, '2026-09-06T11:58:24.757Z', 'electronJson.firstRunAt 优先');
   assert.equal(build4?.projectName, 'GloWalk');
 
+  // —— 停用态：行级 enabled=0 /「（已停用）」标题 → 视图 enabled=false，不再计入逾期 ——
+  store.tasks.upsert({
+    id: 'ops-sync:disabled-proj', title: '数据同步（已停用）', intervalMinutes: 1440,
+    lastRunAt: null, nextRunAt: d(-3), lastStatus: 'never', lastSummary: null, runCount: 0,
+    source: 'electron', kind: 'ops-sync', enabled: false,
+    instance: { projectId: 'msszspx4' },
+  });
+  store.tasks.upsert({
+    id: 'ops-sync:title-disabled', title: '数据同步（已停用）', intervalMinutes: 1440,
+    lastRunAt: null, nextRunAt: d(-4), lastStatus: 'never', lastSummary: null, runCount: 0,
+    source: 'electron', kind: 'ops-sync', enabled: true,
+    instance: { projectId: 'msszspx4' },
+  });
+  const tasks5 = taskCenterTasksFromDb(store);
+  assert.equal(tasks5.find((t) => t.id === 'ops-sync:disabled-proj')?.enabled, false, 'enabled=0 行 → 停用');
+  assert.equal(tasks5.find((t) => t.id === 'ops-sync:title-disabled')?.enabled, false, '「已停用」标题行 → 停用');
+  assert.equal(tasks5.find((t) => t.id === 'build-status:msszspx4:ios')?.enabled, true, '正常行保持启用');
+  const ov5 = taskCenterOverviewFromDb(store);
+  assert.equal(
+    ov5.overdue,
+    1,
+    '停用任务的陈旧 nextRunAt 不再计入逾期（仅剩 github-sync 那条逾期）',
+  );
+  assert.equal(
+    ov5.nextDueAt,
+    tasks5.find((t) => t.id === 'github-sync:msszspx4')?.nextRunAt,
+    '最近到期时间只看启用任务（取启用行中最早的 nextRunAt）',
+  );
+
   store.close();
   console.log('task-center-db 单测全部通过 ✓');
 }

@@ -69,7 +69,8 @@ export function OverviewPage() {
     completed: number;
     generatedAt: string | null;
   } | null>(null);
-  // L0 系统脉搏条：调度器状态（60s 轮询 + data-changed 时机由任务中心维护）。
+  // L0 系统脉搏条：调度器状态与镜像健康（60s 轮询）。
+  const [dataSyncHealth, setDataSyncHealth] = useState<any>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<{
     enabled: boolean;
     total: number;
@@ -85,6 +86,9 @@ export function OverviewPage() {
       (window as any).appilot?.scheduler?.status()
         .then((status: any) => setSchedulerStatus(status || null))
         .catch(() => undefined);
+      (window as any).appilot?.dataSyncHealth?.()
+        .then((health: any) => setDataSyncHealth(health || null))
+        .catch(() => undefined);
     };
     refresh();
     const timer = window.setInterval(refresh, 60_000);
@@ -92,11 +96,20 @@ export function OverviewPage() {
   }, [project?.id]);
 
   useEffect(() => {
+    let cancelled = false;
     setPromotionCampaigns(null);
     if (!project?.id || !product?.id) return;
     (window as any).appilot?.promotion?.list(project.id, product.id)
-      .then((result: any) => setPromotionCampaigns(result?.campaigns || []))
-      .catch(() => setPromotionCampaigns([]));
+      .then((result: any) => {
+        if (cancelled) return;
+        setPromotionCampaigns(result?.campaigns || []);
+      })
+      .catch(() => {
+        if (!cancelled) setPromotionCampaigns([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [project?.id, product?.id]);
 
   useEffect(() => {
@@ -362,6 +375,7 @@ export function OverviewPage() {
       competitorAdvantage={competitorAdvantage}
       schedulerStatus={schedulerStatus}
       promotionCampaigns={promotionCampaigns}
+      dataSyncHealth={dataSyncHealth}
       competitorHref="/keywords?tab=competitor"
       copilotSummary={copilotSummary}
       onSelectProduct={selectProduct}

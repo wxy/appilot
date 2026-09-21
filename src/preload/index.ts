@@ -9,6 +9,9 @@ export interface AIConfig {
 contextBridge.exposeInMainWorld("appilot", {
   platform: process.platform,
   getVersion: (): Promise<string> => ipcRenderer.invoke("app:getVersion"),
+    reportError: (source: string, message: string, stack?: string): Promise<boolean> =>
+      ipcRenderer.invoke("app:reportError", String(source), String(message), String(stack ?? "")),
+    dataSyncHealth: (): Promise<any> => ipcRenderer.invoke("app:dataSyncHealth"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
   openAppPage: (url: string) => ipcRenderer.invoke("shell:openAppPage", url),
   onDataChanged: (callback: (scope: string) => void): (() => void) => {

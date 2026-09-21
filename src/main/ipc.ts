@@ -1,6 +1,7 @@
 import { registerAiHandlers } from "./handlers/ai";
 import { registerActionHandlers } from "./handlers/actions";
 import { registerCompetitorsHandlers } from "./handlers/competitors";
+import { registerDiagnosticsHandlers } from "./handlers/diagnostics";
 import { registerOpsHandlers } from "./handlers/ops";
 import { registerOverviewHandlers } from "./handlers/overview";
 import { registerProjectsHandlers } from "./handlers/projects";
@@ -11,6 +12,7 @@ import { registerShellHandlers } from "./handlers/shell";
 
 /** Aggregates every IPC handler registration by domain. */
 export function registerIpcHandlers() {
+  registerDiagnosticsHandlers();
   registerShellHandlers();
   registerActionHandlers();
   registerSchedulerHandlers();

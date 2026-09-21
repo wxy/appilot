@@ -132,6 +132,10 @@ export function taskRowToView(
     .at(-1) ?? null;
   const executionCount = Math.max(row.runCount ?? 0, facts?.count ?? 0);
   const groupKey = inst.groupKey ?? electron?.groupKey ?? undefined;
+  // 停用态：行级 enabled 列（mirror 写侧 enabled=false）+「（已停用）」标题
+  // （electronTaskFromRow 兼容旧行的第二信号）。此前硬编码 true，自动停用的
+  // 任务（连续失败≥5 次等）在任务中心仍被当作待执行/已逾期统计。
+  const disabled = row.enabled === false || String(row.title ?? '').includes('已停用');
   const view: TaskCenterTaskView = {
     id: row.id,
     kind,
@@ -142,7 +146,7 @@ export function taskRowToView(
     firstRunAt,
     lastStatus: electronStatus(row.lastStatus),
     executionCount,
-    enabled: true,
+    enabled: !disabled,
     projectId,
     productId,
     platform,
@@ -269,7 +273,8 @@ export function taskCenterOverviewFromDb(store: AppilotStore, taskViews?: TaskCe
     const k = r.kind ?? inferKindFromId(r.id) ?? 'unknown';
     byKind[k] = (byKind[k] ?? 0) + 1;
     if (r.lastRunAt) executed += 1;
-    if (r.nextRunAt) {
+    // 已停用任务不再计入逾期/最近到期（排期已停，陈旧 nextRunAt 不该报逾期）。
+    if (r.nextRunAt && r.enabled) {
       const t = new Date(r.nextRunAt).getTime();
       if (t <= now) overdue += 1;
       if (!nextDueAt || t < new Date(nextDueAt).getTime()) nextDueAt = r.nextRunAt;

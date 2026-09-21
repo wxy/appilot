@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -375,9 +375,13 @@ export function CopilotPage() {
   const [taskFeedback, setTaskFeedback] = useState<TaskFeedback | null>(null);
   const [error, setError] = useState("");
 
+  // 会话加载序号：切换项目/产品后旧响应不再覆盖新状态（审计 M-4）。
+  const sessionSeqRef = useRef(0);
   const loadSession = async () => {
     if (!project || !product) return;
+    const seq = ++sessionSeqRef.current;
     const value = await (window as any).appilot?.projects?.getBriefSession(project.id, product.id);
+    if (seq !== sessionSeqRef.current) return;
     setSession(value ? {
       suggestions: value.suggestions || [],
       generatedAt: value.generatedAt,

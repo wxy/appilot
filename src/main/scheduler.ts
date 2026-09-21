@@ -13,6 +13,7 @@ import {
   normalizeTrackedKeyword,
 } from "@appilot-labs/appilot-core/rank-keywords";
 import { appendRankSnapshots } from "@appilot-labs/appilot-core/rank-snapshots";
+import { saveCompetitorRankRowsForApp } from "./competitor-rank-store";
 import { storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
 import { resolveEffectiveCredentials } from "./credentials";
 import {
@@ -679,41 +680,27 @@ async function runRankTask(store: AppStore, task: RankScheduledTask): Promise<vo
       checkedAt: new Date().toISOString(),
     };
     if (result.candidateRanks) {
-      const ranksAll: Record<string, Record<string, any[]>> =
-        store.get("competitorRankSnapshots") || {};
-      const rankById: Record<string, any[]> = ranksAll[project.id] || {};
+      // 竞品排名快照已迁行表（迁移 Phase C）：行级 upsert，替代 kv JSON 整块读改写。
       const checkedAt = new Date().toISOString();
+      const rows = [];
       for (const t of tracked) {
         const competitorTrackId = t.trackId;
         if (!competitorTrackId) continue;
         const foundRank = result.candidateRanks[competitorTrackId];
         // 只记录真正出现在结果里的名次（未命中不写，避免空记录刷屏/挤出历史）。
         if (typeof foundRank !== "number" || !Number.isFinite(foundRank) || foundRank <= 0) continue;
-        const entry = {
+        rows.push({
+          projectId: project.id,
+          competitorId: t.competitor.id,
           keyword: task.keyword,
           language: task.queryLanguage,
           storefront: task.storefront,
           platform: entityPlatform,
           rank: foundRank,
           checkedAt,
-        };
-        // 同一 (关键词, 商店, 平台) 只保留最新一条。
-        const prev = rankById[t.competitor.id] || [];
-        rankById[t.competitor.id] = [
-          ...prev.filter(
-            (item: any) =>
-              !(
-                item.keyword === entry.keyword &&
-                item.storefront === entry.storefront &&
-                // 旧数据无 platform 字段，写入新条目时一并替换。
-                (item.platform == null || item.platform === entry.platform)
-              ),
-          ),
-          entry,
-        ].slice(-300);
+        });
       }
-      ranksAll[project.id] = rankById;
-      store.set("competitorRankSnapshots", ranksAll);
+      saveCompetitorRankRowsForApp(rows);
       notifyDataChanged("competitors");
     }
     task.consecutiveFailures = 0;
