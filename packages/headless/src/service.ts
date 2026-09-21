@@ -77,7 +77,11 @@ export function createHeadlessService(store: AppilotStore): HeadlessService {
       },
       list: () => store.projects.list(),
       get: (name) => store.projects.get(name),
-      remove: (name) => store.projects.remove(name),
+      // 深删：CLI/MCP 删除项目必须与 Electron UI 删除同级联——tasks 表无外键，
+      // 浅删（store.projects.remove）会留下引用已删项目的任务行，任务中心出现
+      // 「已删除项目」幽灵任务（github-sync 等 legacy source 行连 reconcile 都
+      // 不 prune，只能等启动兜底清理）。
+      remove: (name) => store.projects.removeDeep(name),
     },
     snapshots: {
       record: (rows) => store.snapshots.add(rows),

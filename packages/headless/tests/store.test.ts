@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore } from "../src/store";
+import { createHeadlessService } from "../src/service";
 
 const dir = mkdtempSync(join(tmpdir(), "headless-store-"));
 const dbPath = join(dir, "appilot.db");
@@ -269,6 +270,48 @@ try {
   pass("projects stable-id rename");
 } catch (err) {
   fail("projects stable-id rename", err);
+}
+
+/* ── 8. 服务门面 projects.remove = 深删：级联清理任务行（CLI/MCP 删除语义）── */
+try {
+  const store = openStore(join(dir, "svc-remove.db"));
+  const svc = createHeadlessService(store);
+  const t = "2026-09-01T00:00:00.000Z";
+  svc.projects.register({
+    name: "gone", id: "id-gone", path: "/x/gone", githubUrl: "https://github.com/wxy/gone",
+    platform: "ios", languages: ["en"], lastResolvedAt: t, artworkUrl: null,
+  });
+  svc.projects.register({
+    name: "stay", id: "id-stay", path: "/x/stay", githubUrl: null,
+    platform: "ios", languages: [], lastResolvedAt: t, artworkUrl: null,
+  });
+  store.products.upsert({
+    projectName: "gone", productId: "id-gone:ios", platform: "ios", trackId: 1,
+    bundleId: null, trackName: "Gone", artworkUrl: null, supportedLanguages: ["en"],
+    trackedKeywords: [], storeLinks: [], submissionKeywords: [], removedKeywords: [], updatedAt: t,
+  });
+  const seedTask = (id: string, kind: string, instance: Record<string, unknown>) =>
+    store.tasks.upsert({
+      id, title: id, intervalMinutes: 60, lastRunAt: null, nextRunAt: null,
+      lastStatus: "never", lastSummary: null, runCount: 0, source: "electron", kind, instance,
+    });
+  seedTask("github-sync:id-gone", "github-sync", { projectId: "id-gone", projectName: "gone", path: "/x/gone" });
+  seedTask("id-gone:ios:en:us:kw", "rank", { productId: "id-gone:ios", projectId: "id-gone", keyword: "kw" });
+  seedTask("ops-sync:id-gone", "ops-sync", { projectId: "id-gone" });
+  seedTask("github-sync:id-stay", "github-sync", { projectId: "id-stay", projectName: "stay", path: "/x/stay" });
+
+  assert.equal(svc.projects.remove("gone"), true, "删除成功");
+  assert.equal(store.projects.get("gone"), undefined, "注册表行删除");
+  assert.equal(store.products.listByProject("gone").length, 0, "产品记录级联删除");
+  assert.equal(store.tasks.get("github-sync:id-gone"), undefined, "github-sync 行按 projectId 级联删除");
+  assert.equal(store.tasks.get("id-gone:ios:en:us:kw"), undefined, "rank 行按 productId 级联删除");
+  assert.equal(store.tasks.get("ops-sync:id-gone"), undefined, "ops-sync 行按 projectId 级联删除");
+  assert.ok(store.tasks.get("github-sync:id-stay"), "其他项目的任务保留");
+  assert.equal(svc.projects.remove("gone"), false, "重复删除返回 false");
+  store.close();
+  pass("service projects.remove deep-cascades tasks");
+} catch (err) {
+  fail("service projects.remove deep-cascades tasks", err);
 }
 
 if (failures > 0) {
