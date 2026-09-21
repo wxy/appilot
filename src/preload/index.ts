@@ -249,10 +249,14 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("release:selectScreenshotImage"),
     screenshotImagePreview: (imagePath: string): Promise<string | null> =>
       ipcRenderer.invoke("release:screenshotImagePreview", imagePath),
-    selectKeynoteTemplate: (): Promise<string | null> =>
-      ipcRenderer.invoke("release:selectKeynoteTemplate"),
-    generateScreenshotArtifacts: (projectId: string, draftId: string, templatePath: string): Promise<any | null> =>
-      ipcRenderer.invoke("release:generateScreenshotArtifacts", projectId, draftId, templatePath),
+    getScreenshotThemes: (projectId: string, productId: string): Promise<any[]> =>
+      ipcRenderer.invoke("release:getScreenshotThemes", projectId, productId),
+    selectKeynoteTemplate: (projectId: string, productId: string): Promise<any | null> =>
+      ipcRenderer.invoke("release:selectKeynoteTemplate", projectId, productId),
+    removeScreenshotTheme: (projectId: string, productId: string, themeId: string): Promise<boolean> =>
+      ipcRenderer.invoke("release:removeScreenshotTheme", projectId, productId, themeId),
+    generateScreenshotArtifacts: (projectId: string, draftId: string): Promise<any | null> =>
+      ipcRenderer.invoke("release:generateScreenshotArtifacts", projectId, draftId),
     listCopyPlans: (projectId: string, productId: string): Promise<any[]> =>
       ipcRenderer.invoke("release:listCopyPlans", projectId, productId),
     saveCopyPlan: (projectId: string, productId: string, value: any): Promise<any> =>
@@ -294,8 +298,8 @@ contextBridge.exposeInMainWorld("appilot", {
         targetLanguages,
         operationId,
       ),
-    list: (projectId: string, force = false): Promise<any> =>
-      ipcRenderer.invoke("release:list", projectId, force),
+    list: (projectId: string, productId?: string, force = false): Promise<any> =>
+      ipcRenderer.invoke("release:list", projectId, productId, force),
     context: (projectId: string, productId: string, releaseTag: string): Promise<any> =>
       ipcRenderer.invoke("release:context", projectId, productId, releaseTag),
     get: (

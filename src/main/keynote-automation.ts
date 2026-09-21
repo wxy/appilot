@@ -8,6 +8,20 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export const KEYNOTE_SCREENSHOT_LAYOUT = "appilot.screenshot.v1";
+export const KEYNOTE_TITLE_MARKER = "{{appilot.title}}";
+export const KEYNOTE_DESCRIPTION_MARKER = "{{appilot.description}}";
+
+export interface KeynoteTemplateLayout {
+  name: string;
+  detection: "native" | "sample" | "native-and-sample";
+  sampleSlideNumber?: number;
+}
+
+export interface KeynoteTemplateInspection {
+  templatePath: string;
+  layouts: KeynoteTemplateLayout[];
+  inspectedAt: string;
+}
 
 export interface KeynoteScreenshotPage {
   language: string;
@@ -16,6 +30,9 @@ export interface KeynoteScreenshotPage {
   title: string;
   description: string;
   imagePath: string;
+  layoutName?: string;
+  nativePlaceholders?: boolean;
+  sampleSlideNumber?: number;
 }
 
 function appleScriptString(value: string): string {
@@ -71,21 +88,126 @@ return "OK"
 `.trim();
 }
 
-export async function validateKeynoteTemplate(templatePath: string): Promise<void> {
-  if (process.platform !== "darwin") throw new Error("Keynote 模板验证仅支持 macOS");
+export function buildKeynoteInspectionScript(input: { documentPath: string }): string {
+  return `
+set documentName to ${appleScriptString(path.basename(input.documentPath))}
+set outputText to ""
+set targetDocument to missing value
+tell application id "com.apple.Keynote"
+  try
+    repeat 120 times
+      set matchingDocuments to every document whose name is documentName
+      if (count of matchingDocuments) is 1 then
+        set targetDocument to item 1 of matchingDocuments
+        exit repeat
+      end if
+      delay 0.25
+    end repeat
+    if targetDocument is missing value then error "Keynote 未能打开模板检测副本"
+    tell targetDocument
+      set originalSlideCount to count of slides
+      repeat with currentLayout in slide layouts
+        set layoutName to name of currentLayout
+        set validationSlide to make new slide at end of slides with properties {base layout:currentLayout}
+        delay 0.1
+        set nativeCompatible to false
+        try
+          set titleItem to default title item of validationSlide
+          set bodyItem to default body item of validationSlide
+          if (title showing of validationSlide) and (body showing of validationSlide) and (width of titleItem) > 0 and (height of titleItem) > 0 and (width of bodyItem) > 0 and (height of bodyItem) > 0 and (count of images of validationSlide) is 1 then
+            set nativeCompatible to true
+          end if
+        end try
+        if nativeCompatible then set outputText to outputText & "NATIVE" & tab & layoutName & linefeed
+        delete validationSlide
+      end repeat
+      repeat with slideIndex from 1 to originalSlideCount
+        set currentSlide to slide slideIndex
+        set foundTitle to false
+        set foundDescription to false
+        try
+          set titleValue to object text of default title item of currentSlide as text
+          if titleValue is "${KEYNOTE_TITLE_MARKER}" or titleValue is "appilot.title" then set foundTitle to true
+        end try
+        try
+          set bodyValue to object text of default body item of currentSlide as text
+          if bodyValue is "${KEYNOTE_DESCRIPTION_MARKER}" or bodyValue is "appilot.description" then set foundDescription to true
+        end try
+        repeat with currentTextItem in text items of currentSlide
+          try
+            set textValue to object text of currentTextItem as text
+            if textValue is "${KEYNOTE_TITLE_MARKER}" or textValue is "appilot.title" then set foundTitle to true
+            if textValue is "${KEYNOTE_DESCRIPTION_MARKER}" or textValue is "appilot.description" then set foundDescription to true
+          end try
+        end repeat
+        if foundTitle and foundDescription and (count of images of currentSlide) is 1 then
+          set outputText to outputText & "SAMPLE" & tab & (name of base layout of currentSlide) & tab & slideIndex & linefeed
+        end if
+      end repeat
+    end tell
+    close targetDocument saving no
+  on error errorMessage number errorNumber
+    if targetDocument is not missing value then
+      try
+        close targetDocument saving no
+      end try
+    end if
+    error errorMessage number errorNumber
+  end try
+end tell
+return outputText
+`.trim();
+}
+
+function parseKeynoteInspection(output: string, templatePath: string): KeynoteTemplateInspection {
+  const native = new Set<string>();
+  const samples = new Map<string, number>();
+  for (const line of output.split(/\r?\n/)) {
+    const [kind, rawName, rawSlide] = line.split("\t");
+    const name = String(rawName || "").trim();
+    if (!name) continue;
+    if (kind === "NATIVE") native.add(name);
+    if (kind === "SAMPLE") {
+      if (samples.has(name)) throw new Error(`母版“${name}”存在多张 Appilot 示例页`);
+      samples.set(name, Number(rawSlide) || 0);
+    }
+  }
+  const names = Array.from(new Set([...native, ...samples.keys()]));
+  if (names.length === 0) {
+    throw new Error("模板中没有可用母版：请使用内置标题/正文和一个媒体占位符，或为母版创建包含 Appilot 标记的示例页");
+  }
+  return {
+    templatePath,
+    layouts: names.map((name) => ({
+      name,
+      detection: native.has(name) && samples.has(name)
+        ? "native-and-sample"
+        : native.has(name) ? "native" : "sample",
+      ...(samples.has(name) ? { sampleSlideNumber: samples.get(name) } : {}),
+    })),
+    inspectedAt: new Date().toISOString(),
+  };
+}
+
+export async function inspectKeynoteTemplate(templatePath: string): Promise<KeynoteTemplateInspection> {
+  if (process.platform !== "darwin") throw new Error("Keynote 模板检测仅支持 macOS");
   if (!fs.existsSync(templatePath) || path.extname(templatePath).toLowerCase() !== ".key") {
     throw new Error("请选择有效的 Keynote 模板");
   }
   const stagingPath = path.join(os.tmpdir(), `appilot-keynote-template-${crypto.randomUUID()}.key`);
-  const scriptPath = path.join(os.tmpdir(), `appilot-keynote-validate-${process.pid}-${Date.now()}.applescript`);
+  const scriptPath = path.join(os.tmpdir(), `appilot-keynote-inspect-${process.pid}-${Date.now()}.applescript`);
   fs.copyFileSync(templatePath, stagingPath);
-  fs.writeFileSync(scriptPath, buildKeynoteValidationScript({ documentPath: stagingPath }), "utf8");
+  fs.writeFileSync(scriptPath, buildKeynoteInspectionScript({ documentPath: stagingPath }), "utf8");
   try {
     await execFileAsync("/usr/bin/open", ["-b", "com.apple.Keynote", stagingPath], {
       timeout: 60_000,
       maxBuffer: 1024 * 1024,
     });
-    await execFileAsync("/usr/bin/osascript", [scriptPath], { timeout: 60_000, maxBuffer: 1024 * 1024 });
+    const { stdout } = await execFileAsync("/usr/bin/osascript", [scriptPath], {
+      timeout: 60_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return parseKeynoteInspection(stdout, templatePath);
   } catch (error: any) {
     throw new Error(`Keynote 模板不符合要求：${String(error?.stderr || error?.message || error).trim()}`);
   } finally {
@@ -94,50 +216,55 @@ export async function validateKeynoteTemplate(templatePath: string): Promise<voi
   }
 }
 
+export async function validateKeynoteTemplate(templatePath: string): Promise<void> {
+  await inspectKeynoteTemplate(templatePath);
+}
+
 export function buildKeynoteFillScript(input: {
   documentPath: string;
   layoutName?: string;
   pages: KeynoteScreenshotPage[];
   exportPngDirectory?: string;
 }): string {
-  const layoutName = input.layoutName || KEYNOTE_SCREENSHOT_LAYOUT;
-  const pageBlocks = input.pages.map((page) => `
-      set generatedSlide to make new slide at end of slides with properties {base layout:targetLayout}
-      delay 0.1
+  const fallbackLayoutName = input.layoutName || KEYNOTE_SCREENSHOT_LAYOUT;
+  const pageBlocks = input.pages.map((page) => {
+    const layoutName = page.layoutName || fallbackLayoutName;
+    const createSlide = page.sampleSlideNumber
+      ? `duplicate slide ${page.sampleSlideNumber} to after last slide
+      set generatedSlide to last slide`
+      : `
+      set matchingLayouts to every slide layout whose name is ${appleScriptString(layoutName)}
+      if (count of matchingLayouts) is not 1 then error ${appleScriptString(`Template must contain exactly one layout named: ${layoutName}`)}
+      set generatedSlide to make new slide at end of slides with properties {base layout:item 1 of matchingLayouts}`;
+    const fillText = page.nativePlaceholders
+      ? `
+      set title showing of generatedSlide to true
+      set body showing of generatedSlide to true
+      set object text of default title item of generatedSlide to ${appleScriptString(page.title)}
+      set object text of default body item of generatedSlide to ${appleScriptString(page.description)}`
+      : `
       set titleItem to missing value
       set descriptionItem to missing value
-      set editableTextItemCount to 0
       repeat with currentTextItem in text items of generatedSlide
-        set itemPosition to position of currentTextItem
-        if (width of currentTextItem) > 0 and (height of currentTextItem) > 0 then
-          set editableTextItemCount to editableTextItemCount + 1
-          if (item 2 of itemPosition) < (height of targetDocument) / 2 then
-            set titleItem to currentTextItem
-          else
-            set descriptionItem to currentTextItem
-          end if
-        end if
+        try
+          set markerText to object text of currentTextItem as text
+          if markerText is "${KEYNOTE_TITLE_MARKER}" or markerText is "appilot.title" then set titleItem to currentTextItem
+          if markerText is "${KEYNOTE_DESCRIPTION_MARKER}" or markerText is "appilot.description" then set descriptionItem to currentTextItem
+        end try
       end repeat
-      if editableTextItemCount is not 2 then error "Template must create exactly two editable text placeholders: appilot.title and appilot.description"
-      if titleItem is missing value then error "Template is missing appilot.title"
-      if descriptionItem is missing value then error "Template is missing appilot.description"
-      set titlePosition to position of titleItem
-      set titleCenterX to (item 1 of titlePosition) + ((width of titleItem) / 2)
-      set titleCenterY to (item 2 of titlePosition) + ((height of titleItem) / 2)
-      set descriptionPosition to position of descriptionItem
-      set descriptionCenterX to (item 1 of descriptionPosition) + ((width of descriptionItem) / 2)
-      set descriptionCenterY to (item 2 of descriptionPosition) + ((height of descriptionItem) / 2)
+      if titleItem is missing value then error "Sample slide is missing ${KEYNOTE_TITLE_MARKER}"
+      if descriptionItem is missing value then error "Sample slide is missing ${KEYNOTE_DESCRIPTION_MARKER}"
       set object text of titleItem to ${appleScriptString(page.title)}
-      set object text of descriptionItem to ${appleScriptString(page.description)}
-      set textMaxWidth to (width of targetDocument) * 0.8
-      set width of titleItem to textMaxWidth
-      set width of descriptionItem to textMaxWidth
-      set position of titleItem to {titleCenterX - (textMaxWidth / 2), titleCenterY - ((height of titleItem) / 2)}
-      set position of descriptionItem to {descriptionCenterX - (textMaxWidth / 2), descriptionCenterY - ((height of descriptionItem) / 2)}
+      set object text of descriptionItem to ${appleScriptString(page.description)}`;
+    return `
+      ${createSlide}
+      delay 0.1
+      ${fillText}
       if (count of images of generatedSlide) is not 1 then error "Template must create exactly one editable appilot.image"
       set file name of image 1 of generatedSlide to POSIX file ${appleScriptString(page.imagePath)}
       set presenter notes of generatedSlide to ${appleScriptString(`appilot:${page.language}:${page.screenshotId}`)}
-  `).join("\n");
+  `;
+  }).join("\n");
 
   const exportBlock = input.exportPngDirectory
     ? `export targetDocument to POSIX file ${appleScriptString(input.exportPngDirectory)} as slide images with properties {image format:PNG}`
@@ -146,7 +273,6 @@ export function buildKeynoteFillScript(input: {
   return `
 set documentPath to ${appleScriptString(input.documentPath)}
 set documentName to ${appleScriptString(path.basename(input.documentPath))}
-set layoutName to ${appleScriptString(layoutName)}
 set targetDocument to missing value
 tell application id "com.apple.Keynote"
   try
@@ -160,9 +286,6 @@ tell application id "com.apple.Keynote"
     end repeat
     if targetDocument is missing value then error "Keynote did not open the copied template"
     tell targetDocument
-      set matchingLayouts to every slide layout whose name is layoutName
-      if (count of matchingLayouts) is not 1 then error "Template must contain exactly one layout named: " & layoutName
-      set targetLayout to item 1 of matchingLayouts
       set originalSlideCount to count of slides
       ${pageBlocks}
       repeat originalSlideCount times

@@ -9,6 +9,7 @@ import {
   upsertScreenshotMaterials,
 } from "../src/screenshot-material";
 import type { AIProvider } from "../src/ai/ai-provider";
+import { buildProjectProfile } from "../src/project-profile";
 
 async function main() {
   const normalized = normalizeScreenshotMaterialDraft(
@@ -103,11 +104,18 @@ async function main() {
   assert.equal(confirmedEmbedded.masterConfirmedAt, "2026-09-12T01:00:00.000Z", "confirmation survives when the independent master language is unchanged");
 
   const withTemplate = normalizeScreenshotCopySet(
-    { ...normalized, keynoteTemplatePath: " /tmp/screenshots.key " },
+    {
+      ...normalized,
+      keynoteTemplatePath: " /tmp/screenshots.key ",
+      keynoteThemeAssignments: { home: " iphone ", missing: "drop" },
+      keynoteLayoutAssignments: { home: " 30 days ", missing: "drop" },
+    },
     "en",
     ["en", "zh-Hans"],
   );
   assert.equal(withTemplate.keynoteTemplatePath, "/tmp/screenshots.key", "the selected Keynote template is persisted with the copy set");
+  assert.deepEqual(withTemplate.keynoteThemeAssignments, { home: "iphone" }, "only suite assignments for existing screenshot types survive normalization");
+  assert.deepEqual(withTemplate.keynoteLayoutAssignments, { home: "30 days" }, "only assignments for existing screenshot types survive normalization");
 
   const migratedEmbedded = normalizeScreenshotCopySet(
     { sourceLanguage: "zh-Hans", items: [], masterUpdatedAt: "", updatedAt: "" },
@@ -132,16 +140,27 @@ async function main() {
   upsertScreenshotMaterials(project, { ...normalized, items: [] });
   assert.equal(project.screenshotMaterials?.length, 1, "same product is replaced, not duplicated");
 
+  let screenshotPrompt = "";
   const provider = {
-    chat: async () => JSON.stringify({
+    chat: async (messages: Array<{ content: string }>) => {
+      screenshotPrompt = messages.map((message) => message.content).join("\n");
+      return JSON.stringify({
       screenshots: [
         { id: "home", title: "Walk into the light", description: "See every step become a path." },
         { id: "hud", title: "Stay in the moment", description: "Keep your walk essentials in view." },
       ],
-    }),
+      });
+    },
   } as unknown as AIProvider;
   const generated = await generateScreenshotMaterialMaster(provider, {
     productName: "GloWalk",
+    profile: buildProjectProfile({
+      name: "GloWalk",
+      platform: "macos",
+      relatedPlatforms: ["ios"],
+      supportedLanguages: ["en"],
+      description: "A walking dashboard with a mobile companion.",
+    }),
     language: "en",
     screenshots: [
       { id: "home", name: "首页" },
@@ -149,6 +168,9 @@ async function main() {
     ],
   });
   assert.equal(generated.home.title, "Walk into the light");
+  assert.match(screenshotPrompt, /Target storefront platform: macOS/);
+  assert.match(screenshotPrompt, /Related storefront platforms: ios/);
+  assert.match(screenshotPrompt, /exclusive to another platform/);
 
   const translationProvider = {
     chat: async () => JSON.stringify({

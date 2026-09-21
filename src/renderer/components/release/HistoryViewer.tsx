@@ -78,6 +78,7 @@ export function HistoryViewer({
             /> : <p className="py-10 text-center text-sm text-zinc-400 dark:text-zinc-500">这个版本没有商店文案。</p>
           : hasScreenshotCopy ? <ScreenshotMaterialsPanel
               projectId={projectId}
+              productId={viewerDraft.productId}
               draftId={viewerDraft.id}
               value={viewerDraft.screenshotCopy}
               supportedLanguages={viewerDraft.screenshotCopy?.selectedLanguages || tabLanguages}

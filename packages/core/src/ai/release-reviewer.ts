@@ -3,6 +3,7 @@ import type { ReleaseInfo } from "../release-watcher";
 import type { StoreSubmissionContent, StoreSubmissionLocalization } from "../store-submission";
 import { requestJson, buildArchiveMessages } from "./ai-request";
 import type { ProjectProfile } from "../project-profile";
+import { platformCopyGuidance } from "../project-profile";
 import { EngineError } from "../errors";
 import { log } from "../logger";
 import { copyPlanMaterial, type CopyPlanItem } from "../copy-plan";
@@ -362,6 +363,7 @@ async function generateGlobalReleasePlan(
     [
       "You are Appilot's release planner.",
       "Given the release announcement and current product context, produce a release summary and promotion angles.",
+      platformCopyGuidance(context.profile),
       "Respond ONLY with JSON in this shape:",
       JSON.stringify(
         {
@@ -452,6 +454,7 @@ async function generateLocalizedStoreCopy(
       revising
         ? "Revise the existing copy below according to the reviewer/author feedback while preserving its structure and formatting."
         : "Write fresh App Store copy based on the materials below.",
+      platformCopyGuidance(context.profile),
       "Respond ONLY with JSON in this shape:",
       JSON.stringify(
         {
@@ -473,7 +476,7 @@ async function generateLocalizedStoreCopy(
         ? "Revise `name`, `subtitle`, and `keywords` together so they stay a coherent ASO set. When the feedback asks for different keywords or says the keyword field does not match the app, rebuild the keyword set from the app description/README, tracked keywords, and copy-gap keywords below instead of keeping the existing list. Do not just reorder or reword the old keywords."
         : "Base the description on the current app description/README context, not only the release announcement.",
       context.includedChanges?.length
-        ? "whatsNew 必须严格只包含本次确认的变更项，不得添加未列出的内容，也不得加版本标题。"
+        ? "whatsNew 必须严格只从本次确认的变更项中选择，并进一步排除不适用于目标平台的条目；不得为了覆盖清单而写入其他平台专属功能，不得添加未列出的内容，也不得加版本标题。"
         : "Use the release body primarily for whatsNew. For whatsNew, include only user-visible changes and fixes. Do not add a version heading. Do not include deployment, schema, testing, or engineering-only notes.",
       "Keep promotionalText ≤170 characters, keywords ≤100 characters, and description/whatsNew ≤4000 characters.",
       "The copy plan below is user-approved writing guidance, not product evidence. Apply it only when README/profile/release material supports the claim. Never use a copy plan to invent features. Copy-plan guidance must not add content to whatsNew unless the confirmed release changes independently support it.",

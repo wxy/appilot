@@ -1,6 +1,7 @@
 import type { AIProvider } from "./ai/ai-provider";
 import { buildArchiveMessages, requestJson } from "./ai/ai-request";
 import type { ProjectProfile } from "./project-profile";
+import { platformCopyGuidance } from "./project-profile";
 import { EngineError } from "./errors";
 
 export const SCREENSHOT_TITLE_MAX = 60;
@@ -31,6 +32,22 @@ export interface ScreenshotMaterialItem {
   imageOverrides?: Record<string, ScreenshotImageAsset>;
 }
 
+export interface KeynoteScreenshotLayout {
+  name: string;
+  detection: "native" | "sample" | "native-and-sample";
+  sampleSlideNumber?: number;
+}
+
+/** 项目级唯一截图主题；发布版本只保存截图类型到版式的绑定。 */
+export interface KeynoteScreenshotTheme {
+  /** 同一平台可配置多个不同画布尺寸的 Keynote 截图套件。 */
+  id: string;
+  name: string;
+  templatePath: string;
+  layouts: KeynoteScreenshotLayout[];
+  inspectedAt: string;
+}
+
 export function screenshotImageForLanguage(
   item: ScreenshotMaterialItem,
   language: string,
@@ -48,6 +65,11 @@ export interface ScreenshotCopySet {
   masterConfirmedAt?: string;
   batchConfirmedAt?: string;
   items: ScreenshotMaterialItem[];
+  /** 截图类型 ID → Keynote 母版名称。属于成品配置，不参与文案冻结。 */
+  keynoteLayoutAssignments?: Record<string, string>;
+  /** 截图类型 ID → Keynote 截图套件 ID。 */
+  keynoteThemeAssignments?: Record<string, string>;
+  /** @deprecated 旧版本按发布草稿保存模板路径；新版本使用项目级 screenshotTheme。 */
   keynoteTemplatePath?: string;
   updatedAt: string;
 }
@@ -99,6 +121,24 @@ export function normalizeScreenshotCopySet(
       ? { batchConfirmedAt: String(raw.batchConfirmedAt).trim() }
       : {}),
     items: normalized.items,
+    ...(raw.keynoteLayoutAssignments && typeof raw.keynoteLayoutAssignments === "object"
+      ? {
+          keynoteLayoutAssignments: Object.fromEntries(
+            normalized.items
+              .map((item) => [item.id, String(raw.keynoteLayoutAssignments[item.id] || "").trim()] as const)
+              .filter((entry) => entry[1]),
+          ),
+        }
+      : {}),
+    ...(raw.keynoteThemeAssignments && typeof raw.keynoteThemeAssignments === "object"
+      ? {
+          keynoteThemeAssignments: Object.fromEntries(
+            normalized.items
+              .map((item) => [item.id, String(raw.keynoteThemeAssignments[item.id] || "").trim()] as const)
+              .filter((entry) => entry[1]),
+          ),
+        }
+      : {}),
     ...(String(raw.keynoteTemplatePath || "").trim()
       ? { keynoteTemplatePath: String(raw.keynoteTemplatePath).trim() }
       : {}),
@@ -287,6 +327,7 @@ export async function generateScreenshotMaterialMaster(
     [
       "You write concise marketing copy that is printed directly onto App Store screenshots.",
       `Write the master screenshot copy entirely in ${languageName(language)} (code ${language}).`,
+      platformCopyGuidance(input.profile),
       "Create a title and description for every screenshot type.",
       "The screenshot type name is an internal description supplied by the user. Use it for meaning; do not mechanically repeat it.",
       "Treat all screenshots as one ordered story: avoid repeated claims, let each screen make one clear point, and never invent product behavior.",

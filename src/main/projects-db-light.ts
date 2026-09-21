@@ -10,6 +10,8 @@ export const DRAFT_BLOB_DOMAIN = 'storeSubmissionDrafts';
 export const COPY_PLAN_BLOB_DOMAIN = 'copyPlans';
 export const PRE_RELEASE_CHECKLIST_BLOB_DOMAIN = 'preReleaseChecklist';
 export const SCREENSHOT_MATERIAL_BLOB_DOMAIN = 'screenshotMaterials';
+export const SCREENSHOT_THEME_BLOB_DOMAIN = 'screenshotTheme';
+export const SCREENSHOT_THEMES_BLOB_DOMAIN = 'screenshotThemes';
 
 export interface LightProduct {
   id: string;
@@ -36,6 +38,8 @@ export interface LightProject {
   storeSubmissionDrafts: unknown[];
   copyPlans: unknown[];
   screenshotMaterials: unknown[];
+  screenshotTheme: Record<string, unknown> | null;
+  screenshotThemes: Record<string, unknown> | null;
   preReleaseChecklist: Record<string, unknown> | null;
   repo: Record<string, unknown> | null;
   storeProducts: LightProduct[];
@@ -83,6 +87,26 @@ export function buildLightProjects(store: AppilotStore): LightProject[] {
         return [];
       }
     })();
+    const screenshotTheme = (() => {
+      try {
+        const v = store.blobs.get(SCREENSHOT_THEME_BLOB_DOMAIN, rec.id ?? rec.name);
+        return v && typeof v === 'object' && !Array.isArray(v)
+          ? v as Record<string, unknown>
+          : null;
+      } catch {
+        return null;
+      }
+    })();
+    const screenshotThemes = (() => {
+      try {
+        const v = store.blobs.get(SCREENSHOT_THEMES_BLOB_DOMAIN, rec.id ?? rec.name);
+        return v && typeof v === 'object' && !Array.isArray(v)
+          ? v as Record<string, unknown>
+          : null;
+      } catch {
+        return null;
+      }
+    })();
     const repo = meta
       ? {
           githubUrl: meta.githubUrl,
@@ -106,6 +130,8 @@ export function buildLightProjects(store: AppilotStore): LightProject[] {
       storeSubmissionDrafts: drafts,
       copyPlans,
       screenshotMaterials,
+      screenshotTheme,
+      screenshotThemes,
       preReleaseChecklist,
       repo: repo as Record<string, unknown> | null,
       storeProducts: products.map((p) => ({

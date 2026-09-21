@@ -74,6 +74,26 @@ export function syncProjectToDb(
       // 截图素材镜像失败不阻断项目其它数据写入
     }
   }
+  if (Object.prototype.hasOwnProperty.call(project, "screenshotTheme")) {
+    try {
+      const screenshotTheme = (project as any).screenshotTheme;
+      if (screenshotTheme && typeof screenshotTheme === "object" && !Array.isArray(screenshotTheme)) {
+        store.blobs.put("screenshotTheme", stableProjectId, screenshotTheme);
+      }
+    } catch {
+      // 项目级截图主题镜像失败不阻断其它项目字段同步
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(project, "screenshotThemes")) {
+    try {
+      const screenshotThemes = (project as any).screenshotThemes;
+      if (screenshotThemes && typeof screenshotThemes === "object" && !Array.isArray(screenshotThemes)) {
+        store.blobs.put("screenshotThemes", stableProjectId, screenshotThemes);
+      }
+    } catch {
+      // 平台级多截图套件镜像失败不阻断其它项目字段同步
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(project, "preReleaseChecklist")) {
     try {
       const checklist = (project as any).preReleaseChecklist;

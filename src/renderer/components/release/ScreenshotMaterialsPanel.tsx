@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ScreenshotCopySet, ScreenshotImageAsset, ScreenshotMaterialItem } from "@appilot-labs/appilot-core/screenshot-material";
+import type { KeynoteScreenshotTheme, ScreenshotCopySet, ScreenshotImageAsset, ScreenshotMaterialItem } from "@appilot-labs/appilot-core/screenshot-material";
 import {
   normalizeScreenshotCopySet,
   SCREENSHOT_DESCRIPTION_MAX,
@@ -17,6 +17,8 @@ function cloneSet(value: ScreenshotCopySet): ScreenshotCopySet {
   return {
     ...value,
     selectedLanguages: [...value.selectedLanguages],
+    keynoteLayoutAssignments: { ...(value.keynoteLayoutAssignments || {}) },
+    keynoteThemeAssignments: { ...(value.keynoteThemeAssignments || {}) },
     items: value.items.map((item) => ({
       ...item,
       copies: { ...item.copies },
@@ -58,13 +60,19 @@ function ScreenshotPreview({ asset, disabled, inherited, onSelect }: {
   );
 }
 
-function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageReadOnly, typeReadOnly, onChange, onImageChange, onCommit, onRemove }: {
+function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageReadOnly, typeReadOnly, themes, themeId, layoutName, layoutReadOnly, onThemeChange, onLayoutChange, onChange, onImageChange, onCommit, onRemove }: {
   item: ScreenshotMaterialItem;
   language: string;
   sourceLanguage: string;
   textReadOnly: boolean;
   imageReadOnly: boolean;
   typeReadOnly: boolean;
+  themes: KeynoteScreenshotTheme[];
+  themeId: string;
+  layoutName: string;
+  layoutReadOnly: boolean;
+  onThemeChange: (themeId: string, defaultLayout: string) => void;
+  onLayoutChange: (layoutName: string) => void;
   onChange: (field: "name" | "title" | "description", value: string) => void;
   onImageChange: (asset?: ScreenshotImageAsset) => void;
   onCommit: () => void;
@@ -75,22 +83,57 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
   const override = language === sourceLanguage ? undefined : item.imageOverrides?.[language];
   const image = screenshotImageForLanguage(item, language, sourceLanguage);
   const inherited = language !== sourceLanguage && !override && Boolean(item.sourceImage);
+  const selectedTheme = themes.find((theme) => theme.id === themeId) || null;
+  const layouts = selectedTheme?.layouts.map((layout) => layout.name) || [];
   const selectImage = async () => {
     const asset = await (window as any).appilot.release.selectScreenshotImage();
     if (asset) onImageChange(asset);
   };
   return (
     <article className="flex min-w-0 flex-col rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-700 dark:bg-zinc-900">
-      <div className="mb-3 flex min-w-0 items-center gap-2">
-        {canEditType ? (
-          <input value={item.name} onChange={(event) => onChange("name", event.target.value)} onBlur={onCommit} maxLength={100} className={cn(inputLineClass, "min-w-0 flex-1")} />
-        ) : (
-          <h4 className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">{item.name}</h4>
-        )}
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
+        <span className="truncate text-xs font-medium text-zinc-500 dark:text-zinc-400">{item.name}</span>
         {canEditType && (
           <button type="button" onClick={onRemove} className="h-7 w-7 shrink-0 rounded text-xs text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30" aria-label="删除截图类型" title="删除截图类型">×</button>
         )}
       </div>
+      <label className="mb-3 block space-y-1">
+        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Keynote 截图套件</span>
+        <select
+          value={themeId}
+          disabled={layoutReadOnly}
+          onChange={(event) => {
+            const nextTheme = themes.find((theme) => theme.id === event.target.value);
+            onThemeChange(event.target.value, nextTheme?.layouts.length === 1 ? nextTheme.layouts[0].name : "");
+          }}
+          className={cn(inputLineClass, "w-full", !themeId && "text-amber-700 dark:text-amber-300")}
+        >
+          <option value="">请选择截图套件</option>
+          {themeId && !themes.some((theme) => theme.id === themeId) && <option value={themeId}>原套件已不存在</option>}
+          {themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
+        </select>
+      </label>
+      <label className="mb-3 block space-y-1">
+        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Keynote 版式</span>
+        <select
+          value={layoutName}
+          disabled={layoutReadOnly || !themeId}
+          onChange={(event) => onLayoutChange(event.target.value)}
+          className={cn(inputLineClass, "w-full", !layoutName && "text-amber-700 dark:text-amber-300")}
+        >
+          <option value="">请选择版式</option>
+          {layoutName && !layouts.includes(layoutName) && <option value={layoutName}>{layoutName}（套件中已不存在）</option>}
+          {layouts.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>
+      <label className="mb-3 block space-y-1">
+        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">截图类型名称</span>
+        {canEditType ? (
+          <input value={item.name} onChange={(event) => onChange("name", event.target.value)} onBlur={onCommit} maxLength={100} className={cn(inputLineClass, "min-w-0 flex-1")} />
+        ) : (
+          <p className="min-w-0 truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">{item.name}</p>
+        )}
+      </label>
       <div className="space-y-3">
         <label className="block space-y-1">
           <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">标题 <span className="text-violet-600 dark:text-violet-400">（appilot.title）</span></span>
@@ -118,8 +161,9 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
   );
 }
 
-export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedLanguages, defaultSourceLanguage, readOnly = false, allowArtifactGeneration = false, onChange, onCommit, onGenerated, onDelete }: {
+export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value, supportedLanguages, defaultSourceLanguage, readOnly = false, allowArtifactGeneration = false, onChange, onCommit, onGenerated, onDelete }: {
   projectId?: string;
+  productId?: string;
   draftId?: string;
   value?: ScreenshotCopySet | null;
   supportedLanguages: string[];
@@ -154,6 +198,10 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   );
   const [activeLanguage, setActiveLanguage] = useState(normalizedValue?.sourceLanguage || fixedSourceLanguage);
   const [newTypeName, setNewTypeName] = useState("");
+  const [newTypeThemeId, setNewTypeThemeId] = useState("");
+  const [newTypeLayoutName, setNewTypeLayoutName] = useState("");
+  const [themes, setThemes] = useState<KeynoteScreenshotTheme[]>([]);
+  const [themeLoading, setThemeLoading] = useState(Boolean(projectId));
   const [running, setRunning] = useState(false);
   const [failed, setFailed] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -162,6 +210,62 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   const [error, setError] = useState("");
   const [artifactRunning, setArtifactRunning] = useState(false);
   const [artifactResult, setArtifactResult] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setThemes([]);
+    if (!projectId || !productId) {
+      setThemeLoading(false);
+      return () => { active = false; };
+    }
+    setThemeLoading(true);
+    void (window as any).appilot.release.getScreenshotThemes(projectId, productId)
+      .then((value: KeynoteScreenshotTheme[]) => { if (active) setThemes(Array.isArray(value) ? value : []); })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setThemes([]);
+        setError(`读取 Keynote 截图套件失败：${cause instanceof Error ? cause.message : String(cause)}`);
+      })
+      .finally(() => { if (active) setThemeLoading(false); });
+    return () => { active = false; };
+  }, [projectId, productId]);
+
+  useEffect(() => {
+    const selectedTheme = themes.find((theme) => theme.id === newTypeThemeId)
+      || (themes.length === 1 ? themes[0] : null);
+    if (selectedTheme && selectedTheme.id !== newTypeThemeId) setNewTypeThemeId(selectedTheme.id);
+    const names = selectedTheme?.layouts.map((layout) => layout.name) || [];
+    if (!names.includes(newTypeLayoutName)) {
+      const defaultLayout = names.length === 1 ? names[0] : "";
+      setNewTypeLayoutName(defaultLayout);
+      setNewTypeName((current) => current.trim() ? current : defaultLayout);
+    }
+  }, [themes.map((theme) => `${theme.id}:${theme.inspectedAt}`).join("|")]);
+
+  const chooseTheme = async (): Promise<KeynoteScreenshotTheme | null> => {
+    if (!projectId || !productId) return null;
+    setError("");
+    try {
+      const selected = await (window as any).appilot.release.selectKeynoteTemplate(projectId, productId);
+      if (!selected) return null;
+      setThemes((current) => current.some((theme) => theme.id === selected.id)
+        ? current.map((theme) => theme.id === selected.id ? selected : theme)
+        : [...current, selected]);
+      setNewTypeThemeId(selected.id);
+      setArtifactResult("");
+      return selected;
+    } catch (reason: any) {
+      setError(reason?.message || "Keynote 截图主题检测失败。");
+      return null;
+    }
+  };
+
+  const removeTheme = async (themeId: string) => {
+    if (!projectId || !productId) return;
+    await (window as any).appilot.release.removeScreenshotTheme(projectId, productId, themeId);
+    setThemes((current) => current.filter((theme) => theme.id !== themeId));
+    setArtifactResult("");
+  };
 
   useEffect(() => {
     if (!normalizedValue) return;
@@ -179,16 +283,18 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
 
   if (!normalizedValue) {
     if (readOnly) return <div className="rounded-xl border border-zinc-200 px-4 py-10 text-center text-sm text-zinc-400 dark:border-zinc-800">这份版本没有创建截图文案。</div>;
-    const create = () => {
+    const create = async () => {
+      if (themes.length === 0 && !await chooseTheme()) return;
       const next: ScreenshotCopySet = { sourceLanguage: fixedSourceLanguage, selectedLanguages: languages.length ? languages : [fixedSourceLanguage], masterUpdatedAt: "", items: [], updatedAt: new Date().toISOString() };
       onChange?.(next);
-      void onCommit?.(next);
+      await onCommit?.(next);
     };
     return (
       <div className="rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center dark:border-zinc-700">
         <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">本版本尚未创建截图文案</p>
-        <p className="mx-auto mt-1 max-w-lg text-xs text-zinc-400 dark:text-zinc-500">创建后先用界面语言编写母本，再选择所需语言逐一翻译；整个流程不影响商店文案。</p>
-        <button type="button" onClick={create} className={cn(btnPrimary, "mt-4")}>创建截图文案</button>
+        <p className="mx-auto mt-1 max-w-lg text-xs text-zinc-400 dark:text-zinc-500">先为当前平台添加至少一个 Keynote 截图套件，再为每种截图绑定套件与版式。</p>
+        <button type="button" onClick={() => void create()} disabled={themeLoading} className={cn(btnPrimary, "mt-4")}>{themeLoading ? "正在读取截图套件…" : themes.length > 0 ? "创建截图文案" : "添加截图套件并创建"}</button>
+        {error && <p className="mt-3 text-xs text-red-600 dark:text-red-400">{error}</p>}
       </div>
     );
   }
@@ -244,18 +350,29 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
     || (!masterConfirmed && activeLanguage !== screenshotCopy.sourceLanguage)
     || (masterConfirmed && activeLanguage === screenshotCopy.sourceLanguage);
   const typeReadOnly = readOnly || masterConfirmed || batchConfirmed;
+  const selectedNewTheme = themes.find((theme) => theme.id === newTypeThemeId) || null;
+  const newTypeLayoutNames = selectedNewTheme?.layouts.map((layout) => layout.name) || [];
 
   const addType = () => {
     const name = newTypeName.trim();
     if (!name) return setError("请先输入截图类型名称。");
+    if (!newTypeThemeId) return setError("请先为截图类型选择 Keynote 截图套件。");
+    if (!newTypeLayoutName) return setError("请先为截图类型选择 Keynote 版式。");
     setError("");
     update((next) => {
-      next.items.push({ id: globalThis.crypto?.randomUUID?.() || `screenshot-${Date.now()}-${next.items.length}`, name, copies: {} });
+      const id = globalThis.crypto?.randomUUID?.() || `screenshot-${Date.now()}-${next.items.length}`;
+      next.items.push({ id, name, copies: {} });
+      next.keynoteThemeAssignments = { ...(next.keynoteThemeAssignments || {}), [id]: newTypeThemeId };
+      next.keynoteLayoutAssignments = { ...(next.keynoteLayoutAssignments || {}), [id]: newTypeLayoutName };
       next.masterUpdatedAt = new Date().toISOString();
       delete next.masterConfirmedAt;
       delete next.batchConfirmedAt;
     }, true);
-    setNewTypeName("");
+    const nextDefaultTheme = themes.length === 1 ? themes[0] : null;
+    const nextDefaultLayout = nextDefaultTheme?.layouts.length === 1 ? nextDefaultTheme.layouts[0].name : "";
+    setNewTypeThemeId(nextDefaultTheme?.id || "");
+    setNewTypeLayoutName(nextDefaultLayout);
+    setNewTypeName(nextDefaultLayout);
   };
 
   const run = async (mode: "generate" | "translate", targetLanguage = "") => {
@@ -306,25 +423,22 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   const activeOverrides = activeLanguage === screenshotCopy.sourceLanguage
     ? activeImages.length
     : screenshotCopy.items.filter((item) => item.imageOverrides?.[activeLanguage]).length;
-  const keynoteReady = allTextReady && missingImagePageCount === 0;
-  const selectKeynoteTemplate = async () => {
-    setError("");
-    try {
-      const templatePath = await (window as any).appilot.release.selectKeynoteTemplate();
-      if (!templatePath) return;
-      update((next) => { next.keynoteTemplatePath = templatePath; }, true);
-      setArtifactResult("");
-    } catch (reason: any) {
-      setError(reason?.message || "Keynote 模板验证失败。");
-    }
-  };
+  const missingLayoutCount = screenshotCopy.items.filter((item) => {
+    const assignedThemeId = screenshotCopy.keynoteThemeAssignments?.[item.id] || (themes.length === 1 ? themes[0].id : "");
+    const assignedTheme = themes.find((theme) => theme.id === assignedThemeId);
+    const assigned = screenshotCopy.keynoteLayoutAssignments?.[item.id] || "";
+    return !assignedTheme || !assigned || !assignedTheme.layouts.some((layout) => layout.name === assigned);
+  }).length;
+  const keynoteReady = themes.length > 0 && allTextReady && missingImagePageCount === 0 && missingLayoutCount === 0;
   const generateArtifacts = async () => {
-    if (!projectId || !draftId || !screenshotCopy.keynoteTemplatePath || artifactRunning) return;
+    if (!projectId || !draftId || themes.length === 0 || artifactRunning) return;
     setError(""); setArtifactResult(""); setArtifactRunning(true);
     try {
       await onCommit?.(screenshotCopy);
-      const result = await (window as any).appilot.release.generateScreenshotArtifacts(projectId, draftId, screenshotCopy.keynoteTemplatePath);
-      if (result?.outputPath) setArtifactResult(`已生成 ${result.pageCount} 页；Keynote：${result.outputPath}；PNG：${result.outputDirectory}`);
+      const result = await (window as any).appilot.release.generateScreenshotArtifacts(projectId, draftId);
+      if (result?.artifacts?.length) {
+        setArtifactResult(`已按 ${result.artifacts.length} 个套件生成 ${result.pageCount} 页：${result.artifacts.map((item: any) => `${item.themeName} → ${item.outputPath}`).join("；")}`);
+      }
     } catch (reason: any) {
       setError(reason?.message || "截图成品生成失败。");
     } finally {
@@ -333,17 +447,84 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
   };
   return (
     <div className="space-y-4">
+      <section className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-3.5 dark:border-zinc-700 dark:bg-zinc-800/20">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h4 className="text-xs font-medium text-zinc-600 dark:text-zinc-300">当前平台的截图套件</h4>
+            <p className="mt-1 break-all text-xs text-zinc-400 dark:text-zinc-500">
+              {themes.length > 0 ? `已配置 ${themes.length} 个 Keynote 文件；不同画布尺寸分别生成。` : "尚未添加 Keynote 截图套件"}
+            </p>
+          </div>
+          {(!readOnly || allowArtifactGeneration) && <button type="button" onClick={() => void chooseTheme()} disabled={running} className={btnSecondary}>＋ 添加 Keynote 套件</button>}
+        </div>
+        {themes.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{themes.map((theme) => <div key={theme.id} className="rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-700 dark:bg-zinc-900"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-xs font-medium text-zinc-700 dark:text-zinc-200">{theme.name}</p><p className="mt-0.5 truncate text-[10px] text-zinc-400" title={theme.templatePath}>{theme.templatePath}</p><p className="mt-1 text-[10px] text-emerald-600 dark:text-emerald-400">✓ {theme.layouts.length} 个版式</p></div>{(!readOnly || allowArtifactGeneration) && <button type="button" disabled={running} onClick={() => void removeTheme(theme.id)} className="shrink-0 text-xs text-zinc-400 hover:text-red-600">移除</button>}</div></div>)}</div>}
+      </section>
       <div>
         <LanguageTabs languages={tabLanguages} activeLanguage={activeLanguage} onSelect={setActiveLanguage} generatedLanguages={generatedLanguages} />
         <div className="overflow-hidden rounded-lg border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
           <div className="space-y-3 p-4">
+          {!typeReadOnly && activeLanguage === screenshotCopy.sourceLanguage && (
+            <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 p-4 dark:border-zinc-700 dark:bg-zinc-800/20">
+              <div className="grid gap-3 sm:max-w-xl">
+                <label className="block space-y-1">
+                  <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Keynote 截图套件</span>
+                  <select
+                    value={newTypeThemeId}
+                    onChange={(event) => {
+                      const nextTheme = themes.find((theme) => theme.id === event.target.value) || null;
+                      setNewTypeThemeId(event.target.value);
+                      const defaultLayout = nextTheme?.layouts.length === 1 ? nextTheme.layouts[0].name : "";
+                      setNewTypeLayoutName(defaultLayout);
+                      setNewTypeName((current) => !current.trim() || current === newTypeLayoutName ? defaultLayout : current);
+                    }}
+                    disabled={themes.length === 0 || running}
+                    className={cn(inputLineClass, "w-full")}
+                  >
+                    <option value="">选择 Keynote 截图套件</option>
+                    {themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">版式</span>
+                  <select
+                    value={newTypeLayoutName}
+                    onChange={(event) => {
+                      const nextLayout = event.target.value;
+                      const previousLayout = newTypeLayoutName;
+                      setNewTypeLayoutName(nextLayout);
+                      setNewTypeName((current) => !current.trim() || current === previousLayout ? nextLayout : current);
+                    }}
+                    disabled={!selectedNewTheme || running}
+                    className={cn(inputLineClass, "w-full")}
+                  >
+                    <option value="">选择 Keynote 版式</option>
+                    {newTypeLayoutNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">截图类型名称</span>
+                  <input value={newTypeName} onChange={(event) => setNewTypeName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addType(); }} disabled={running} maxLength={100} placeholder="选择版式后默认使用版式名称" className={cn(inputLineClass, "w-full")} />
+                  <span className="block text-[11px] text-zinc-400 dark:text-zinc-500">名称会作为 AI 理解这张截图内容的语义，请尽量描述画面重点。</span>
+                </label>
+                <div><button type="button" onClick={addType} disabled={running} className={btnSecondary}>＋ 添加类型</button></div>
+              </div>
+            </div>
+          )}
         {screenshotCopy.items.length > 0 && <div className="flex items-center justify-between gap-3 text-xs text-zinc-500 dark:text-zinc-400">
           <span>当前语言图片 {activeImages.length}/{screenshotCopy.items.length}</span>
           {activeLanguage !== screenshotCopy.sourceLanguage && <span>{activeOverrides} 张本地化，{activeImages.length - activeOverrides} 张继承母本</span>}
         </div>}
         <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {screenshotCopy.items.map((item) => (
-            <ScreenshotCard key={`${activeLanguage}:${item.id}`} item={item} language={activeLanguage} sourceLanguage={screenshotCopy.sourceLanguage} textReadOnly={fieldReadOnly} imageReadOnly={readOnly || batchConfirmed} typeReadOnly={typeReadOnly}
+            <ScreenshotCard key={`${activeLanguage}:${item.id}`} item={item} language={activeLanguage} sourceLanguage={screenshotCopy.sourceLanguage} textReadOnly={fieldReadOnly || running} imageReadOnly={readOnly || batchConfirmed || running} typeReadOnly={typeReadOnly || running}
+              themes={themes} themeId={screenshotCopy.keynoteThemeAssignments?.[item.id] || (themes.length === 1 ? themes[0].id : "")} layoutName={screenshotCopy.keynoteLayoutAssignments?.[item.id] || ""} layoutReadOnly={running || themes.length === 0 || (readOnly && !allowArtifactGeneration)}
+              onThemeChange={(themeId, defaultLayout) => update((next) => {
+                next.keynoteThemeAssignments = { ...(next.keynoteThemeAssignments || {}), [item.id]: themeId };
+                next.keynoteLayoutAssignments = { ...(next.keynoteLayoutAssignments || {}), [item.id]: defaultLayout };
+              }, true)}
+              onLayoutChange={(layoutName) => update((next) => {
+                next.keynoteLayoutAssignments = { ...(next.keynoteLayoutAssignments || {}), [item.id]: layoutName };
+              }, true)}
               onChange={(field, fieldValue) => update((next) => {
                 const target = next.items.find((entry) => entry.id === item.id);
                 if (!target) return;
@@ -381,18 +562,16 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
               onCommit={commitCurrent}
               onRemove={() => update((next) => {
                 next.items = next.items.filter((entry) => entry.id !== item.id);
+                next.keynoteThemeAssignments = { ...(next.keynoteThemeAssignments || {}) };
+                delete next.keynoteThemeAssignments[item.id];
+                next.keynoteLayoutAssignments = { ...(next.keynoteLayoutAssignments || {}) };
+                delete next.keynoteLayoutAssignments[item.id];
                 next.masterUpdatedAt = new Date().toISOString();
                 delete next.masterConfirmedAt;
                 delete next.batchConfirmedAt;
               }, true)} />
           ))}
         </div>
-          {!typeReadOnly && activeLanguage === screenshotCopy.sourceLanguage && (
-            <div className="flex items-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/20">
-              <input value={newTypeName} onChange={(event) => setNewTypeName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addType(); }} maxLength={100} placeholder="添加截图类型，例如首页、设置页或 HUD" className={cn(inputLineClass, "max-w-sm")} />
-              <button type="button" onClick={addType} className={btnSecondary}>＋ 添加类型</button>
-            </div>
-          )}
           {screenshotCopy.items.length === 0 && (typeReadOnly || activeLanguage !== screenshotCopy.sourceLanguage) && <div className="rounded-xl border border-zinc-200 px-4 py-10 text-center text-sm text-zinc-400 dark:border-zinc-700">尚未添加截图类型。</div>}
           </div>
         </div>
@@ -410,28 +589,20 @@ export function ScreenshotMaterialsPanel({ projectId, draftId, value, supportedL
           {activeLanguage !== screenshotCopy.sourceLanguage && !masterConfirmed && (
             <p className="text-xs text-zinc-400 dark:text-zinc-500">先确定截图母本，再翻译其他语言。</p>
           )}
-          <button type="button" onClick={confirmMaster} disabled={masterConfirmed || batchConfirmed} className={masterConfirmed ? btnSecondary : btnPrimary}>{masterConfirmed ? "母本已确定" : "确定母本"}</button>
-          <button type="button" onClick={confirmBatch} disabled={!masterConfirmed || batchConfirmed} className={batchConfirmed ? btnSecondary : btnPrimary}>{batchConfirmed ? "整批文案已确定" : "确定整批文案"}</button>
-          {onDelete && !masterConfirmed && <button type="button" onClick={() => { if (window.confirm("删除本版本的全部截图文案？商店文案不会受到影响。")) void onDelete(); }} className={cn(btnSecondary, "border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 dark:border-red-900/70 dark:text-red-400 dark:hover:bg-red-950/30")}>删除截图文案</button>}
+          <button type="button" onClick={confirmMaster} disabled={running || masterConfirmed || batchConfirmed} className={masterConfirmed ? btnSecondary : btnPrimary}>{masterConfirmed ? "母本已确定" : "确定母本"}</button>
+          <button type="button" onClick={confirmBatch} disabled={running || !masterConfirmed || batchConfirmed} className={batchConfirmed ? btnSecondary : btnPrimary}>{batchConfirmed ? "整批文案已确定" : "确定整批文案"}</button>
+          {onDelete && !masterConfirmed && <button type="button" disabled={running} onClick={() => { if (window.confirm("删除本版本的全部截图文案？商店文案不会受到影响。")) void onDelete(); }} className={cn(btnSecondary, "border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 dark:border-red-900/70 dark:text-red-400 dark:hover:bg-red-950/30")}>删除截图文案</button>}
         </div>
       </section>}
       {(!readOnly || allowArtifactGeneration) && <section className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-3.5 dark:border-zinc-700 dark:bg-zinc-800/20">
         <h4 className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">成品生成</h4>
-        <div className="grid items-center gap-2 border-b border-zinc-200/80 py-2.5 sm:grid-cols-[180px_minmax(0,1fr)] dark:border-zinc-700/80">
-          <button type="button" onClick={() => void selectKeynoteTemplate()} className={cn(btnSecondary, "w-full justify-center")}>{screenshotCopy.keynoteTemplatePath ? "更换 Keynote 模板" : "选择 Keynote 模板"}</button>
-          <p className="min-w-0 break-all text-xs text-zinc-400 dark:text-zinc-500" title={screenshotCopy.keynoteTemplatePath}>
-            {screenshotCopy.keynoteTemplatePath
-              ? <>{screenshotCopy.keynoteTemplatePath} <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">✓ 校验通过</span></>
-              : "选择包含 appilot.screenshot.v1 母板的模板"}
-          </p>
-        </div>
         <div className="grid items-center gap-2 pt-2.5 sm:grid-cols-[180px_minmax(0,1fr)]">
-          <button type="button" onClick={() => void generateArtifacts()} disabled={!screenshotCopy.keynoteTemplatePath || !keynoteReady || artifactRunning} className={cn(btnPrimary, "w-full justify-center")}>{artifactRunning ? "正在生成…" : "生成 Keynote 及图片"}</button>
+          <button type="button" onClick={() => void generateArtifacts()} disabled={running || !keynoteReady || artifactRunning} className={cn(btnPrimary, "w-full justify-center")}>{artifactRunning ? "正在生成…" : "生成 Keynote 及图片"}</button>
           {artifactResult
             ? <p className="min-w-0 break-all text-xs text-emerald-600 dark:text-emerald-400">{artifactResult}</p>
             : !keynoteReady
-              ? <p className="text-xs text-amber-600 dark:text-amber-400">{!allTextReady ? "仍有语言文案未完成。" : `仍缺少 ${missingImagePageCount} 个语言截图。`}</p>
-              : <p className="text-xs text-zinc-400 dark:text-zinc-500">Keynote 保存在模板同目录，PNG 存入同目录下的新子目录。</p>}
+              ? <p className="text-xs text-amber-600 dark:text-amber-400">{themes.length === 0 ? "请先为当前平台添加截图套件。" : missingLayoutCount > 0 ? `仍有 ${missingLayoutCount} 个截图类型未绑定有效套件与版式。` : !allTextReady ? "仍有语言文案未完成。" : `仍缺少 ${missingImagePageCount} 个语言截图。`}</p>
+              : <p className="text-xs text-zinc-400 dark:text-zinc-500">每个套件分别在其模板目录生成 Keynote 和 PNG。</p>}
         </div>
       </section>}
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { generateStoreSubmissionContent } from "../src/ai/release-reviewer";
 import type { AIProvider, ChatMessage } from "../src/ai/ai-provider";
 import { createCopyPlanItem } from "../src/copy-plan";
+import { buildProjectProfile } from "../src/project-profile";
 
 const calls: ChatMessage[][] = [];
 const responses = [
@@ -60,6 +61,13 @@ await generateStoreSubmissionContent(provider, {
   },
   includedChanges: ["Improved route stability"],
   copyPlanItems: [plan],
+  profile: buildProjectProfile({
+    name: "GloWalk",
+    platform: "ios",
+    relatedPlatforms: ["macos"],
+    supportedLanguages: ["en"],
+    description: "Night walking companion with an optional Mac companion.",
+  }),
 });
 
 assert.equal(calls.length, 2, "global and localized generation both run");
@@ -67,6 +75,10 @@ assert.equal(calls[0].some((message) => message.content.includes("突出离线�
 assert.equal(calls[1].some((message) => message.content.includes("突出离线安心感")), true);
 assert.match(calls[1][0].content, /not product evidence/);
 assert.match(calls[1][0].content, /must not add content to whatsNew/);
+assert.match(calls[0][0].content, /Target storefront platform: iOS \(iPhone and iPad\)/);
+assert.match(calls[0][0].content, /Related storefront platforms: macos/);
+assert.match(calls[1][0].content, /Omit changes that are exclusive to another platform/);
+assert.match(calls[1][0].content, /name and subtitle are shared app-level identity fields/);
 
 console.log("release copy-plan tests passed");
 }

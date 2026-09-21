@@ -1,4 +1,5 @@
 import { dialog, ipcMain, nativeImage, shell } from "electron";
+import crypto from "node:crypto";
 import fs from "fs";
 import path from "path";
 import type { StoreSubmissionDraft } from "@appilot-labs/appilot-core/store-submission";
@@ -10,6 +11,7 @@ import {
   findDraftByVersion,
   findStoreSubmissionDraft,
   getStoreSubmissionDrafts,
+  prepareStoreSubmissionDraftForSave,
   upsertStoreSubmissionDraft,
 } from "../project-state";
 import { inferAppVersion, submissionDraftId } from "@appilot-labs/appilot-core/store-submission";
@@ -41,7 +43,55 @@ import {
   translateScreenshotMaterialMaster,
 } from "@appilot-labs/appilot-core/screenshot-material";
 import { buildProjectProfileFor } from "../release-service";
-import { fillKeynoteFromTemplate, validateKeynoteTemplate } from "../keynote-automation";
+import { fillKeynoteFromTemplate, inspectKeynoteTemplate } from "../keynote-automation";
+
+const LAST_SCREENSHOT_IMAGE_DIRECTORY_KEY = "lastScreenshotImageDirectory";
+
+function existingDirectory(value: unknown): string | undefined {
+  const candidate = String(value || "").trim();
+  if (!candidate) return undefined;
+  try {
+    return fs.statSync(candidate).isDirectory() ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function screenshotThemeOwner(project: any): string {
+  return getStoreSubmissionDrafts(project)
+    .filter((draft) => draft?.screenshotCopy?.items?.length)
+    .sort((a, b) => new Date(b.updatedAt || "").getTime() - new Date(a.updatedAt || "").getTime())[0]
+    ?.productId || "";
+}
+
+function screenshotThemesForProduct(project: any, productId: string): any[] {
+  const configured = project?.screenshotThemes?.[productId];
+  if (Array.isArray(configured)) return configured;
+  const legacy = project?.screenshotTheme;
+  if (!legacy || screenshotThemeOwner(project) !== productId) return [];
+  return [{
+    ...legacy,
+    id: String(legacy.id || `legacy-${productId}`),
+    name: String(legacy.name || path.basename(legacy.templatePath || "", ".key") || "Keynote"),
+  }];
+}
+
+function setScreenshotThemesForProduct(project: any, productId: string, themes: any[]): void {
+  project.screenshotThemes = { ...(project.screenshotThemes || {}), [productId]: themes };
+}
+
+function inheritSharedAppIdentity(project: any, draft: StoreSubmissionDraft): void {
+  const source = getStoreSubmissionDrafts(project)
+    .filter((item) => item.id !== draft.id && Array.isArray(item.localizations) && item.localizations.length > 0)
+    .sort((a, b) => new Date(b.updatedAt || "").getTime() - new Date(a.updatedAt || "").getTime())[0];
+  if (!source) return;
+  for (const localization of draft.localizations || []) {
+    const shared = source.localizations.find((item) => item.language === localization.language);
+    if (!shared) continue;
+    if (shared.name) localization.name = shared.name;
+    if (shared.subtitle) localization.subtitle = shared.subtitle;
+  }
+}
 
 function migrateLegacyScreenshotCopy(
   draft: StoreSubmissionDraft,
@@ -62,7 +112,13 @@ function migrateLegacyScreenshotCopy(
 
 function frozenScreenshotContent(value: any): any {
   if (!value || typeof value !== "object") return null;
-  const { keynoteTemplatePath: _templatePath, updatedAt: _updatedAt, ...content } = value;
+  const {
+    keynoteTemplatePath: _templatePath,
+    keynoteLayoutAssignments: _layoutAssignments,
+    keynoteThemeAssignments: _themeAssignments,
+    updatedAt: _updatedAt,
+    ...content
+  } = value;
   return content;
 }
 
@@ -72,7 +128,7 @@ function preferredLegacyScreenshotTarget(project: any, productId: string): Store
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] || null;
 }
 
-function screenshotArtifactContext(project: any, draft: StoreSubmissionDraft) {
+function screenshotArtifactContext(project: any, draft: StoreSubmissionDraft, themes: any[]) {
   const product = (project.storeProducts || []).find((item: any) => item.id === draft.productId);
   if (!product) throw new Error("Store product not found");
   const supported = (product.supportedLanguages || [])
@@ -84,6 +140,7 @@ function screenshotArtifactContext(project: any, draft: StoreSubmissionDraft) {
     draft.screenshotCopy.sourceLanguage,
     supported,
   );
+  const themeById = new Map(themes.map((theme) => [String(theme.id), theme]));
   const pages = screenshotCopy.selectedLanguages.flatMap((language) =>
     screenshotCopy.items.map((item) => {
       const copy = item.copies[language];
@@ -97,6 +154,13 @@ function screenshotArtifactContext(project: any, draft: StoreSubmissionDraft) {
       if (!image?.path || !fs.existsSync(image.path)) {
         throw new Error(`${language} 的“${item.name}”尚未选择可用图片`);
       }
+      const assignedThemeId = String(screenshotCopy.keynoteThemeAssignments?.[item.id] || "").trim();
+      const theme = themeById.get(assignedThemeId) || (themes.length === 1 ? themes[0] : null);
+      if (!theme) throw new Error(`请为截图类型“${item.name}”选择 Keynote 截图套件`);
+      const layoutName = String(screenshotCopy.keynoteLayoutAssignments?.[item.id] || "").trim();
+      if (!layoutName) throw new Error(`请为截图类型“${item.name}”选择 Keynote 版式`);
+      const layout = (theme.layouts || []).find((entry: any) => entry.name === layoutName);
+      if (!layout) throw new Error(`Keynote 模板中已找不到“${layoutName}”版式，请重新选择`);
       return {
         language,
         screenshotId: item.id,
@@ -104,6 +168,12 @@ function screenshotArtifactContext(project: any, draft: StoreSubmissionDraft) {
         title: copy.title,
         description: copy.description,
         imagePath: image.path,
+        themeId: theme.id,
+        layoutName,
+        nativePlaceholders: layout.detection !== "sample",
+        ...(Number(layout.sampleSlideNumber) > 0
+          ? { sampleSlideNumber: Number(layout.sampleSlideNumber) }
+          : {}),
       };
     }),
   );
@@ -134,15 +204,19 @@ export function registerReleaseHandlers(): void {
   });
 
   ipcMain.handle("release:selectScreenshotImage", async () => {
+    const s = await getStore();
+    const defaultPath = existingDirectory(s.get(LAST_SCREENSHOT_IMAGE_DIRECTORY_KEY));
     const result = await dialog.showOpenDialog({
       title: "选择截图图片",
       properties: ["openFile"],
       filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "heic"] }],
+      ...(defaultPath ? { defaultPath } : {}),
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     const imagePath = result.filePaths[0];
     const image = nativeImage.createFromPath(imagePath);
     if (image.isEmpty()) throw new Error("无法读取所选图片");
+    s.set(LAST_SCREENSHOT_IMAGE_DIRECTORY_KEY, path.dirname(imagePath));
     const size = image.getSize();
     return {
       path: imagePath,
@@ -163,50 +237,119 @@ export function registerReleaseHandlers(): void {
     return preview.toDataURL();
   });
 
-  ipcMain.handle("release:selectKeynoteTemplate", async () => {
+  ipcMain.handle("release:getScreenshotThemes", async (_event, projectId: string, productId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const themes = screenshotThemesForProduct(project, productId);
+    if (!project.screenshotThemes?.[productId] && themes.length > 0) {
+      setScreenshotThemesForProduct(project, productId, themes);
+      s.set("projects", projects);
+    }
+    return themes;
+  });
+
+  ipcMain.handle("release:selectKeynoteTemplate", async (_event, projectId: string, productId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
     const result = await dialog.showOpenDialog({
-      title: "选择 Keynote 截图模板",
+      title: "添加 Keynote 截图套件",
       properties: ["openFile"],
       filters: [{ name: "Keynote", extensions: ["key"] }],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     const templatePath = result.filePaths[0];
-    await validateKeynoteTemplate(templatePath);
-    return templatePath;
+    const inspection = await inspectKeynoteTemplate(templatePath);
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const themes = screenshotThemesForProduct(project, productId);
+    const existing = themes.find((item: any) => path.resolve(item.templatePath) === path.resolve(templatePath));
+    const theme = {
+      ...inspection,
+      id: existing?.id || crypto.randomUUID(),
+      name: existing?.name || path.basename(templatePath, path.extname(templatePath)),
+    };
+    setScreenshotThemesForProduct(
+      project,
+      productId,
+      existing ? themes.map((item: any) => item.id === existing.id ? theme : item) : [...themes, theme],
+    );
+    s.set("projects", projects);
+    notifyDataChanged("screenshot-theme");
+    return theme;
+  });
+
+  ipcMain.handle("release:removeScreenshotTheme", async (_event, projectId: string, productId: string, themeId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    productId = assertNonEmptyString(productId, "productId");
+    themeId = assertNonEmptyString(themeId, "themeId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const themes = screenshotThemesForProduct(project, productId);
+    setScreenshotThemesForProduct(project, productId, themes.filter((item: any) => item.id !== themeId));
+    s.set("projects", projects);
+    notifyDataChanged("screenshot-theme");
+    return true;
   });
 
   ipcMain.handle(
     "release:generateScreenshotArtifacts",
-    async (_event, projectId: string, draftId: string, templatePath: string) => {
+    async (_event, projectId: string, draftId: string) => {
       projectId = assertNonEmptyString(projectId, "projectId");
       draftId = assertNonEmptyString(draftId, "draftId");
-      templatePath = assertNonEmptyString(templatePath, "templatePath");
-      if (!fs.existsSync(templatePath) || path.extname(templatePath).toLowerCase() !== ".key") {
-        throw new Error("请选择有效的 Keynote 模板");
-      }
       const s = await getStore();
       const projects: any[] = s.get("projects") || [];
       const project = projects.find((item: any) => item.id === projectId);
       if (!project) throw new Error("Project not found");
       const draft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
       if (!draft) throw new Error("Submission draft not found");
-      const { pages, productName, version } = screenshotArtifactContext(project, draft);
-      const { outputPath, outputDirectory } = availableScreenshotArtifacts(
-        path.dirname(templatePath),
-        `${productName}-${version}-screenshots`,
-      );
-      const result = await fillKeynoteFromTemplate({
-        templatePath,
-        outputPath,
-        pages,
-        exportPngDirectory: outputDirectory,
-      });
-      shell.showItemInFolder(outputPath);
+      const configuredThemes = screenshotThemesForProduct(project, draft.productId);
+      if (configuredThemes.length === 0) throw new Error("请先为当前平台添加 Keynote 截图套件");
+      const themes = [];
+      for (const configured of configuredThemes) {
+        const inspection = await inspectKeynoteTemplate(configured.templatePath);
+        themes.push({ ...inspection, id: configured.id, name: configured.name });
+      }
+      setScreenshotThemesForProduct(project, draft.productId, themes);
+      s.set("projects", projects);
+      const { pages, productName, version } = screenshotArtifactContext(project, draft, themes);
+      const artifacts = [];
+      for (const theme of themes) {
+        const themePages = pages.filter((page: any) => page.themeId === theme.id);
+        if (themePages.length === 0) continue;
+        const safeThemeName = String(theme.name || "screenshots").replace(/[\\/:*?"<>|]+/g, "-");
+        const { outputPath, outputDirectory } = availableScreenshotArtifacts(
+          path.dirname(theme.templatePath),
+          `${productName}-${version}-${safeThemeName}-screenshots`,
+        );
+        const result = await fillKeynoteFromTemplate({
+          templatePath: theme.templatePath,
+          outputPath,
+          pages: themePages,
+          exportPngDirectory: outputDirectory,
+        });
+        artifacts.push({
+          themeId: theme.id,
+          themeName: theme.name,
+          outputPath,
+          outputDirectory,
+          files: result.pngPaths,
+          pageCount: result.pngPaths.length,
+        });
+      }
+      if (artifacts.length === 0) throw new Error("没有绑定到截图套件的页面可生成");
+      shell.showItemInFolder(artifacts[0].outputPath);
       return {
-        outputPath,
-        outputDirectory,
-        files: result.pngPaths,
-        pageCount: result.pngPaths.length,
+        ...artifacts[0],
+        artifacts,
+        pageCount: artifacts.reduce((sum, item) => sum + item.pageCount, 0),
       };
     },
   );
@@ -294,10 +437,10 @@ export function registerReleaseHandlers(): void {
         ? String(sourceLanguage).trim()
         : supported[0] || "en";
       const now = new Date().toISOString();
-      const existing = findStoreSubmissionDraft(project, releaseTag)
-        || findDraftByVersion(project, appVersion);
+      const existing = findStoreSubmissionDraft(project, productId, releaseTag)
+        || findDraftByVersion(project, productId, appVersion);
       const draft: StoreSubmissionDraft = existing || {
-        id: submissionDraftId(projectId, releaseTag),
+        id: submissionDraftId(projectId, productId, releaseTag),
         projectId,
         productId,
         releaseTag,
@@ -549,8 +692,12 @@ export function registerReleaseHandlers(): void {
     return Array.isArray(cached?.releases) ? cached.releases : [];
   }
 
-  ipcMain.handle("release:list", async (_event, projectId: string, force?: boolean) => {
+  ipcMain.handle("release:list", async (_event, projectId: string, productId?: string | boolean, force?: boolean) => {
     projectId = assertNonEmptyString(projectId, "projectId");
+    if (typeof productId === "boolean") {
+      force = productId;
+      productId = undefined;
+    }
     const s = await getStore();
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
@@ -611,12 +758,17 @@ export function registerReleaseHandlers(): void {
     return {
       releases: result.releases.map((release) => ({
         ...release,
-        // Copy is bound to the software, not to (software, platform): one
-        // submission draft per release/version across all store products.
+        // Version copy and screenshots are isolated per store product/platform.
         submissionDrafts: (() => {
+          if (!productId) {
+            return getStoreSubmissionDrafts(project).filter((draft) =>
+              draft.releaseTag === release.tag ||
+              String(draft.appVersion || "").replace(/^v/i, "") === inferAppVersion(release)
+            );
+          }
           const draft =
-            findStoreSubmissionDraft(project, release.tag) ||
-            findDraftByVersion(project, inferAppVersion(release));
+            findStoreSubmissionDraft(project, productId, release.tag) ||
+            findDraftByVersion(project, productId, inferAppVersion(release));
           return draft ? [draft] : [];
         })(),
       })),
@@ -664,7 +816,7 @@ export function registerReleaseHandlers(): void {
       );
       let release = result.releases.find((item) => item.tag === releaseTag) || null;
       if (!release) {
-        const saved = findStoreSubmissionDraft(project, releaseTag);
+        const saved = findStoreSubmissionDraft(project, productId, releaseTag);
         if (saved) release = synthesizeReleaseFromDraft(saved);
       }
       if (!release) return null;
@@ -676,9 +828,12 @@ export function registerReleaseHandlers(): void {
       }
 
       const draftSummaries = getStoreSubmissionDrafts(project)
+        .filter((draft) => draft.productId === productId)
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .map((draft) => ({
           id: draft.id,
+          projectId: draft.projectId,
+          productId: draft.productId,
           releaseTag: draft.releaseTag,
           updatedAt: draft.updatedAt,
           appVersion: draft.appVersion || "",
@@ -785,7 +940,7 @@ export function registerReleaseHandlers(): void {
     );
     let release = result.releases.find((item) => item.tag === releaseTag) || null;
     if (!release) {
-      const saved = findStoreSubmissionDraft(project, releaseTag);
+      const saved = findStoreSubmissionDraft(project, productId, releaseTag);
       if (saved) release = synthesizeReleaseFromDraft(saved);
     }
     _event.sender.send("release:generateProgress", {
@@ -796,14 +951,14 @@ export function registerReleaseHandlers(): void {
     });
     if (!release) return { release: null, draft: null, actionable: false };
 
-    let existing = findStoreSubmissionDraft(project, releaseTag);
+    let existing = findStoreSubmissionDraft(project, productId, releaseTag);
     if (!existing) {
       // Identity by appVersion: a copy prepared under an older release for the
       // same target version belongs to this release's workbench too.
       const targetVersion = String(
         appVersion || inferAppVersion(release) || "",
       ).trim();
-      existing = findDraftByVersion(project, targetVersion);
+      existing = findDraftByVersion(project, productId, targetVersion);
     }
     const migrationTarget = preferredLegacyScreenshotTarget(project, productId);
     if (existing && migrationTarget?.id === existing.id && migrateLegacyScreenshotCopy(existing, project, product)) {
@@ -854,6 +1009,10 @@ export function registerReleaseHandlers(): void {
             },
           ),
         );
+        // Apple 的名称/副标题是 App 级字段。首次为另一个平台创建版本文案时，
+        // 沿用最近草稿中的这两个字段；版本描述、推广文本、更新内容和关键词
+        // 仍由当前 product/platform 独立生成和保存。
+        if (!existing) inheritSharedAppIdentity(project, draft);
         migrateLegacyScreenshotCopy(draft, project, product);
         // Re-read before writing: AI generation awaited for seconds, during
         // which concurrent handlers may have replaced the projects array.
@@ -900,7 +1059,7 @@ export function registerReleaseHandlers(): void {
       if (!project) throw new Error("Project not found");
       const product = (project.storeProducts || []).find((item: any) => item.id === productId);
       if (!product) throw new Error("Store product not found");
-      const draft = findStoreSubmissionDraft(project, releaseTag);
+      const draft = findStoreSubmissionDraft(project, productId, releaseTag);
       if (!draft) throw new Error("Submission draft not found");
       // 已按商店上架冻结的文案完全只读：翻译也不允许（UI 已禁用，这里兜底）。
       if (draft.ascSyncedAt) {
@@ -966,7 +1125,7 @@ export function registerReleaseHandlers(): void {
       const latestProjects: any[] = s.get("projects") || [];
       const latestProject = latestProjects.find((item: any) => item.id === projectId);
       const latestDraft = latestProject
-        ? findStoreSubmissionDraft(latestProject, releaseTag)
+        ? findStoreSubmissionDraft(latestProject, productId, releaseTag)
         : null;
       if (!latestDraft) throw new Error("Submission draft not found");
 
@@ -994,7 +1153,9 @@ export function registerReleaseHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
-    if (!draft?.id || draft.projectId !== projectId) throw new Error("Invalid submission draft");
+    const preparedDraft = prepareStoreSubmissionDraftForSave(project, projectId, draft);
+    if (!preparedDraft) throw new Error("Invalid submission draft");
+    draft = preparedDraft;
     const existing = getStoreSubmissionDrafts(project).find(
       (item: any) => item.id === draft.id,
     );
@@ -1126,8 +1287,8 @@ export function registerReleaseHandlers(): void {
         throw new Error("需要 App Store Connect 凭证才能重建文案");
       }
       const existing =
-        findStoreSubmissionDraft(project, releaseTag) ||
-        findDraftByVersion(project, inferAppVersion({ tag: releaseTag, name: null })) ||
+        findStoreSubmissionDraft(project, productId, releaseTag) ||
+        findDraftByVersion(project, productId, inferAppVersion({ tag: releaseTag, name: null })) ||
         null;
       const targetVersion = existing?.appVersion ||
         inferAppVersion({ tag: releaseTag, name: null });

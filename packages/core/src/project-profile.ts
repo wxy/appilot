@@ -11,6 +11,8 @@ export interface ProjectProfile {
   name: string;
   subtitle: string | null;
   platform: string | null;
+  /** Other storefront products that belong to the same app/repository. */
+  relatedPlatforms: string[];
   languages: string[];
   description: string;
   /** Full README content (stable, cache-friendly). */
@@ -31,6 +33,7 @@ export interface ProjectProfileInput {
   name: string;
   subtitle?: string | null;
   platform?: string | null;
+  relatedPlatforms?: string[];
   supportedLanguages: string[];
   description: string;
   readme?: string;
@@ -60,6 +63,10 @@ export function buildProjectProfile(input: ProjectProfileInput): ProjectProfile 
     name: input.name,
     subtitle: input.subtitle || null,
     platform: input.platform || null,
+    relatedPlatforms: [...new Set((input.relatedPlatforms || [])
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter((item) => item && item !== String(input.platform || "").trim().toLowerCase()))]
+      .sort(),
     languages: [...(input.supportedLanguages || [])],
     description: input.description || "",
     storeNames: [
@@ -93,6 +100,7 @@ export function profileToPromptBlock(profile: ProjectProfile): string {
     `App name: ${profile.name}`,
     `App subtitle: ${profile.subtitle || "N/A"}`,
     `Platform: ${profile.platform || "unknown"}`,
+    `Related platforms: ${profile.relatedPlatforms.join(", ") || "N/A"}`,
     `Supported languages: ${profile.languages.join(", ") || "N/A"}`,
     `Store links: ${profile.storeNames.join(", ") || "N/A"}`,
     `Storefront regions: ${profile.storefrontLabels.join(", ") || "N/A"}`,
@@ -108,6 +116,29 @@ export function profileToPromptBlock(profile: ProjectProfile): string {
           ),
         ].join("\n")
       : "Recent release announcements: N/A",
+  ].join("\n");
+}
+
+/**
+ * Platform boundary shared by release-copy and screenshot-copy generation.
+ * Repository/release material can describe the whole product family, while an
+ * App Store version and its screenshots belong to one storefront platform.
+ */
+export function platformCopyGuidance(profile?: ProjectProfile): string {
+  const platform = String(profile?.platform || "").trim().toLowerCase();
+  if (!platform) return "The target storefront platform is unknown. Do not assume that every cross-platform release item applies to this store product.";
+  const target = platform === "ios"
+    ? "iOS (iPhone and iPad)"
+    : platform === "macos"
+      ? "macOS"
+      : platform;
+  const related = (profile?.relatedPlatforms || []).join(", ") || "other supported platforms";
+  return [
+    `Target storefront platform: ${target}. Related storefront platforms: ${related}.`,
+    "Treat the README, release announcement, and confirmed changes as cross-platform source material, not as proof that every item ships on the target platform.",
+    "Prioritize capabilities and user-visible changes that apply to the target platform. Omit changes that are exclusive to another platform from this platform's description, promotional text, whatsNew, promotion angles, and screenshots.",
+    "Other platforms may be mentioned only when the supplied evidence supports a real companion-app, synchronization, continuity, universal-purchase, or cross-platform relationship. Keep that mention secondary to the target-platform experience.",
+    "The App Store name and subtitle are shared app-level identity fields: keep them platform-neutral and consistent across related platforms; do not add Mac, iPhone, iPad, or Watch wording merely to specialize this version.",
   ].join("\n");
 }
 
