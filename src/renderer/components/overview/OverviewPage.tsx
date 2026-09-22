@@ -141,11 +141,14 @@ export function OverviewPage() {
   // 直接派生自 project（store 重载即刷新），不额外 IPC。
   const drafts = useMemo<SubmissionDraftRow[]>(
     () =>
-      submissionDraftRows((project as any)?.storeSubmissionDrafts, {
+      submissionDraftRows(
+        ((project as any)?.storeSubmissionDrafts || []).filter((draft: any) => !product?.id || draft.productId === product.id),
+        {
         currentTag: draftStatusCtx.currentTag,
         publishedTags: draftStatusCtx.publishedTags,
-      }),
-    [project, draftStatusCtx],
+        },
+      ),
+    [project, product?.id, draftStatusCtx],
   );
 
   // release:list → releaseOverview / draftStatusCtx / releaseSince（一次取数三输出）。

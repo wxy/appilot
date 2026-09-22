@@ -7,8 +7,10 @@ import {
   submissionDraftId,
 } from "@appilot-labs/appilot-core/store-submission";
 import {
+  findStoreSubmissionDraft,
   findDraftByVersion,
   normalizeDraftIdentity,
+  prepareStoreSubmissionDraftForSave,
   upsertStoreSubmissionDraft,
 } from "../src/main/project-state";
 
@@ -37,11 +39,11 @@ check(
   "草案 name 无版本 → 空（用户手动填写）",
 );
 
-// --- appVersion identity, bound to the software (project), not (software, platform) ---
+// --- appVersion identity, isolated by store product/platform ---
 
 function draft(releaseTag: string, appVersion: string, updatedAt: string, productId = "prod") {
   return {
-    id: `p:${productId}:${releaseTag}`,
+    id: submissionDraftId("p", productId, releaseTag),
     projectId: "p",
     productId,
     releaseTag,
@@ -56,25 +58,33 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
 
 {
   const project: any = { id: "p", storeSubmissionDrafts: [older, newer, other] };
-  const found = findDraftByVersion(project, "1.1.1");
+  const found = findDraftByVersion(project, "prod", "1.1.1");
   check(found?.releaseTag === "v1.1.1", "按 appVersion 找到最新同版本文案");
-  check(findDraftByVersion(project, "v1.1.1")?.releaseTag === "v1.1.1", "v 前缀归一化匹配");
-  check(findDraftByVersion(project, "9.9.9") === null, "无匹配 → null");
-  check(findDraftByVersion(project, "") === null, "空版本 → null");
+  check(findDraftByVersion(project, "prod", "v1.1.1")?.releaseTag === "v1.1.1", "v 前缀归一化匹配");
+  check(findDraftByVersion(project, "prod", "9.9.9") === null, "无匹配 → null");
+  check(findDraftByVersion(project, "prod", "") === null, "空版本 → null");
 }
 
 {
-  // 同一软件的多平台（iOS/macOS）共享一份文案：同一版本不同 productId 也命中。
+  const legacy = { ...draft("v1.1.1", "1.1.1", "2026-08-21T10:00:00Z", "macos"), id: "p:v1.1.1" };
+  const project: any = { id: "p", storeSubmissionDrafts: [legacy] };
+  check(findStoreSubmissionDraft(project, "macos", "v1.1.1")?.id === "p:v1.1.1", "旧草稿 id 按 productId 安全归属原平台");
+  check(findStoreSubmissionDraft(project, "ios", "v1.1.1") === null, "旧 macOS 草稿不会泄漏到 iOS");
+}
+
+{
+  // 同一软件的多平台必须保留各自的版本文案与截图文案。
   const ios = draft("v1.1.1", "1.1.1", "2026-08-21T10:00:00Z", "ios");
   const macos = draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z", "macos");
   const project: any = { id: "p", storeSubmissionDrafts: [ios, macos] };
   check(
-    findDraftByVersion(project, "1.1.1")?.productId === "macos",
-    "跨平台命中同一版本文案（取最新更新）",
+    findDraftByVersion(project, "ios", "1.1.1")?.productId === "ios" &&
+      findDraftByVersion(project, "macos", "1.1.1")?.productId === "macos",
+    "同版本文案按平台隔离",
   );
   check(
-    submissionDraftId("p", "v1.1.1") === submissionDraftId("p", "v1.1.1"),
-    "draft id 只含软件维度（projectId + releaseTag）",
+    submissionDraftId("p", "ios", "v1.1.1") !== submissionDraftId("p", "macos", "v1.1.1"),
+    "draft id 包含产品平台维度",
   );
 }
 
@@ -92,12 +102,35 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
 }
 
 {
-  // 多平台重复文案（iOS + macOS 同版本）upsert 时合并为一份。
+  // 多平台同版本 upsert 时互不覆盖。
   const ios = draft("v1.1.1", "1.1.1", "2026-08-21T10:00:00Z", "ios");
   const macos = draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z", "macos");
   const project: any = { id: "p", storeSubmissionDrafts: [ios] };
   upsertStoreSubmissionDraft(project, macos);
-  check(project.storeSubmissionDrafts.length === 1, "跨平台同版本 upsert 合并为一份");
+  check(project.storeSubmissionDrafts.length === 2, "跨平台同版本 upsert 保留两份");
+}
+
+{
+  const complete = {
+    ...draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z", "macos"),
+    summary: "完整摘要",
+    reviewFeedback: "保留的审核意见",
+    localizations: [{ language: "zh-Hans", name: "AI Pulse" }],
+    screenshotCopy: { sourceLanguage: "zh-Hans", items: [] },
+  } as any;
+  const project: any = { id: "p", storeSubmissionDrafts: [complete] };
+  const prepared = prepareStoreSubmissionDraftForSave(project, "p", {
+    id: complete.id,
+    productId: "macos",
+    screenshotCopy: { sourceLanguage: "zh-Hans", items: [], keynoteThemeAssignments: {} },
+  } as any);
+  check(prepared?.projectId === "p", "轻量摘要保存时恢复 projectId");
+  check(prepared?.reviewFeedback === "保留的审核意见", "轻量摘要保存不会截断完整草稿字段");
+  check(prepared?.screenshotCopy?.keynoteThemeAssignments !== undefined, "局部截图配置覆盖到完整草稿");
+  check(
+    prepareStoreSubmissionDraftForSave(project, "other-project", { id: complete.id } as any) === null,
+    "跨项目轻量草稿仍被拒绝",
+  );
 }
 
 {
@@ -110,15 +143,14 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
 }
 
 {
-  // normalizeDraftIdentity 也把历史遗留的跨平台重复合并（保留最新更新）。
+  // normalizeDraftIdentity 不合并不同平台的同版本草稿。
   const ios = draft("v1.1.1", "1.1.1", "2026-08-21T10:00:00Z", "ios");
   const macos = draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z", "macos");
   const project: any = { id: "p", storeSubmissionDrafts: [ios, macos] };
-  check(normalizeDraftIdentity(project) === true, "跨平台重复被归一化检测");
+  check(normalizeDraftIdentity(project) === false, "跨平台同版本不视为重复");
   check(
-    project.storeSubmissionDrafts.length === 1 &&
-      project.storeSubmissionDrafts[0].productId === "macos",
-    "跨平台重复归并保留最新更新的一份",
+    project.storeSubmissionDrafts.length === 2,
+    "跨平台草稿均被保留",
   );
 }
 

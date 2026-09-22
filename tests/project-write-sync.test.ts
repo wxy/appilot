@@ -119,6 +119,14 @@ async function main() {
     r.storeSubmissionDrafts = [];
     r.copyPlans = [{ id: 'plan-1', productId: 'glo:ios', title: '未来改进' }];
     r.screenshotMaterials = [{ productId: 'glo:ios', selectedLanguages: ['en'], items: [] }];
+    r.screenshotTheme = {
+      templatePath: '/tmp/glo.key',
+      layouts: [{ name: 'Overview', detection: 'native' }],
+      inspectedAt: '2026-09-03T01:00:00Z',
+    };
+    r.screenshotThemes = {
+      'glo:ios': [{ id: 'iphone', name: 'iPhone', templatePath: '/tmp/iphone.key', layouts: [], inspectedAt: '2026-09-03T01:00:00Z' }],
+    };
     r.preReleaseChecklist = {
       updatedAt: '2026-09-03T00:00:00Z',
       checks: [{ id: 'version-consistency', status: 'pass' }],
@@ -140,6 +148,16 @@ async function main() {
       (buildLightProjects(store)[0].preReleaseChecklist as any).checks[0].status,
       'pass',
       'DB 项目视图可重新读取发布检查结果',
+    );
+    assert.equal(
+      (buildLightProjects(store)[0].screenshotTheme as any).layouts[0].name,
+      'Overview',
+      '项目级截图主题写入并可从 DB 轻量视图读取',
+    );
+    assert.equal(
+      (buildLightProjects(store)[0].screenshotThemes as any)['glo:ios'][0].name,
+      'iPhone',
+      '平台级多截图套件写入并可从 DB 轻量视图读取',
     );
 
     // 新建项目：无既有草稿时仍可写入非空草稿

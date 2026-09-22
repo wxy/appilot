@@ -69,11 +69,21 @@ export function useCopyableField(key: string, text: string) {
   const onDoubleClick = async (
     event: MouseEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
+    // React's SyntheticEvent.currentTarget is only guaranteed during the
+    // synchronous event callback. Clipboard writes are asynchronous, so keep
+    // the concrete control (and cursor) before awaiting; the field may also be
+    // unmounted while the clipboard permission prompt is pending.
+    const control = event.currentTarget;
+    const cursor = control.selectionStart ?? 0;
     event.preventDefault();
     const copied = await feedback?.copy(key, text);
-    if (copied) {
-      const control = event.currentTarget;
-      control.setSelectionRange?.(control.selectionStart || 0, control.selectionStart || 0);
+    if (copied && control.isConnected) {
+      try {
+        control.setSelectionRange?.(cursor, cursor);
+      } catch {
+        // Some input types do not support a text selection range. Copying has
+        // already succeeded, so selection cleanup must never reject the event.
+      }
     }
   };
   return {

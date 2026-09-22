@@ -14,6 +14,7 @@ export interface ProjectLike {
   submissionKeywords?: any[];
   storeSubmissionDrafts?: any[];
   copyPlans?: any[];
+  storeProducts?: ProductLike[];
 }
 
 export interface ProductLike {
@@ -37,6 +38,7 @@ export async function buildProjectProfileFor(
     import("@appilot-labs/appilot-core/app-store-discovery"),
   ]);
   const drafts = getStoreSubmissionDrafts(project)
+    .filter((item: any) => item.productId === product.id)
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const releaseHistory = drafts.map((item: any) => ({
     tag: String(item.releaseTag || ""),
@@ -48,6 +50,10 @@ export async function buildProjectProfileFor(
     name: product.trackName || project.name,
     subtitle: subtitle ?? drafts[0]?.localizations?.[0]?.subtitle ?? null,
     platform: product.platform || null,
+    relatedPlatforms: (project.storeProducts || [])
+      .filter((item) => item.id !== product.id)
+      .map((item) => String(item.platform || "").trim())
+      .filter(Boolean),
     supportedLanguages: (product.supportedLanguages || []).map((l: any) => l.code),
     description: description ?? readRepoDescription(project.localPath),
     readme: readFullReadme(project.localPath),
@@ -115,7 +121,7 @@ export async function generateStoreSubmissionDraft(
     checkedAt: snapshot.checkedAt,
   }));
   const previousDrafts = getStoreSubmissionDrafts(project)
-    .filter((item) => item.releaseTag !== release.tag)
+    .filter((item) => item.productId === product.id && item.releaseTag !== release.tag)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const previousDraft = previousDrafts[0] || null;
   const previousLocalization = previousDraft?.localizations?.find(

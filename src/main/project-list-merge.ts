@@ -35,6 +35,8 @@ const PROJECT_FALLBACK_KEYS = [
   'storeSubmissionDrafts',
   'copyPlans',
   'screenshotMaterials',
+  'screenshotTheme',
+  'screenshotThemes',
   'preReleaseChecklist',
 ] as const;
 /** 产品级兜底键。 */

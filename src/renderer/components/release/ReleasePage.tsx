@@ -194,7 +194,7 @@ export function ReleasePage() {
     }
     setError("");
     try {
-      const next = await (window as any).appilot.release.list(project.id, force);
+      const next = await (window as any).appilot.release.list(project.id, productId, force);
       setReleases(next.releases || []);
       setGithubCapabilities(next.githubCapabilities || null);
       setGithubLastCheckedAt(next.githubLastCheckedAt || null);
@@ -223,6 +223,7 @@ export function ReleasePage() {
       setActive((prev: any) => {
         if (
           !force &&
+          prev?.draft?.productId === productId &&
           prev?.draft?.releaseTag &&
           next.releases?.some((item: any) => item.tag === prev.draft.releaseTag)
         ) {
@@ -381,6 +382,9 @@ export function ReleasePage() {
   }, [project?.id, selectedTag, viewMode, urlTag, searchParams]);
 
   useEffect(() => {
+    setActive(null);
+    setHistoryDraft(null);
+    setReleaseContext(null);
     setSourceLanguage(UI_SOURCE_LANGUAGE);
     setTranslatingLanguages(new Set());
     setActiveLanguage("");
@@ -2237,6 +2241,7 @@ export function ReleasePage() {
                   ) : (
                     <ScreenshotMaterialsPanel
                       projectId={project.id}
+                      productId={productId}
                       draftId={draft.id}
                       value={draft.screenshotCopy}
                       supportedLanguages={availableLanguages}

@@ -86,6 +86,8 @@ export interface Project {
   repo: RepoInfo | null;
   briefActions: BriefActionRecord[];
   copyPlans: CopyPlanItem[];
+  screenshotTheme?: import("@appilot-labs/appilot-core/screenshot-material").KeynoteScreenshotTheme | null;
+  screenshotThemes?: Record<string, import("@appilot-labs/appilot-core/screenshot-material").KeynoteScreenshotTheme[]> | null;
   storeProducts: StoreProduct[];
 
   // Legacy summary fields, kept for compatibility and migration.
