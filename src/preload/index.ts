@@ -375,6 +375,12 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("promotion:skip", projectId, campaignId, reason),
     importAssets: (projectId: string, campaignId: string, role: "screenshot" | "generated"): Promise<any> =>
       ipcRenderer.invoke("promotion:importAssets", projectId, campaignId, role),
+    importSeriesAssets: (
+      projectId: string,
+      campaignId: string,
+      itemId: string,
+      usage: "reference" | "final-screenshot" | "final-generated",
+    ): Promise<any> => ipcRenderer.invoke("promotion:importSeriesAssets", projectId, campaignId, itemId, usage),
     assetPreview: (projectId: string, campaignId: string, assetId: string): Promise<string | null> =>
       ipcRenderer.invoke("promotion:assetPreview", projectId, campaignId, assetId),
     removeAsset: (projectId: string, campaignId: string, assetId: string): Promise<any> =>
@@ -385,6 +391,13 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("promotion:generateSeriesPlan", projectId, campaignId, operationId),
     generateSeriesItem: (projectId: string, campaignId: string, itemId: string, operationId: string, linkProductId?: string): Promise<any> =>
       ipcRenderer.invoke("promotion:generateSeriesItem", projectId, campaignId, itemId, operationId, linkProductId),
+    generateSeriesImagePrompt: (
+      projectId: string,
+      campaignId: string,
+      itemId: string,
+      kind: "scene" | "screenshot",
+      operationId: string,
+    ): Promise<any> => ipcRenderer.invoke("promotion:generateSeriesImagePrompt", projectId, campaignId, itemId, kind, operationId),
     markSeriesItemPublished: (
       projectId: string,
       campaignId: string,
