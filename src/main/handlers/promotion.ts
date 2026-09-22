@@ -9,6 +9,8 @@ import {
   normalizeXPostUrl,
   promotionPlatformUrl,
   revisionGeneratedDeliveries,
+  X_POST_MAX_IMAGES,
+  X_PROMOTION_MAX_REFERENCE_IMAGES,
   xPostWeightedLength,
   validatePromotionProfile,
   type ProductPromotionProfile,
@@ -19,6 +21,7 @@ import {
 } from "@appilot-labs/appilot-core/promotion";
 import {
   analyzePromotionValue,
+  generateXPromotionImagePrompt,
   generateXPromotionSeriesItem,
   generateXPromotionSeriesPlan,
   generatePromotionPackage,
@@ -410,10 +413,14 @@ export function registerPromotionHandlers(): void {
     }));
     const seriesItems = (Array.isArray(value.seriesItems) ? value.seriesItems : current.seriesItems)?.map((item) => {
       const target = storeLinkForItem(item, linkOptions, current.source.storeUrl);
+      const referenceAssetIds = (item.referenceAssetIds || []).filter((id: string) => assetIds.has(id)).slice(0, X_PROMOTION_MAX_REFERENCE_IMAGES);
+      const finalAssetIds = (item.finalAssetIds || item.selectedAssetIds || []).filter((id: string) => assetIds.has(id)).slice(0, X_POST_MAX_IMAGES);
       return {
         ...item,
         ...(target ? { storeProductId: target.productId, storePlatform: target.platform, storeUrl: target.url } : {}),
-        selectedAssetIds: (item.selectedAssetIds || []).filter((id: string) => assetIds.has(id)),
+        referenceAssetIds,
+        finalAssetIds,
+        selectedAssetIds: finalAssetIds,
       };
     });
     return saveCampaign(s, {
@@ -470,6 +477,65 @@ export function registerPromotionHandlers(): void {
     },
   );
 
+  ipcMain.handle(
+    "promotion:importSeriesAssets",
+    async (
+      _event,
+      projectId: string,
+      campaignIdValue: string,
+      itemId: string,
+      usage: "reference" | "final-screenshot" | "final-generated",
+    ) => {
+      const s = await getStore();
+      const campaign = findCampaign(s, projectId, campaignIdValue);
+      const item = campaign.seriesItems?.find((candidate) => candidate.id === itemId);
+      if (!item) throw new Error("找不到这条 X 系列内容");
+      if (item.status === "published") throw new Error("已发布帖子的图片记录不可修改");
+      if (!(["reference", "final-screenshot", "final-generated"] as const).includes(usage)) {
+        throw new Error("不支持的图片用途");
+      }
+      const currentIds = usage === "reference"
+        ? item.referenceAssetIds || []
+        : item.finalAssetIds || item.selectedAssetIds || [];
+      const limit = usage === "reference" ? X_PROMOTION_MAX_REFERENCE_IMAGES : X_POST_MAX_IMAGES;
+      const result = await dialog.showOpenDialog({
+        title: usage === "reference" ? "选择 1–2 张参考截图" : usage === "final-generated" ? "导入外部生成的图片" : "选择发布到 X 的截图",
+        properties: ["openFile", "multiSelections"],
+        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "heic"] }],
+      });
+      if (result.canceled || result.filePaths.length === 0) return campaign;
+      if (currentIds.length + result.filePaths.length > limit) {
+        throw new Error(usage === "reference" ? "每条帖子最多使用两张参考截图" : "X 每条帖子最多记录四张图片");
+      }
+      const role = usage === "final-generated" ? "generated" as const : "screenshot" as const;
+      const imported = result.filePaths.map((sourcePath) => importAsset(campaign.id, sourcePath, role));
+      const assets = [...campaign.assets];
+      const importedIds: string[] = [];
+      for (const asset of imported) {
+        const existing = assets.find((candidate) => candidate.sha256 === asset.sha256 && candidate.role === asset.role);
+        if (existing) importedIds.push(existing.id);
+        else {
+          assets.push(asset);
+          importedIds.push(asset.id);
+        }
+      }
+      const nextIds = [...new Set([...currentIds, ...importedIds])].slice(0, limit);
+      return saveCampaign(s, {
+        ...campaign,
+        assets,
+        seriesItems: campaign.seriesItems?.map((candidate) => candidate.id === itemId ? {
+          ...candidate,
+          visualMode: usage === "final-screenshot" ? "screenshots" : "generated",
+          ...(usage === "reference"
+            ? { referenceAssetIds: nextIds }
+            : { finalAssetIds: nextIds, selectedAssetIds: nextIds }),
+          revision: candidate.revision + 1,
+          updatedAt: new Date().toISOString(),
+        } : candidate),
+      });
+    },
+  );
+
   ipcMain.handle("promotion:assetPreview", async (_event, projectId: string, campaignIdValue: string, assetId: string) => {
     const s = await getStore();
     const campaign = findCampaign(s, projectId, campaignIdValue);
@@ -485,7 +551,7 @@ export function registerPromotionHandlers(): void {
     const usedByPublished = campaign.deliveries.some(
       (delivery) => delivery.status === "published" && delivery.selectedAssetIds.includes(assetId),
     ) || Boolean(campaign.seriesItems?.some(
-      (item) => item.status === "published" && item.selectedAssetIds.includes(assetId),
+      (item) => item.status === "published" && (item.finalAssetIds || item.selectedAssetIds).includes(assetId),
     ));
     if (usedByPublished) throw new Error("该素材已被发布记录引用，不能移除");
     return saveCampaign(s, {
@@ -497,6 +563,8 @@ export function registerPromotionHandlers(): void {
       })),
       seriesItems: campaign.seriesItems?.map((item) => ({
         ...item,
+        referenceAssetIds: item.referenceAssetIds?.filter((id) => id !== assetId),
+        finalAssetIds: item.finalAssetIds?.filter((id) => id !== assetId),
         selectedAssetIds: item.selectedAssetIds.filter((id) => id !== assetId),
       })),
     });
@@ -551,7 +619,6 @@ export function registerPromotionHandlers(): void {
       const campaign = findCampaign(s, projectId, campaignIdValue);
       const item = campaign.seriesItems?.find((candidate) => candidate.id === itemId);
       if (!item) throw new Error("找不到这条 X 系列内容");
-      const screenshots = campaign.assets.filter((asset) => asset.role === "screenshot");
       const { project, product } = findContext(s, projectId, campaign.productId);
       const linkOptions = promotionStoreLinkOptions(project);
       const target = linkOptions.find((option) => option.productId === linkProductId) ||
@@ -567,7 +634,7 @@ export function registerPromotionHandlers(): void {
         ]);
         const generated = await generateXPromotionSeriesItem(
           provider,
-          { source, profile, item, assets: screenshots, projectProfile },
+          { source, profile, item, projectProfile },
           {
             signal,
             onProgress: (progress) => emitProgress(event, { kind: "chars", ...progress }),
@@ -583,6 +650,60 @@ export function registerPromotionHandlers(): void {
             storeProductId: target.productId,
             storePlatform: target.platform,
             storeUrl: target.url,
+          } : candidate),
+        });
+      });
+    },
+  );
+
+  ipcMain.handle(
+    "promotion:generateSeriesImagePrompt",
+    async (
+      event,
+      projectId: string,
+      campaignIdValue: string,
+      itemId: string,
+      kind: "scene" | "screenshot",
+      operationId: string,
+    ) => {
+      const s = await getStore();
+      const campaign = findCampaign(s, projectId, campaignIdValue);
+      const item = campaign.seriesItems?.find((candidate) => candidate.id === itemId);
+      if (!item) throw new Error("找不到这条 X 系列内容");
+      if (kind !== "scene" && kind !== "screenshot") throw new Error("不支持的图片提示词类型");
+      const referenceIds = new Set(item.referenceAssetIds || []);
+      const referenceAssets = kind === "screenshot"
+        ? campaign.assets.filter((asset) => referenceIds.has(asset.id)).slice(0, 2)
+        : [];
+      if (kind === "screenshot" && !referenceAssets.length) throw new Error("请先选择至少一张参考截图");
+      const { project, product } = findContext(s, projectId, campaign.productId);
+      const profile = profileForProject(s, projectId, campaign.productId);
+      if (!profile) throw new Error("请先设置 X 推广档案");
+      return withAiOperation(operationId, async (signal) => {
+        const [provider, projectProfile] = await Promise.all([
+          createAiProvider(s),
+          buildProjectProfileFor(project, product, undefined, campaign.source.description),
+        ]);
+        const imagePrompt = await generateXPromotionImagePrompt(
+          provider,
+          { source: campaign.source, profile, item, kind, assets: referenceAssets, projectProfile },
+          {
+            signal,
+            onProgress: (progress) => emitProgress(event, { kind: "chars", ...progress }),
+            onRetry: () => emitProgress(event, { kind: "retry" }),
+          },
+        );
+        return saveCampaign(s, {
+          ...campaign,
+          seriesItems: campaign.seriesItems?.map((candidate) => candidate.id === itemId ? {
+            ...candidate,
+            visualMode: "generated",
+            imagePromptKind: kind,
+            imagePrompt,
+            sceneImagePrompt: kind === "scene" ? imagePrompt : candidate.sceneImagePrompt,
+            screenshotImagePrompt: kind === "screenshot" ? imagePrompt : candidate.screenshotImagePrompt,
+            revision: candidate.revision + 1,
+            updatedAt: new Date().toISOString(),
           } : candidate),
         });
       });
@@ -620,7 +741,7 @@ export function registerPromotionHandlers(): void {
               deliveryId: item.id,
               contentRevision: item.revision,
               promotionAngle: item.angle,
-              assetIds: [...item.selectedAssetIds],
+              assetIds: [...(item.visualMode === "none" ? [] : item.finalAssetIds || item.selectedAssetIds)],
               postUrl: normalizedPostUrl || undefined,
               occurredAt: now,
             }]

@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   promotionRecommendationLabel,
-  type PromotionAsset,
   type PromotionCampaign,
 } from "@appilot-labs/appilot-core/promotion";
 import { AIProgressButton } from "../ui/AIProgressButton";
-import { btnSecondary, btnSmSecondary, inputLineClass } from "../ui/styles";
+import { btnSmSecondary, inputLineClass } from "../ui/styles";
 import { XPromotionSeriesView } from "./XPromotionSeriesView";
 
 interface ReleaseCandidate {
@@ -132,8 +131,6 @@ export function PromotionCampaignView({
     );
   }
 
-  const screenshots = campaign.assets.filter((item) => item.role === "screenshot");
-  const generatedAssets = campaign.assets.filter((item) => item.role === "generated");
   const saveDecision = async () => {
     if (!angle.trim()) {
       setError("请确认一个主传播角度");
@@ -146,18 +143,6 @@ export function PromotionCampaignView({
     });
     update(next);
     return next as PromotionCampaign;
-  };
-
-  const importAssets = async (role: "screenshot" | "generated") => {
-    setError("");
-    try {
-      const saved = role === "screenshot" ? await saveDecision() : campaign;
-      if (!saved) return;
-      const next = await (window as any).appilot.promotion.importAssets(projectId, saved.id, role);
-      update(next);
-    } catch (cause: any) {
-      setError(cause?.message || "导入失败");
-    }
   };
 
   const skip = async () => {
@@ -201,35 +186,19 @@ export function PromotionCampaignView({
             <input className={`${inputLineClass} mt-1`} value={angle} onChange={(event) => setAngle(event.target.value)} />
           </label>
 
-          <div className="mt-6 border-t border-zinc-100 dark:border-zinc-800 pt-5">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">配图（可选）</h3>
-            {campaign.recommendedScreenshotTypes.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {campaign.recommendedScreenshotTypes.map((item, index) => (
-                  <span key={item} className="rounded-full bg-zinc-100 dark:bg-zinc-800 px-2.5 py-1 text-xs text-zinc-600 dark:text-zinc-300">
-                    {index + 1}. {item}
-                  </span>
-                ))}
-              </div>
-            )}
-            <p className="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-              可以先生成纯文字系列；如需配图，再选择当前实际存在的 1–2 张正式截图。
+          <div className="mt-6 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+            <p className="mb-4 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+              先生成帖子计划；每条帖子是否配图、使用截图还是制作推广图，稍后逐条决定。
             </p>
-            <AssetStrip projectId={projectId} campaign={campaign} assets={screenshots} onChanged={update} />
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-              <button type="button" className={btnSecondary} onClick={() => importAssets("screenshot")} disabled={screenshots.length >= 2}>
-                {screenshots.length ? "再添加一张" : "选择 1–2 张截图"}
-              </button>
-              <AIProgressButton
-                onStart={generate}
-                onStop={stopCurrent}
-                idleLabel="生成 X 系列计划"
-                loading={loading}
-                progress={progress}
-                retry={retry}
-                retrying={retrying}
-              />
-            </div>
+            <AIProgressButton
+              onStart={generate}
+              onStop={stopCurrent}
+              idleLabel="生成 X 系列计划"
+              loading={loading}
+              progress={progress}
+              retry={retry}
+              retrying={retrying}
+            />
           </div>
           {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
         </section>
@@ -239,103 +208,14 @@ export function PromotionCampaignView({
 
   return (
     <CampaignShell onBack={onBack} version={campaign.appVersion} publishedAt={campaign.storePublishedAt} platformsLabel={platformsLabel} status={campaign.status}>
-      <details className="mb-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <summary className="cursor-pointer text-sm font-semibold text-zinc-900 dark:text-zinc-100">配图与素材（可选）</summary>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">正式截图保存在项目受管目录；外部 AI 生成的成品也可导入留档。</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className={btnSecondary} onClick={() => importAssets("screenshot")} disabled={screenshots.length >= 2}>添加截图</button>
-            <button type="button" className={btnSecondary} onClick={() => importAssets("generated")}>导入外部生成成品</button>
-          </div>
-        </div>
-        <AssetStrip projectId={projectId} campaign={campaign} assets={screenshots} onChanged={update} />
-        {generatedAssets.length > 0 && (
-          <div className="mt-4">
-            <p className="text-xs font-medium text-zinc-500">已导入的生成图</p>
-            <AssetStrip projectId={projectId} campaign={campaign} assets={generatedAssets} role="generated" onChanged={update} />
-          </div>
-        )}
-      </details>
       <XPromotionSeriesView
         projectId={projectId}
         campaign={campaign}
-        screenshots={screenshots}
         storeLinkOptions={storeLinkOptions}
         onChanged={update}
       />
       {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
     </CampaignShell>
-  );
-}
-
-function AssetStrip({
-  projectId,
-  campaign,
-  assets,
-  role = "screenshot",
-  onChanged,
-}: {
-  projectId: string;
-  campaign: PromotionCampaign;
-  assets: PromotionAsset[];
-  role?: "screenshot" | "generated";
-  onChanged: (campaign: PromotionCampaign) => void;
-}) {
-  return (
-    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-      {assets.map((asset, index) => (
-        <AssetCard
-          key={asset.id}
-          projectId={projectId}
-          campaign={campaign}
-          asset={asset}
-          label={role === "generated" ? `生成图 ${index + 1}` : index === 0 ? "主截图" : "辅助截图"}
-          onChanged={onChanged}
-        />
-      ))}
-    </div>
-  );
-}
-
-function AssetCard({
-  projectId,
-  campaign,
-  asset,
-  label,
-  onChanged,
-}: {
-  projectId: string;
-  campaign: PromotionCampaign;
-  asset: PromotionAsset;
-  label: string;
-  onChanged: (campaign: PromotionCampaign) => void;
-}) {
-  const [src, setSrc] = useState<string | null | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    void (window as any).appilot.promotion.assetPreview(projectId, campaign.id, asset.id).then((value: string | null) => {
-      if (live) setSrc(value);
-    });
-    return () => { live = false; };
-  }, [projectId, campaign.id, asset.id]);
-
-  const remove = async () => {
-    onChanged(await (window as any).appilot.promotion.removeAsset(projectId, campaign.id, asset.id));
-  };
-  return (
-    <div className="flex gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 p-3">
-      <div className="flex h-24 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800">
-        {src ? <img src={src} alt={asset.fileName} className="h-full w-full object-cover" /> : <span className="px-2 text-center text-xs text-zinc-400">{src === null ? "受管副本缺失" : "载入中"}</span>}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">{label}</p>
-        <p className="mt-1 truncate text-sm text-zinc-800 dark:text-zinc-200" title={asset.fileName}>{asset.fileName}</p>
-        <p className="mt-1 text-xs text-zinc-400">{asset.width} × {asset.height}</p>
-        <button type="button" className="mt-2 text-xs text-red-600 hover:underline dark:text-red-400" onClick={remove}>移除</button>
-      </div>
-    </div>
   );
 }
 

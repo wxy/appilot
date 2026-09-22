@@ -15,6 +15,7 @@ import {
   type RedditCommunitySuggestion,
   type XPromotionSeriesItem,
   type XPromotionSeriesItemKind,
+  type XPromotionImagePromptKind,
 } from "../promotion";
 
 interface PromotionAiCallbacks {
@@ -83,6 +84,11 @@ export async function generateXPromotionSeriesPlan(
       alternateOpening: "",
       sceneImagePrompt: "",
       screenshotImagePrompt: "",
+      visualMode: "none",
+      imagePromptKind: item?.recommendedVisual === "scenario" ? "scene" : "screenshot",
+      referenceAssetIds: [],
+      finalAssetIds: [],
+      imagePrompt: "",
       selectedAssetIds: [],
       revision: 0,
       status: "planned",
@@ -97,18 +103,10 @@ export async function generateXPromotionSeriesItem(
     source: PromotionSourceSnapshot;
     profile: ProductPromotionProfile;
     item: XPromotionSeriesItem;
-    assets: PromotionAsset[];
     projectProfile?: ProjectProfile;
   },
   callbacks: PromotionAiCallbacks = {},
 ): Promise<XPromotionSeriesItem> {
-  const assetFacts = input.assets.map((asset, index) => ({
-    id: asset.id,
-    role: index === 0 ? "primary screenshot" : "secondary screenshot",
-    fileName: asset.fileName,
-    width: asset.width,
-    height: asset.height,
-  }));
   const messages = buildArchiveMessages(
     input.projectProfile,
     [
@@ -116,18 +114,12 @@ export async function generateXPromotionSeriesItem(
       "The public post and alternateOpening must be natural English. Target at most 260 weighted characters for the post, with a hard X limit of 280; every URL counts as 23 characters.",
       `The post must include this exact App Store URL once: ${input.source.storeUrl}`,
       "Use only supplied facts. Do not invent adoption, safety guarantees, outcomes, awards, performance, testimonials, or features.",
-      input.assets.length
-        ? "Create two distinct English image prompts, each usable independently."
-        : "Create sceneImagePrompt normally and return an empty screenshotImagePrompt because no screenshot was supplied.",
-      "sceneImagePrompt: generate a finished, concrete real-world use scene expressing the item angle. Do not embed an app screenshot and do not show invented or readable app UI on a device. It may use the screenshots only as visual-language references.",
-      "screenshotImagePrompt: tell the operator to attach the named real screenshots and create a finished promotional composition around them. Keep every screenshot intact, flat, legible, and unmodified; add only surrounding background, light, depth, spacing, and restrained decoration.",
-      "Both prompts must include all prohibitions inline. No separate negative prompt. No fake UI, text, numbers, badges, ratings, awards, logos, or watermarks.",
-      "Return ONLY JSON: {post,alternateOpening,sceneImagePrompt,screenshotImagePrompt}.",
+      "Do not create image prompts in this request. Visual production is a separate, user-triggered step.",
+      "Return ONLY JSON: {post,alternateOpening}.",
     ].join("\n"),
     [
       `Approved plan item:\n${JSON.stringify(input.item)}`,
       `Release source:\n${JSON.stringify(input.source)}`,
-      `Selected screenshot metadata:\n${JSON.stringify(assetFacts)}`,
       `Audience notes: ${input.profile.audienceNotes || "N/A"}`,
       `Tone notes: ${input.profile.toneNotes || "N/A"}`,
     ],
@@ -185,19 +177,65 @@ export async function generateXPromotionSeriesItem(
     ...input.item,
     post,
     alternateOpening: String(raw?.alternateOpening || "").trim(),
-    sceneImagePrompt: completeSceneImagePrompt(String(raw?.sceneImagePrompt || ""), input),
-    screenshotImagePrompt: input.assets.length
-      ? completeImagePrompt(
-          String(raw?.screenshotImagePrompt || defaultImagePrompt(input.assets)),
-          defaultNegativePrompt(),
-          input.assets,
-        )
-      : "",
-    selectedAssetIds: input.assets.map((asset) => asset.id),
     revision: input.item.revision + 1,
     status: "ready",
     updatedAt: now,
   };
+}
+
+export async function generateXPromotionImagePrompt(
+  provider: AIProvider,
+  input: {
+    source: PromotionSourceSnapshot;
+    profile: ProductPromotionProfile;
+    item: XPromotionSeriesItem;
+    kind: XPromotionImagePromptKind;
+    assets: PromotionAsset[];
+    projectProfile?: ProjectProfile;
+  },
+  callbacks: PromotionAiCallbacks = {},
+): Promise<string> {
+  if (input.kind === "screenshot" && !input.assets.length) {
+    throw new EngineError("请先选择至少一张参考截图", "PROMOTION_ASSET_REQUIRED");
+  }
+  const assetFacts = input.assets.map((asset, index) => ({
+    id: asset.id,
+    role: index === 0 ? "primary screenshot" : "secondary screenshot",
+    fileName: asset.fileName,
+    width: asset.width,
+    height: asset.height,
+  }));
+  const messages = buildArchiveMessages(
+    input.projectProfile,
+    [
+      "You create one complete English image-generation prompt for an approved X promotion post.",
+      input.kind === "scene"
+        ? "Create a finished real-world use scene. Do not embed an app screenshot or invent readable app UI on a device."
+        : "Tell the operator to attach the named real screenshots and create a finished promotional composition around them. Keep screenshots intact, flat, legible, and unmodified.",
+      "The prompt must be usable on its own and include every prohibition inline. No separate negative prompt.",
+      "No fake UI, added text, numbers, badges, ratings, awards, third-party logos, or watermarks.",
+      "Return ONLY JSON: {imagePrompt}.",
+    ].join("\n"),
+    [
+      `Approved post and angle:\n${JSON.stringify({ post: input.item.post, angle: input.item.angle, visualReason: input.item.visualReason })}`,
+      `Release source:\n${JSON.stringify(input.source)}`,
+      `Reference screenshot metadata:\n${JSON.stringify(assetFacts)}`,
+      `Audience notes: ${input.profile.audienceNotes || "N/A"}`,
+      `Tone notes: ${input.profile.toneNotes || "N/A"}`,
+    ],
+  );
+  const raw = await requestJson(provider, messages, {
+    temperature: 0.4,
+    maxTokens: 1800,
+    thinking: "disabled",
+    onProgress: callbacks.onProgress,
+    onRetry: callbacks.onRetry,
+    signal: callbacks.signal,
+  });
+  const prompt = String(raw?.imagePrompt || "").trim();
+  return input.kind === "scene"
+    ? completeSceneImagePrompt(prompt, input)
+    : completeImagePrompt(prompt || defaultImagePrompt(input.assets), defaultNegativePrompt(), input.assets);
 }
 
 function completeSceneImagePrompt(

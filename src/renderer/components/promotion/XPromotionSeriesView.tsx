@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   xComposeUrl,
   xPostWeightedLength,
+  X_POST_MAX_IMAGES,
+  X_PROMOTION_MAX_REFERENCE_IMAGES,
   type PromotionAsset,
   type PromotionCampaign,
   type XPromotionSeriesItem,
@@ -20,13 +22,11 @@ type StoreLinkOption = {
 export function XPromotionSeriesView({
   projectId,
   campaign,
-  screenshots,
   storeLinkOptions,
   onChanged,
 }: {
   projectId: string;
   campaign: PromotionCampaign;
-  screenshots: PromotionAsset[];
   storeLinkOptions: StoreLinkOption[];
   onChanged: (campaign: PromotionCampaign) => void;
 }) {
@@ -75,7 +75,6 @@ export function XPromotionSeriesView({
           projectId={projectId}
           campaign={campaign}
           item={selected}
-          screenshots={screenshots}
           assets={campaign.assets}
           storeLinkOptions={storeLinkOptions}
           onChanged={onChanged}
@@ -89,7 +88,6 @@ function SeriesItemEditor({
   projectId,
   campaign,
   item,
-  screenshots,
   assets,
   storeLinkOptions,
   onChanged,
@@ -97,13 +95,13 @@ function SeriesItemEditor({
   projectId: string;
   campaign: PromotionCampaign;
   item: XPromotionSeriesItem;
-  screenshots: PromotionAsset[];
   assets: PromotionAsset[];
   storeLinkOptions: StoreLinkOption[];
   onChanged: (campaign: PromotionCampaign) => void;
 }) {
   const [draft, setDraft] = useState(item);
   const [loading, setLoading] = useState(false);
+  const [visualLoading, setVisualLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishedUrl, setPublishedUrl] = useState(item.publishedUrl || "");
   const [error, setError] = useState("");
@@ -118,6 +116,11 @@ function SeriesItemEditor({
     storeLinkOptions[0];
   const expectedStoreUrl = selectedStoreLink?.url || draft.storeUrl || campaign.source.storeUrl;
   const hasStoreLink = Boolean(expectedStoreUrl && draft.post.includes(expectedStoreUrl));
+  const visualMode = draft.visualMode || ((draft.finalAssetIds || draft.selectedAssetIds).length ? "screenshots" : "none");
+  const referenceIds = draft.referenceAssetIds || [];
+  const finalIds = visualMode === "none" ? [] : draft.finalAssetIds || draft.selectedAssetIds || [];
+  const referenceAssets = referenceIds.map((id) => assets.find((asset) => asset.id === id)).filter(Boolean) as PromotionAsset[];
+  const finalAssets = finalIds.map((id) => assets.find((asset) => asset.id === id)).filter(Boolean) as PromotionAsset[];
 
   useEffect(() => {
     const off = (window as any).appilot?.promotion?.onProgress?.((event: any) => {
@@ -127,7 +130,7 @@ function SeriesItemEditor({
   }, []);
 
   const generate = async () => {
-    if (draft.status === "ready" && !window.confirm("重新生成会覆盖这条帖子的当前文案和两份图片提示词。是否继续？")) return;
+    if (draft.status === "ready" && !window.confirm("重新生成会覆盖这条帖子的当前文案，但不会改变配图。是否继续？")) return;
     setLoading(true);
     setError("");
     setProgress(null);
@@ -149,7 +152,7 @@ function SeriesItemEditor({
     }
   };
 
-  const save = async () => {
+  const save = async (nextDraft: XPromotionSeriesItem = draft) => {
     setSaving(true);
     setError("");
     try {
@@ -157,9 +160,12 @@ function SeriesItemEditor({
       onChanged(await (window as any).appilot.promotion.saveCampaign(projectId, {
         ...campaign,
         seriesItems: campaign.seriesItems?.map((candidate) => candidate.id === item.id ? {
-          ...draft,
-          revision: Math.max(draft.revision, item.revision) + 1,
-          status: draft.post.trim() ? "ready" : "planned",
+          ...nextDraft,
+          finalAssetIds: (nextDraft.finalAssetIds || []).slice(0, X_POST_MAX_IMAGES),
+          selectedAssetIds: (nextDraft.finalAssetIds || []).slice(0, X_POST_MAX_IMAGES),
+          referenceAssetIds: (nextDraft.referenceAssetIds || []).slice(0, X_PROMOTION_MAX_REFERENCE_IMAGES),
+          revision: Math.max(nextDraft.revision, item.revision) + 1,
+          status: nextDraft.post.trim() ? "ready" : "planned",
           updatedAt: now,
         } : candidate),
       }));
@@ -204,13 +210,51 @@ function SeriesItemEditor({
     }
   };
 
-  const toggleAsset = (assetId: string) => {
-    setDraft((current) => ({
-      ...current,
-      selectedAssetIds: current.selectedAssetIds.includes(assetId)
-        ? current.selectedAssetIds.filter((id) => id !== assetId)
-        : [...current.selectedAssetIds, assetId],
-    }));
+  const setMode = (mode: "none" | "screenshots" | "generated") => {
+    const next = {
+      ...draft,
+      visualMode: mode,
+      imagePromptKind: draft.imagePromptKind || (item.recommendedVisual === "scenario" ? "scene" : "screenshot"),
+    };
+    setDraft(next);
+    void save(next);
+  };
+
+  const importSeriesAssets = async (usage: "reference" | "final-screenshot" | "final-generated") => {
+    setError("");
+    if (!(await save())) return;
+    try {
+      onChanged(await (window as any).appilot.promotion.importSeriesAssets(projectId, campaign.id, item.id, usage));
+    } catch (cause: any) {
+      setError(cause?.message || "导入图片失败");
+    }
+  };
+
+  const generateImagePrompt = async () => {
+    if (!(await save())) return;
+    setVisualLoading(true);
+    setError("");
+    operationId.current = crypto.randomUUID();
+    try {
+      onChanged(await (window as any).appilot.promotion.generateSeriesImagePrompt(
+        projectId,
+        campaign.id,
+        item.id,
+        draft.imagePromptKind || "scene",
+        operationId.current,
+      ));
+    } catch (cause: any) {
+      if (!String(cause?.message || "").includes("取消")) setError(cause?.message || "生成图片提示词失败");
+    } finally {
+      setVisualLoading(false);
+      operationId.current = "";
+    }
+  };
+
+  const updateAssetIds = async (field: "referenceAssetIds" | "finalAssetIds", ids: string[]) => {
+    const next = { ...draft, [field]: ids, ...(field === "finalAssetIds" ? { selectedAssetIds: ids } : {}) };
+    setDraft(next);
+    await save(next);
   };
 
   const changeStoreLink = (productId: string) => {
@@ -279,7 +323,7 @@ function SeriesItemEditor({
               progress={progress}
             />
           </div>
-          {!screenshots.length && <p className="mt-2 text-xs text-zinc-400">截图是可选项；可先生成纯文字帖子，稍后再添加配图。</p>}
+          <p className="mt-2 text-xs text-zinc-400">这一步只生成文案；配图稍后单独决定。</p>
         </div>
       ) : (
         <>
@@ -292,49 +336,99 @@ function SeriesItemEditor({
           </div>
 
           <details className="mt-5 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-            <summary className="cursor-pointer text-sm font-semibold text-zinc-700 dark:text-zinc-300">配图、备选文案与素材记录（可选）</summary>
+            <summary className="cursor-pointer text-sm font-semibold text-zinc-700 dark:text-zinc-300">备选文案（可选）</summary>
             <label className="mt-4 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
               备选首句（替换主帖开头）
               <textarea className={`${inputClass} mt-1 min-h-16 resize-y`} value={draft.alternateOpening} readOnly={readOnly} onChange={(event) => setDraft((current) => ({ ...current, alternateOpening: event.target.value }))} />
             </label>
-            <div className="mt-4 grid gap-3 xl:grid-cols-2">
-              <PromptCard title="场景图提示词" description="生成独立的真实使用场景，不把应用截图画进手机屏幕。" prompt={draft.sceneImagePrompt} />
-              {draft.screenshotImagePrompt && <PromptCard title="截图包装图提示词" description="上传正式截图，让 AI 只包装外围环境和构图。" prompt={draft.screenshotImagePrompt} />}
-            </div>
+          </details>
 
-          <div className="mt-4 rounded-xl bg-zinc-50 p-4 dark:bg-zinc-800/50">
-            <p className="text-xs font-medium text-zinc-500">原始截图也可以直接发布</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {screenshots.map((asset, index) => (
-                <button key={asset.id} type="button" className={btnSmSecondary} onClick={() => void (window as any).appilot.revealInFolder(asset.managedPath)}>
-                  在 Finder 中显示{index === 0 ? "主截图" : "辅助截图"}
+          <section className="mt-5 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">配图（可选）</h3>
+                <p className="mt-1 text-xs text-zinc-400">推荐{visualLabel(item.recommendedVisual)}：{item.visualReason}</p>
+              </div>
+              <span className="text-xs text-zinc-400">最终附件 {finalAssets.length}/{X_POST_MAX_IMAGES}</span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              {([
+                ["none", "无图发布", "只发布文字和商店链接"],
+                ["screenshots", "使用截图", "直接选择 1–4 张真实截图"],
+                ["generated", "制作推广图", "按需生成提示词并导入成品"],
+              ] as const).map(([mode, title, description]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  disabled={readOnly}
+                  onClick={() => setMode(mode)}
+                  className={cn(
+                    "rounded-xl border p-3 text-left",
+                    visualMode === mode ? "border-amber-400 bg-amber-50 dark:bg-amber-500/10" : "border-zinc-200 dark:border-zinc-700",
+                  )}
+                >
+                  <span className="block text-sm font-semibold text-zinc-800 dark:text-zinc-200">{title}</span>
+                  <span className="mt-1 block text-xs text-zinc-400">{description}</span>
                 </button>
               ))}
             </div>
-          </div>
 
-          <div className="mt-4 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-            <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">记录这条帖子实际使用的素材</p>
-            <p className="mt-1 text-xs text-zinc-400">生成后默认选中提示词所参考的截图；导入生成图后，请改为最终实际发布的图片。</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {assets.map((asset) => (
-                <label key={asset.id} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">
-                  <input type="checkbox" className="accent-amber-500" checked={draft.selectedAssetIds.includes(asset.id)} disabled={readOnly} onChange={() => toggleAsset(asset.id)} />
-                  <span>{asset.role === "generated" ? "生成图" : "截图"} · {asset.fileName}</span>
-                </label>
-              ))}
-              {!assets.length && <span className="text-xs text-zinc-400">尚无素材</span>}
-            </div>
-          </div>
-          </details>
+            {visualMode === "none" && <p className="mt-4 text-xs text-zinc-400">无需准备图片，可以直接发布。</p>}
+
+            {visualMode === "screenshots" && (
+              <div className="mt-4">
+                <SeriesAssetGrid projectId={projectId} campaignId={campaign.id} assets={finalAssets} readOnly={readOnly} onChange={(ids) => void updateAssetIds("finalAssetIds", ids)} />
+                {!readOnly && <button type="button" className={`${btnSecondary} mt-3`} disabled={finalAssets.length >= X_POST_MAX_IMAGES} onClick={() => void importSeriesAssets("final-screenshot")}>选择发布截图</button>}
+              </div>
+            )}
+
+            {visualMode === "generated" && (
+              <div className="mt-4 space-y-4">
+                <div>
+                  <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">制作方式</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" disabled={readOnly} className={draft.imagePromptKind !== "screenshot" ? btnSmPrimary : btnSmSecondary} onClick={() => setDraft((current) => ({ ...current, imagePromptKind: "scene", imagePrompt: "" }))}>独立场景图</button>
+                    <button type="button" disabled={readOnly} className={draft.imagePromptKind === "screenshot" ? btnSmPrimary : btnSmSecondary} onClick={() => setDraft((current) => ({ ...current, imagePromptKind: "screenshot", imagePrompt: "" }))}>包装真实截图</button>
+                  </div>
+                </div>
+
+                {draft.imagePromptKind === "screenshot" && (
+                  <div className="rounded-xl bg-zinc-50 p-3 dark:bg-zinc-800/40">
+                    <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">参考截图，不会被自动记为最终附件</p>
+                    <SeriesAssetGrid projectId={projectId} campaignId={campaign.id} assets={referenceAssets} readOnly={readOnly} reorderable={false} onChange={(ids) => void updateAssetIds("referenceAssetIds", ids)} />
+                    {!readOnly && <button type="button" className={`${btnSecondary} mt-3`} disabled={referenceAssets.length >= X_PROMOTION_MAX_REFERENCE_IMAGES} onClick={() => void importSeriesAssets("reference")}>选择参考截图</button>}
+                  </div>
+                )}
+
+                {!readOnly && (
+                  <AIProgressButton
+                    onStart={generateImagePrompt}
+                    onStop={() => operationId.current && void (window as any).appilot.ai.cancel(operationId.current)}
+                    idleLabel={draft.imagePrompt ? "重新生成图片提示词" : "生成图片提示词"}
+                    loading={visualLoading}
+                    progress={progress}
+                  />
+                )}
+                {draft.imagePrompt && <PromptCard title="外部生图提示词" description="复制到支持图片生成的平台；包装截图时同时上传上面的参考图。" prompt={draft.imagePrompt} />}
+
+                <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
+                  <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">最终生成图</p>
+                  <p className="mt-1 text-xs text-zinc-400">外部生成完成后在这里导入，导入结果会直接成为这条帖子的附件。</p>
+                  <SeriesAssetGrid projectId={projectId} campaignId={campaign.id} assets={finalAssets} readOnly={readOnly} onChange={(ids) => void updateAssetIds("finalAssetIds", ids)} />
+                  {!readOnly && <button type="button" className={`${btnSecondary} mt-3`} disabled={finalAssets.length >= X_POST_MAX_IMAGES} onClick={() => void importSeriesAssets("final-generated")}>导入生成结果</button>}
+                </div>
+              </div>
+            )}
+          </section>
 
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
             <div className="flex flex-wrap gap-2">
-              {!readOnly && <button type="button" className={btnSecondary} disabled={saving} onClick={save}>{saving ? "正在保存…" : "保存修改"}</button>}
+              {!readOnly && <button type="button" className={btnSecondary} disabled={saving} onClick={() => void save()}>{saving ? "正在保存…" : "保存修改"}</button>}
               {!readOnly && <button type="button" className={btnSecondary} onClick={generate}>重新生成这一条</button>}
               <button type="button" className={btnSecondary} onClick={() => navigator.clipboard.writeText(draft.post)}>复制文案</button>
             </div>
             <div className="flex min-w-[280px] flex-1 flex-col items-end gap-2">
+              {!readOnly && finalAssets.length > 0 && <p className="w-full max-w-xl text-right text-xs text-zinc-400">X 会打开文案；请按上方顺序手动附加 {finalAssets.length} 张图片。</p>}
               {readOnly ? (
                 <>
                   {item.publishedUrl ? (
@@ -362,6 +456,97 @@ function SeriesItemEditor({
       )}
       {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
     </section>
+  );
+}
+
+function SeriesAssetGrid({
+  projectId,
+  campaignId,
+  assets,
+  readOnly,
+  reorderable = true,
+  onChange,
+}: {
+  projectId: string;
+  campaignId: string;
+  assets: PromotionAsset[];
+  readOnly: boolean;
+  reorderable?: boolean;
+  onChange: (ids: string[]) => void;
+}) {
+  if (!assets.length) return <p className="mt-3 text-xs text-zinc-400">尚未选择图片</p>;
+  const move = (index: number, direction: -1 | 1) => {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= assets.length) return;
+    const ids = assets.map((asset) => asset.id);
+    [ids[index], ids[nextIndex]] = [ids[nextIndex], ids[index]];
+    onChange(ids);
+  };
+  return (
+    <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {assets.map((asset, index) => (
+        <SeriesAssetCard
+          key={asset.id}
+          projectId={projectId}
+          campaignId={campaignId}
+          asset={asset}
+          index={index}
+          count={assets.length}
+          readOnly={readOnly}
+          reorderable={reorderable}
+          onMove={move}
+          onRemove={() => onChange(assets.filter((candidate) => candidate.id !== asset.id).map((candidate) => candidate.id))}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SeriesAssetCard({
+  projectId,
+  campaignId,
+  asset,
+  index,
+  count,
+  readOnly,
+  reorderable,
+  onMove,
+  onRemove,
+}: {
+  projectId: string;
+  campaignId: string;
+  asset: PromotionAsset;
+  index: number;
+  count: number;
+  readOnly: boolean;
+  reorderable: boolean;
+  onMove: (index: number, direction: -1 | 1) => void;
+  onRemove: () => void;
+}) {
+  const [src, setSrc] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void (window as any).appilot.promotion.assetPreview(projectId, campaignId, asset.id).then((value: string | null) => {
+      if (live) setSrc(value);
+    });
+    return () => { live = false; };
+  }, [projectId, campaignId, asset.id]);
+  return (
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+      <button type="button" className="flex h-28 w-full items-center justify-center bg-zinc-100 dark:bg-zinc-800" onClick={() => void (window as any).appilot.revealInFolder(asset.managedPath)}>
+        {src ? <img src={src} alt={asset.fileName} className="h-full w-full object-cover" /> : <span className="text-xs text-zinc-400">{src === null ? "图片缺失" : "载入中"}</span>}
+      </button>
+      <div className="p-2">
+        <p className="truncate text-xs font-medium text-zinc-700 dark:text-zinc-300" title={asset.fileName}>{index + 1}. {asset.fileName}</p>
+        {!readOnly && (
+          <div className="mt-2 flex items-center gap-1">
+            {reorderable && <button type="button" className={btnSmSecondary} disabled={index === 0} onClick={() => onMove(index, -1)}>←</button>}
+            {reorderable && <button type="button" className={btnSmSecondary} disabled={index === count - 1} onClick={() => onMove(index, 1)}>→</button>}
+            <button type="button" className="ml-auto text-xs text-red-600" onClick={onRemove}>移除</button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
