@@ -8,6 +8,8 @@ import {
   xPostWeightedLength,
   validatePromotionProfile,
   type PromotionCampaign,
+  normalizeXPostUrl,
+  xComposeUrl,
 } from "../src/promotion";
 
 const profile = normalizePromotionProfile({
@@ -23,6 +25,11 @@ assert.deepEqual(
 assert.equal(promotionPlatformUrl("reddit", "r/macapps"), "https://www.reddit.com/r/macapps/submit");
 assert.equal(xPostWeightedLength("Hello https://example.com/very/long/path"), 29);
 assert.equal(xPostWeightedLength("你好 👨‍👩‍👧‍👦"), 7);
+assert.equal(normalizeXPostUrl("https://x.com/example/status/123?ref=home"), "https://x.com/example/status/123");
+assert.equal(normalizeXPostUrl("https://twitter.com/example/status/456"), "https://twitter.com/example/status/456");
+assert.equal(normalizeXPostUrl("https://x.com/compose/post"), null);
+assert.equal(normalizeXPostUrl("https://example.com/example/status/123"), null);
+assert.equal(new URL(xComposeUrl("Hello & goodbye")).searchParams.get("text"), "Hello & goodbye");
 
 const analysis = normalizePromotionAnalysis(
   { recommendation: "strong", recommendedPlatforms: ["x", "linkedin"], recommendedScreenshotTypes: ["A", "B", "C"] },

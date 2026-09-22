@@ -8,12 +8,15 @@
 
 ## 最新架构决策：X 系列模型
 
-本节覆盖下文与 `PromotionDelivery[]` 多平台首发有关的旧实现目标；旧结构和处理器暂时保留以读取既有活动，不做破坏性迁移。
+本节覆盖下文与 `PromotionDelivery[]` 多平台首发有关的旧实现目标；旧结构和处理器继续兼容读取，但同一产品族、同一版本下按平台拆分的旧活动会折叠为一个推广任务，并保留进度最高的一条。
 
 - 新活动固定 `enabledPlatforms = ["x"]`。
-- `PromotionCampaign.seriesItems` 是新的主工作模型：每项独立保存计划元数据、X 文案、场景图提示词、截图包装提示词、素材引用、修订和发布状态。
-- 生成拆成两个 IPC：`promotion:generateSeriesPlan` 只创建 1–5 条精简计划；`promotion:generateSeriesItem` 只生成指定条目的最终内容，降低长度截断与无用生成成本。
-- `promotion:markSeriesItemPublished` 继续写入事实型 `publicationEvents`，只表示用户手工确认，不冒充 X 平台回执。
+- 同一项目产品族的同一版本只有一个推广活动；iOS、macOS 等 Store Product 只是活动的目标平台，不再各自创建重复活动。旧的同版本平台活动在读取时折叠为进度最完整的一条。
+- 首次操作合并推广价值分析与系列规划；用户进入条目后只需“生成帖子 → 在 X 发布 → 回填帖子链接”。
+- `PromotionCampaign.seriesItems` 是新的主工作模型：每项独立保存计划元数据、X 文案、所选 Store Product 与商店链接、场景图提示词、截图包装提示词、素材引用、修订和发布状态。多平台产品默认使用 macOS 主平台链接，用户可以逐条改选 iPhone / iOS 链接。
+- `promotion:generateSeriesPlan` 创建 1–5 条精简计划，`promotion:generateSeriesItem` 按需生成指定条目的最终内容；每条 X 主帖必须包含当前产品对应的 App Store 链接。
+- 截图和图片提示词是可选增强，不再阻塞纯文字 X 帖子的生成与发布。
+- `promotion:markSeriesItemPublished` 要求用户回填实际 X `/status/…` 链接，并写入事实型 `publicationEvents`；它仍是用户手工确认，不冒充 X 平台 API 回执。
 - 场景提示词与截图包装提示词的约束被服务端补全，不能依赖模型自觉返回；单帖在服务端校验 X 加权 280 字符限制。
 - 删除素材时，同时清理未发布系列条目的素材引用；已发布条目引用的素材不可移除。
 
