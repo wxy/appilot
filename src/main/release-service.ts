@@ -197,6 +197,7 @@ export async function generateStoreSubmissionDraft(
   );
   if (existingTranslations.length > 0) {
     draft.localizations = [...draft.localizations, ...existingTranslations];
+    draft.staleTranslationLanguages = existingTranslations.map((item) => item.language);
     draft.submissionKeywords = draft.localizations.map((item) => ({
       language: item.language,
       text: item.keywords,

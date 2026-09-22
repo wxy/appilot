@@ -2,9 +2,11 @@ import {
   applyAscSnapshotToDraft,
   applyStorePublicSnapshotToDraft,
   buildStoreRebuildDraft,
+  createStoreSubmissionRevision,
   diffDraftAgainstStore,
   inferAppVersion,
   submissionDraftId,
+  submissionRevisionDraftId,
 } from "@appilot-labs/appilot-core/store-submission";
 import {
   findStoreSubmissionDraft,
@@ -108,6 +110,55 @@ const other = draft("v1.2.0", "1.2.0", "2026-08-22T10:00:00Z");
   const project: any = { id: "p", storeSubmissionDrafts: [ios] };
   upsertStoreSubmissionDraft(project, macos);
   check(project.storeSubmissionDrafts.length === 2, "跨平台同版本 upsert 保留两份");
+}
+
+{
+  const current = {
+    ...draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z"),
+    batchConfirmedAt: "2026-08-21T12:00:00Z",
+    revisionNumber: 1,
+  } as any;
+  const revision = {
+    ...current,
+    id: submissionRevisionDraftId("p", "prod", "v1.1.1", 2),
+    revisionNumber: 2,
+    revisesDraftId: current.id,
+    batchConfirmedAt: undefined,
+    updatedAt: "2026-08-22T12:00:00Z",
+  } as any;
+  const project: any = { id: "p", storeSubmissionDrafts: [current] };
+  upsertStoreSubmissionDraft(project, revision);
+  check(project.storeSubmissionDrafts.length === 2, "修订稿与当前定稿并存");
+  check(findStoreSubmissionDraft(project, "prod", "v1.1.1")?.id === revision.id, "同版本优先返回工作修订稿");
+  revision.batchConfirmedAt = "2026-08-23T12:00:00Z";
+  upsertStoreSubmissionDraft(project, revision);
+  check(findDraftByVersion(project, "prod", "1.1.1")?.id === revision.id, "修订稿定稿后成为当前版本");
+  check(normalizeDraftIdentity(project) === false && project.storeSubmissionDrafts.length === 2, "归一化保留显式修订历史");
+}
+
+{
+  const source = {
+    ...draft("v1.1.1", "1.1.1", "2026-08-21T12:00:00Z"),
+    projectId: "p",
+    reviewFeedback: "旧意见",
+    masterConfirmedAt: "2026-08-21T11:00:00Z",
+    batchConfirmedAt: "2026-08-21T12:00:00Z",
+    ascSyncedAt: "2026-08-21T13:00:00Z",
+    screenshotCopy: {
+      sourceLanguage: "en",
+      selectedLanguages: ["en"],
+      masterUpdatedAt: "2026-08-21T10:00:00Z",
+      items: [],
+      updatedAt: "2026-08-21T12:00:00Z",
+      masterConfirmedAt: "2026-08-21T11:00:00Z",
+      batchConfirmedAt: "2026-08-21T12:00:00Z",
+    },
+  } as any;
+  const revision = createStoreSubmissionRevision(source, [source], "2026-08-22T00:00:00Z");
+  check(revision.revisionNumber === 2 && revision.revisesDraftId === source.id, "创建下一号修订稿并记录来源");
+  check(!revision.masterConfirmedAt && !revision.batchConfirmedAt && !revision.ascSyncedAt, "修订稿解除确认与商店冻结");
+  check(!revision.screenshotCopy?.masterConfirmedAt && !revision.screenshotCopy?.batchConfirmedAt, "截图文案同步进入可修订状态");
+  check(Boolean(source.batchConfirmedAt && source.screenshotCopy?.batchConfirmedAt), "创建修订稿不修改原定稿");
 }
 
 {

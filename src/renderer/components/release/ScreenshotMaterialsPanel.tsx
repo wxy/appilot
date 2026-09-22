@@ -589,8 +589,8 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
           {activeLanguage !== screenshotCopy.sourceLanguage && !masterConfirmed && (
             <p className="text-xs text-zinc-400 dark:text-zinc-500">先确定截图母本，再翻译其他语言。</p>
           )}
-          <button type="button" onClick={confirmMaster} disabled={running || masterConfirmed || batchConfirmed} className={masterConfirmed ? btnSecondary : btnPrimary}>{masterConfirmed ? "母本已确定" : "确定母本"}</button>
-          <button type="button" onClick={confirmBatch} disabled={running || !masterConfirmed || batchConfirmed} className={batchConfirmed ? btnSecondary : btnPrimary}>{batchConfirmed ? "整批文案已确定" : "确定整批文案"}</button>
+          <button type="button" onClick={confirmMaster} disabled={running || masterConfirmed || batchConfirmed} className={masterConfirmed ? btnSecondary : btnPrimary}>{masterConfirmed ? "截图母本已锁定" : "锁定截图母本并开始翻译"}</button>
+          <button type="button" onClick={confirmBatch} disabled={running || !masterConfirmed || batchConfirmed} className={batchConfirmed ? btnSecondary : btnPrimary}>{batchConfirmed ? "截图文案已定稿" : "定稿本批截图文案"}</button>
           {onDelete && !masterConfirmed && <button type="button" disabled={running} onClick={() => { if (window.confirm("删除本版本的全部截图文案？商店文案不会受到影响。")) void onDelete(); }} className={cn(btnSecondary, "border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 dark:border-red-900/70 dark:text-red-400 dark:hover:bg-red-950/30")}>删除截图文案</button>}
         </div>
       </section>}

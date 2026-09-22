@@ -14,7 +14,11 @@ import {
   prepareStoreSubmissionDraftForSave,
   upsertStoreSubmissionDraft,
 } from "../project-state";
-import { inferAppVersion, submissionDraftId } from "@appilot-labs/appilot-core/store-submission";
+import {
+  createStoreSubmissionRevision,
+  inferAppVersion,
+  submissionDraftId,
+} from "@appilot-labs/appilot-core/store-submission";
 import { githubSyncCacheSnapshot, saveGithubSyncCacheSnapshot } from "../scheduler";
 import { getStore } from "../store";
 import {
@@ -766,10 +770,12 @@ export function registerReleaseHandlers(): void {
               String(draft.appVersion || "").replace(/^v/i, "") === inferAppVersion(release)
             );
           }
-          const draft =
-            findStoreSubmissionDraft(project, productId, release.tag) ||
-            findDraftByVersion(project, productId, inferAppVersion(release));
-          return draft ? [draft] : [];
+          const version = inferAppVersion(release);
+          return getStoreSubmissionDrafts(project)
+            .filter((draft) => draft.productId === productId && (
+              draft.releaseTag === release.tag ||
+              (version && String(draft.appVersion || "").replace(/^v/i, "") === version)
+            ));
         })(),
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,
@@ -850,19 +856,11 @@ export function registerReleaseHandlers(): void {
           batchConfirmedAt: draft.batchConfirmedAt || "",
           ascSyncedAt: draft.ascSyncedAt || "",
           alignmentCheckedAt: draft.alignmentCheckedAt || "",
+          revisionNumber: draft.revisionNumber || 1,
+          revisesDraftId: draft.revisesDraftId || "",
+          staleTranslationLanguages: draft.staleTranslationLanguages || [],
           screenshotCopy: draft.screenshotCopy,
-        }))
-        // Identity by appVersion: one entry per target version, newest first.
-        .filter((draft, index, all) => {
-          if (!draft.appVersion) return true;
-          const version = String(draft.appVersion).replace(/^v/i, "");
-          return all.findIndex((item) => {
-            if (!item.appVersion) return false;
-            return (
-              String(item.appVersion).replace(/^v/i, "") === version
-            );
-          }) === index;
-        });
+        }));
       const previous = draftSummaries.find((item) => item.releaseTag !== releaseTag) || null;
       const readme = readFullReadme(project.localPath);
       let readmeModifiedAt = "";
@@ -972,6 +970,9 @@ export function registerReleaseHandlers(): void {
         // 已按商店上架冻结的文案完全只读：不允许强制重新生成覆盖。
         if (existing?.ascSyncedAt) {
           throw new Error("该文案已按商店上架状态冻结，不可重新生成");
+        }
+        if (existing?.batchConfirmedAt) {
+          throw new Error("已定稿文案不可直接覆盖，请先创建修订稿");
         }
         // Respect the user's include/exclude checklist: only the checked
         // commits are fed to the AI as release material.
@@ -1136,6 +1137,8 @@ export function registerReleaseHandlers(): void {
         localizationMap.set(translation.language, translation);
       }
       latestDraft.localizations = [...localizationMap.values()];
+      latestDraft.staleTranslationLanguages = (latestDraft.staleTranslationLanguages || [])
+        .filter((language) => !targetLanguages.includes(language));
       latestDraft.submissionKeywords = latestDraft.localizations.map((item: any) => ({
         language: item.language,
         text: item.keywords,
@@ -1147,6 +1150,33 @@ export function registerReleaseHandlers(): void {
       return latestDraft;
     },
   );
+
+  ipcMain.handle("release:createRevision", async (_event, projectId: string, draftId: string) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    draftId = assertNonEmptyString(draftId, "draftId");
+    const s = await getStore();
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const source = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
+    if (!source) throw new Error("Submission draft not found");
+    if (!source.batchConfirmedAt) throw new Error("只有已定稿文案可以创建修订稿");
+
+    const version = String(source.appVersion || "").trim().replace(/^v/i, "");
+    const siblings = getStoreSubmissionDrafts(project).filter((item) =>
+      item.productId === source.productId &&
+      String(item.appVersion || "").trim().replace(/^v/i, "") === version
+    );
+    const activeRevision = siblings.find((item) => !item.batchConfirmedAt);
+    if (activeRevision) return activeRevision;
+
+    const now = new Date().toISOString();
+    const revision = createStoreSubmissionRevision(source, siblings, now);
+    upsertStoreSubmissionDraft(project, revision);
+    s.set("projects", projects);
+    notifyDataChanged("release-drafts");
+    return revision;
+  });
 
   ipcMain.handle("release:saveDraft", async (_event, projectId: string, draft: StoreSubmissionDraft) => {
     const s = await getStore();

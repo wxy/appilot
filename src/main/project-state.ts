@@ -176,15 +176,18 @@ export function upsertStoreSubmissionDraft(
   const withDraft = index >= 0
     ? drafts.map((item) => item.id === draft.id ? draft : item)
     : [draft, ...drafts];
-  // Identity by product/platform + appVersion. A draft relinked to a newer
-  // release replaces only the prior draft for that same store product.
+  // Legacy identity is product/platform + appVersion. Explicit revisions are
+  // append-only siblings of that identity and must not evict the current or
+  // historical finalized snapshot.
   const version = normalizeVersionKey(String(draft.appVersion || ""));
-  const next = version
+  const isRevision = Boolean(draft.revisesDraftId || (draft.revisionNumber || 0) > 1);
+  const next = version && !isRevision
     ? withDraft.filter(
         (item) =>
           item.id === draft.id ||
           item.productId !== draft.productId ||
-          normalizeVersionKey(String(item.appVersion || "")) !== version,
+          normalizeVersionKey(String(item.appVersion || "")) !== version ||
+          Boolean(item.revisesDraftId || (item.revisionNumber || 0) > 1),
       )
     : withDraft;
   project.storeSubmissionDrafts = next.slice(0, 100);
@@ -196,12 +199,14 @@ export function findStoreSubmissionDraft(
   productId: string,
   releaseTag: string,
 ): StoreSubmissionDraft | null {
-  return getStoreSubmissionDrafts(project).find(
-    (item) => item.productId === productId && (
-      item.id === submissionDraftId(project.id, productId, releaseTag) ||
-      item.releaseTag === releaseTag
-    ),
-  ) || null;
+  return getStoreSubmissionDrafts(project)
+    .filter(
+      (item) => item.productId === productId && (
+        item.id === submissionDraftId(project.id, productId, releaseTag) ||
+        item.releaseTag === releaseTag
+      ),
+    )
+    .sort(compareActiveDrafts)[0] || null;
 }
 
 /** Find the copy draft for a target version within one store product/platform. */
@@ -214,16 +219,12 @@ export function findDraftByVersion(
   if (!version) return null;
   return getStoreSubmissionDrafts(project)
     .filter((item) => item.productId === productId && normalizeVersionKey(String(item.appVersion || "")) === version)
-    .sort(
-      (a, b) =>
-        new Date(b.updatedAt || "").getTime() -
-        new Date(a.updatedAt || "").getTime(),
-    )[0] || null;
+    .sort(compareActiveDrafts)[0] || null;
 }
 
 /**
- * Normalize to one draft per product/platform and target version, keeping the
- * newest updatedAt. Existing cross-platform drafts remain separate.
+ * Normalize legacy duplicates to one base draft per product/platform and
+ * target version. Explicit revisions and cross-platform drafts stay intact.
  */
 export function normalizeDraftIdentity(project: any): boolean {
   const drafts = getStoreSubmissionDrafts(project);
@@ -237,7 +238,10 @@ export function normalizeDraftIdentity(project: any): boolean {
   let removed = false;
   for (const draft of sorted) {
     const version = normalizeVersionKey(String(draft.appVersion || ""));
-    const key = version
+    const isRevision = Boolean(draft.revisesDraftId || (draft.revisionNumber || 0) > 1);
+    const key = isRevision
+      ? `revision::${draft.id}`
+      : version
       ? `product::${draft.productId}::version::${version}`
       : `no-version::${draft.id}`;
     if (seen.has(key)) {
@@ -253,6 +257,17 @@ export function normalizeDraftIdentity(project: any): boolean {
 
 function normalizeVersionKey(value: string): string {
   return String(value || "").trim().replace(/^v/i, "");
+}
+
+function compareActiveDrafts(a: StoreSubmissionDraft, b: StoreSubmissionDraft): number {
+  // An unfinished revision is the active workspace. Otherwise use the newest
+  // finalized revision, then fall back to the last updated legacy draft.
+  const aWorking = !a.batchConfirmedAt;
+  const bWorking = !b.batchConfirmedAt;
+  if (aWorking !== bWorking) return aWorking ? -1 : 1;
+  const aTime = a.batchConfirmedAt || a.updatedAt || "";
+  const bTime = b.batchConfirmedAt || b.updatedAt || "";
+  return new Date(bTime).getTime() - new Date(aTime).getTime();
 }
 
 export function isProductPostRelease(project: any, product: any): boolean {
