@@ -1,4 +1,6 @@
 export const PROMOTION_PLATFORMS = ["x", "reddit", "facebook"] as const;
+export const X_POST_MAX_IMAGES = 4;
+export const X_PROMOTION_MAX_REFERENCE_IMAGES = 2;
 
 export type PromotionPlatform = (typeof PROMOTION_PLATFORMS)[number];
 export type PromotionRecommendation = "strong" | "light" | "skip";
@@ -13,6 +15,8 @@ export type PromotionDeliveryStatus = "draft" | "ready" | "published" | "skipped
 export type XPromotionSeriesItemKind = "release" | "feature" | "use_case" | "conversation";
 export type XPromotionSeriesItemStatus = "planned" | "ready" | "published" | "skipped";
 export type XPromotionLinkStrategy = "store" | "soft" | "none";
+export type XPromotionVisualMode = "none" | "screenshots" | "generated";
+export type XPromotionImagePromptKind = "scene" | "screenshot";
 
 export interface PromotionTarget {
   id: string;
@@ -127,6 +131,17 @@ export interface XPromotionSeriesItem {
   alternateOpening: string;
   sceneImagePrompt: string;
   screenshotImagePrompt: string;
+  /** Selected visual path for this post. Defaults to no image. */
+  visualMode?: XPromotionVisualMode;
+  /** Relevant only when visualMode is generated. */
+  imagePromptKind?: XPromotionImagePromptKind;
+  /** Source screenshots shown to an image generator, never publication evidence. */
+  referenceAssetIds?: string[];
+  /** Ordered images actually intended for the X post. */
+  finalAssetIds?: string[];
+  /** One on-demand prompt matching imagePromptKind. */
+  imagePrompt?: string;
+  /** @deprecated Legacy field; use finalAssetIds for publication evidence. */
   selectedAssetIds: string[];
   revision: number;
   status: XPromotionSeriesItemStatus;

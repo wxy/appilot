@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   analyzePromotionValue,
   generatePromotionPackage,
+  generateXPromotionImagePrompt,
   generateXPromotionSeriesItem,
   generateXPromotionSeriesPlan,
   regeneratePromotionDelivery,
@@ -94,9 +95,10 @@ const provider = {
       return JSON.stringify({
         post: "The cost dashboard is now live in Example. https://apps.apple.com/app/id1",
         alternateOpening: "A clearer view of AI costs.",
-        sceneImagePrompt: "Show an independent developer reviewing costs at a calm evening workspace.",
-        screenshotImagePrompt: "Use dashboard.png as the intact central screenshot with restrained depth and generous whitespace.",
       });
+    }
+    if (messages[0].content.includes("one complete English image-generation prompt")) {
+      return JSON.stringify({ imagePrompt: "Use dashboard.png as the intact central screenshot with restrained depth and generous whitespace." });
     }
     return JSON.stringify({
       brief: {
@@ -154,14 +156,25 @@ async function main() {
     source,
     profile,
     item: series[0],
-    assets,
   });
   assert.equal(seriesItem.status, "ready");
   assert.equal(seriesItem.revision, 1);
-  assert.match(seriesItem.sceneImagePrompt, /complete promotional image/i);
-  assert.match(seriesItem.sceneImagePrompt, /do not place an app screenshot/i);
-  assert.match(seriesItem.screenshotImagePrompt, /Attach these real screenshots/i);
-  assert.match(seriesItem.screenshotImagePrompt, /dashboard\.png/);
+  assert.equal(seriesItem.imagePrompt, "", "post generation does not create image work");
+  const imagePrompt = await generateXPromotionImagePrompt(provider, {
+    source,
+    profile,
+    item: seriesItem,
+    kind: "screenshot",
+    assets,
+  });
+  assert.match(imagePrompt, /Attach these real screenshots/i);
+  assert.match(imagePrompt, /dashboard\.png/);
+  await assert.rejects(
+    () => generateXPromotionImagePrompt(provider, { source, profile, item: seriesItem, kind: "screenshot", assets: [] }),
+    /请先选择至少一张参考截图/,
+  );
+  const scenePrompt = await generateXPromotionImagePrompt(provider, { source, profile, item: seriesItem, kind: "scene", assets: [] });
+  assert.match(scenePrompt, /Do not place an app screenshot/i);
 
   const generated = await generatePromotionPackage(provider, {
     campaignId: "campaign",

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import {
+  X_POST_MAX_IMAGES,
+  X_PROMOTION_MAX_REFERENCE_IMAGES,
   derivePromotionCampaignStatus,
   normalizePromotionAnalysis,
   normalizePromotionProfile,
@@ -30,6 +32,8 @@ assert.equal(normalizeXPostUrl("https://twitter.com/example/status/456"), "https
 assert.equal(normalizeXPostUrl("https://x.com/compose/post"), null);
 assert.equal(normalizeXPostUrl("https://example.com/example/status/123"), null);
 assert.equal(new URL(xComposeUrl("Hello & goodbye")).searchParams.get("text"), "Hello & goodbye");
+assert.equal(X_POST_MAX_IMAGES, 4);
+assert.equal(X_PROMOTION_MAX_REFERENCE_IMAGES, 2);
 
 const analysis = normalizePromotionAnalysis(
   { recommendation: "strong", recommendedPlatforms: ["x", "linkedin"], recommendedScreenshotTypes: ["A", "B", "C"] },
