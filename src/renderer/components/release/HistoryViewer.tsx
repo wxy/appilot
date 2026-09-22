@@ -57,7 +57,7 @@ export function HistoryViewer({
             </button>
           )}
           <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">
-            {draftVersionLabel(viewerDraft)} · 更新于 {formatHumanTime(viewerDraft.updatedAt)}
+            {draftVersionLabel(viewerDraft)} · 修订 {Math.max(1, Number(viewerDraft.revisionNumber) || 1)} · 更新于 {formatHumanTime(viewerDraft.updatedAt)}
           </span>
         </div>
         <div className="inline-flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">

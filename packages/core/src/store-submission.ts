@@ -57,6 +57,12 @@ export interface StoreSubmissionDraft extends StoreSubmissionContent {
   masterConfirmedAt?: string;
   /** 整批多语言文案已确定（全部只读）的时间。 */
   batchConfirmedAt?: string;
+  /** 同一产品版本内的文案修订序号；旧数据视为第 1 版。 */
+  revisionNumber?: number;
+  /** 创建本修订稿时所基于的已定稿文案。 */
+  revisesDraftId?: string;
+  /** 母本变化后仍保留、但需要重新翻译或人工核对的语言。 */
+  staleTranslationLanguages?: string[];
   /** 上架后按商店实际文案回读覆盖本地快照的时间（冻结依据）。 */
   ascSyncedAt?: string;
   /** 无 ASC 凭证时，按商店公开信息（iTunes description/releaseNotes）部分冻结的时间。 */
@@ -323,6 +329,50 @@ export function submissionDraftId(projectId: string, productId: string, releaseT
   return `${projectId}:${productId}:${releaseTag}`;
 }
 
+export function submissionRevisionDraftId(
+  projectId: string,
+  productId: string,
+  releaseTag: string,
+  revisionNumber: number,
+): string {
+  return `${submissionDraftId(projectId, productId, releaseTag)}:revision-${revisionNumber}`;
+}
+
+export function createStoreSubmissionRevision(
+  source: StoreSubmissionDraft,
+  siblings: StoreSubmissionDraft[],
+  now = new Date().toISOString(),
+): StoreSubmissionDraft {
+  const revisionNumber = Math.max(
+    1,
+    ...siblings.map((item) => Number(item.revisionNumber) || 1),
+  ) + 1;
+  const revision = structuredClone(source);
+  revision.id = submissionRevisionDraftId(
+    source.projectId,
+    source.productId,
+    source.releaseTag,
+    revisionNumber,
+  );
+  revision.revisionNumber = revisionNumber;
+  revision.revisesDraftId = source.id;
+  revision.reviewFeedback = "";
+  revision.createdAt = now;
+  revision.updatedAt = now;
+  delete revision.masterConfirmedAt;
+  delete revision.batchConfirmedAt;
+  delete revision.ascSyncedAt;
+  delete revision.storeSyncedAt;
+  delete revision.alignmentCheckedAt;
+  if (revision.screenshotCopy) {
+    revision.screenshotCopy = structuredClone(revision.screenshotCopy);
+    delete revision.screenshotCopy.masterConfirmedAt;
+    delete revision.screenshotCopy.batchConfirmedAt;
+    revision.screenshotCopy.updatedAt = now;
+  }
+  return revision;
+}
+
 export function inferAppVersion(release: { tag: string; name?: string | null }): string {
   const tag = String(release.tag || "").trim();
   if (/^v?\d+(\.\d+)*$/.test(tag)) return tag.replace(/^v/i, "");
@@ -355,7 +405,7 @@ export function createStoreSubmissionDraft(input: {
   const now = new Date().toISOString();
   const existing = input.existing || null;
   return {
-    id: submissionDraftId(input.projectId, input.productId, input.release.tag),
+    id: existing?.id || submissionDraftId(input.projectId, input.productId, input.release.tag),
     projectId: input.projectId,
     productId: input.productId,
     releaseTag: input.release.tag,
@@ -367,6 +417,8 @@ export function createStoreSubmissionDraft(input: {
     reviewFeedback: existing?.reviewFeedback || "",
     storeCopyCreatedAt: existing?.storeCopyCreatedAt || now,
     screenshotCopy: existing?.screenshotCopy,
+    ...(existing?.revisionNumber ? { revisionNumber: existing.revisionNumber } : {}),
+    ...(existing?.revisesDraftId ? { revisesDraftId: existing.revisesDraftId } : {}),
     createdAt: existing?.createdAt || now,
     updatedAt: now,
     summary: input.content.summary,

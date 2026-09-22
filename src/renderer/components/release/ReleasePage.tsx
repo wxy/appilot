@@ -203,10 +203,15 @@ export function ReleasePage() {
       if (resetView) {
         const hasConfirmedFor = (r: any) =>
           (r?.submissionDrafts || []).some((d: any) => Boolean(d?.batchConfirmedAt));
+        const hasWorkingFor = (r: any) =>
+          (r?.submissionDrafts || []).some((d: any) => !d?.batchConfirmedAt);
         // 工作目标 = 前沿发布（列表第一项）。最新发布已定稿且没有更新的
         // 发布时，不存在工作目标；绝不回退到旧的未覆盖发布。
         const workTarget =
-          (next.releases || [])[0] && !hasConfirmedFor((next.releases || [])[0])
+          (next.releases || [])[0] && (
+            hasWorkingFor((next.releases || [])[0]) ||
+            !hasConfirmedFor((next.releases || [])[0])
+          )
             ? (next.releases || [])[0]
             : null;
         const urlView = searchParams.get("view");
@@ -498,11 +503,15 @@ export function ReleasePage() {
   // 且没有更新的发布时不存在工作目标，绝不回退到旧的未覆盖发布。
   const hasConfirmedCopyFor = (r: any) =>
     (r?.submissionDrafts || []).some((d: any) => Boolean(d?.batchConfirmedAt));
-  const workTargetRelease =
-    releases[0] && !hasConfirmedCopyFor(releases[0]) ? releases[0] : null;
+  const hasWorkingCopyFor = (r: any) =>
+    (r?.submissionDrafts || []).some((d: any) => !d?.batchConfirmedAt);
+  const workTargetRelease = releases[0] && (
+    hasWorkingCopyFor(releases[0]) || !hasConfirmedCopyFor(releases[0])
+  ) ? releases[0] : null;
   // 工作目标上的文案草案（未确定）：按最近更新取一份。
   const workingDraft =
     (workTargetRelease?.submissionDrafts || [])
+      .filter((item: any) => !item?.batchConfirmedAt)
       .sort(
         (a: any, b: any) =>
           new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
@@ -792,6 +801,9 @@ export function ReleasePage() {
       language !== primaryLanguage &&
       !localizations.some((item: any) => item.language === language),
   ).length;
+  const staleTranslationLanguages: string[] = Array.isArray(draft?.staleTranslationLanguages)
+    ? draft.staleTranslationLanguages
+    : [];
   const selectedExistingDraft =
     active?.draft?.releaseTag === selectedTag
       ? active.draft
@@ -912,6 +924,40 @@ export function ReleasePage() {
     const targetTag = releaseTagForVersion(item?.appVersion) || item?.releaseTag || "";
     if (targetTag && targetTag !== selectedTag) {
       setSelectedTag(targetTag);
+    }
+  };
+
+  const openWorkingRevision = (item: any) => {
+    if (!item) return;
+    setShowChecklist(false);
+    setShowCurrentDetails(true);
+    setViewMode("working");
+    setHistoryDraft(null);
+    setLoadingDraft(false);
+    const targetTag = releaseTagForVersion(item.appVersion) || item.releaseTag || "";
+    const targetRelease = releases.find((candidate: any) => candidate.tag === targetTag)
+      || releases.find((candidate: any) => candidate.tag === item.releaseTag)
+      || selectedRelease;
+    if (targetTag && targetTag !== selectedTag) setSelectedTag(targetTag);
+    setActive({ release: targetRelease, draft: item, actionable: true });
+  };
+
+  const handleCreateRevision = async (item: any) => {
+    if (!project?.id || !item?.id) return;
+    if (!window.confirm(
+      `基于 ${draftVersionLabel(item)} 的当前定稿创建修订稿？原定稿会继续生效，直到修订稿重新定稿。`,
+    )) return;
+    setError("");
+    try {
+      const created = await (window as any).appilot.release.createRevision(project.id, item.id);
+      attachSavedDraft(created);
+      setReleaseContext((current: any) => current ? {
+        ...current,
+        drafts: [created, ...(current.drafts || []).filter((draftItem: any) => draftItem.id !== created.id)],
+      } : current);
+      openWorkingRevision(created);
+    } catch (e: any) {
+      setError(e?.message || "创建修订稿失败。");
     }
   };
 
@@ -1279,14 +1325,42 @@ export function ReleasePage() {
           ? { ...item, [field]: value }
           : item,
       );
+      const editingLanguage = activeLocalization?.language || "";
+      const editingMaster = editingLanguage === primaryLanguage;
+      const stale = editingMaster
+        ? nextLocalizations
+            .map((item: any) => item.language)
+            .filter((language: string) => language && language !== primaryLanguage)
+        : (prev.draft.staleTranslationLanguages || []).filter(
+            (language: string) => language !== editingLanguage,
+          );
       return {
         ...prev,
         draft: {
           ...prev.draft,
           localizations: nextLocalizations,
+          staleTranslationLanguages: stale,
+          ...(editingMaster ? { masterConfirmedAt: undefined } : {}),
+          batchConfirmedAt: undefined,
         },
       };
     });
+  };
+
+  const handleMarkTranslationReviewed = async (language: string) => {
+    if (!draft || !project?.id) return;
+    const next = {
+      ...draft,
+      staleTranslationLanguages: staleTranslationLanguages.filter((item) => item !== language),
+    };
+    setActive((prev: any) => prev ? { ...prev, draft: next } : prev);
+    try {
+      const saved = await (window as any).appilot.release.saveDraft(project.id, next);
+      setActive((prev: any) => prev ? { ...prev, draft: saved } : prev);
+      attachSavedDraft(saved);
+    } catch (e: any) {
+      setError(e?.message || "保存核对状态失败。");
+    }
   };
 
   const updateDraftField = (key: string, value: string) => {
@@ -1442,6 +1516,11 @@ export function ReleasePage() {
     }
     if (!masterConfirmed || batchConfirmed || confirmingBatch) return;
     if (!validateConfirmFieldLimits()) return;
+    if (staleTranslationLanguages.length > 0) {
+      setActiveLanguage(staleTranslationLanguages[0]);
+      setError(`还有 ${staleTranslationLanguages.length} 个语言基于旧母本，请重新翻译或标记为已核对。`);
+      return;
+    }
     if (
       remainingTranslationCount > 0 &&
       !window.confirm(
@@ -1558,6 +1637,15 @@ export function ReleasePage() {
             />
             {translatingLanguages.size > 0 && !translatingLanguages.has(activeLanguage) && (
               <span className="text-[11px] text-zinc-400 dark:text-zinc-500">已有翻译进行中，请稍候</span>
+            )}
+            {staleTranslationLanguages.includes(activeLanguage) && (
+              <button
+                type="button"
+                onClick={() => void handleMarkTranslationReviewed(activeLanguage)}
+                className={btnSmSecondary}
+              >
+                标记此语言已核对
+              </button>
             )}
           </div>
         )
@@ -2057,10 +2145,12 @@ export function ReleasePage() {
                 />
               ) : (
                 <HistoryPanel
-                  drafts={(releaseContext?.drafts || []).filter((item: any) => Boolean(item.batchConfirmedAt))}
+                  drafts={releaseContext?.drafts || []}
                   currentDraftId={currentCopy?.id}
                   onSelect={handleSelectHistory}
                   onDelete={(item: any) => void handleDeleteDraft(item)}
+                  onCreateRevision={(item: any) => void handleCreateRevision(item)}
+                  onContinueRevision={openWorkingRevision}
                 />
               )
             ) : showChecklist ? null
@@ -2211,9 +2301,9 @@ export function ReleasePage() {
                     productTrackName={selectedProduct?.trackName}
                     hints
                     translatingLanguages={translatingLanguages}
-                    generatedLanguages={localizations.map(
-                      (item: any) => item.language,
-                    )}
+                    generatedLanguages={localizations
+                      .map((item: any) => item.language)
+                      .filter((language: string) => !staleTranslationLanguages.includes(language))}
                     footer={<>
                         {translationControls}
                         {activeLocalization === null &&
@@ -2273,6 +2363,8 @@ export function ReleasePage() {
                               ? "商店文案已完成"
                               : !masterConfirmed
                                 ? "确定母本语言后，可逐一翻译其他语言"
+                                : staleTranslationLanguages.length > 0
+                                  ? `还有 ${staleTranslationLanguages.length} 个语言需要重新核对`
                                 : remainingTranslationCount > 0
                                   ? `还有 ${remainingTranslationCount} 个语言未翻译（可选）`
                                   : "全部语言已翻译"}
@@ -2290,10 +2382,10 @@ export function ReleasePage() {
                             className={masterConfirmed ? btnSecondary : btnPrimary}
                           >
                             {masterConfirmed
-                              ? "商店母本已确定"
+                              ? "商店母本已锁定"
                               : confirmingMaster
-                                ? "确定中…"
-                                : "确定商店母本"}
+                                ? "锁定中…"
+                                : "锁定商店母本并开始翻译"}
                           </button>
                           <button
                             type="button"
@@ -2308,10 +2400,10 @@ export function ReleasePage() {
                             className={batchConfirmed ? btnSecondary : btnPrimary}
                           >
                             {batchConfirmed
-                              ? "商店文案已完成"
+                              ? "商店文案已定稿"
                               : confirmingBatch
-                                ? "确定中…"
-                                : "确定整批商店文案"}
+                                ? "定稿中…"
+                                : "定稿本批商店文案"}
                           </button>
                         </div>
                       </div>

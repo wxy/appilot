@@ -48,3 +48,33 @@ export function mergeHistoryDrafts(drafts: any[]): any[] {
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
 }
+
+/** One top-level row per product version. The newest finalized revision is the
+ * effective copy; an unfinished revision is attached to that row, and older
+ * finalized snapshots remain available as nested history. */
+export function groupHistoryDrafts(drafts: any[]): {
+  key: string;
+  current: any;
+  working: any | null;
+  history: any[];
+}[] {
+  const groups = new Map<string, any[]>();
+  for (const draft of drafts) {
+    const version = String(draft?.appVersion || "").trim().replace(/^v/i, "");
+    const key = `${draft?.productId || ""}:${version || draft?.releaseTag || draft?.id}`;
+    groups.set(key, [...(groups.get(key) || []), draft]);
+  }
+  return [...groups.entries()].flatMap(([key, entries]) => {
+    const finalized = entries
+      .filter((item) => Boolean(item.batchConfirmedAt))
+      .sort((a, b) => new Date(b.batchConfirmedAt).getTime() - new Date(a.batchConfirmedAt).getTime());
+    const working = entries
+      .filter((item) => !item.batchConfirmedAt)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] || null;
+    if (finalized.length === 0) return [];
+    return [{ key, current: finalized[0], working, history: finalized.slice(1) }];
+  }).sort((a, b) =>
+    new Date(b.current.batchConfirmedAt).getTime() -
+    new Date(a.current.batchConfirmedAt).getTime()
+  );
+}
