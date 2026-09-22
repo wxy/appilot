@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import type { BriefActionRecord } from "../lib/overview-brief";
 import type { CopyPlanItem } from "@appilot-labs/appilot-core/copy-plan";
+import {
+  PROJECT_SELECTION_STORAGE_KEY,
+  parseProjectSelection,
+  resolveProjectSelection,
+  type ProjectSelection,
+} from "./project-selection";
 
 export interface KeywordEntry {
   language: string;
@@ -377,6 +383,26 @@ function upsertRankSnapshot(snapshots: RankSnapshot[], snapshot: RankSnapshot): 
   return [...snapshots, snapshot];
 }
 
+function readPersistedSelection(): ProjectSelection | null {
+  try {
+    return typeof localStorage === "undefined"
+      ? null
+      : parseProjectSelection(localStorage.getItem(PROJECT_SELECTION_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function persistSelection(selection: ProjectSelection): void {
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(PROJECT_SELECTION_STORAGE_KEY, JSON.stringify(selection));
+    }
+  } catch {
+    // Selection remains usable in memory when storage is unavailable.
+  }
+}
+
 export const useProject = create<ProjectState>((set, get) => ({
   projects: [],
   currentProjectId: null,
@@ -388,13 +414,18 @@ export const useProject = create<ProjectState>((set, get) => ({
     try {
       const raw = (await (window as any).appilot.projects.list()) || [];
       const projects: Project[] = raw.map(normalizeProject);
-      const currentProjectId = get().currentProjectId || projects?.[0]?.id || null;
-      const currentProject = projects.find((project) => project.id === currentProjectId);
+      const current = get();
+      const selection = resolveProjectSelection(
+        projects,
+        { projectId: current.currentProjectId, productId: current.currentProductId },
+        readPersistedSelection(),
+      );
       set({
         projects,
-        currentProjectId,
-        currentProductId: get().currentProductId || currentProject?.storeProducts?.[0]?.id || null,
+        currentProjectId: selection.projectId,
+        currentProductId: selection.productId,
       });
+      persistSelection(selection);
     } finally {
       set({ loading: false });
     }
@@ -404,38 +435,54 @@ export const useProject = create<ProjectState>((set, get) => ({
     const project = normalizeProject(await (window as any).appilot.projects.add(localPath));
     set((s) => {
       const exists = s.projects.some((p) => p.id === project.id);
-      return {
+      const next = {
         projects: exists
           ? s.projects.map((p) => (p.id === project.id ? project : p))
           : [...s.projects, project],
         currentProjectId: project.id,
         currentProductId: project.storeProducts[0]?.id || null,
       };
+      persistSelection({ projectId: next.currentProjectId, productId: next.currentProductId });
+      return next;
     });
     return project;
   },
 
   select: (id) => {
     const project = get().projects.find((item) => item.id === id);
-    set({
+    if (!project) return;
+    const selection = {
       currentProjectId: id,
       currentProductId: project?.storeProducts?.[0]?.id || null,
-    });
+    };
+    set(selection);
+    persistSelection({ projectId: selection.currentProjectId, productId: selection.currentProductId });
   },
 
-  selectProduct: (id) => set({ currentProductId: id }),
+  selectProduct: (id) => {
+    const state = get();
+    const project = state.projects.find((item) => item.id === state.currentProjectId);
+    if (!project?.storeProducts.some((product) => product.id === id)) return;
+    set({ currentProductId: id });
+    persistSelection({ projectId: project.id, productId: id });
+  },
 
   remove: async (id) => {
     await (window as any).appilot.projects.remove(id);
     set((s) => {
       const projects = s.projects.filter((p) => p.id !== id);
-      const currentProjectId = s.currentProjectId === id ? projects[0]?.id ?? null : s.currentProjectId;
-      const currentProject = projects.find((project) => project.id === currentProjectId);
-      return {
+      const selection = resolveProjectSelection(
         projects,
-        currentProjectId,
-        currentProductId: currentProject?.storeProducts?.[0]?.id || null,
+        { projectId: s.currentProjectId, productId: s.currentProductId },
+        null,
+      );
+      const next = {
+        projects,
+        currentProjectId: selection.projectId,
+        currentProductId: selection.productId,
       };
+      persistSelection(selection);
+      return next;
     });
   },
 

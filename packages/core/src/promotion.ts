@@ -131,6 +131,12 @@ export interface XPromotionSeriesItem {
   revision: number;
   status: XPromotionSeriesItemStatus;
   publishedAt?: string;
+  /** Canonical X status URL supplied by the operator after manual publication. */
+  publishedUrl?: string;
+  /** Store product/link chosen for this individual X post. */
+  storeProductId?: string;
+  storePlatform?: "ios" | "macos" | "unknown";
+  storeUrl?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -147,6 +153,8 @@ export interface PromotionPublishedEvent {
   contentRevision: number;
   promotionAngle: string;
   assetIds: string[];
+  /** Platform post URL captured as evidence of the manual publication. */
+  postUrl?: string;
   occurredAt: string;
   revertedAt?: string;
 }
@@ -154,6 +162,11 @@ export interface PromotionPublishedEvent {
 export interface PromotionCampaign {
   id: string;
   projectId: string;
+  /** Store-product records covered by this product-level campaign. */
+  productIds?: string[];
+  /** User-facing Apple platforms covered by this campaign. */
+  targetPlatforms?: Array<"ios" | "macos" | "unknown">;
+  /** Primary product retained for compatibility and source/profile lookup. */
   productId: string;
   releaseTag: string;
   appVersion: string;
@@ -303,6 +316,27 @@ export function promotionPlatformUrl(
       : "https://www.reddit.com/submit";
   }
   return "https://www.facebook.com/";
+}
+
+export function xComposeUrl(post: string): string {
+  const url = new URL("https://x.com/intent/post");
+  url.searchParams.set("text", post);
+  return url.toString();
+}
+
+/** Accept only a concrete X/Twitter status URL, never a profile or compose URL. */
+export function normalizeXPostUrl(value: string): string | null {
+  try {
+    const url = new URL(String(value || "").trim());
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (url.protocol !== "https:" || !["x.com", "twitter.com"].includes(host)) return null;
+    if (!/^\/[A-Za-z0-9_]+\/status\/\d+\/?$/.test(url.pathname)) return null;
+    url.hash = "";
+    url.search = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
 }
 
 export function promotionPlatformLabel(platform: PromotionPlatform): string {
