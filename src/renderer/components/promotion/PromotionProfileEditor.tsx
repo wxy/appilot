@@ -52,13 +52,13 @@ export function PromotionProfileEditor({
       <div className="mb-5">
         <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">设置 X 推广档案</h2>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          当前正式推广系列只面向 X，并由你手动发布。Reddit 与 Facebook Group 暂停使用，已有配置不会被删除。
+          当前推广只面向 X，由你确认内容并手动发布；Appilot 不保存平台密码，也不会自动发帖。
         </p>
       </div>
 
       <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-800 dark:bg-amber-500/10">
         <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">X · 主渠道</p>
-        <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-300/80">生成系列计划与单条文案；Appilot 不保存平台密码，也不会自动发帖。</p>
+        <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-300/80">用于生成系列计划、单条文案并记录实际发布链接。</p>
         <input className={`${inputLineClass} mt-3`} value={xAccount} onChange={(event) => setXAccount(event.target.value)} placeholder="账户备注，可选" />
       </div>
 

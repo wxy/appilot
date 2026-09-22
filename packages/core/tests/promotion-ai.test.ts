@@ -92,7 +92,7 @@ const provider = {
     }
     if (messages[0].content.includes("one truthful, standalone X post")) {
       return JSON.stringify({
-        post: "The cost dashboard is now live in Example.",
+        post: "The cost dashboard is now live in Example. https://apps.apple.com/app/id1",
         alternateOpening: "A clearer view of AI costs.",
         sceneImagePrompt: "Show an independent developer reviewing costs at a calm evening workspace.",
         screenshotImagePrompt: "Use dashboard.png as the intact central screenshot with restrained depth and generous whitespace.",
@@ -147,7 +147,7 @@ async function main() {
   assert.equal(series.length, 2);
   assert.equal(series[0].status, "planned");
   assert.equal(series[0].post, "");
-  assert.equal(series[1].linkStrategy, "none");
+  assert.equal(series[1].linkStrategy, "store");
   assert.equal(lastOptions.thinking, "disabled");
 
   const seriesItem = await generateXPromotionSeriesItem(provider, {

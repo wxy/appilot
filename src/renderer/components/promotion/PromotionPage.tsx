@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  promotionPlatformLabel,
   promotionRecommendationLabel,
   type ProductPromotionProfile,
   type PromotionCampaign,
@@ -11,6 +10,7 @@ import { btnPrimary, btnSecondary, btnSmPrimary } from "../ui/styles";
 import { EmptyState } from "../ui/EmptyState";
 import { PromotionCampaignView } from "./PromotionCampaignView";
 import { PromotionProfileEditor } from "./PromotionProfileEditor";
+import { platformLabel } from "../../lib/format";
 
 interface ReleaseCandidate {
   id: string;
@@ -33,6 +33,17 @@ export function PromotionPage() {
   const { projects, currentProjectId, currentProductId } = useProject();
   const project = projects.find((item) => item.id === currentProjectId) || null;
   const product = project?.storeProducts.find((item) => item.id === currentProductId) || project?.storeProducts[0] || null;
+  const platformsLabel = project
+    ? [...new Set(project.storeProducts.map((item) => platformLabel(item.platform)))].join(" + ")
+    : "";
+  const storeLinkOptions = project
+    ? project.storeProducts.map((item: any) => ({
+        productId: String(item.id || ""),
+        platform: item.platform === "ios" || item.platform === "macos" ? item.platform : "unknown",
+        label: item.platform === "macos" ? "macOS" : item.platform === "ios" ? "iPhone / iOS" : platformLabel(item.platform),
+        url: String(item.storeLinks?.find((link: any) => link.platform === item.platform)?.url || item.storeLinks?.[0]?.url || ""),
+      })).filter((item) => item.productId && item.url)
+    : [];
   const [data, setData] = useState<PromotionListResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -86,6 +97,8 @@ export function PromotionPage() {
         productId={product.id}
         release={selectedRelease}
         initialCampaign={selectedCampaign}
+        platformsLabel={platformsLabel}
+        storeLinkOptions={storeLinkOptions}
         onBack={() => navigate("/promotion")}
         onChanged={(campaign) => {
           setData((current) => current ? {
@@ -114,10 +127,10 @@ export function PromotionPage() {
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">推广</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">将已上架版本转化为可执行的海外推广内容</p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">为已上架版本准备、发布并追踪 X 帖子</p>
         </div>
         {data?.profile && !editingProfile && (
-          <button type="button" className={btnSecondary} onClick={() => setEditingProfile(true)}>推广平台设置</button>
+          <button type="button" className={btnSecondary} onClick={() => setEditingProfile(true)}>X 推广设置</button>
         )}
       </header>
 
@@ -147,6 +160,7 @@ export function PromotionPage() {
         <PromotionGroups
           releases={data.releases}
           campaigns={data.campaigns}
+          platformsLabel={platformsLabel}
           onOpen={(id) => navigate(`/promotion/${id}`)}
         />
       ) : null}
@@ -157,10 +171,12 @@ export function PromotionPage() {
 function PromotionGroups({
   releases,
   campaigns,
+  platformsLabel,
   onOpen,
 }: {
   releases: ReleaseCandidate[];
   campaigns: PromotionCampaign[];
+  platformsLabel: string;
   onOpen: (id: string) => void;
 }) {
   const releasesByCampaign = new Set(releases.map((item) => item.campaign?.id).filter(Boolean));
@@ -175,9 +191,9 @@ function PromotionGroups({
 
   return (
     <div className="space-y-7">
-      <Group title="需要处理" entries={needsAction} onOpen={onOpen} />
-      <Group title="进行中" entries={active} onOpen={onOpen} />
-      <Group title="已完成" entries={completed} onOpen={onOpen} compact />
+      <Group title="需要处理" entries={needsAction} platformsLabel={platformsLabel} onOpen={onOpen} />
+      <Group title="进行中" entries={active} platformsLabel={platformsLabel} onOpen={onOpen} />
+      <Group title="已完成" entries={completed} platformsLabel={platformsLabel} onOpen={onOpen} compact />
     </div>
   );
 }
@@ -185,11 +201,13 @@ function PromotionGroups({
 function Group({
   title,
   entries,
+  platformsLabel,
   onOpen,
   compact = false,
 }: {
   title: string;
   entries: Array<{ id: string; release: ReleaseCandidate | null; campaign: PromotionCampaign | null }>;
+  platformsLabel: string;
   onOpen: (id: string) => void;
   compact?: boolean;
 }) {
@@ -201,8 +219,8 @@ function Group({
         {entries.map(({ id, release, campaign }) => {
           const version = campaign?.appVersion || release?.appVersion || release?.releaseTag || "";
           const published = campaign?.storePublishedAt || release?.storePublishedAt;
-          const publishCount = campaign?.deliveries.filter((item) => item.status === "published").length || 0;
-          const deliveryCount = campaign?.deliveries.filter((item) => item.status !== "skipped").length || 0;
+          const publishCount = campaign?.seriesItems?.filter((item) => item.status === "published").length || 0;
+          const deliveryCount = campaign?.seriesItems?.filter((item) => item.status !== "skipped").length || 0;
           const detail = !campaign
             ? "尚未分析"
             : campaign.status === "skipped"
@@ -213,9 +231,8 @@ function Group({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">v{String(version).replace(/^v/i, "")}</h3>
-                  {campaign?.deliveries.map((delivery) => delivery.status === "published" ? (
-                    <span key={delivery.platform} className="rounded-full bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">{promotionPlatformLabel(delivery.platform)}</span>
-                  ) : null)}
+                  {platformsLabel && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{platformsLabel}</span>}
+                  {publishCount > 0 && <span className="rounded-full bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">X · {publishCount} 条已发布</span>}
                 </div>
                 <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">{formatDate(published)} · {detail}</p>
               </div>
@@ -231,12 +248,11 @@ function Group({
 }
 
 function actionLabel(campaign: PromotionCampaign | null, compact: boolean): string {
-  if (!campaign) return "分析推广价值";
+  if (!campaign) return "准备 X 系列";
   if (compact) return campaign.status === "skipped" ? "查看原因" : "查看记录";
-  if (!campaign.assets.some((item) => item.role === "screenshot")) return "选择截图";
-  if (!campaign.brief) return "生成推广包";
+  if (!campaign.seriesItems?.length) return "生成 X 系列";
   if (campaign.status === "partially_published") return "继续推广";
-  return "继续编辑";
+  return "继续准备";
 }
 
 function formatDate(value?: string): string {

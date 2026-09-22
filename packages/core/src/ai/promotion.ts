@@ -13,7 +13,6 @@ import {
   type PromotionPlatform,
   type PromotionSourceSnapshot,
   type RedditCommunitySuggestion,
-  type XPromotionLinkStrategy,
   type XPromotionSeriesItem,
   type XPromotionSeriesItemKind,
 } from "../promotion";
@@ -43,9 +42,9 @@ export async function generateXPromotionSeriesPlan(
       "A small release may need only one item. A substantial release may include: one release overview, distinct feature spotlights, one real use-case angle, and one honest conversation question.",
       "Each item must have standalone value and must not repeat another item. Do not create a thread.",
       "Operator-facing title, objective, angle, and visualReason must be concise Simplified Chinese.",
-      "linkStrategy is store for a direct App Store CTA, soft for a low-pressure mention, or none for a conversation-first post.",
+      "Every planned post will include the supplied App Store link; always return linkStrategy:'store'.",
       "recommendedVisual is scenario, screenshot, or raw. Scenario means a separate use-scene image; screenshot means AI packaging around real screenshots; raw means the unmodified screenshot.",
-      "Return ONLY JSON: {items:[{kind:'release|feature|use_case|conversation',title,objective,angle,sourceRefs:string[],linkStrategy:'store|soft|none',recommendedVisual:'scenario|screenshot|raw',visualReason}]}",
+      "Return ONLY JSON: {items:[{kind:'release|feature|use_case|conversation',title,objective,angle,sourceRefs:string[],linkStrategy:'store',recommendedVisual:'scenario|screenshot|raw',visualReason}]}",
     ].join("\n"),
     [
       `Release source:\n${JSON.stringify(input.source)}`,
@@ -63,7 +62,6 @@ export async function generateXPromotionSeriesPlan(
   });
   const now = new Date().toISOString();
   const kinds: XPromotionSeriesItemKind[] = ["release", "feature", "use_case", "conversation"];
-  const links: XPromotionLinkStrategy[] = ["store", "soft", "none"];
   const visuals = ["scenario", "screenshot", "raw"] as const;
   return (Array.isArray(raw?.items) ? raw.items : [])
     .slice(0, 5)
@@ -78,7 +76,7 @@ export async function generateXPromotionSeriesPlan(
         .map((value: unknown) => String(value).trim())
         .filter(Boolean)
         .slice(0, 4),
-      linkStrategy: links.includes(item?.linkStrategy) ? item.linkStrategy : index === 0 ? "store" : "soft",
+      linkStrategy: "store",
       recommendedVisual: visuals.includes(item?.recommendedVisual) ? item.recommendedVisual : "screenshot",
       visualReason: String(item?.visualReason || "用真实画面支持这一条内容").trim(),
       post: "",
@@ -115,10 +113,12 @@ export async function generateXPromotionSeriesItem(
     input.projectProfile,
     [
       "You create one truthful, standalone X post from an approved promotion-series plan item.",
-      "The public post and alternateOpening must be natural English. The post must fit X's 280-character limit including a URL counted as 23 characters.",
-      "Follow linkStrategy exactly: store must include the supplied store URL; soft may mention availability without a hard CTA; none must contain no URL and no download CTA.",
+      "The public post and alternateOpening must be natural English. Target at most 260 weighted characters for the post, with a hard X limit of 280; every URL counts as 23 characters.",
+      `The post must include this exact App Store URL once: ${input.source.storeUrl}`,
       "Use only supplied facts. Do not invent adoption, safety guarantees, outcomes, awards, performance, testimonials, or features.",
-      "Create two distinct English image prompts, each usable independently.",
+      input.assets.length
+        ? "Create two distinct English image prompts, each usable independently."
+        : "Create sceneImagePrompt normally and return an empty screenshotImagePrompt because no screenshot was supplied.",
       "sceneImagePrompt: generate a finished, concrete real-world use scene expressing the item angle. Do not embed an app screenshot and do not show invented or readable app UI on a device. It may use the screenshots only as visual-language references.",
       "screenshotImagePrompt: tell the operator to attach the named real screenshots and create a finished promotional composition around them. Keep every screenshot intact, flat, legible, and unmodified; add only surrounding background, light, depth, spacing, and restrained decoration.",
       "Both prompts must include all prohibitions inline. No separate negative prompt. No fake UI, text, numbers, badges, ratings, awards, logos, or watermarks.",
@@ -141,21 +141,58 @@ export async function generateXPromotionSeriesItem(
     signal: callbacks.signal,
   });
   const now = new Date().toISOString();
-  const post = String(raw?.post || "").trim();
+  let post = String(raw?.post || "").trim();
   if (!post) throw new EngineError("AI 没有返回可用的 X 文案", "AI_RESPONSE_INVALID");
-  if (xPostWeightedLength(post) > 280) {
-    throw new EngineError("AI 生成的 X 文案超过 280 字符，请重试", "AI_RESPONSE_INVALID");
+  if (xPostWeightedLength(post) > 280 || !post.includes(input.source.storeUrl)) {
+    callbacks.onRetry?.();
+    const shortened = await requestJson(
+      provider,
+      [
+        {
+          role: "system",
+          content: [
+            "You shorten an existing English X post without adding any new claims.",
+            "Return ONLY JSON: {post}.",
+            "The revised post must have a conservative X weighted length of at most 260 characters; every URL counts as 23 characters.",
+            "Preserve the meaning and tone. Remove secondary wording or hashtags before removing the core user value.",
+            `Include this exact App Store URL once: ${input.source.storeUrl}`,
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: [
+            `Current X weighted length: ${xPostWeightedLength(post)}`,
+            `Required App Store URL: ${input.source.storeUrl}`,
+            `Post to shorten:\n${post}`,
+          ].join("\n\n"),
+        },
+      ],
+      {
+        temperature: 0.1,
+        maxTokens: 800,
+        thinking: "disabled",
+        onProgress: callbacks.onProgress,
+        onRetry: callbacks.onRetry,
+        signal: callbacks.signal,
+      },
+    );
+    post = String(shortened?.post || "").trim();
+    if (!post || xPostWeightedLength(post) > 280 || !post.includes(input.source.storeUrl)) {
+      throw new EngineError("AI 修订后的 X 文案仍不符合链接或 280 字符限制，请重新生成", "AI_RESPONSE_INVALID");
+    }
   }
   return {
     ...input.item,
     post,
     alternateOpening: String(raw?.alternateOpening || "").trim(),
     sceneImagePrompt: completeSceneImagePrompt(String(raw?.sceneImagePrompt || ""), input),
-    screenshotImagePrompt: completeImagePrompt(
-      String(raw?.screenshotImagePrompt || defaultImagePrompt(input.assets)),
-      defaultNegativePrompt(),
-      input.assets,
-    ),
+    screenshotImagePrompt: input.assets.length
+      ? completeImagePrompt(
+          String(raw?.screenshotImagePrompt || defaultImagePrompt(input.assets)),
+          defaultNegativePrompt(),
+          input.assets,
+        )
+      : "",
     selectedAssetIds: input.assets.map((asset) => asset.id),
     revision: input.item.revision + 1,
     status: "ready",

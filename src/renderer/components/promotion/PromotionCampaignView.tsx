@@ -22,6 +22,8 @@ export function PromotionCampaignView({
   productId,
   release,
   initialCampaign,
+  platformsLabel,
+  storeLinkOptions,
   onBack,
   onChanged,
 }: {
@@ -29,6 +31,8 @@ export function PromotionCampaignView({
   productId: string;
   release: ReleaseCandidate | null;
   initialCampaign: PromotionCampaign | null;
+  platformsLabel: string;
+  storeLinkOptions: Array<{ productId: string; platform: "ios" | "macos" | "unknown"; label: string; url: string }>;
   onBack: () => void;
   onChanged: (campaign: PromotionCampaign) => void;
 }) {
@@ -93,17 +97,17 @@ export function PromotionCampaignView({
 
   if (!campaign) {
     return (
-      <CampaignShell onBack={onBack} version={release?.appVersion || ""} publishedAt={release?.storePublishedAt || ""}>
+      <CampaignShell onBack={onBack} version={release?.appVersion || ""} publishedAt={release?.storePublishedAt || ""} platformsLabel={platformsLabel}>
         <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">分析这个版本是否值得推广</h2>
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">准备这个版本的 X 推广系列</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-            Appilot 将读取最终版本变更、商店文案和截图类型，但不会修改发布材料，也不会在这一步生成完整平台文案。
+            Appilot 会读取已经确认的版本事实，一次完成推广角度分析和系列规划。之后只需逐条生成、发布并记录 X 帖子链接。
           </p>
           <div className="mt-6">
             <AIProgressButton
               onStart={analyze}
               onStop={stopCurrent}
-              idleLabel="分析推广价值"
+              idleLabel="准备 X 推广系列"
               loading={loading}
               progress={progress}
               retry={retry}
@@ -118,7 +122,7 @@ export function PromotionCampaignView({
 
   if (campaign.status === "skipped") {
     return (
-      <CampaignShell onBack={onBack} version={campaign.appVersion} publishedAt={campaign.storePublishedAt}>
+      <CampaignShell onBack={onBack} version={campaign.appVersion} publishedAt={campaign.storePublishedAt} platformsLabel={platformsLabel}>
         <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6">
           <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">本次已跳过</p>
           <h2 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-100">{campaign.skipReason || "本版本不进行推广"}</h2>
@@ -177,7 +181,7 @@ export function PromotionCampaignView({
 
   if (!campaign.seriesItems?.length) {
     return (
-      <CampaignShell onBack={onBack} version={campaign.appVersion} publishedAt={campaign.storePublishedAt}>
+      <CampaignShell onBack={onBack} version={campaign.appVersion} publishedAt={campaign.storePublishedAt} platformsLabel={platformsLabel}>
         <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -197,14 +201,8 @@ export function PromotionCampaignView({
             <input className={`${inputLineClass} mt-1`} value={angle} onChange={(event) => setAngle(event.target.value)} />
           </label>
 
-          <div className="mt-5">
-            <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">主要渠道</p>
-            <div className="mt-2 inline-flex rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 dark:border-amber-700 dark:bg-amber-500/10 dark:text-amber-300">X · 系列推广</div>
-            <p className="mt-2 text-xs text-zinc-400">Reddit 与 Facebook Group 暂不进入正式推广系列。</p>
-          </div>
-
           <div className="mt-6 border-t border-zinc-100 dark:border-zinc-800 pt-5">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">准备推广截图</h3>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">配图（可选）</h3>
             {campaign.recommendedScreenshotTypes.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {campaign.recommendedScreenshotTypes.map((item, index) => (
@@ -215,7 +213,7 @@ export function PromotionCampaignView({
               </div>
             )}
             <p className="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-              发布截图通常保存在 Keynote 模板旁、以产品名和版本号命名的 screenshots 文件夹中。请选择当前实际存在的 1–2 张图片。
+              可以先生成纯文字系列；如需配图，再选择当前实际存在的 1–2 张正式截图。
             </p>
             <AssetStrip projectId={projectId} campaign={campaign} assets={screenshots} onChanged={update} />
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -228,7 +226,6 @@ export function PromotionCampaignView({
                 idleLabel="生成 X 系列计划"
                 loading={loading}
                 progress={progress}
-                disabled={!screenshots.length}
                 retry={retry}
                 retrying={retrying}
               />
@@ -241,12 +238,12 @@ export function PromotionCampaignView({
   }
 
   return (
-    <CampaignShell onBack={onBack} version={campaign.appVersion} publishedAt={campaign.storePublishedAt} status={campaign.status}>
-      <section className="mb-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <CampaignShell onBack={onBack} version={campaign.appVersion} publishedAt={campaign.storePublishedAt} platformsLabel={platformsLabel} status={campaign.status}>
+      <details className="mb-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <summary className="cursor-pointer text-sm font-semibold text-zinc-900 dark:text-zinc-100">配图与素材（可选）</summary>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">系列共用素材</h2>
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">正式截图保存在项目受管目录；外部 AI 生成的成品也可导入留档。</p>
+            <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">正式截图保存在项目受管目录；外部 AI 生成的成品也可导入留档。</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={btnSecondary} onClick={() => importAssets("screenshot")} disabled={screenshots.length >= 2}>添加截图</button>
@@ -260,11 +257,12 @@ export function PromotionCampaignView({
             <AssetStrip projectId={projectId} campaign={campaign} assets={generatedAssets} role="generated" onChanged={update} />
           </div>
         )}
-      </section>
+      </details>
       <XPromotionSeriesView
         projectId={projectId}
         campaign={campaign}
         screenshots={screenshots}
+        storeLinkOptions={storeLinkOptions}
         onChanged={update}
       />
       {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -345,12 +343,14 @@ function CampaignShell({
   onBack,
   version,
   publishedAt,
+  platformsLabel,
   status,
   children,
 }: {
   onBack: () => void;
   version: string;
   publishedAt: string;
+  platformsLabel: string;
   status?: string;
   children: React.ReactNode;
 }) {
@@ -360,7 +360,7 @@ function CampaignShell({
       <div className="mb-6 mt-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">v{String(version).replace(/^v/i, "")}</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{formatDate(publishedAt)} · App Store 已上架</p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{formatDate(publishedAt)} · {platformsLabel || "Apple 平台"} · App Store 已上架</p>
         </div>
         {status && <span className="text-xs text-zinc-400">{campaignStatusLabel(status)}</span>}
       </div>

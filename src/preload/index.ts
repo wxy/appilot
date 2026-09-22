@@ -383,15 +383,16 @@ contextBridge.exposeInMainWorld("appilot", {
       ipcRenderer.invoke("promotion:generate", projectId, campaignId, operationId),
     generateSeriesPlan: (projectId: string, campaignId: string, operationId: string): Promise<any> =>
       ipcRenderer.invoke("promotion:generateSeriesPlan", projectId, campaignId, operationId),
-    generateSeriesItem: (projectId: string, campaignId: string, itemId: string, operationId: string): Promise<any> =>
-      ipcRenderer.invoke("promotion:generateSeriesItem", projectId, campaignId, itemId, operationId),
+    generateSeriesItem: (projectId: string, campaignId: string, itemId: string, operationId: string, linkProductId?: string): Promise<any> =>
+      ipcRenderer.invoke("promotion:generateSeriesItem", projectId, campaignId, itemId, operationId, linkProductId),
     markSeriesItemPublished: (
       projectId: string,
       campaignId: string,
       itemId: string,
       published: boolean,
+      publishedUrl?: string,
     ): Promise<any> =>
-      ipcRenderer.invoke("promotion:markSeriesItemPublished", projectId, campaignId, itemId, published),
+      ipcRenderer.invoke("promotion:markSeriesItemPublished", projectId, campaignId, itemId, published, publishedUrl),
     regenerateDelivery: (
       projectId: string,
       campaignId: string,

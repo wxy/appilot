@@ -6,6 +6,7 @@ import type { StoreSubmissionDraft } from "@appilot-labs/appilot-core/store-subm
 import {
   derivePromotionCampaignStatus,
   normalizePromotionProfile,
+  normalizeXPostUrl,
   promotionPlatformUrl,
   revisionGeneratedDeliveries,
   xPostWeightedLength,
@@ -30,6 +31,14 @@ import { notifyDataChanged } from "../data-sync";
 import { getStore, type AppStore } from "../store";
 import { buildProjectProfileFor } from "../release-service";
 import { assertNonEmptyString } from "../util";
+import { mergePromotionCampaigns } from "../promotion-campaign-merge";
+import { releasedPromotionDrafts } from "../promotion-releases";
+import {
+  defaultPromotionStoreLink,
+  hydrateCampaignStoreLinks,
+  promotionStoreLinkOptions,
+  storeLinkForItem,
+} from "../promotion-store-links";
 
 type PromotionProfiles = Record<string, ProductPromotionProfile>;
 type PromotionCampaigns = Record<string, PromotionCampaign[]>;
@@ -37,6 +46,17 @@ type PromotionCampaigns = Record<string, PromotionCampaign[]>;
 function profiles(s: AppStore): PromotionProfiles {
   const value = s.get<PromotionProfiles>("promotionProfiles");
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function profileForProject(s: AppStore, projectId: string, productId: string): ProductPromotionProfile | null {
+  const all = profiles(s);
+  if (all[projectId]) return all[projectId];
+  if (all[productId]) return all[productId];
+  const { project } = findContext(s, projectId, productId);
+  for (const product of project.storeProducts || []) {
+    if (all[product.id]) return all[product.id];
+  }
+  return null;
 }
 
 function campaigns(s: AppStore): PromotionCampaigns {
@@ -53,25 +73,12 @@ function findContext(s: AppStore, projectId: string, productId: string) {
   return { project, product };
 }
 
-function releasedDrafts(project: any, currentStoreVersion = ""): StoreSubmissionDraft[] {
-  return (Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [])
-    // Store copy is software/version scoped and shared by the project's iOS
-    // and macOS product records. The promotion campaign is product scoped,
-    // but its release fact must not disappear because the draft was first
-    // created while another product surface was selected.
-    .filter((draft: StoreSubmissionDraft) => {
-      const version = String(draft.appVersion || "").replace(/^v/i, "");
-      return Boolean(
-        draft.storeStatus === "released" ||
-        draft.ascSyncedAt ||
-        draft.storeSyncedAt ||
-        (currentStoreVersion && version === currentStoreVersion),
-      );
-    })
-    .sort((a: StoreSubmissionDraft, b: StoreSubmissionDraft) =>
-      new Date(b.ascSyncedAt || b.storeSyncedAt || b.updatedAt).getTime() -
-      new Date(a.ascSyncedAt || a.storeSyncedAt || a.updatedAt).getTime(),
-    );
+function storeUrlForProduct(product: any): string {
+  return String(
+    product.storeLinks?.find((link: any) => link.platform === product.platform)?.url ||
+    product.storeLinks?.[0]?.url ||
+    "",
+  );
 }
 
 function sourceFromDraft(
@@ -106,7 +113,7 @@ function sourceFromDraft(
     appVersion: String(draft.appVersion || draft.releaseTag || "").replace(/^v/i, ""),
     releaseTag: String(draft.releaseTag || ""),
     storePublishedAt: String(storePublishedAt || draft.ascSyncedAt || draft.storeSyncedAt || draft.updatedAt || ""),
-    storeUrl: String(product.storeLinks?.[0]?.url || ""),
+    storeUrl: storeUrlForProduct(product),
     summary: String(draft.summary || ""),
     whatsNew: String(primary?.whatsNew || draft.whatsNew || ""),
     description: String(primary?.description || draft.description || ""),
@@ -120,9 +127,42 @@ function sourceHash(source: PromotionSourceSnapshot): string {
   return createHash("sha256").update(JSON.stringify(source)).digest("hex");
 }
 
-function campaignId(projectId: string, productId: string, source: PromotionSourceSnapshot): string {
-  const identity = `${projectId}\u0000${productId}\u0000${source.appVersion || source.releaseTag}`;
+function campaignId(projectId: string, source: PromotionSourceSnapshot): string {
+  const identity = `${projectId}\u0000${source.appVersion || source.releaseTag}`;
   return `promotion-${createHash("sha256").update(identity).digest("hex").slice(0, 20)}`;
+}
+
+function projectProductScope(project: any): {
+  productIds: string[];
+  targetPlatforms: Array<"ios" | "macos" | "unknown">;
+} {
+  const products = Array.isArray(project.storeProducts) ? project.storeProducts : [];
+  return {
+    productIds: [...new Set<string>(products.map((item: any) => String(item.id || "")).filter(Boolean))],
+    targetPlatforms: [...new Set(products.map((item: any) =>
+      item.platform === "ios" || item.platform === "macos" ? item.platform : "unknown",
+    ))] as Array<"ios" | "macos" | "unknown">,
+  };
+}
+
+/** Collapse the former per-platform campaigns into one product-level campaign per version. */
+function mergeProjectCampaigns(s: AppStore, project: any): PromotionCampaign[] {
+  const all = campaigns(s);
+  const current = all[project.id] || [];
+  const scope = projectProductScope(project);
+  const { campaigns: merged, changed } = mergePromotionCampaigns(
+    current,
+    scope,
+    (source) => campaignId(project.id, source),
+  );
+  const linkOptions = promotionStoreLinkOptions(project);
+  const hydrated = merged.map((campaign) => hydrateCampaignStoreLinks(campaign, linkOptions));
+  const linksChanged = JSON.stringify(hydrated) !== JSON.stringify(merged);
+  if (changed || linksChanged) {
+    all[project.id] = hydrated;
+    s.set("promotionCampaigns", all);
+  }
+  return hydrated;
 }
 
 function saveCampaign(s: AppStore, campaign: PromotionCampaign): PromotionCampaign {
@@ -155,26 +195,27 @@ export function registerPromotionHandlers(): void {
     productId = assertNonEmptyString(productId, "productId");
     const s = await getStore();
     const { project, product } = findContext(s, projectId, productId);
-    const currentStore = product.trackId
+    const defaultLink = defaultPromotionStoreLink(promotionStoreLinkOptions(project));
+    const linkProduct = (project.storeProducts || []).find((item: any) => item.id === defaultLink?.productId) || product;
+    const currentStore = linkProduct.trackId
       ? await import("@appilot-labs/appilot-core/app-store-discovery")
-          .then(({ fetchStoreCurrentVersion }) => fetchStoreCurrentVersion(product.trackId))
+          .then(({ fetchStoreCurrentVersion }) => fetchStoreCurrentVersion(linkProduct.trackId))
           .catch(() => null)
       : null;
     const currentVersion = String(currentStore?.version || "").replace(/^v/i, "");
-    const allCampaigns = (campaigns(s)[projectId] || [])
-      .filter((item) => item.productId === productId)
+    const allCampaigns = mergeProjectCampaigns(s, project)
       .sort((a, b) => new Date(b.storePublishedAt).getTime() - new Date(a.storePublishedAt).getTime());
     const campaignByVersion = new Map(allCampaigns.map((item) => [item.appVersion, item]));
-    const releases = releasedDrafts(project, currentVersion).map((draft) => {
+    const releases = releasedPromotionDrafts(project, currentVersion).map((draft) => {
       const draftVersion = String(draft.appVersion || "").replace(/^v/i, "");
       const source = sourceFromDraft(
         project,
-        product,
+        linkProduct,
         draft,
         draftVersion === currentVersion ? currentStore?.currentVersionReleaseDate : null,
       );
       return {
-        id: campaignId(projectId, productId, source),
+        id: campaignId(projectId, source),
         releaseTag: source.releaseTag,
         appVersion: source.appVersion,
         storePublishedAt: source.storePublishedAt,
@@ -183,7 +224,7 @@ export function registerPromotionHandlers(): void {
       };
     });
     return {
-      profile: profiles(s)[productId] || null,
+      profile: profileForProject(s, projectId, productId),
       campaigns: allCampaigns,
       releases,
     };
@@ -198,7 +239,7 @@ export function registerPromotionHandlers(): void {
     const errors = validatePromotionProfile(profile);
     if (errors.length) throw new Error(errors[0]);
     const all = profiles(s);
-    all[productId] = profile;
+    all[projectId] = profile;
     s.set("promotionProfiles", all);
     notifyDataChanged("promotion");
     return profile;
@@ -254,34 +295,37 @@ export function registerPromotionHandlers(): void {
       operationId = assertNonEmptyString(operationId, "operationId");
       const s = await getStore();
       const { project, product } = findContext(s, projectId, productId);
-      const profile = profiles(s)[productId];
+      const defaultLink = defaultPromotionStoreLink(promotionStoreLinkOptions(project));
+      const linkProduct = (project.storeProducts || []).find((item: any) => item.id === defaultLink?.productId) || product;
+      const profile = profileForProject(s, projectId, productId);
       if (!profile) throw new Error("请先设置推广平台");
       const xProfile = { ...profile, enabledPlatforms: ["x" as const] };
       const errors = validatePromotionProfile(xProfile);
       if (errors.length) throw new Error(errors[0]);
-      const currentStore = product.trackId
+      const currentStore = linkProduct.trackId
         ? await import("@appilot-labs/appilot-core/app-store-discovery")
-            .then(({ fetchStoreCurrentVersion }) => fetchStoreCurrentVersion(product.trackId))
+            .then(({ fetchStoreCurrentVersion }) => fetchStoreCurrentVersion(linkProduct.trackId))
             .catch(() => null)
         : null;
       const currentVersion = String(currentStore?.version || "").replace(/^v/i, "");
-      const draft = releasedDrafts(project, currentVersion).find((item) => item.releaseTag === releaseTag);
+      const draft = releasedPromotionDrafts(project, currentVersion).find((item) => item.releaseTag === releaseTag);
       if (!draft) throw new Error("这个版本尚未确认上架，不能创建推广活动");
       const draftVersion = String(draft.appVersion || "").replace(/^v/i, "");
       const source = sourceFromDraft(
         project,
-        product,
+        linkProduct,
         draft,
         draftVersion === currentVersion ? currentStore?.currentVersionReleaseDate : null,
       );
       if (!source.storeUrl) throw new Error("这个产品还没有可用的 App Store 链接");
       const now = new Date().toISOString();
       const existing = (campaigns(s)[projectId] || []).find(
-        (item) => item.productId === productId && item.appVersion === source.appVersion,
+        (item) => item.appVersion === source.appVersion,
       );
       let campaign: PromotionCampaign = existing || {
-        id: campaignId(projectId, productId, source),
+        id: campaignId(projectId, source),
         projectId,
+        ...projectProductScope(project),
         productId,
         releaseTag,
         appVersion: source.appVersion,
@@ -315,6 +359,18 @@ export function registerPromotionHandlers(): void {
           },
         );
         emitProgress(event, { kind: "phase", phase: "analysis", status: "completed" });
+        emitProgress(event, { kind: "phase", phase: "series-plan", status: "started" });
+        const seriesItems = await generateXPromotionSeriesPlan(
+          provider,
+          { campaignId: campaign.id, source, profile: xProfile, projectProfile },
+          {
+            signal,
+            onProgress: (progress) => emitProgress(event, { kind: "chars", ...progress }),
+            onRetry: () => emitProgress(event, { kind: "retry" }),
+          },
+        );
+        if (!seriesItems.length) throw new Error("AI 没有返回可用的 X 系列计划，请重试");
+        emitProgress(event, { kind: "phase", phase: "series-plan", status: "completed" });
         return saveCampaign(s, {
           ...campaign,
           recommendation: analysis.recommendation,
@@ -323,6 +379,12 @@ export function registerPromotionHandlers(): void {
           recommendedPlatforms: analysis.recommendedPlatforms,
           recommendedScreenshotTypes: analysis.recommendedScreenshotTypes,
           enabledPlatforms: ["x"],
+          seriesItems: seriesItems.map((item) => defaultLink ? {
+            ...item,
+            storeProductId: defaultLink.productId,
+            storePlatform: defaultLink.platform,
+            storeUrl: defaultLink.url,
+          } : item),
           skippedAt: undefined,
           skipReason: undefined,
           status: "draft",
@@ -339,15 +401,21 @@ export function registerPromotionHandlers(): void {
     if (current.productId !== value.productId || current.releaseTag !== value.releaseTag) {
       throw new Error("Promotion campaign identity cannot be changed");
     }
+    const { project } = findContext(s, projectId, current.productId);
+    const linkOptions = promotionStoreLinkOptions(project);
     const assetIds = new Set(current.assets.map((item) => item.id));
     const deliveries = (Array.isArray(value.deliveries) ? value.deliveries : current.deliveries).map((delivery) => ({
       ...delivery,
       selectedAssetIds: (delivery.selectedAssetIds || []).filter((id) => assetIds.has(id)),
     }));
-    const seriesItems = (Array.isArray(value.seriesItems) ? value.seriesItems : current.seriesItems)?.map((item) => ({
-      ...item,
-      selectedAssetIds: (item.selectedAssetIds || []).filter((id: string) => assetIds.has(id)),
-    }));
+    const seriesItems = (Array.isArray(value.seriesItems) ? value.seriesItems : current.seriesItems)?.map((item) => {
+      const target = storeLinkForItem(item, linkOptions, current.source.storeUrl);
+      return {
+        ...item,
+        ...(target ? { storeProductId: target.productId, storePlatform: target.platform, storeUrl: target.url } : {}),
+        selectedAssetIds: (item.selectedAssetIds || []).filter((id: string) => assetIds.has(id)),
+      };
+    });
     return saveCampaign(s, {
       ...value,
       id: current.id,
@@ -440,7 +508,9 @@ export function registerPromotionHandlers(): void {
       const s = await getStore();
       const campaign = findCampaign(s, projectId, campaignIdValue);
       const { project, product } = findContext(s, projectId, campaign.productId);
-      const profile = profiles(s)[campaign.productId];
+      const defaultLink = defaultPromotionStoreLink(promotionStoreLinkOptions(project));
+      const source = { ...campaign.source, storeUrl: defaultLink?.url || campaign.source.storeUrl };
+      const profile = profileForProject(s, projectId, campaign.productId);
       if (!profile) throw new Error("请先设置 X 推广档案");
       return withAiOperation(operationId, async (signal) => {
         const [provider, projectProfile] = await Promise.all([
@@ -449,7 +519,7 @@ export function registerPromotionHandlers(): void {
         ]);
         const seriesItems = await generateXPromotionSeriesPlan(
           provider,
-          { campaignId: campaign.id, source: campaign.source, profile, projectProfile },
+          { campaignId: campaign.id, source, profile, projectProfile },
           {
             signal,
             onProgress: (progress) => emitProgress(event, { kind: "chars", ...progress }),
@@ -459,8 +529,15 @@ export function registerPromotionHandlers(): void {
         if (!seriesItems.length) throw new Error("AI 没有返回可用的 X 系列计划，请重试");
         return saveCampaign(s, {
           ...campaign,
+          source,
+          sourceSnapshotHash: sourceHash(source),
           enabledPlatforms: ["x"],
-          seriesItems,
+          seriesItems: seriesItems.map((item) => defaultLink ? {
+            ...item,
+            storeProductId: defaultLink.productId,
+            storePlatform: defaultLink.platform,
+            storeUrl: defaultLink.url,
+          } : item),
           status: "draft",
         });
       });
@@ -469,15 +546,19 @@ export function registerPromotionHandlers(): void {
 
   ipcMain.handle(
     "promotion:generateSeriesItem",
-    async (event, projectId: string, campaignIdValue: string, itemId: string, operationId: string) => {
+    async (event, projectId: string, campaignIdValue: string, itemId: string, operationId: string, linkProductId?: string) => {
       const s = await getStore();
       const campaign = findCampaign(s, projectId, campaignIdValue);
       const item = campaign.seriesItems?.find((candidate) => candidate.id === itemId);
       if (!item) throw new Error("找不到这条 X 系列内容");
       const screenshots = campaign.assets.filter((asset) => asset.role === "screenshot");
-      if (!screenshots.length) throw new Error("请先导入至少一张真实截图");
       const { project, product } = findContext(s, projectId, campaign.productId);
-      const profile = profiles(s)[campaign.productId];
+      const linkOptions = promotionStoreLinkOptions(project);
+      const target = linkOptions.find((option) => option.productId === linkProductId) ||
+        storeLinkForItem(item, linkOptions, campaign.source.storeUrl);
+      if (!target) throw new Error("这个产品还没有可用的 App Store 链接");
+      const source = { ...campaign.source, storeUrl: target.url };
+      const profile = profileForProject(s, projectId, campaign.productId);
       if (!profile) throw new Error("请先设置 X 推广档案");
       return withAiOperation(operationId, async (signal) => {
         const [provider, projectProfile] = await Promise.all([
@@ -486,7 +567,7 @@ export function registerPromotionHandlers(): void {
         ]);
         const generated = await generateXPromotionSeriesItem(
           provider,
-          { source: campaign.source, profile, item, assets: screenshots, projectProfile },
+          { source, profile, item, assets: screenshots, projectProfile },
           {
             signal,
             onProgress: (progress) => emitProgress(event, { kind: "chars", ...progress }),
@@ -495,7 +576,14 @@ export function registerPromotionHandlers(): void {
         );
         return saveCampaign(s, {
           ...campaign,
-          seriesItems: campaign.seriesItems?.map((candidate) => candidate.id === itemId ? generated : candidate),
+          source,
+          sourceSnapshotHash: sourceHash(source),
+          seriesItems: campaign.seriesItems?.map((candidate) => candidate.id === itemId ? {
+            ...generated,
+            storeProductId: target.productId,
+            storePlatform: target.platform,
+            storeUrl: target.url,
+          } : candidate),
         });
       });
     },
@@ -503,32 +591,39 @@ export function registerPromotionHandlers(): void {
 
   ipcMain.handle(
     "promotion:markSeriesItemPublished",
-    async (_event, projectId: string, campaignIdValue: string, itemId: string, published: boolean) => {
+    async (_event, projectId: string, campaignIdValue: string, itemId: string, published: boolean, publishedUrl?: string) => {
       const s = await getStore();
       const campaign = findCampaign(s, projectId, campaignIdValue);
       const item = campaign.seriesItems?.find((candidate) => candidate.id === itemId);
       if (!item) throw new Error("找不到这条 X 系列内容");
       if (published && xPostWeightedLength(item.post) > 280) throw new Error("X 主帖超过 280 字符限制，请先修改文案");
       if (published && !item.post.trim()) throw new Error("请先生成或填写 X 主帖");
+      const expectedStoreUrl = item.storeUrl || campaign.source.storeUrl;
+      if (published && !item.post.includes(expectedStoreUrl)) throw new Error("X 主帖缺少所选平台的 App Store 链接");
+      const normalizedPostUrl = published ? normalizeXPostUrl(String(publishedUrl || "")) : null;
+      if (published && !normalizedPostUrl) throw new Error("请粘贴有效的 X 帖子链接，例如 https://x.com/name/status/123");
       const now = new Date().toISOString();
       const activeEvent = [...campaign.publicationEvents].reverse().find(
         (event) => event.deliveryId === item.id && !event.revertedAt,
       );
       const publicationEvents = published
-        ? [...campaign.publicationEvents, {
-            id: `promotion-event-${randomUUID()}`,
-            campaignId: campaign.id,
-            projectId: campaign.projectId,
-            productId: campaign.productId,
-            releaseId: campaign.releaseTag,
-            appVersion: campaign.appVersion,
-            platform: "x" as const,
-            deliveryId: item.id,
-            contentRevision: item.revision,
-            promotionAngle: item.angle,
-            assetIds: [...item.selectedAssetIds],
-            occurredAt: now,
-          }]
+        ? activeEvent
+          ? campaign.publicationEvents.map((event) => event.id === activeEvent.id ? { ...event, postUrl: normalizedPostUrl || undefined } : event)
+          : [...campaign.publicationEvents, {
+              id: `promotion-event-${randomUUID()}`,
+              campaignId: campaign.id,
+              projectId: campaign.projectId,
+              productId: campaign.productId,
+              releaseId: campaign.releaseTag,
+              appVersion: campaign.appVersion,
+              platform: "x" as const,
+              deliveryId: item.id,
+              contentRevision: item.revision,
+              promotionAngle: item.angle,
+              assetIds: [...item.selectedAssetIds],
+              postUrl: normalizedPostUrl || undefined,
+              occurredAt: now,
+            }]
         : campaign.publicationEvents.map((event) => event.id === activeEvent?.id ? { ...event, revertedAt: now } : event);
       return saveCampaign(s, {
         ...campaign,
@@ -536,7 +631,8 @@ export function registerPromotionHandlers(): void {
         seriesItems: campaign.seriesItems?.map((candidate) => candidate.id === item.id ? {
           ...candidate,
           status: published ? "published" : "ready",
-          publishedAt: published ? now : undefined,
+          publishedAt: published ? candidate.publishedAt || activeEvent?.occurredAt || now : undefined,
+          publishedUrl: published ? normalizedPostUrl || undefined : undefined,
           updatedAt: now,
         } : candidate),
       });
@@ -553,7 +649,7 @@ export function registerPromotionHandlers(): void {
       const screenshots = campaign.assets.filter((asset) => asset.role === "screenshot");
       if (!screenshots.length) throw new Error("请先导入至少一张真实截图");
       const { project, product } = findContext(s, projectId, campaign.productId);
-      const profile = profiles(s)[campaign.productId];
+      const profile = profileForProject(s, projectId, campaign.productId);
       if (!profile) throw new Error("请先设置推广平台");
       emitProgress(event, { kind: "phase", phase: "package", status: "started" });
       return withAiOperation(operationId, async (signal) => {
@@ -604,7 +700,7 @@ export function registerPromotionHandlers(): void {
       const current = campaign.deliveries.find((item) => item.platform === platform);
       if (!current) throw new Error("Platform delivery not found");
       const { project, product } = findContext(s, projectId, campaign.productId);
-      const profile = profiles(s)[campaign.productId];
+      const profile = profileForProject(s, projectId, campaign.productId);
       if (!profile) throw new Error("请先设置推广平台");
       return withAiOperation(operationId, async (signal) => {
         const [provider, projectProfile] = await Promise.all([
