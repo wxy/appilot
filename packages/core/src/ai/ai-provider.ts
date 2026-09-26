@@ -187,7 +187,16 @@ export class AIProvider {
             streamAttempts.push({ ...withoutFormat, stream: true });
           }
           let streamed = false;
-          for (const attempt of streamAttempts) {
+          for (const streamAttempt of streamAttempts) {
+            // 审计 H1：streaming 多次尝试共享外层可变变量——失败的尝试可能已
+            // 收到半截文本/finish_reason/usage，若不重置，会与下一个成功尝试
+            // 的完整输出拼接/残留，产出损坏的文案且无告警。每次尝试开始前
+            // 全部归零，语义 = 只有成功完成的那次尝试的结果会被采用。
+            content = null;
+            finishReason = undefined;
+            promptTokens = 0;
+            completionTokens = 0;
+            cachedTokens = 0;
             const streamController = new AbortController();
             lastChunkAt = Date.now();
             const idleTimer = setInterval(() => {
@@ -199,7 +208,7 @@ export class AIProvider {
             try {
               await consumeStream(
                 await this.client.chat.completions.create({
-                  ...attempt,
+                  ...streamAttempt,
                   signal: opts?.signal
                     ? AbortSignal.any([streamController.signal, opts.signal])
                     : streamController.signal,

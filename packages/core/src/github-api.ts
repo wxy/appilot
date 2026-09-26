@@ -274,6 +274,69 @@ export async function fetchMergedPullRequests(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
+    // 审计 M-C1：带 cutoff（生成边界）时改用 Search API——服务端 merged 过滤
+    // + updated 排序。旧 /pulls?sort=updated 只能覆盖「最近更新」的 300 个
+    // PR，窗口内合并但此后无更新的 PR 会被静默挤出变更摘要。
+    if (cutoff > 0) {
+      const mergedSince = new Date(cutoff).toISOString();
+      for (const base of bases) {
+        if (prs.length > 0) break;
+        for (let page = 1; page <= 3; page += 1) {
+          const params = new URLSearchParams({
+            q: `repo:${ownerRepo} is:pr is:merged merged:>=${mergedSince} base:${base}`,
+            sort: "updated",
+            order: "desc",
+            per_page: "100",
+            page: String(page),
+          });
+          const url = `https://api.github.com/search/issues?${params.toString()}`;
+          let response = await fetch(url, {
+            headers: githubHeaders(token),
+            signal: controller.signal,
+          });
+          let effectiveToken = Boolean(token);
+          if (token && (response.status === 401 || response.status === 403)) {
+            response = await fetch(url, {
+              headers: githubHeaders(null),
+              signal: controller.signal,
+            });
+            effectiveToken = false;
+          }
+          if (!response.ok) break;
+          const raw = await response.text();
+          onStats?.(
+            url.length + (effectiveToken ? token!.length + 24 : 0),
+            raw.length,
+          );
+          const data: any = JSON.parse(raw);
+          const items: any[] = Array.isArray(data?.items) ? data.items : [];
+          if (page === 3 && Number(data?.total_count) > 300) {
+            log.warn(`fetchMergedPullRequests search window exceeds 300 results for ${ownerRepo}; result may be partial`);
+          }
+          if (items.length === 0) break;
+          for (const item of items) {
+            const mergedAt =
+              typeof item?.pull_request?.merged_at === "string"
+                ? item.pull_request.merged_at
+                : typeof item?.closed_at === "string"
+                  ? item.closed_at
+                  : null;
+            if (!mergedAt || new Date(mergedAt).getTime() < cutoff) {
+              continue;
+            }
+            prs.push({
+              number: item.number,
+              title: typeof item.title === "string" ? item.title : null,
+              body: typeof item.body === "string" ? item.body : "",
+              url: typeof item.html_url === "string" ? item.html_url : null,
+              viaToken: effectiveToken,
+              mergedAt,
+            });
+          }
+          if (items.length < 100) break;
+        }
+      }
+    } else {
     for (const base of bases) {
       if (prs.length > 0) break;
       for (let page = 1; page <= 3 && prs.length < 50; page += 1) {
@@ -319,6 +382,7 @@ export async function fetchMergedPullRequests(
         }
       }
     }
+    }
 
     // De-duplicate: the same PR can surface again when multiple base branches
     // are probed or pages overlap.
@@ -328,6 +392,12 @@ export async function fetchMergedPullRequests(
       if (seenNumbers.has(pr.number)) continue;
       seenNumbers.add(pr.number);
       deduped.push(pr);
+    }
+    if (cutoff > 0) {
+      deduped.sort((a, b) =>
+        new Date(b.mergedAt || 0).getTime() - new Date(a.mergedAt || 0).getTime(),
+      );
+      deduped.length = Math.min(deduped.length, 50);
     }
 
     // Per-PR commit shas let the workbench map checked PRs to real commits for
@@ -342,7 +412,14 @@ export async function fetchMergedPullRequests(
           : pr,
       ),
     );
-    const result = [...withShas, ...deduped.slice(10)];
+    // Search 路径的响应没有 item.commits——token 场景已取 per-PR 提交列表，
+    // 用其长度回填（≤100；无 token 时保持 undefined，仅影响展示粒度）。
+    const withCounts = withShas.map((pr) =>
+      pr.commits === undefined && Array.isArray(pr.commitShas)
+        ? { ...pr, commits: pr.commitShas.length }
+        : pr,
+    );
+    const result = [...withCounts, ...deduped.slice(10)];
     mergedPrCache.set(key, { at: Date.now(), prs: result });
     return result;
   } catch (err: any) {

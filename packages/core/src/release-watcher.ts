@@ -155,6 +155,29 @@ export async function countContentCommitsSince(localPath: string, boundary: stri
 }
 
 /**
+ * 按 sha 并集合并多段 `git log --format` 输出（\x1e 分隔记录）。
+ * sortByDateDesc 时按 %cI（第 5 个字段）倒序，近似单区间 git log 的时序。
+ */
+function dedupeLogRecords(logs: string[], sortByDateDesc = false): string {
+  const seen = new Set<string>();
+  const records: string[] = [];
+  for (const log of logs) {
+    for (const record of log.split("\x1e").filter(Boolean)) {
+      const sha = record.split("\x1f")[0];
+      if (!sha || seen.has(sha)) continue;
+      seen.add(sha);
+      records.push(record);
+    }
+  }
+  if (sortByDateDesc) {
+    records.sort((a, b) =>
+      String(b.split("\x1f")[4] || "").localeCompare(String(a.split("\x1f")[4] || "")),
+    );
+  }
+  return records.join("\x1e");
+}
+
+/**
  * Sync remote tags into the local repo. Read-only: only adds/updates refs,
  * never touches the user's branches or working tree. Silent no-op when the
  * repo has no remote or the network is unavailable.
@@ -286,28 +309,42 @@ export async function collectReleaseMaterial(
   end: string | string[] = "HEAD",
 ): Promise<ReleaseMaterial> {
   const endRefs = Array.isArray(end) ? end : [end];
-  const rangeArgs = since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs;
-  const [logOut, diffOut] = await Promise.all([
-    git(localPath, [
-      "log",
-      ...rangeArgs,
-      `--max-count=${MAX_MATERIAL_COMMITS}`,
-      // \x1e record separator keeps multi-line bodies from corrupting records.
-      "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
-    ]).catch(() => ""),
-    git(localPath, ["diff", "--stat", ...rangeArgs]).catch(() => ""),
+  const formatArgs = [
+    `--max-count=${MAX_MATERIAL_COMMITS}`,
+    // \x1e record separator keeps multi-line bodies from corrupting records.
+    "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
+  ];
+  // 审计 H2：带边界（since）且有多个 frontier ref 时，`git log since..ref0
+  // ref1 …` 的排除集只作用于 ref0——ref1/refN 上「边界之前」的分叉旧提交会
+  // 被泄漏进发布素材。改为对每个 ref 单独取 `since..ref`，再按 sha 并集去重；
+  // 无边界时 `git log ref0 ref1 …` 本就是可达并集，保持原语义。
+  const multiRefWithBoundary = Boolean(since) && endRefs.length > 1;
+  const logArgSets: string[][] = multiRefWithBoundary
+    ? endRefs.map((ref) => ["log", `${since}..${ref}`, ...formatArgs])
+    : [
+        [
+          "log",
+          ...(since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs),
+          ...formatArgs,
+        ],
+      ];
+  const [logs, mergeLogs] = await Promise.all([
+    Promise.all(logArgSets.map((args) => git(localPath, args).catch(() => ""))),
+    Promise.all(
+      logArgSets.map((args) => {
+        const mergesArgs = args.filter(
+          (item) => item !== formatArgs[0] && !item.startsWith("--format="),
+        );
+        return git(localPath, [...mergesArgs, "--merges", "--max-count=20", "--format=%H%x1f%P%x1f%s%x1e"]).catch(() => "");
+      }),
+    ),
   ]);
+  const logOut = dedupeLogRecords(logs, true);
+  const mergeLog = dedupeLogRecords(mergeLogs);
   // Merge commits ("Merge pull request #N …") are excluded from the content
   // commits, but their subjects identify PRs. For each merge commit we also
   // derive the PR's own commits (second-parent range) so the change summary
   // can map PR rows to real commits even when the branch commits carry no #N.
-  const mergeLog = await git(localPath, [
-    "log",
-    ...rangeArgs,
-    "--merges",
-    "--max-count=20",
-    "--format=%H%x1f%P%x1f%s%x1e",
-  ]).catch(() => "");
   const mergePrShas = new Map<number, string[]>();
   for (const record of mergeLog.split("\x1e").filter(Boolean)) {
     const [sha, parents, subject] = record.split("\x1f");
@@ -343,7 +380,41 @@ export async function collectReleaseMaterial(
         date: date || "",
       };
     })
-    .filter((commit) => commit.sha && !isMergeCommit(commit.subject));
+    .filter((commit) => commit.sha && !isMergeCommit(commit.subject))
+    // 审计 H2：分叉的 frontier（废弃分支/改写历史）上「边界之前」的旧提交
+    // 无法用可达性排除（它们不是边界的祖先），按边界提交日期过滤——这些
+    // 提交在边界落tag之前就已存在，不属于「自上次发布以来的变更」。日期
+    // 解析失败（空）时保守保留，不丢真实提交。
+    .filter(
+      (commit) =>
+        !sinceDate ||
+        !commit.date ||
+        commit.date >= sinceDate,
+    );
+
+  // Derive the stat from the exact commits retained above. A single guessed
+  // frontier tip can omit another branch or describe a stale branch that was
+  // filtered out of commits. One git show handles all refs without that loss.
+  const numstat = commits.length > 0
+    ? await git(localPath, ["show", "--numstat", "--format=", "--no-renames", ...commits.map((commit) => commit.sha)], 20_000).catch(() => "")
+    : "";
+  const fileStats = new Map<string, { added: number; deleted: number; binary: boolean }>();
+  for (const line of numstat.split("\n")) {
+    const [added, deleted, ...nameParts] = line.split("\t");
+    const name = nameParts.join("\t");
+    if (!name || !added || !deleted) continue;
+    const previous = fileStats.get(name) || { added: 0, deleted: 0, binary: false };
+    if (added === "-" || deleted === "-") previous.binary = true;
+    else {
+      previous.added += Number(added) || 0;
+      previous.deleted += Number(deleted) || 0;
+    }
+    fileStats.set(name, previous);
+  }
+  const diffOut = [...fileStats.entries()]
+    .sort((a, b) => (b[1].added + b[1].deleted) - (a[1].added + a[1].deleted))
+    .map(([name, stats]) => `${name} | ${stats.binary ? "binary" : `+${stats.added} -${stats.deleted}`}`)
+    .join("\n");
 
   const shasByPr = new Map<number, string[]>();
   const addShas = (number: number, shas: string[]) => {

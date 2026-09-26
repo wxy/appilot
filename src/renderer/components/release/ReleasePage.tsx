@@ -74,6 +74,8 @@ export function ReleasePage() {
   const [initialCheckPending, setInitialCheckPending] = useState(true);
   const [githubLastCheckedAt, setGithubLastCheckedAt] = useState<string | null>(null);
   const initialCheckPendingRef = useRef(true);
+  // 审计 H9：loadReleases 过期响应守卫的序号源。
+  const loadReleasesSeqRef = useRef(0);
   const [generating, setGenerating] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<{
@@ -233,6 +235,9 @@ export function ReleasePage() {
 
   const loadReleases = async (force = false, clearFirst = true, resetView = false) => {
     if (!project?.id) return;
+    // 审计 H9：过期响应守卫（对齐 CopilotPage 的 sessionSeqRef 模式）——快速
+    // 切换项目/平台或并发触发刷新时，先发且更慢的响应不得覆盖新状态。
+    const seq = ++loadReleasesSeqRef.current;
     if (resetView) {
       initialCheckPendingRef.current = true;
       setInitialCheckPending(true);
@@ -247,6 +252,7 @@ export function ReleasePage() {
     setError("");
     try {
       const next = await (window as any).appilot.release.list(project.id, productId, force);
+      if (seq !== loadReleasesSeqRef.current) return; // 过期响应：丢弃，不覆盖新状态
       setReleases(next.releases || []);
       setGithubCapabilities(next.githubCapabilities || null);
       setGithubLastCheckedAt(next.githubLastCheckedAt || null);
@@ -343,13 +349,16 @@ export function ReleasePage() {
       }
       setSelectedTag(nextTag);
     } catch (e: any) {
+      if (seq !== loadReleasesSeqRef.current) return;
       setError(e.message || "发布列表加载失败。");
     } finally {
-      setChecking(false);
-      setReleasesLoaded(true);
-      if (resetView) {
-        initialCheckPendingRef.current = false;
-        setInitialCheckPending(false);
+      if (seq === loadReleasesSeqRef.current) {
+        setChecking(false);
+        setReleasesLoaded(true);
+        if (resetView) {
+          initialCheckPendingRef.current = false;
+          setInitialCheckPending(false);
+        }
       }
     }
   };
