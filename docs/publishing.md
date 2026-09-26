@@ -2,6 +2,7 @@
 
 > 适用：@appilot-labs/* npm 包发布 + DSH 宿主（profile）消费更新。
 > 首次 1.0.0 已发布（2026-09-04，NPM_TOKEN 首发）；此后一律 **OIDC Trusted Publishing**（无 token）。
+> 当前 npm 包版本为 1.3.0；最近已发布的 macOS DMG 为 1.2.0。两种分发需分别验证。
 
 ## 1. 包结构与发布范围
 
@@ -10,19 +11,22 @@
 
 **不发布**：根 desktop（Electron，private）、`packages/cli`（无 scope 本地启动器）。
 
-发布包间依赖用 `^<version>` 互相引用（如 headless → core ^1.2.0）——bump 时**必须同步所有 range**，否则消费方装到旧版。
+发布包间依赖用 `^<version>` 互相引用（如 headless → core ^1.3.0）——bump 时**必须同步所有 range**，否则消费方装到旧版。
 
 ## 2. 发布流程（每次发版）
 
 ### Step 1 — Bump PR
-- 改各发布包 `package.json` version（+ 桌面 root 如需对齐）+ 所有 `@appilot-labs/*` 依赖 range `^0.1.x → ^1.0.0` 式同步
+- 改各发布包 `package.json` version（+ 桌面 root 如需对齐）+ 所有 `@appilot-labs/*` 内部依赖 range，同步为本次版本
 - `npm install --package-lock-only`（workspace 链接，本地可重建，不触网）
 - CI 走缓存：锁变化触发增量 install（已优化，~30s），无需担心冷装
-- 合并 PR（等 CI 绿）
+- 合并 PR（等 CI 绿），确认 tag 指向该合并后的 `master` 提交
 
 ### Step 2 — 推 tag 触发发布
 ```bash
-git tag v1.2.0 && git push origin v1.2.0
+VERSION=$(node -p "require('./package.json').version")
+git fetch origin master --tags
+git tag -a "v${VERSION}" origin/master -m "Appilot v${VERSION} npm packages"
+git push origin "v${VERSION}"
 ```
 - `.github/workflows/publish.yml`：tag push → OIDC 认证（Node 24 / npm≥11.5.1）→ **自动生成 provenance**（无需 `--provenance` 标志）
 - 观察：`gh run list --limit 3` → publish job 全绿；registry API 验证：
@@ -30,9 +34,14 @@ git tag v1.2.0 && git push origin v1.2.0
   curl -s https://registry.npmjs.org/@appilot-labs%2fappilot-core | python3 -c "import json,sys;print(json.load(sys.stdin)['dist-tags'])"
   ```
 
-### Step 3 — GitHub Release
+### Step 3 — 分发记录
+
+本次 1.3.0 仅发布 npm 包；GitHub Releases 的 `latest` 仍指向带 DMG 的 1.2.0。只有相应安装包完成签名、公证和验证后，才创建或发布面向下载者的 GitHub Release。
+
+需要同时发布 GitHub Release 时，使用对应版本的发布说明：
 ```bash
-gh release create v1.2.0 --title "Appilot 1.2.0" --notes-file RELEASE_DRAFT.md
+VERSION=$(node -p "require('./package.json').version")
+gh release create "v${VERSION}" --title "Appilot ${VERSION}" --notes-file RELEASE_DRAFT.md
 ```
 
 ### OIDC 现状（已配置，勿重复操作）
@@ -45,7 +54,7 @@ profile 是 pnpm（hoisted）工程：`~/.dsh/profiles/appilot/`
 
 ```bash
 cd ~/.dsh/profiles/appilot
-# package.json dependencies 里的 @appilot-labs/* 升到新版本（如 ^1.2.0）
+# package.json dependencies 里的 @appilot-labs/* 升到新版本（如 ^1.3.0）
 pnpm install          # 从 registry 替换（不再拷 dist）
 # 重启 3099（宿主装载插件 dist）
 ```
@@ -61,7 +70,7 @@ pnpm install          # 从 registry 替换（不再拷 dist）
 
 1. **registry 冒烟**（全新目录）：
    ```bash
-   mkdir /tmp/npmt && cd /tmp/npmt && npm i @appilot-labs/appilot-headless ...
+   mkdir -p "$TMPDIR/appilot-npm-smoke" && cd "$TMPDIR/appilot-npm-smoke" && npm i @appilot-labs/appilot-headless ...
    ```
    → openStore + lease + tasks + snapshots 跑通；`appilot-headless --help` 有输出
 2. **3099**：`/appilot task` 出状态摘要（不经模型）；agent 跑 `appilot_tasks` 出 byKind

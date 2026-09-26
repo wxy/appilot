@@ -41,7 +41,7 @@
     <rect x="302" y="124" width="82" height="8" rx="4" fill="#C9BBA8"/><rect x="302" y="144" width="65" height="8" rx="4" fill="#DED3C4"/><rect x="302" y="164" width="46" height="8" rx="4" fill="#E8DFD2"/>
     <rect x="432" y="82" width="196" height="108" rx="16" fill="#312C28"/>
     <text x="450" y="108" font-family="ui-monospace,'SF Mono',Menlo,monospace" font-size="11" font-weight="700" fill="#F1BD58">RELEASE</text>
-    <text x="450" y="151" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="27" font-weight="800" fill="#FFF8EA">v1.2.0</text>
+    <text x="450" y="151" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="27" font-weight="800" fill="#FFF8EA">v1.3.0</text>
     <rect x="450" y="164" width="104" height="8" rx="4" fill="#F1BD58"/><circle cx="595" cy="148" r="17" fill="#54765A" stroke="#FFF8EA" stroke-width="2"/><path d="M587 148l6 6 10-13" fill="none" stroke="#FFF8EA" stroke-width="3"/>
     <rect x="22" y="210" width="606" height="140" rx="18" fill="#F6F0E4" stroke="#D6C8B5"/>
     <text x="42" y="239" font-family="ui-monospace,'SF Mono',Menlo,monospace" font-size="11" font-weight="700" fill="#9C6A39">EVIDENCE ROUTE</text>

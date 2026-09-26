@@ -1,67 +1,47 @@
-# Appilot v1.2.0 — Evidence to action
+# Appilot v1.3.0 — npm packages
+
+This release publishes the nine public `@appilot-labs/*` packages. It does not include a new desktop installer; the latest downloadable macOS DMG remains v1.2.0.
 
 ## What's New
 
-- Copilot is now an actionable workspace: suggestions retain product and storefront context, support contextual follow-ups, define measurable outcomes, and dispatch only registered actions.
-- The release workbench now starts with a fresh GitHub release check, separates copy-plan and submission states, and makes release progress easier to verify.
-- Screenshot production now covers localized copy, Keynote document generation, image replacement, and localized PNG export.
-- Overview recommendations are grounded in current product and ranking evidence, while deterministic rank diagnostics explain actionable anomalies.
-- Task scheduling is safer: automatic work can be balanced earlier without delaying cadence, daemon restart is atomic, and schedule provenance survives restarts.
-- Trends and Reviews were removed because the available data did not yet justify standalone modules.
+- Release preparation now keeps store copy and Keynote screenshot suites separate by platform. Final copy can be revised without overwriting the prior approved version, and the workbench shows release facts across platforms.
+- Post-release promotion has its own X series workflow with per-storefront copy and final image selection.
+- Rankings adds keyword localization suggestions, collection budget controls, and comparisons across several keywords.
 
-## Fixes & Engineering
+## Reliability and Security
 
-- Release drafts, copy plans, checklists, and screenshot materials now use more stable product/version identities and migration paths.
-- Copilot suggestions preserve lifecycle state and avoid recomputing user-visible identities from list order.
-- Scheduler startup, self-update, signal handling, task execution facts, and Windows plugin build gates were hardened.
-- The package family and all internal `@appilot-labs/*` dependency ranges move together to 1.2.0.
+- Scheduler startup verifies a connectable control socket; arbitration, permissions, self-update, and process-exit handling are more robust.
+- AI credentials, App Store Connect private keys, screenshot previews, and proxied requests have tighter main-process boundaries.
+- Release change boundaries, merged PR ordering, iTunes timeouts, AI streaming retries, screenshot removal, and snapshot retention are corrected.
+- CI now runs lint, type checking, and the full test suite before npm publishing. MCP initialization reports the package's actual version.
 
-## Deployment Notes
+## Upgrade Notes
 
-- Target: `master` after the release pull request is merged.
-- Public packages: nine `@appilot-labs/*` packages, published through npm Trusted Publishing with provenance.
-- Database: schema 15 adds `tasks.scheduleJson`; migration runs automatically when the shared SQLite store opens.
-- macOS screenshot generation asks for Apple Events permission to automate Keynote.
-- Trends/reviews routes and their collectors are intentionally unavailable after upgrade.
-
-## Verification
-
-- Tests: `npm test` passed, including multiprocess, daemon, migration, Copilot, release-material, and Keynote automation coverage.
-- Typecheck: `npm run typecheck` passed.
-- Build: `npm run build` passed on macOS; GitHub Actions remains the merge gate.
-- Visual assets: all SVGs rendered successfully; hero and banner text bounds, icon edge alpha, XML validity, and README constraints passed.
+- All nine public packages and their internal dependency ranges move together to `1.3.0` / `^1.3.0`.
+- Shared SQLite schema 16 adds `lease.leaderPid`; migration runs when the shared store opens.
+- No new signed, notarized, or downloadable desktop build is part of this npm release.
 
 ---
 
-# Appilot v1.2.0 — 从证据到行动
+# Appilot v1.3.0 — npm 包
+
+本次发布九个公开的 `@appilot-labs/*` 包，不包含新的桌面安装包；目前可下载的 macOS DMG 仍是 v1.2.0。
 
 ## 新增功能
 
-- 副驾升级为可执行工作区：建议会保留产品与商店上下文，支持上下文追问，定义可衡量结果，并且只分派已注册行动。
-- 发布工作台会先执行实时 GitHub 发布检查，区分文案计划与提交状态，并让发布进度更容易核验。
-- 截图生产流程覆盖本地化文案、Keynote 文稿生成、图片替换与多语言 PNG 导出。
-- 总览建议基于当前产品与排名证据；确定性排名诊断用于解释值得行动的异常。
-- 调度更加安全：自动任务可以提前削峰而不延后原节奏，守护进程原子重启，计划来源在重启后仍可追溯。
-- 趋势与评论模块已移除，因为当前可用数据尚不足以支撑独立模块。
+- 发布工作台按平台隔离商店文案与 Keynote 截图套件；已定稿文案可以修订并保留旧版，多平台发布事实可一并查看。
+- 上架后推广有独立的 X 系列流程，按商店平台准备文案并选择最终配图。
+- 排名模块增加关键词本地化建议、采集预算治理和多词对比。
 
-## 修复与工程
+## 可靠性与安全
 
-- 发布草稿、文案计划、检查清单和截图素材使用更稳定的产品/版本身份与迁移路径。
-- 副驾建议保留生命周期状态，不再从列表顺序重新计算用户可见身份。
-- 强化调度器启动、自更新、信号处理、任务执行事实与 Windows 插件构建门禁。
-- 包家族及全部内部 `@appilot-labs/*` 依赖范围统一升级到 1.2.0。
+- 调度器启动检查可连接的控制 socket，并强化仲裁、权限、自更新与退出处理。
+- 收紧 AI 凭据、App Store Connect 私钥、截图预览和代理请求的主进程边界。
+- 修复发布变更范围、合并 PR 排序、iTunes 超时、AI 流式重试、截图移除与快照保留清理。
+- npm 发布前 CI 执行 lint、类型检查和完整测试；MCP 初始化报告实际包版本。
 
-## 部署说明
+## 升级说明
 
-- 目标：发布 PR 合并后的 `master`。
-- 公开包：9 个 `@appilot-labs/*` 包，通过 npm Trusted Publishing 携带 provenance 发布。
-- 数据库：schema 15 新增 `tasks.scheduleJson`；共享 SQLite 存储打开时会自动迁移。
-- macOS 截图生成会请求 Apple Events 权限以自动化 Keynote。
-- 升级后趋势/评论路由及其采集器将不可用，这是有意的产品收敛。
-
-## 验证
-
-- 测试：`npm test` 已通过，覆盖多进程、守护进程、迁移、副驾、发布素材与 Keynote 自动化。
-- 类型检查：`npm run typecheck` 已通过。
-- 构建：`npm run build` 已在 macOS 通过；GitHub Actions 仍作为合并门禁。
-- 视觉资产：全部 SVG 已成功渲染，Hero/横幅文字边界、图标边缘 alpha、XML 有效性与 README 约束均已通过。
+- 九个公开包统一升级到 `1.3.0`，内部依赖范围同步为 `^1.3.0`。
+- 共享 SQLite schema 16 新增 `lease.leaderPid`，打开存储时自动迁移。
+- 本次 npm 发布不包含新的已签名、公证或可下载的桌面安装包。
