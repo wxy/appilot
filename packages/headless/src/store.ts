@@ -114,6 +114,20 @@ export interface AppilotStore {
     ): RankSnapshotRow[];
     /** 清理某项目早于 checkedAt 的旧快照（保留最近 N 天）。 */
     pruneOlderThan(projectName: string, beforeIso: string): number;
+    /**
+     * prune 影响面预览（不删除）：项目快照总数 + 将被删除的条数。
+     * 项目不存在返回 null（审计 H7：未知项目必须显式报错，不能静默 0）。
+     */
+    prunePreview(
+      projectName: string,
+      beforeIso: string,
+    ): { total: number; matched: number } | null;
+    /** Atomically count, guard, and delete under BEGIN IMMEDIATE. */
+    pruneChecked(
+      projectName: string,
+      beforeIso: string,
+      opts?: { dryRun?: boolean; force?: boolean },
+    ): { total: number; matched: number; removed: number } | null;
     /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
     pruneAllOlderThan(beforeIso: string): number;
     /**
@@ -235,6 +249,18 @@ export function openStore(dbPath: string): AppilotStore {
     const identity = projectIdentity(ref);
     if (!identity) throw new Error(`项目不存在：${ref}`);
     return identity;
+  }
+
+  function snapshotPrunePreview(projectName: string, beforeIso: string): { total: number; matched: number; projectId: string } | null {
+    const identity = projectIdentity(projectName);
+    if (!identity) return null;
+    const total = Number(
+      (db.prepare('SELECT COUNT(*) AS n FROM rank_snapshots WHERE projectId = ?').get(identity.id) as any).n,
+    );
+    const matched = Number(
+      (db.prepare('SELECT COUNT(*) AS n FROM rank_snapshots WHERE projectId = ? AND julianday(checkedAt) < julianday(?)').get(identity.id, beforeIso) as any).n,
+    );
+    return { total, matched, projectId: identity.id };
   }
 
   return {
@@ -519,9 +545,30 @@ export function openStore(dbPath: string): AppilotStore {
         const identity = projectIdentity(projectName);
         if (!identity) return 0;
         const res = db
-          .prepare('DELETE FROM rank_snapshots WHERE projectId = ? AND checkedAt < ?')
+          .prepare('DELETE FROM rank_snapshots WHERE projectId = ? AND julianday(checkedAt) < julianday(?)')
           .run(identity.id, beforeIso);
         return Number(res.changes);
+      },
+      prunePreview(projectName, beforeIso) {
+        const preview = snapshotPrunePreview(projectName, beforeIso);
+        return preview ? { total: preview.total, matched: preview.matched } : null;
+      },
+      pruneChecked(projectName, beforeIso, opts = {}) {
+        return tx(() => {
+          const preview = snapshotPrunePreview(projectName, beforeIso);
+          if (!preview) return null;
+          if (opts.dryRun) return { total: preview.total, matched: preview.matched, removed: 0 };
+          if (preview.total > 0 && preview.matched * 2 > preview.total && !opts.force) {
+            throw new Error(
+              `将删除 ${preview.matched}/${preview.total} 条快照（超过存量的 50%）。` +
+              '如确认无误请传 force:true；建议先用 dryRun 预览影响面。',
+            );
+          }
+          const removed = Number(db.prepare(
+            'DELETE FROM rank_snapshots WHERE projectId = ? AND julianday(checkedAt) < julianday(?)',
+          ).run(preview.projectId, beforeIso).changes);
+          return { total: preview.total, matched: preview.matched, removed };
+        });
       },
       /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
       pruneAllOlderThan(beforeIso) {

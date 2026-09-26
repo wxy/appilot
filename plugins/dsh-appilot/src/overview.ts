@@ -101,11 +101,7 @@ export function createAppilotOverviewTool(
         description:
           'Whether to generate the AI overview brief. Requires an OpenAI-compatible key (OPENAI_API_KEY via ctx.credentials/env). Default false (costs tokens).',
       },
-      token: {
-        type: 'string',
-        description:
-          'Optional GitHub token for private repos or draft visibility. Prefer configuring GITHUB_TOKEN via ctx.credentials; avoid passing secrets in the conversation.',
-      },
+      // 审计 H8：GitHub token 不作为工具参数暴露给模型——从凭据通道读取。
     },
     output: {
       schema: { type: 'json', description: 'Aggregated overview JSON (see render output for the actual shape)' },
@@ -119,7 +115,8 @@ export function createAppilotOverviewTool(
       const platform = detectApplePlatform(path);
       const supportedLanguages = detectLocalizedLanguages(path);
       const tags = await listGitTags(path);
-      const token = args.token || (await reader('GITHUB_TOKEN')) || null;
+      // 审计 H8：token 只从凭据通道读取，绝不接受模型传入的工具参数。
+      const token = (await reader('GITHUB_TOKEN')) || null;
       const releases = await listGitHubReleases(path, token);
       const versionTag = tags[0]?.name || '';
       const checks = runReadinessChecks({
