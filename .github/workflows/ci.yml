@@ -9,6 +9,11 @@ on:
   pull_request:
     branches: [master]
 
+# 审计 E5：同分支连续 push 取消仍在跑的旧检查，节省 runner 时长。
+concurrency:
+  group: ci-${{ github.workflow_ref }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   typecheck:
     name: Type Check
