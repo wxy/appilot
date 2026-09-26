@@ -7,7 +7,8 @@ import { listGitHubReleases } from '@appilot-labs/appilot-core/github-api';
 
 /**
  * 刷新并汇总仓库的发布状态：最近 git tag + GitHub release（公开仓库匿名可读，
- * 传 token 可看私有/草稿）。ASC 商店状态需要凭据，Phase 4 接入 ctx.credentials。
+ * token 从 ctx.credentials / 环境变量读取——审计 H8：token 不作为模型可见的
+ * 工具参数，防止落入会话转录/持久化存储）。ASC 商店状态需要凭据，Phase 4 接入。
  */
 export function createSyncReleaseStatusTool(
   reader: CredentialReader = envCredentialReader,
@@ -15,17 +16,12 @@ export function createSyncReleaseStatusTool(
   return defineTool({
   name: 'sync_release_status',
   description:
-    'Refresh and summarize release status of a repository: latest git tags and, when the remote is GitHub, published/draft releases. ASC store status needs credentials and is not checked yet.',
+    'Refresh and summarize release status of a repository: latest git tags and, when the remote is GitHub, published/draft releases. GitHub token (for private repos/draft visibility) is read from configured credentials, not from tool arguments. ASC store status needs credentials and is not checked yet.',
   parameters: {
     path: {
       type: 'string',
       required: true,
       description: 'Absolute path of the project directory.',
-    },
-    token: {
-      type: 'string',
-      description:
-        'Optional GitHub token for private repos or draft visibility. Prefer configuring GITHUB_TOKEN via ctx.credentials; avoid passing secrets in the conversation.',
     },
   },
   output: {
@@ -38,7 +34,8 @@ export function createSyncReleaseStatusTool(
     const path = resolvePath(args.path);
     const repo = await collectRepoInfo(path);
     const tags = await listGitTags(path);
-    const token = args.token || (await reader('GITHUB_TOKEN')) || null;
+    // 审计 H8：token 只从凭据通道读取，绝不接受模型传入的工具参数。
+    const token = (await reader('GITHUB_TOKEN')) || null;
     const releases = await listGitHubReleases(path, token);
     return jsonify({
       path,
