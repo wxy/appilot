@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   ]);
 
   // 1. 非 ISO before 一律拒绝（旧实现 "z" 会删光全部）
-  for (const bad of ['z', '9999', '', 'not-a-date']) {
+  for (const bad of ['z', '9999', '', 'not-a-date', '2026-02-30T00:00:00Z', '2026-09-01T00:00:00']) {
     assert.throws(
       () => svc.snapshots.prune('proj', bad),
       /ISO 8601/,
