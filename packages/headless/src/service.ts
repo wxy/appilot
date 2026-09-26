@@ -7,6 +7,23 @@
 import type { AppilotStore } from './store.js';
 import type { ProjectRow, RankSnapshotRow, TaskRow, ProjectMetaRow, ProductRecordRow, ReleaseCacheRow } from './schema.js';
 
+/** A prune boundary is an instant, never a locale-dependent or lexical string. */
+function normalizePruneBefore(value: string): string {
+  const input = String(value).trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:?\d{2}))?$/.exec(input);
+  const invalid = () => new Error(`before 必须是有效的 ISO 8601 时间（如 2026-01-01T00:00:00Z），收到："${input.slice(0, 40)}"`);
+  if (!match) throw invalid();
+  const [, year, month, day, hour, minute, second] = match;
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (y < 1 || m < 1 || m > 12 || d < 1 || d > new Date(Date.UTC(y, m, 0)).getUTCDate()) throw invalid();
+  if (hour && (Number(hour) > 23 || Number(minute) > 59 || Number(second || 0) > 59)) throw invalid();
+  const instant = new Date(input);
+  if (!Number.isFinite(instant.getTime())) throw invalid();
+  return instant.toISOString();
+}
+
 export interface HeadlessService {
   projects: {
     /** 注册/更新（stamp updatedAt）。 */
@@ -25,8 +42,16 @@ export interface HeadlessService {
       projectName: string,
       opts?: { productId?: string | null; keyword?: string; limit?: number },
     ): RankSnapshotRow[];
-    /** 清理某项目早于 beforeIso 的旧快照；返回删除行数。 */
-    prune(projectName: string, beforeIso: string): number;
+    /**
+     * 清理某项目早于 beforeIso 的旧快照；返回 { matched, removed, total }。
+     * 破坏性命令防护：before 必须是有确定时区的有效 ISO 8601 时间；未知项目报错；
+     * dryRun 只预览；单次删除超过存量 50% 需显式 force:true。
+     */
+    prune(
+      projectName: string,
+      beforeIso: string,
+      opts?: { dryRun?: boolean; force?: boolean },
+    ): { matched: number; removed: number; total: number };
   };
   tasks: {
     list(): TaskRow[];
@@ -88,7 +113,14 @@ export function createHeadlessService(store: AppilotStore): HeadlessService {
       latest: (projectName, productId) =>
         store.snapshots.latestByKey(projectName, productId ?? undefined),
       recent: (projectName, opts) => store.snapshots.recent(projectName, opts),
-      prune: (projectName, beforeIso) => store.snapshots.pruneOlderThan(projectName, beforeIso),
+      prune: (projectName, beforeIso, opts = {}) => {
+        const cutoff = normalizePruneBefore(beforeIso);
+        const result = store.snapshots.pruneChecked(projectName, cutoff, opts);
+        if (!result) {
+          throw new Error(`项目不存在：${projectName}`);
+        }
+        return result;
+      },
     },
     tasks: {
       list: () => store.tasks.all(),

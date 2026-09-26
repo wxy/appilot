@@ -41,7 +41,7 @@ export function CurationDialog({
   curation: Record<string, CurationEntry>;
   curationOpen: boolean;
   curationConfirm: null | "apply" | "discard";
-  /** 采集预算提示（如「每日 320/360 实例 · 剩余可采纳 40」）；超限建议会被自动裁剪。 */
+  /** 采集量参考提示；不限制用户的采纳选择。 */
   budgetHint?: string | null;
   onApply: (data: Record<string, CurationResolved>) => void;
   onDiscard: () => void;

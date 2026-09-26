@@ -8,7 +8,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { execFileSync } from "child_process";
-import { checkForRelease } from "../src/release-watcher";
+import { checkForRelease, countContentCommitsSince } from "../src/release-watcher";
 
 let errors = 0;
 function check(ok: boolean, msg: string) {
@@ -40,6 +40,33 @@ function commit(dir: string, file: string, message: string) {
 }
 
 async function runTests() {
+  // A published release with no copy cursor must not count historical commits.
+  {
+    const dir = setupRepo(["v2.0.0"]);
+    const published = [{
+      id: 200,
+      tag: "v2.0.0",
+      name: "v2.0.0",
+      body: "published",
+      draft: false,
+      prerelease: false,
+      createdAt: "2026-09-21T00:00:00Z",
+      publishedAt: "2026-09-21T01:00:00Z",
+      url: "https://github.com/owner/repo/releases/tag/v2.0.0",
+      viaToken: true,
+    }];
+    const atRelease = await checkForRelease(dir, null, null, {
+      sync: false, allowNetwork: false, githubReleases: published,
+    });
+    check(atRelease.latest?.material?.commits.length === 0, "已发布版本且无游标时不扫描历史提交");
+    commit(dir, "after.txt", "fix: after release");
+    const afterRelease = await checkForRelease(dir, null, null, {
+      sync: false, allowNetwork: false, githubReleases: published,
+    });
+    check(afterRelease.latest?.material?.commits.length === 1, "已发布版本只收集 tag 后的提交");
+    check(await countContentCommitsSince(dir, "v2.0.0") === 1, "总览发布计数使用完整的 tag 范围");
+  }
+
   // GitHub-first path: draft listed first, untagged draft gets gh-{id} tag.
   {
     const dir = setupRepo();

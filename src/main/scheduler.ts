@@ -997,23 +997,39 @@ async function runOpsSyncTask(store: AppStore, task: OpsSyncTask): Promise<void>
   notifyDataChanged("tasks");
 }
 
-async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promise<void> {
+const activeBuildStatusRuns = new Map<string, Promise<boolean>>();
+
+async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promise<boolean> {
+  const running = activeBuildStatusRuns.get(task.productId);
+  if (running) return running;
+  const run = executeBuildStatusTask(store, task);
+  activeBuildStatusRuns.set(task.productId, run);
+  try {
+    return await run;
+  } finally {
+    if (activeBuildStatusRuns.get(task.productId) === run) activeBuildStatusRuns.delete(task.productId);
+  }
+}
+
+async function executeBuildStatusTask(store: AppStore, task: BuildStatusTask): Promise<boolean> {
   const context = findProductContext(store.get("projects") || [], task.productId);
   const project = context?.project;
   const product = context?.product;
-  if (!project || !product?.trackId) return;
+  if (!project || !product?.trackId) return false;
   const creds = resolveEffectiveCredentials(store, project.id);
-  if (!creds.ascIssuerId || !creds.ascKeyId || !creds.ascPrivateKeyPath) return;
+  if (!creds.ascIssuerId || !creds.ascKeyId || !creds.ascPrivateKeyPath) return false;
   const fs = await import("fs");
-  const { createAscClient } = await import("@appilot-labs/appilot-core/asc-api");
+  const { ascPlatformForProduct, createAscClient } = await import("@appilot-labs/appilot-core/asc-api");
   const client = createAscClient({
     issuerId: creds.ascIssuerId,
     keyId: creds.ascKeyId,
     privateKeyPem: fs.readFileSync(creds.ascPrivateKeyPath, "utf8"),
   });
   const appId = await client.getAppIdByBundleId(product.bundleId);
-  if (!appId) return;
-  const versions = await client.listAppStoreVersions(appId);
+  if (!appId) return false;
+  const platform = ascPlatformForProduct(product.platform);
+  if (!platform) throw new Error(`Unsupported App Store platform: ${product.platform || "unknown"}`);
+  const versions = await client.listAppStoreVersions(appId, platform);
   const sorted = [...versions].sort((a, b) =>
     (b.createdDate || "").localeCompare(a.createdDate || ""),
   );
@@ -1022,7 +1038,7 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   if (latest) {
     localizations[latest.id] = await client.listVersionLocalizations(latest.id);
   }
-  const builds = await client.listBuilds(appId);
+  const builds = await client.listBuilds(appId, platform);
   const all: Record<string, any> = store.get("ascCache") || {};
   const prev = all[task.productId] || null;
   const prevStates = new Map(
@@ -1030,6 +1046,7 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   );
   all[task.productId] = {
     appId,
+    platform,
     versions: sorted,
     localizations,
     builds,
@@ -1044,6 +1061,24 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   const liveVersions = sorted.filter((v) => v.appStoreState === "READY_FOR_SALE");
   if (liveVersions.length > 0) {
     const { applyAscSnapshotToDraft } = await import("@appilot-labs/appilot-core/store-submission");
+    const initialProjects: any[] = store.get("projects") || [];
+    const relevantDrafts = initialProjects.flatMap((project) =>
+      getStoreSubmissionDrafts(project).filter((draft) => draft.productId === task.productId),
+    );
+    const versionsToSync = liveVersions.filter((live) => relevantDrafts.some((draft) =>
+      String(draft.appVersion || "").trim().replace(/^v/i, "") === live.versionString &&
+      !(prevStates.get(live.versionString) === "READY_FOR_SALE" && draft.ascSyncedAt),
+    ));
+    const localizationEntries = await Promise.all(versionsToSync.map(async (live) =>
+      [live.id, await client.listVersionLocalizations(live.id)] as const,
+    ));
+    const localizationsByVersion = new Map(localizationEntries);
+    const appInfoLocalizations = versionsToSync.length > 0
+      ? await client.listAppInfoLocalizations(appId)
+      : [];
+    // Both platforms may finish their network calls together. Re-read here
+    // and make the read-modify-write section synchronous so neither platform
+    // can overwrite the other's freshly saved draft.
     const projects: any[] = store.get("projects") || [];
     let changed = false;
     for (const project of projects) {
@@ -1053,13 +1088,13 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
         const version = String(draft.appVersion || "").trim().replace(/^v/i, "");
         const live = liveVersions.find((v) => v.versionString === version);
         if (!live) continue;
+        const ascLocalizations = localizationsByVersion.get(live.id);
+        if (!ascLocalizations) continue;
         const wasLive = prevStates.get(live.versionString) === "READY_FOR_SALE";
         if (wasLive && draft.ascSyncedAt) continue;
-        const ascLocalizations = await client.listVersionLocalizations(live.id);
         if (applyAscSnapshotToDraft(draft, ascLocalizations)) changed = true;
         // 自愈：版本级 name/subtitle 为空（商店显示回退到 App 级），用
         // appInfoLocalizations 回填名称/副标题——这才是商店实际显示的值。
-        const appInfoLocalizations = await client.listAppInfoLocalizations(appId);
         if (applyAscSnapshotToDraft(draft, appInfoLocalizations)) changed = true;
       }
     }
@@ -1071,6 +1106,7 @@ async function runBuildStatusTask(store: AppStore, task: BuildStatusTask): Promi
   task.lastStatus = "success";
   task.firstRunAt = task.firstRunAt || task.lastRunAt;
   task.nextRunAt = nextRunAt(task.id, task.intervalMinutes);
+  return true;
 }
 
 /** Run one scheduled task while preventing duplicate immediate/scheduled runs. */
@@ -1102,8 +1138,7 @@ async function runScheduledTask(
         await runOpsSyncTask(store, task as OpsSyncTask);
         return true;
       case "build-status":
-        await runBuildStatusTask(store, task as BuildStatusTask);
-        return true;
+        return runBuildStatusTask(store, task as BuildStatusTask);
       case "rank":
         await runRankTask(store, task as RankScheduledTask);
         return true;
@@ -1221,7 +1256,16 @@ export async function runOpsSyncNow(projectId: string): Promise<boolean> {
 
 export async function runBuildStatusNow(productId: string): Promise<boolean> {
   const store = await getStore();
-  return runTaskById(store, buildStatusTaskId(productId));
+  // A user-initiated check is independent of whether the optional hourly
+  // scheduler task exists or is enabled. Same-product checks join one run;
+  // iOS and macOS retain separate product IDs and can run concurrently.
+  const task = seedScheduledTask(store.get("scheduledTasks") || [], {
+    id: buildStatusTaskId(productId),
+    kind: "build-status",
+    productId,
+    intervalMinutes: 60,
+  }) as BuildStatusTask;
+  return runBuildStatusTask(store, task);
 }
 
 /** Trigger any scheduled task to run immediately (by its ID). */

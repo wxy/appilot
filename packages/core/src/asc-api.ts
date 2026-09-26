@@ -8,6 +8,7 @@ export interface AscCredentials {
 
 export interface AscVersion {
   id: string;
+  platform?: AscPlatform | null;
   versionString: string;
   appStoreState: string;
   createdDate: string | null;
@@ -33,6 +34,27 @@ export interface AscBuild {
   uploadedDate: string | null;
   /** Filled in a later milestone after verifying the beta review endpoint. */
   betaReviewState: string | null;
+}
+
+export type AscPlatform = "IOS" | "MAC_OS" | "TV_OS" | "VISION_OS";
+
+export function ascPlatformForProduct(platform?: string | null): AscPlatform | null {
+  switch (platform) {
+    case "ios": return "IOS";
+    case "macos": return "MAC_OS";
+    case "tvos": return "TV_OS";
+    case "visionos": return "VISION_OS";
+    default: return null;
+  }
+}
+
+/** Reject legacy unscoped snapshots when more than one platform shares a project. */
+export function scopedAscSnapshotForProduct(products: any[], product: any, snapshot: any): any | null {
+  if (!snapshot || !product) return null;
+  const platform = ascPlatformForProduct(product.platform);
+  if (!platform) return null;
+  if (snapshot.platform) return snapshot.platform === platform ? snapshot : null;
+  return products.length === 1 ? snapshot : null;
 }
 
 export interface AscReviewDetail {
@@ -94,7 +116,11 @@ export function createAscClient(credentials: AscCredentials) {
     if (res.status === 401) throw new Error("App Store Connect 凭据无效（401）");
     if (res.status === 403) throw new Error("App Store Connect 密钥角色权限不足（403）");
     if (res.status === 429) throw new Error("App Store Connect API 频率受限（429）");
-    if (!res.ok) throw new Error(`App Store Connect API ${res.status}`);
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      const detail = String(payload?.errors?.[0]?.detail || payload?.errors?.[0]?.title || "").trim().slice(0, 240);
+      throw new Error(`App Store Connect API ${res.status}${detail ? `：${detail}` : ""}`);
+    }
     return res.json();
   };
 
@@ -104,10 +130,12 @@ export function createAscClient(credentials: AscCredentials) {
       const app = Array.isArray(data?.data) ? data.data[0] : null;
       return app?.id || null;
     },
-    async listAppStoreVersions(appId: string): Promise<AscVersion[]> {
-      const data = await get(`/apps/${encodeURIComponent(appId)}/appStoreVersions?include=build&limit=50`);
+    async listAppStoreVersions(appId: string, platform?: AscPlatform | null): Promise<AscVersion[]> {
+      const filter = platform ? `&filter[platform]=${platform}` : "";
+      const data = await get(`/apps/${encodeURIComponent(appId)}/appStoreVersions?include=build&limit=50${filter}`);
       return (Array.isArray(data?.data) ? data.data : []).map((item: any) => ({
         id: item.id,
+        platform: item.attributes?.platform || null,
         versionString: item.attributes?.versionString || "",
         appStoreState: item.attributes?.appStoreState || "",
         createdDate: item.attributes?.createdDate || null,
@@ -154,8 +182,11 @@ export function createAscClient(credentials: AscCredentials) {
         };
       });
     },
-    async listBuilds(appId: string): Promise<AscBuild[]> {
-      const data = await get(`/apps/${encodeURIComponent(appId)}/builds?limit=50`);
+    async listBuilds(appId: string, platform?: AscPlatform | null): Promise<AscBuild[]> {
+      const filter = platform ? `&filter[preReleaseVersion.platform]=${platform}` : "";
+      // The app relationship endpoint does not accept this platform filter.
+      // Use the global builds collection with both app and platform filters.
+      const data = await get(`/builds?filter[app]=${encodeURIComponent(appId)}&limit=50${filter}`);
       return (Array.isArray(data?.data) ? data.data : []).map((item: any) => ({
         id: item.id,
         version: item.attributes?.version || "",

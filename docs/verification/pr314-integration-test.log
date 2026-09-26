@@ -1,0 +1,1279 @@
+
+> appilot@1.2.0 test
+> npm run build:core && npm run build:plugins && npm test -w @appilot-labs/appilot-project && npm test -w @appilot-labs/appilot-release && npm test --workspace=@appilot-labs/appilot-core && tsx tests/keynote-automation.test.ts && tsx tests/action-registry.test.ts && tsx tests/asc-key-file.test.ts && tsx tests/asc-status.test.ts && tsx tests/brief-session-management.test.ts && tsx tests/brief-rank-data.test.ts && tsx tests/electron-task-policy.test.ts && tsx tests/hup-restart.test.ts && tsx tests/format.test.ts && tsx tests/matrix-helpers.test.ts && tsx tests/matrix.test.ts && tsx tests/data-retention.test.ts && tsx tests/ai-empty-retry.test.ts && tsx tests/ai-stream-retry.test.ts && tsx tests/overview-brief.test.ts && tsx tests/overview-data.test.ts && tsx tests/release-format.test.ts && tsx tests/release-summary.test.ts && tsx tests/schedule-ops.test.ts && tsx tests/schedule.test.ts && tsx tests/scheduler-status.test.ts && tsx tests/daemon-startup.test.ts && tsx tests/store-submission.test.ts && tsx tests/task-cleanup.test.ts && tsx tests/execution-stats.test.ts && tsx tests/task-grouping.test.ts && tsx tests/util.test.ts && tsx tests/url-policy.test.ts && tsx tests/screenshot-paths.test.ts && tsx tests/rank-db-sync.test.ts && tsx tests/task-db-sync.test.ts && tsx tests/rich-data-sync.test.ts && tsx tests/release-cache-sync.test.ts && tsx tests/kv-blob-mirror.test.ts && tsx tests/task-project-ref.test.ts && tsx tests/phase3-executions-read.test.ts && tsx tests/tasks-lossless.test.ts && tsx tests/phase3-executions.test.ts && tsx tests/project-write-sync.test.ts && tsx tests/project-list-merge.test.ts && tsx tests/project-selection.test.ts && tsx tests/promotion-campaign-merge.test.ts && tsx tests/promotion-store-links.test.ts && tsx tests/phase2-dualwrite.test.ts && tsx tests/project-db-view.test.ts && tsx tests/kv-migrate.test.ts && tsx tests/registry-sync-core.test.ts && tsx tests/rank-backfill.test.ts && tsx tests/task-center-db.test.ts && tsx tests/rank-matrix.test.ts && npm test --workspace=@appilot-labs/appilot-headless && npm test --workspace=@appilot-labs/appilot-scheduler && npm test --workspace=@appilot-labs/appilot-headless-cli && npm test --workspace=@appilot-labs/appilot-mcp
+
+
+> appilot@1.2.0 build:core
+> npm run build --workspace=@appilot-labs/appilot-core && npm run build --workspace=@appilot-labs/appilot-headless && npm run build --workspace=@appilot-labs/appilot-scheduler && npm run build --workspace=@appilot-labs/appilot-headless-cli && npm run build --workspace=@appilot-labs/appilot-mcp
+
+
+> @appilot-labs/appilot-core@1.2.0 build
+> tsc -p tsconfig.json
+
+
+> @appilot-labs/appilot-headless@1.2.0 build
+> tsc -p tsconfig.json
+
+
+> @appilot-labs/appilot-scheduler@1.2.0 build
+> tsc -p tsconfig.json
+
+
+> @appilot-labs/appilot-headless-cli@1.2.0 build
+> tsc -p tsconfig.json
+
+
+> @appilot-labs/appilot-mcp@1.2.0 build
+> tsc -p tsconfig.json
+
+
+> appilot@1.2.0 build:plugins
+> npm run build -w @appilot-labs/appilot-common && npm run build -w @appilot-labs/appilot-project && npm run build -w @appilot-labs/appilot-release && npm run build -w @appilot-labs/appilot
+
+
+> @appilot-labs/appilot-common@1.2.0 build
+> tsc -p tsconfig.json
+
+
+> @appilot-labs/appilot-project@1.2.0 build
+> tsc -p tsconfig.json
+
+
+> @appilot-labs/appilot-release@1.2.0 build
+> tsc -p tsconfig.json
+
+
+> @appilot-labs/appilot@1.2.0 build
+> tsc -p tsconfig.json && npm run build:client
+
+
+> @appilot-labs/appilot@1.2.0 build:client
+> node ./scripts/build-client.mjs
+
+tailwind css → /Users/xingyuwang/.codex/worktrees/audit-pr-312-review/appilot/plugins/dsh-appilot/client/.build/overview.css (59 KB)
+client built → /Users/xingyuwang/.codex/worktrees/audit-pr-312-review/appilot/plugins/dsh-appilot/client/client.js (21 KB)
+
+> @appilot-labs/appilot-project@1.2.0 test
+> tsx tests/*.test.ts
+
+✅ PASS: resolve_current_project resolves fixture repo + github url
+✅ PASS: resolve_current_project defaults to cwd
+✅ PASS: get_project_context builds profile + prompt block
+✅ PASS: register_project saves a project record
+✅ PASS: list_projects returns the registered project
+
+🎉 All @appilot-labs/appilot-project tool tests passed!
+
+> @appilot-labs/appilot-release@1.2.0 test
+> tsx tests/*.test.ts
+
+✅ PASS: get_release_draft returns latest tag + head info
+✅ PASS: get_release_draft resolves by registered project name
+✅ PASS: get_release_draft rejects unknown project name
+✅ PASS: check_release_readiness returns checks array
+✅ PASS: sync_release_status returns latest tag + release list
+✅ PASS: generate_store_copy fails cleanly without credentials
+✅ PASS: revise_store_copy fails cleanly without credentials
+
+🎉 All @appilot-labs/appilot-release tool tests passed!
+
+> @appilot-labs/appilot-core@1.2.0 test
+> for f in tests/*.test.ts; do echo "== $f"; tsx "$f" || exit 1; done
+
+== tests/ai-provider.test.ts
+✅ PASS: constructor: model stored
+✅ PASS: constructor: baseURL stored
+✅ PASS: constructor: totalUsage starts null
+✅ PASS: ChatMessage: can build message array
+✅ PASS: ChatMessage: system role
+✅ PASS: ChatMessage: user role
+✅ PASS: auth error: non-retryable
+✅ PASS: rate limit error: retryable
+✅ PASS: local provider: model
+✅ PASS: local provider: ollama URL
+✅ PASS: deepseek provider: model
+
+🎉 All AI provider tests passed!
+== tests/ai-request.test.ts
+✅ PASS: archive: system + user messages
+✅ PASS: archive: roles
+✅ PASS: archive: stable block is the system prefix
+✅ PASS: archive: task instructions appended after archive
+✅ PASS: archive: volatile task data stays in the user message only
+✅ PASS: archive: same profile yields byte-identical prefix
+✅ PASS: archive: prefix shared even when task instructions differ
+✅ PASS: no profile: system is task instructions only
+✅ PASS: no profile: fallback identity + task lines in user message
+
+All ai-request tests passed ✅
+== tests/app-store-discovery.test.ts
+✅ PASS: detect: iphoneos → ios
+✅ PASS: detect: macosx → macos
+✅ PASS: detect: macos wins over ios
+✅ PASS: detect: non-Apple → null
+✅ PASS: discover: apps.apple.com id+mt
+✅ PASS: discover: itunes.apple.com id
+✅ PASS: discover: no README → null
+✅ PASS: discover: no link → null
+✅ PASS: extract: 3 storefront links
+✅ PASS: extract: country codes preserved
+✅ PASS: extract: trackId captured
+✅ PASS: localize: maps all four links
+✅ PASS: localize: us iOS listed
+✅ PASS: localize: us macOS also listed
+✅ PASS: localize: cn → 中国大陆
+✅ PASS: localize: jp → 日本
+✅ PASS: detect languages: .lproj + plist merged
+✅ PASS: detect languages: .xcstrings parsed
+
+🎉 All app-store discovery tests passed!
+== tests/app-store-lookup-timeout.test.ts
+app-store lookup 超时/编码契约测试全部通过 ✓
+== tests/asc-api.test.ts
+✅ PASS: ascJwt 生成 ES256 JWT（header/payload 正确，签名 64 字节）
+✅ PASS: 多平台项目拒绝旧版无平台 ASC 快照
+✅ PASS: getAppIdByBundleId 解析 app id
+✅ PASS: listAppStoreVersions 解析版本与 buildId
+✅ PASS: 版本请求按 macOS 平台过滤
+✅ PASS: listVersionLocalizations 解析本地化字段
+✅ PASS: listAppInfoLocalizations 解析 App 级名称/副标题
+✅ PASS: appInfos 端点被调用
+✅ PASS: listBuilds 解析构建状态
+✅ PASS: 构建请求按 macOS 平台过滤
+✅ PASS: 构建请求使用支持双重过滤的全局端点
+✅ PASS: 产品平台映射到 ASC 平台
+✅ PASS: bundleId 查询参数正确
+✅ PASS: ASC 400 返回具体错误信息供按钮展示
+== tests/audit.test.ts
+✅ PASS: sortLanguageCodes prioritizes English and zh-Hans
+✅ PASS: sortLanguageCodes keeps unknown languages last
+🎉 All audit utility tests passed!
+== tests/build-status.test.ts
+✅ PASS: PROCESSING → processing
+✅ PASS: VALID → available
+✅ PASS: FAILED → rejected
+✅ PASS: beta IN_REVIEW → inBetaReview
+✅ PASS: beta APPROVED → available
+✅ PASS: 空值 → unknown
+✅ PASS: available 有 info 建议
+✅ PASS: rejected 有 warning 建议
+✅ PASS: 按 buildId 匹配到可用构建
+✅ PASS: 未匹配构建 → unknown
+✅ PASS: 无版本 → null
+done
+== tests/competitor-delta.test.ts
+✅ PASS: delta 返回竞品名
+✅ PASS: delta 含版本变化
+✅ PASS: delta 含 star 增量
+✅ PASS: 无快照返回 null
+✅ PASS: 无变化返回 null
+done
+== tests/competitor-radar.test.ts
+✅ PASS: createCompetitor 生成稳定 id
+✅ PASS: 竞品名称归一化（去空格/小写）
+✅ PASS: 旧数据迁移：trackId+platform 填入按平台字段
+✅ PASS: 按平台取 trackId（未上架平台为 null）
+✅ PASS: 只返回已上架平台
+✅ PASS: 双平台 trackIds 分别取用
+✅ PASS: 同名竞品查找（忽略大小写/空格）
+✅ PASS: 不同名不误合并
+
+🎉 All competitor-radar tests passed!
+✅ PASS: 排除自己（trackId/bundleId）
+✅ PASS: 候选带来源商店
+✅ PASS: 候选带平台标记（默认 software → ios）
+✅ PASS: 候选带截图与副标题
+✅ PASS: macSoftware 搜索候选标记为 macos
+✅ PASS: 多商店合并：跨商店出现优先、平均排名靠前优先
+✅ PASS: 跨商店竞品记录出现商店与各商店排名
+✅ PASS: 本地竞品标记来源商店
+✅ PASS: 403 冒泡（across 不静默吞 403）
+✅ PASS: 快照解析 lookup + GitHub stars/releases
+✅ PASS: 快照 date 为当天
+✅ PASS: 快照记录来源商店
+✅ PASS: 快照记录平台
+== tests/copy-plan.test.ts
+copy plan tests passed
+== tests/errors.test.ts
+✅ PASS: AppError (via EngineError) is an Error
+✅ PASS: EngineError instanceof AppError
+✅ PASS: AppError.message preserved
+✅ PASS: AppError.code set
+✅ PASS: AppError.context preserved
+✅ PASS: isAppError returns true for AppError subclass
+✅ PASS: isAppError returns false for plain Error
+✅ PASS: isAppError returns false for string
+✅ PASS: EngineError is an AppError
+✅ PASS: EngineError is an EngineError
+✅ PASS: EngineError.code set
+✅ PASS: ApiError is an AppError
+✅ PASS: ApiError.statusCode
+✅ PASS: ApiError.retryable = true for 429
+✅ PASS: ApiError.retryable = true for 500
+✅ PASS: ApiError.retryable = false for 404
+✅ PASS: apiErrorFromStatus 429 → retryable
+✅ PASS: apiErrorFromStatus preserves status
+✅ PASS: apiErrorFromStatus 500 → retryable
+✅ PASS: apiErrorFromStatus 404 → not retryable
+✅ PASS: formatError returns AppError.message
+✅ PASS: formatError returns Error.message
+✅ PASS: formatError returns string as-is
+✅ PASS: formatError stringifies numbers
+✅ PASS: Error has stack trace
+✅ PASS: Stack includes test file
+
+🎉 All error handling tests passed!
+== tests/feedback-inbox.test.ts
+✅ PASS: normalizeIssue 映射 source/sourceId
+✅ PASS: normalizeIssue 保留 url/state
+✅ PASS: merge 按 source+sourceId 去重
+✅ PASS: merge 按 createdAt 倒序（最新在前）
+✅ PASS: merge 重复条目取较新的状态
+✅ PASS: fetchIssues 过滤 PR
+== tests/git-info.test.ts
+✅ PASS: https remote with .git is normalized
+✅ PASS: git@ SSH remote is normalized
+✅ PASS: ssh:// remote is normalized
+✅ PASS: trailing slash is stripped
+✅ PASS: non-GitHub remote returns null
+✅ PASS: empty remote returns null
+✅ PASS: null remote returns null
+✅ PASS: origin remote detected
+✅ PASS: GitHub URL derived from remote
+✅ PASS: branch field present (may be null on detached HEAD)
+✅ PASS: HEAD short sha detected
+✅ PASS: HEAD message detected
+✅ PASS: HEAD date is ISO
+✅ PASS: dirty flag is boolean
+✅ PASS: capturedAt set
+
+All git-info tests passed ✅
+== tests/github-api.test.ts
+✅ PASS: release fetched
+✅ PASS: release viaToken flag
+✅ PASS: release fetch carries the token
+✅ PASS: onStats reports response bytes
+✅ PASS: 404 release → null
+✅ PASS: PR enriched from GitHub
+✅ PASS: PR fetch carries the token
+✅ PASS: same token reuses the PR cache
+✅ PASS: different token bypasses the PR cache
+✅ PASS: rejected token retries anonymously
+✅ PASS: anonymous fallback flags viaToken=false
+✅ PASS: anonymous retry sends no Authorization header
+✅ PASS: merged PR list filters by merged_at cutoff
+✅ PASS: merged PR list carries titles
+✅ PASS: merged PR list carries commit counts
+✅ PASS: merged PR list fetches per-PR commit shas
+✅ PASS: merged PR commit shas parsed
+✅ PASS: merged PR list cached per repo+cutoff+token
+✅ PASS: different token bypasses the merged PR cache
+✅ PASS: releases list includes drafts
+✅ PASS: releases sorted newest-first
+✅ PASS: rejected token retries anonymously
+✅ PASS: anonymous release fallback flags viaToken=false
+✅ PASS: repo capabilities report push access
+✅ PASS: classic token kind detected from x-oauth-scopes
+✅ PASS: repo capabilities report missing push access
+✅ PASS: read-only classic token still detected as classic
+✅ PASS: fine-grained Contents: write sees drafts
+✅ PASS: fine-grained write permission parsed
+✅ PASS: fine-grained Contents: read hides drafts
+✅ PASS: fine-grained read permission parsed
+
+🎉 All github-api tests passed!
+== tests/github-merged-prs.test.ts
+github merged-PR 窗口契约测试全部通过 ✓
+== tests/github-releases.test.ts
+✅ PASS: list parsed
+✅ PASS: newest first by created_at
+✅ PASS: draft flag parsed
+✅ PASS: untagged draft keeps tag null
+✅ PASS: draft name parsed
+✅ PASS: publishedAt parsed
+✅ PASS: url parsed
+✅ PASS: viaToken true with token
+✅ PASS: list carries Bearer token
+✅ PASS: per_page=30 requested
+✅ PASS: onStats reports response bytes
+✅ PASS: anonymous list has no Authorization header
+✅ PASS: anonymous viaToken false
+✅ PASS: 404 → empty (private repo degradation)
+✅ PASS: store lookup version parsed
+✅ PASS: release date parsed
+✅ PASS: country param passed
+✅ PASS: per-storefront description parsed
+✅ PASS: per-storefront release notes parsed
+✅ PASS: per-storefront version parsed
+✅ PASS: per-storefront trackName parsed
+✅ PASS: store lookup failure → null
+✅ PASS: localized copy failure → null
+done
+== tests/github-repo-metrics.test.ts
+✅ PASS: issues: search query scopes to repo + is:issue
+✅ PASS: issues: search query scopes to repo + is:issue
+✅ PASS: issues: open/closed totals parsed
+✅ PASS: issues: token header attached
+✅ PASS: issues: exactly two search calls (open + closed)
+✅ PASS: issues: in-process cache avoids refetch
+✅ PASS: issues: failure degrades to null (no throw)
+✅ PASS: issues: 404 degrades to null
+✅ PASS: pulls: since-boundary uses state=all
+✅ PASS: pulls: since-boundary uses state=all
+✅ PASS: pulls: counts 150 PRs since boundary (got 150)
+✅ PASS: pulls: stops paging once a page falls below the cutoff
+✅ PASS: pulls: token header attached
+✅ PASS: pulls: no-since uses state=open
+✅ PASS: pulls: no since → total open PRs (got 3)
+✅ PASS: pulls: 403 degrades to null
+✅ PASS: pulls: network failure degrades to null
+
+🎉 All github-repo-metrics tests passed!
+== tests/keyword-curation.test.ts
+✅ PASS: parseKeywordCuration reads removals and adds
+✅ PASS: parseKeywordCuration unwraps markdown fences
+✅ PASS: parseKeywordCuration caps removals at 20 and adds at 30
+✅ PASS: parseKeywordCuration tolerates missing fields
+✅ PASS: curation evidence is scoped to product snapshots and platform review state
+✅ PASS: high-load curation prompt requests evidence-based cleanup without blocking adds
+🎉 All keyword-curation tests passed!
+== tests/keyword-suggester.test.ts
+✅ PASS: parse: 2 tracking keywords
+✅ PASS: parse: tracking keyword
+✅ PASS: parse: tracking rationale
+✅ PASS: parse: defaults language to en
+✅ PASS: parse: markdown fence unwrapped
+✅ PASS: parse: ignores surrounding prose
+✅ PASS: parse: empty object
+✅ PASS: parse: caps at 30
+✅ PASS: parse: keeps local language
+✅ PASS: parse: keeps English language
+✅ PASS: parse: keeps translation when provided
+✅ PASS: parse: ignores submission field
+✅ PASS: parse: no submission in result
+
+🎉 All keyword-suggester tests passed!
+== tests/overview-summary.test.ts
+✅ PASS: computeRankMovers: drop delta is negative
+✅ PASS: computeRankMovers: prev/current ranks
+✅ PASS: computeRankMovers: new entry has null delta
+✅ PASS: computeRankMovers: outside window excluded
+✅ PASS: buildBriefInput: name
+✅ PASS: buildBriefInput: keyword stats
+✅ PASS: buildBriefInput: null and ranked snapshots both count as completed checks
+✅ PASS: buildBriefInput: ranked/top10 from snapshots (night walk best #5 in window)
+✅ PASS: buildBriefInput: active and paused keyword inventory
+✅ PASS: buildBriefInput: removed keyword inventory
+✅ PASS: buildBriefInput: English query coverage exposes all storefronts
+✅ PASS: buildBriefInput: latest per-storefront rank detail
+✅ PASS: buildBriefInput: movers only include active tracked keywords
+✅ PASS: buildBriefInput: significant rank drop becomes a detected issue
+✅ PASS: buildBriefInput: incomplete localization becomes a detected issue
+✅ PASS: buildBriefInput: release tag
+✅ PASS: buildBriefInput: submission keyword count
+✅ PASS: buildBriefInput: competitor context is preserved
+✅ PASS: buildBriefInput: empty keyword coverage becomes a high severity issue
+✅ PASS: buildBriefInput: distinguishes checked-but-unranked from missing collection
+✅ PASS: buildBriefInput: checked-but-unranked becomes a ranking issue
+✅ PASS: buildBriefInput: checked-but-unranked is not labeled a broken data pipeline
+
+All overview-summary tests passed ✅
+== tests/pre-release.test.ts
+🎉 All pre-release tests passed!
+== tests/project-profile.test.ts
+✅ PASS: profile: identity fields
+✅ PASS: profile: related platforms are normalized and exclude the target
+✅ PASS: profile: languages
+✅ PASS: profile: store dedupe
+✅ PASS: profile: paused excluded, stable alphabetical order
+✅ PASS: prompt block: name
+✅ PASS: prompt block: description
+✅ PASS: prompt block: related platforms
+✅ PASS: prompt block: storefronts
+✅ PASS: prompt block: keywords
+✅ PASS: prompt block: full readme
+✅ PASS: prompt block: release history
+✅ PASS: prompt block: deterministic across builds
+✅ PASS: archive: byte-stable across builds
+✅ PASS: archive: shared header first
+✅ PASS: profile: empty-safe
+✅ PASS: profile: readme/history empty-safe
+
+All project-profile tests passed ✅
+== tests/project-sync.test.ts
+✓ 本地 tag 提取 + 摘要（无 remote → releases 空）
+✓ fetchRemote 无 remote 安全降级
+✓ inspectProjectRelease 深度链（无 remote/token 降级）
+project-sync 单测全部通过 ✓
+== tests/promotion-ai.test.ts
+promotion AI request boundaries passed ✓
+== tests/promotion-series-length-repair.test.ts
+promotion AI length repair tests passed ✓
+== tests/promotion.test.ts
+promotion domain normalization and status passed ✓
+== tests/rank-budget.test.ts
+✅ PASS: en 全局词成本 = 全部本地化商店之和
+✅ PASS: de 词成本 = de 本地化商店数
+✅ PASS: en 全局词比单语言词贵
+✅ PASS: 暂停/待复核关键词不计入活跃数
+✅ PASS: 每日实例 = 活跃词成本之和（en + de）
+✅ PASS: 预算内状态 ok
+✅ PASS: 超参考线仍采纳所有非重复词
+✅ PASS: 采纳后采集量估算包含全部所选词
+✅ PASS: 采集量可以超过高负载参考线
+✅ PASS: 只过滤已有词和本批重复词
+✅ PASS: 超参考线仍完整计入状态
+✅ PASS: 软提醒线 < 高负载参考线
+
+🎉 All rank budget tests passed!
+== tests/rank-collector.test.ts
+
+🎉 All rank collector tests passed!
+== tests/rank-diagnostic.test.ts
+rank diagnostic tests passed
+== tests/rank-keywords.test.ts
+✅ PASS: normalizeTrackedKeyword fills defaults
+✅ PASS: enrichKeywordFromSnapshots computes bestRank and lastSeenAt
+✅ PASS: evaluatePause flags pending-pause after consecutive misses in every mature storefront
+✅ PASS: evaluatePause only counts snapshots after `since` (review/resume baseline)
+🎉 All rank-keywords tests passed!
+== tests/rank-snapshots.test.ts
+✅ PASS: appendRankSnapshots dedupes by exact key (incoming wins)
+✅ PASS: appendRankSnapshots keeps only the newest per key
+✅ PASS: appendRankSnapshots drops snapshots outside the 90-day window
+🎉 All rank-snapshots tests passed!
+== tests/readiness-check.test.ts
+✅ PASS: 字段限制常量正确
+✅ PASS: 字段恰好达到上限时允许确定
+✅ PASS: 可取得确认动作所需的超限字段详情
+✅ PASS: 完备输入全部 pass
+✅ PASS: Promotional Text 超限 → fail
+✅ PASS: 缺少本地化 → warning
+✅ PASS: 版本号不一致 → fail
+✅ PASS: 无 ASC 版本 → unknown
+✅ PASS: 未挂载构建 → fail
+done
+== tests/release-copy-plan.test.ts
+release copy-plan tests passed
+== tests/release-material.test.ts
+✅ PASS: merge pull request detected
+✅ PASS: merge branch detected
+✅ PASS: normal commit not detected
+✅ PASS: first run: named by newest main-line tag
+✅ PASS: first run: source git-tag
+✅ PASS: first run: material covers history
+✅ PASS: first run: boundary captured
+✅ PASS: no changes: identity stable
+✅ PASS: no changes: empty material
+✅ PASS: new commits: identity stays the latest tag
+✅ PASS: new commits: source git-tag
+✅ PASS: untagged: material only since boundary
+✅ PASS: tagged: tag names candidate
+✅ PASS: backport: v1.0.1 filtered off the main line
+✅ PASS: old tag on generated history: not chosen as the name
+✅ PASS: old tag on generated history: newest ungenerated tag still wins
+✅ PASS: moved tag: still names the candidate
+✅ PASS: moved tag: material includes post-move commits
+✅ PASS: merge commit excluded from material
+✅ PASS: branch content commit kept in material
+✅ PASS: merge-derived PR extracted when its commits are inside the range
+✅ PASS: collectReleaseMaterial: commits since boundary
+✅ PASS: collectReleaseMaterial: PR ref extracted
+✅ PASS: collectReleaseMaterial: sinceDate populated
+✅ PASS: filterMaterial: only included commits kept
+✅ PASS: filterMaterial: PR list re-derived
+✅ PASS: materialToBody: GitHub release announcement included
+✅ PASS: filterMaterial: GitHub release preserved after filtering
+✅ PASS: PR fully covered by the previous boundary is excluded
+✅ PASS: fetch: tag absent before sync
+✅ PASS: fetch: remote sync succeeded
+✅ PASS: fetch: tag synced from remote
+✅ PASS: sync: local repo updated
+✅ PASS: sync: local main fast-forwarded to origin tip
+✅ PASS: sync: dirty working tree not fast-forwarded
+✅ PASS: sync: material includes remote commits with a dirty local branch
+✅ PASS: multi-line body: both commits parsed
+✅ PASS: multi-line body: dates preserved
+✅ PASS: multi-line body: body text captured
+✅ PASS: no tags: head-named candidate
+✅ PASS: no tags: source git-commits
+✅ PASS: no tags: identity stays head-named
+✅ PASS: no tags: material since boundary
+
+All release-material tests passed ✅
+== tests/release-reviewer.test.ts
+✅ PASS: normalizeLocalizedStoreCopy clamps fields to limits
+✅ PASS: normalizeLocalizedStoreCopy prefixes promotional text with '> '
+✅ PASS: normalizeLocalizedStoreCopy falls back to the brand name
+✅ PASS: normalizeLocalizedStoreCopy tolerates missing fields
+✅ PASS: validateTranslatedCopy rejects source-language echo (Russian ← Chinese)
+✅ PASS: validateTranslatedCopy accepts real Russian
+🎉 All release-reviewer utility tests passed!
+== tests/release-watcher-cache.test.ts
+✅ PASS: matching githubCache performs no GitHub API calls
+✅ PASS: cached release body is used
+✅ PASS: cached PR info is used
+✅ PASS: 另一平台游标的 PR 缓存不混入当前平台
+✅ PASS: without cache, PR info is fetched
+✅ PASS: PR fetch carries the token
+✅ PASS: fetched PR title replaces the local fallback
+✅ PASS: same token reuses the PR cache
+✅ PASS: different token bypasses the PR cache (token-aware key)
+✅ PASS: empty cached PR list triggers a fresh PR fetch
+✅ PASS: force check refetches PRs even with a matching cache
+
+🎉 All release-watcher cache tests passed!
+== tests/release-watcher-frontier.test.ts
+release-watcher frontier 回归测试全部通过 ✓
+== tests/release-watcher-github.test.ts
+✅ PASS: 已发布版本且无游标时不扫描历史提交
+✅ PASS: 已发布版本只收集 tag 后的提交
+✅ PASS: 总览发布计数使用完整的 tag 范围
+✅ PASS: GitHub-first: 2 candidates
+✅ PASS: draft 优先排在前面
+✅ PASS: 未打 tag 的草案回退 gh-{id}
+✅ PASS: 草案 githubDraft=true
+✅ PASS: 草案 source=github-release
+✅ PASS: 草案 name 保留
+✅ PASS: 已发布 release tag 保留
+✅ PASS: 已发布 githubDraft=false
+✅ PASS: GitHub 公告写入 material
+✅ PASS: latest 为最新草案
+✅ PASS: GitHub 草案始终仅收集上次已发布 tag 后的提交
+✅ PASS: 草案素材不包含 v1.1.2 及更早历史
+✅ PASS: 草案素材只包含新的 2 个 PR
+✅ PASS: 无 GitHub 数据 → 本地 tag 候选
+✅ PASS: 降级后 source=git-tag
+✅ PASS: 降级后 githubDraft=null（未知）
+✅ PASS: 未被 GitHub 覆盖的主线 tag 被补充
+✅ PASS: 补充项标记为本地标签
+✅ PASS: GitHub release 排在前
+✅ PASS: 工作台本地载入不访问 GitHub
+✅ PASS: 工作台本地载入保留上次 GitHub 发布快照
+done
+== tests/release-watcher-mainline.test.ts
+✅ PASS: 主分支上的新 tag 在功能分支 checkout 下也能被检测到
+done
+== tests/screenshot-material.test.ts
+All screenshot material tests passed ✅
+== tests/storefronts.test.ts
+✅ PASS: zh-Hans maps to cn
+✅ PASS: zh-Hans does not map to us
+✅ PASS: de defaults to de
+✅ PASS: zh-Hans is allowed in cn
+✅ PASS: zh-Hans is not allowed in us
+✅ PASS: English is allowed in cn
+✅ PASS: English is allowed in es
+
+🎉 All storefront tests passed!
+== tests/submission-candidates.test.ts
+✅ PASS: parseSubmissionCandidates reads candidates with source
+✅ PASS: parseSubmissionCandidates unwraps fences and defaults source to name
+✅ PASS: parseSubmissionCandidates caps at 20 and tolerates missing
+🎉 All submission-candidates tests passed!
+== tests/version-status.test.ts
+✅ PASS: 空版本 → unknown
+✅ PASS: 空白版本 → 未确认
+✅ PASS: 无任何来源 → none
+✅ PASS: IN_DEVELOPMENT → in-development
+✅ PASS: IN_DEVELOPMENT label
+✅ PASS: WAITING_FOR_REVIEW → waiting-review
+✅ PASS: IN_REVIEW → in-review
+✅ PASS: READY_FOR_SALE → 已上架/emerald/asc
+✅ PASS: REJECTED → rejected
+✅ PASS: DEVELOPER_REJECTED → rejected
+✅ PASS: ASC 无匹配 → not-in-asc
+✅ PASS: ASC 空列表 → not-in-asc
+✅ PASS: not-in-asc 来源为 asc
+✅ PASS: 未知 ASC 状态 → unknown（source=asc）
+✅ PASS: 商店当前版本命中 → store-live
+✅ PASS: store-live 来源为 store-lookup
+✅ PASS: 商店当前版本不匹配 → unknown（不否定）
+✅ PASS: 无商店数据 → unknown
+✅ PASS: ASC 优先于商店查询
+✅ PASS: 商店当前版本 = 最新 READY_FOR_SALE（排除审核中）
+✅ PASS: 单个已上架版本
+✅ PASS: 无已上架版本 → null
+✅ PASS: 空列表 → null
+✅ PASS: null → null
+✅ PASS: createdDate 缺失仍可返回版本
+done
+All Keynote automation tests passed ✅
+action registry tests passed
+✅ PASS: copy: new key is copied into keys dir
+✅ PASS: copy: destination lives in keys dir
+✅ PASS: dedupe: identical content reuses the existing copy
+✅ PASS: dedupe: identical content does not create a second file
+✅ PASS: same-name different content: returns a new path
+✅ PASS: same-name different content: both copies kept
+✅ PASS: same-name different content: new copy contains the new key
+✅ PASS: different key: separate managed copy
+✅ PASS: already-managed path: returned as-is without copying
+✅ PASS: new copy permission is 0600 (got 600)
+✅ PASS: replacement copy permission is 0600 (got 600)
+✅ PASS: different key copy permission is 0600 (got 600)
+✅ PASS: dedupe hit again
+✅ PASS: dedupe hit re-tightens loose permission to 0600
+✅ PASS: already-managed path reused
+✅ PASS: already-managed path re-tightens loose permission
+✅ PASS: already-managed path rejects chmod failure
+✅ PASS: dedupe hit rejects chmod failure
+✅ PASS: new copy rejects chmod failure
+✅ PASS: new copy leaves no partial managed key after chmod failure
+
+🎉 All asc-key-file tests passed!
+✅ PASS: READY_FOR_SALE → 已上架
+✅ PASS: IN_REVIEW → amber
+✅ PASS: REJECTED → red
+✅ PASS: 未知状态回退原值
+✅ PASS: null → null
+✅ PASS: undefined → null
+done
+brief session management tests passed
+brief rank data tests passed
+electron-task-policy 单测全部通过 ✓
+SIGHUP 重启单测全部通过 ✓
+✅ PASS: languageLabel maps known codes
+✅ PASS: languageLabel falls back to the raw code
+✅ PASS: platformLabel maps platforms
+✅ PASS: platformLabel falls back
+✅ PASS: formatHumanTime null → —
+✅ PASS: formatHumanTime undefined → —
+✅ PASS: seconds ago → 刚刚
+✅ PASS: seconds ahead → 即将
+✅ PASS: minutes ago
+✅ PASS: minutes ahead
+✅ PASS: hours ago
+✅ PASS: formatDurationMs null → —
+✅ PASS: milliseconds
+✅ PASS: seconds
+✅ PASS: minutes + seconds
+✅ PASS: formatKilo zero（统一一位小数）
+✅ PASS: formatKilo exact K（统一一位小数）
+✅ PASS: formatKilo decimal
+✅ PASS: formatTokens small
+✅ PASS: formatTokens K
+✅ PASS: formatTokens just under K
+✅ PASS: formatTokens K→M carry boundary
+✅ PASS: formatTokens M
+✅ PASS: formatTokens G
+✅ PASS: formatTokens T
+✅ PASS: formatBytes zero
+✅ PASS: formatBytes bytes
+✅ PASS: formatBytes KB
+✅ PASS: formatBytes MB
+✅ PASS: formatDuration zero → —
+✅ PASS: formatDuration ms
+✅ PASS: formatDuration s
+✅ PASS: formatElapsed seconds
+✅ PASS: formatElapsed minute+seconds
+✅ PASS: formatElapsed whole minutes
+
+🎉 All format tests passed!
+✅ PASS: rank text
+✅ PASS: no rank → —
+✅ PASS: beyond 200
+✅ PASS: new trend
+✅ PASS: lost trend
+✅ PASS: up trend
+✅ PASS: down trend abs
+✅ PASS: same trend → null
+
+🎉 All matrix-helper tests passed!
+✅ PASS: trackingLanguageOptions excludes en (global card) and sorts by zh-CN pinyin
+✅ PASS: matrixFilterKeywords returns only the view language (en lives in the global card)
+✅ PASS: matrixCellState reports rank, delta and beyond200
+✅ PASS: matrixColumnMeta detects stale column
+✅ PASS: buildCellIndex O(1) lookup matches matrixCellState
+✅ PASS: matrixRowGroups splits ranked (best first) and unranked
+🎉 All matrix helper tests passed!
+🎉 All data-retention tests passed!
+🎉 All ai empty-retry tests passed!
+🎉 ai-stream-retry tests passed!
+✅ PASS: parse: caps at 3 suggestions
+✅ PASS: parse: fields preserved
+✅ PASS: parse: structured proposed action preserved
+✅ PASS: parse: mutating keyword action requires confirmation
+✅ PASS: capability: Appilot defines effective actions instead of trusting the model
+✅ PASS: parse: keyword mutation without language is rejected
+✅ PASS: parse: generalized action input preserves validated keyword-add rationale
+✅ PASS: parse: copy-plan action accepts only registered copy fields and excludes whatsNew
+✅ PASS: parse: specific keyword view without language is rejected
+✅ PASS: parse: follow-up markdown answer and actions
+✅ PASS: parse: follow-up can explicitly withdraw the original suggestion
+✅ PASS: parse: follow-up replacement is a complete standalone suggestion
+✅ PASS: follow-up: stable project archive and original evidence are restored
+✅ PASS: follow-up: complete original suggestion is restored as assistant context
+✅ PASS: follow-up: history is scoped to the selected suggestion
+✅ PASS: follow-up: archive, evidence, and original suggestion form a reusable prefix
+✅ PASS: follow-up: completed action evidence is appended for before/after assessment
+✅ PASS: parse: unfinished trend page is not proposed
+✅ PASS: parse: release action kept
+✅ PASS: parse: unknown action falls back to keywords
+✅ PASS: parse: code fence tolerated
+✅ PASS: parse: id is stable
+✅ PASS: parse: duplicate actions for the same target are merged
+✅ PASS: parse: removed trend action falls back to keywords
+✅ PASS: quality: view-only and collection-only observations are not recommendations
+✅ PASS: capability: navigation is removed even when attached to an effective action
+✅ PASS: capability: an action that does not match current state is rejected
+✅ PASS: capability: missing keyword can be proposed for tracking
+✅ PASS: capability: removed keyword must use restore instead of add
+✅ PASS: quality: a measurable recommendation also needs a review window
+✅ PASS: buildBriefMessages: context embedded
+✅ PASS: buildBriefMessages: system prompt first
+✅ PASS: buildBriefMessages: deterministic issues drive prioritization
+✅ PASS: buildBriefMessages: collection refresh is distinct from storefront coverage
+✅ PASS: buildBriefMessages: avoids dashboard repetition and fragmented advice
+✅ PASS: buildBriefMessages: internal fields stay out of copy and only effective actions are offered
+✅ PASS: buildBriefMessages: competitor context is embedded
+✅ PASS: buildBriefMessages: volatile evidence stays out of cacheable system prefix
+✅ PASS: rules: emits up to 3 signals
+✅ PASS: rules: dropout first
+✅ PASS: rules: incomplete languages signal
+✅ PASS: rules: paused signal when keywords exist
+✅ PASS: rules: no-keywords signal when empty
+✅ PASS: rules: pending-pause review signal
+✅ PASS: generate: returns only measurable state-changing suggestions
+✅ PASS: generate: returns no advice instead of padding with observations
+✅ PASS: generate: requests json_object
+✅ PASS: generate: concise output token cap
+
+All overview-brief tests passed ✅
+✅ PASS: one row per keyword
+✅ PASS: best rank across storefronts
+✅ PASS: best storefront recorded
+✅ PASS: trend vs previous snapshot
+✅ PASS: fresh snapshot not stale
+✅ PASS: series covers top keywords
+✅ PASS: chart data has daily points
+✅ PASS: best rank per day recorded
+✅ PASS: no snapshots → no rows
+
+🎉 All overview-data tests passed!
+✅ PASS: drafts: one row per draft
+✅ PASS: drafts: sorted by updatedAt desc
+✅ PASS: drafts: latest candidate → current + v label
+✅ PASS: drafts: published by v-normalized tag match, languageCount kept
+✅ PASS: drafts: unknown tag → draft, label falls back to tag
+✅ PASS: drafts: updatedAt preserved
+✅ PASS: drafts: null → []
+✅ PASS: drafts: [] → []
+✅ PASS: drafts: undefined → []
+✅ PASS: drafts: all-published ctx
+✅ PASS: drafts: no ctx → all draft
+✅ PASS: grid: commits present → data
+✅ PASS: grid: 6 week-columns × 7 day rows
+✅ PASS: grid: span ≥ 4 weeks → grid mode
+✅ PASS: grid: window total counted
+✅ PASS: grid: today cell carries count
+✅ PASS: grid: recent-only → bars mode
+✅ PASS: grid: undefined → null
+✅ PASS: grid: empty object → null
+✅ PASS: grid: tz-suffixed keys tolerated
+
+🎉 All overview-data tests passed!
+store product scope tests passed ✓
+✅ PASS: formatVersionDate empty
+✅ PASS: formatVersionDate invalid
+✅ PASS: formatVersionDate renders month/day + time
+✅ PASS: draftVersionLabel adds v
+✅ PASS: draftVersionLabel keeps v
+✅ PASS: draftVersionLabel from appVersion
+✅ PASS: tag fallback to date
+✅ PASS: draftVersionLabel unknown
+✅ PASS: 上架日期仅与它所属的当前商店版本配对
+✅ PASS: 不同版本的公开商店日期不会被误标为当前版本上架时间
+✅ PASS: iOS 使用本平台的版本和构建状态
+✅ PASS: macOS 不复用 iOS 的上架和构建状态
+✅ PASS: mergeHistoryDrafts merges same releaseTag
+✅ PASS: merge keeps the latest updatedAt
+✅ PASS: merge consolidates localizations by language
+✅ PASS: merge keeps distinct tags separate
+✅ PASS: merge sorts newest first
+✅ PASS: 同一版本的修订只占一个一级列表项
+✅ PASS: 最新定稿修订成为当前文案
+✅ PASS: 未定稿修订附属于当前文案
+✅ PASS: 旧定稿进入修订历史
+✅ PASS: 文案列表同一版本只渲染一个一级标题
+✅ PASS: 存在工作修订时显示继续入口
+✅ PASS: 旧定稿折叠进修订历史
+✅ PASS: 历史商店文案为每个已有翻译显示勾选标记
+✅ PASS: 只读定稿页提供创建修订稿入口
+✅ PASS: 多平台发布流程同时展示每个平台线路
+
+🎉 All release-format tests passed!
+✅ PASS: summarize: 4 PR rows + 1 aggregated row
+✅ PASS: summarize: feat mapped and stripped
+✅ PASS: summarize: feat(scope) stripped
+✅ PASS: summarize: fix mapped
+✅ PASS: summarize: perf mapped
+✅ PASS: summarize: PR row flagged
+✅ PASS: summarize: PR ref recorded
+✅ PASS: summarize: commit count + detail carried
+✅ PASS: summarize: standalone aggregated row exists
+✅ PASS: summarize: standalone title
+✅ PASS: summarize: standalone counts commits without a PR
+✅ PASS: summarize: standalone keeps commits for AI material
+✅ PASS: summarize: standalone has no PR ref
+✅ PASS: aggregate: same PR merged into one item
+✅ PASS: aggregate: PR ref merged
+✅ PASS: aggregate: both commits kept
+✅ PASS: pr-list: PR row + standalone row
+✅ PASS: pr-list: API title used
+✅ PASS: pr-list: API commit count used
+✅ PASS: pr-list: matched commits kept
+✅ PASS: pr-list: PR URL kept
+✅ PASS: pr-list: remaining commit aggregated
+✅ PASS: pr-list: PR whose commits are all outside the range is dropped
+✅ PASS: summarize: null material → empty
+✅ PASS: summarize: many non-PR commits collapse to one row
+✅ PASS: summarize: collapse row counts all commits
+
+All release-summary tests passed ✅
+✅ PASS: ops-sync id 稳定
+✅ PASS: build-status id 稳定
+✅ PASS: 在途状态集合正确
+✅ PASS: seed 保留上次运行字段
+✅ PASS: 新任务生成 nextRunAt 且无历史字段
+✅ PASS: nextRunAt 在未来
+✅ PASS: reconcile 移除已下线的评论任务
+done
+✅ PASS: nextRunAt keeps a stable phase, once per interval (24h rank cadence)
+✅ PASS: nextRunAt never returns a past time for sub-day intervals
+✅ PASS: nextRunWithinMinutes scatters within the window
+✅ PASS: nextRankRunAt with runsPerDay=1 never runs twice on one calendar day
+✅ PASS: initialRankRunAt can use a later phase today without weakening post-run cadence
+✅ PASS: nextRankRunAt supports more runs per day when configured later
+✅ PASS: prioritizeGroupCompletion runs one group's tasks back-to-back
+✅ PASS: rankGroupKey is stable and platform-aware
+✅ PASS: pruneRoundMembers keeps progress for an unchanged group, restarts on change
+✅ PASS: bootstrapRoundState seeds progress from existing lastRunAt values
+✅ PASS: markRoundTaskDone completes a round only when every member ran
+✅ PASS: rebalanceCollapsedTasks spreads a collapsed batch to stable phases
+✅ PASS: rebalanceCollapsedTasks leaves small batches untouched
+✅ PASS: rebalanceCollapsedTasks skips overdue and disabled tasks
+✅ PASS: rebalanceCollapsedTasks threshold scales with enabled task count
+
+🎉 All schedule tests passed!
+✅ PASS: total counts every task kind
+✅ PASS: due only counts enabled rank tasks (sync excluded)
+✅ PASS: failed counts failed tasks of all kinds
+✅ PASS: nextDueAt is the earliest rank task, ignoring an even earlier sync task
+✅ PASS: a lone due sync task yields due=0
+✅ PASS: a lone sync task yields nextDueAt=null
+
+🎉 All scheduler-status tests passed!
+daemon startup: spawn error, exit 0, concurrency, live timeout and startup report passed
+✅ PASS: tag v1.1.1 → 1.1.1
+✅ PASS: tag 1.0 → 1.0
+✅ PASS: 无版本号 → 空
+✅ PASS: 草案 name v1.2.0 WIP → 1.2.0
+✅ PASS: 草案 name GloWalk 1.1.1 → 1.1.1
+✅ PASS: 草案 name 无版本 → 空（用户手动填写）
+✅ PASS: 按 appVersion 找到最新同版本文案
+✅ PASS: v 前缀归一化匹配
+✅ PASS: 无匹配 → null
+✅ PASS: 空版本 → null
+✅ PASS: 旧草稿 id 按 productId 安全归属原平台
+✅ PASS: 旧 macOS 草稿不会泄漏到 iOS
+✅ PASS: 同版本文案按平台隔离
+✅ PASS: draft id 包含产品平台维度
+✅ PASS: upsert 同版本去重并保留新来源
+✅ PASS: 不同版本不受影响
+✅ PASS: 跨平台同版本 upsert 保留两份
+✅ PASS: 修订稿与当前定稿并存
+✅ PASS: 同版本优先返回工作修订稿
+✅ PASS: 修订稿定稿后成为当前版本
+✅ PASS: 归一化保留显式修订历史
+✅ PASS: 创建下一号修订稿并记录来源
+✅ PASS: 修订稿解除确认与商店冻结
+✅ PASS: 截图文案同步进入可修订状态
+✅ PASS: 创建修订稿不修改原定稿
+✅ PASS: 轻量摘要保存时恢复 projectId
+✅ PASS: 轻量摘要保存不会截断完整草稿字段
+✅ PASS: 局部截图配置覆盖到完整草稿
+✅ PASS: 跨项目轻量草稿仍被拒绝
+✅ PASS: 归一化检测到重复
+✅ PASS: 归并后每个版本一份
+✅ PASS: 无重复时不再变更
+✅ PASS: 跨平台同版本不视为重复
+✅ PASS: 跨平台草稿均被保留
+✅ PASS: 无版本草稿保留
+✅ PASS: 快照覆盖返回 changed
+✅ PASS: en-US 匹配 en 并覆盖
+✅ PASS: zh-Hans 精确匹配覆盖
+✅ PASS: 无 ASC 匹配的语言保持不变
+✅ PASS: 冻结时间戳写入
+✅ PASS: 内容一致时不写时间戳
+✅ PASS: 仅覆盖提供的字段
+✅ PASS: 空可选字段 + 非空描述 → 部分变更
+✅ PASS: ASC 空名称/副标题不覆盖本地
+✅ PASS: ASC 非空描述/新增内容仍覆盖
+✅ PASS: ASC 空关键词不覆盖本地
+✅ PASS: 部分冻结返回 changed
+✅ PASS: en 描述与新增内容对齐
+✅ PASS: de 仅覆盖提供的字段
+✅ PASS: 无对应语言更新时保持不变
+✅ PASS: 名称/关键词不参与部分冻结
+✅ PASS: 部分冻结时间戳写入
+✅ PASS: 内容一致时不写部分冻结时间戳
+✅ PASS: 重建包含全部版本级语言
+✅ PASS: App 级名称/副标题合并进 en
+✅ PASS: 版本级描述/关键词保留
+✅ PASS: zh-Hans 语言映射与名称合并
+✅ PASS: 无匹配语言码时保留 locale 原样
+✅ PASS: 版本号归一化
+✅ PASS: 重建文案标记为已确认且已与商店同步
+✅ PASS: 重建状态标记
+✅ PASS: 提交关键词同步重建
+✅ PASS: diffDraftAgainstStore 逐语言逐字段比对
+✅ PASS: 只统计确实不同的字段
+✅ PASS: 差异包含本地值与商店值
+✅ PASS: 一致时无差异
+🎉 All store-submission tests passed!
+✅ PASS: rank tasks of removed products are removed
+✅ PASS: second rank task of removed product is removed
+✅ PASS: rank tasks of other products are kept
+✅ PASS: github-sync task of removed project is removed
+✅ PASS: github-sync task of other project is kept
+✅ PASS: ops-sync task of removed project is removed
+✅ PASS: ops-sync task of other project is kept
+✅ PASS: no matching ids keeps all tasks
+
+🎉 All task-cleanup tests passed!
+✅ PASS: 带 keyword 的条目 = 查排名的执行
+✅ PASS: kind=rank 即查排名的执行
+✅ PASS: 语言×商店指纹也算排名维度
+✅ PASS: github-sync 无排名维度
+✅ PASS: ops-sync 无排名维度
+✅ PASS: 空条目无排名维度
+✅ PASS: null 无排名维度
+✅ PASS: 入榜率只统计查排名成功：2 次成功采集 1 次有排名 → 50%（实际 50）
+✅ PASS: 成功率仍按全部成功/全部计
+✅ PASS: 重试不进近 24h 计数（实际 3）
+✅ PASS: 成功率 = 2 成功 / 3 有结论（实际 67%）
+✅ PASS: 今日执行同样排除重试（实际 3）
+✅ PASS: 无查排名成功时入榜率为 null（不显示 0% 误导）
+✅ PASS: 请求流量只求和窗口内条目（实际 300）
+✅ PASS: 响应流量只求和窗口内条目（实际 3000）
+✅ PASS: 窗口内确实无数据
+✅ PASS: 空窗口沿用最近一次非空测量（实际 200/2222）
+✅ PASS: 从未有测量时仍为 0
+✅ PASS: 近 24h 计数
+✅ PASS: 今日执行只计零点后（实际 2）
+✅ PASS: 平均耗时 = round((400+800+1200)/3)（实际 800）
+execution-stats 单测全部通过 ✓
+✅ PASS: rank 任务按 groupKey 分组（保留 产品×平台×语言×storefront 粒度）
+✅ PASS: rank 任务无 groupKey 时回退到产品分组
+✅ PASS: github-sync 按项目分组
+✅ PASS: ops-sync 按项目分组
+✅ PASS: build-status 按产品×类型分组
+✅ PASS: 到期成员不进“下次执行”，只取未来最小排期
+✅ PASS: 到期成员数由 dueCount 呈现
+✅ PASS: 组级 nextRunAt 永不落在过去（next<last 矛盾消除）
+✅ PASS: 整组到期 → nextRunAt=null，UI 显示「已到期 ×2」
+✅ PASS: 全未来 → 最小未来排期，due=0
+✅ PASS: null/空 nextRunAt 忽略，不误计 due
+✅ PASS: 未来排期必然晚于组内上次执行 → 展示不再自相矛盾
+done
+✅ PASS: normalizeLocalPath empty
+✅ PASS: normalizeLocalPath whitespace
+✅ PASS: normalizeLocalPath non-string
+✅ PASS: normalizeLocalPath resolves .. segments
+✅ PASS: assertNonEmptyString trims
+✅ PASS: assertNonEmptyString throws on empty
+✅ PASS: assertStringArray dedupes
+✅ PASS: assertStringArray rejects non-strings
+✅ PASS: dedupeProjects keeps one per path
+✅ PASS: dedupeProjects keeps the latest project for a path
+
+🎉 All util tests passed!
+url-policy 单测全部通过 ✓
+screenshot-paths 单测全部通过 ✓
+✓ toRankRows 过滤畸形
+✓ 首次导入 4 行
+✓ 重复导入幂等
+✓ 双写增量
+✓ productId 维度隔离
+rank-db-sync 单测全部通过 ✓
+✓ toTaskRow rank 任务
+✓ 状态映射 success→ok / failed→error / 未跑→never
+✓ 停用标记
+✓ 非法行跳过
+✓ 镜像幂等 upsert + source 标记 + 幽灵行清理
+✓ 无 electronJson 的历史 Electron 行可恢复
+✓ DSH 静态任务行不受镜像清理影响
+✓ kind 实例行不受镜像 prune 影响（P1）
+✓ clearElectronFailures（clear/reschedule/镜像映射）
+✓ purgeOrphanProjectTasks（孤儿清理/注册表保护/幂等）
+✓ backfillTaskHistoryOnce（只跑一次：清除后重启不复活）
+task-db-sync 单测全部通过 ✓
+✓ schema v4→v5 migration（project_meta/product_records）
+✓ electron 富数据 → meta/product 行映射
+✓ 双写 + JSON 往返 + 幂等
+✓ 无效项目跳过
+rich-data-sync 单测全部通过 ✓
+✓ schema v5→v6 migration（project_release_cache）
+✓ cacheByProjectId → DB 映射 + 幂等覆盖 + syncedAt 保留
+release-cache-sync 单测全部通过 ✓
+✅ blobs put/get/all/pruneKeys/域隔离/覆盖
+✅ syncKvBlobMap：覆盖镜像 + 陈旧清理 + 清空
+✅ KV_BLOB_DOMAINS 清单
+kv-blob-mirror 单测全部通过 ✓
+task-project-ref 单测全部通过 ✓
+✅ latest：最近 N 条升序
+✅ 唯一约束幂等
+✅ 导入幂等（库内无重复）
+phase3-executions-read 单测全部通过 ✓
+✅ 富任务无损镜像 + 重建
+✅ 旧行按列推导
+✅ 引擎装载等价（DB 重建 = 原列表）
+✅ 历史回填（executions→任务行，幂等）
+tasks-lossless 单测全部通过 ✓
+✅ add + since + summaryByTask（窗口/升序/原字段保留/完整聚合）
+✅ pruneBefore
+✅ schema v9 就绪 + 重复打开幂等
+phase3-executions 单测全部通过 ✓
+✅ 完整镜像：注册表 id/meta/产品扩展列
+✅ 幂等 upsert
+✅ 无效项目跳过
+✅ 草稿镜像（有字段才写/清空/不覆盖）
+project-write-sync 单测全部通过 ✓
+✅ 等价性：DB 为主 + kv 兜底（repo/createdAt/快照）
+✅ 新鲜项目（kv-only）不丢
+✅ DB 快照为空 → kv 快照兜底
+✅ DB-only 项目展示
+project-list-merge 单测全部通过 ✓
+project selection persistence tests passed ✓
+promotion campaign merge tests passed ✓
+promotion store link tests passed ✓
+✅ v8 projects.id 往返
+✅ product_records 扩展列往返 + 默认空数组
+✅ registry 映射：id 写读/回退
+✅ rich-data-sync 扩展列双写入库
+phase2-dualwrite 单测全部通过 ✓
+✅ 组装：注册表 + 双产品 + meta
+✅ includeSnapshots：升序历史点
+✅ 默认视图（无快照/无产品）
+project-db-view 单测全部通过 ✓
+✅ 首次导入：全量键入库 + 归档 + 完成标记
+✅ 幂等：完成标记后跳过
+✅ 无 config.json：置标记不抛错
+✅ 损坏 JSON：抛错且不置标记、原文件保留
+✅ app_kv 表随 schema v7 就绪
+kv-migrate 单测全部通过 ✓
+✅ cleanupMigrationArtifacts 清理口径正确
+✓ 本侧项目 → DB（identity 子集，无富数据）
+✓ DB 新项目 → minimal Project 补入（富数据对象保留）
+✓ hydrate 幂等
+✓ DB 更新字段覆盖本侧（富数据仍保留）
+✓ 旧时间戳不覆盖（isNewer 语义）
+✓ record 往返映射（id 保留）
+registry-sync-core 单测全部通过 ✓
+✓ 本地空 → 全量导入
+✓ 增量合并（只加更新的点）
+✓ 无更新幂等
+✓ 畸形行清洗 + 全量导入
+rank-backfill 单测全部通过 ✓
+task-center-db 单测全部通过 ✓
+rank-matrix 单测全部通过 ✓
+
+> @appilot-labs/appilot-headless@1.2.0 test
+> for f in tests/*.test.ts; do echo "== $f"; tsx "$f" || exit 1; done
+
+== tests/execution-records.test.ts
+✅ PASS: 成功后落 success 执行记录（含 rank 结构化字段与耗时）
+✅ PASS: 业务错误落 failed；瞬时抖动落 retry，连续 3 次才 failed
+✅ PASS: 熔断跳过（派发前）不落记录；执行中命中 403 落 retry
+
+🎉 All headless execution-record tests passed!
+== tests/instances.test.ts
+✅ PASS: schema v3→v4 migration adds kind/instance
+✅ PASS: reconcile seed/幂等/清理
+✅ PASS: scheduler executor 执行 github-sync 实例
+✅ PASS: 实例失败记 error
+✅ PASS: 加速模式
+🎉 All instance-task engine tests passed!
+== tests/itunes-block.test.ts
+✅ PASS: itunes-breaker: 同键读写/45 分钟窗口/幂等/引号兼容
+✅ PASS: itunes-breaker: 复发升级（45→90 分钟）与窗口外回落
+✅ PASS: scheduler: rank 熔断门控（自动/显式跳过，github-sync 不受影响）
+✅ PASS: scheduler: 403 只写熔断键不落 error，并停止同批后续 rank
+
+🎉 All headless itunes-block tests passed!
+== tests/multiprocess.test.ts
+✓ 跨进程即时可见（A 写 → B 读）
+✓ 租约唯一主（活主抢占失败）
+✓ 持有期并发写不冲突（A 读见 B 写）
+✓ 主崩溃后从者接管（TTL 过期，接管判定用与主一致的 TTL 窗口）
+✓ 崩溃主按 leaderPid 立即接管（不空等 TTL）
+多进程集成测试全部通过 ✓
+== tests/phase4.test.ts
+✅ PASS: schema v1→v2 migration adds productId
+✅ PASS: schema v2→v3 migration adds tasks.source
+✅ PASS: snapshots productId filtering
+✅ PASS: service facade projects/snapshots
+🎉 All Phase 4a headless tests passed!
+== tests/rank-instances.test.ts
+✓ 推导（en 产品；paused 跳过；en 商店展开；实例数 6）
+✓ 多语言展开（zh-Hans storefronts 2）
+✓ 无 trackId 跳过
+✓ reconcile 落库（seeded 6）
+✓ 执行器装配 + 参数/trackId 校验错误路径
+P2a rank 组件测试全部通过 ✓
+== tests/rank-progress.test.ts
+✓ rankProgress 聚合（组/ok/error/pending/lastRunAt + 过滤）
+rank-progress 单测全部通过 ✓
+== tests/recent.test.ts
+✓ 缺省 productId NULL 维度 + 降序
+✓ productId 过滤
+✓ keyword + limit 过滤
+✓ service 透传
+snapshots.recent 测试全部通过 ✓
+== tests/schedule-balance.test.ts
+balance: forward bounds, idempotency, protection, persistence, CAS, automatic/manual execution and v14 migration passed
+== tests/scheduler-sleep.test.ts
+✅ PASS: 窗口末尾停止派发；唤醒后恢复（fake clock）
+✅ PASS: 清醒会话不裁剪（长时间活跃 → 全速派发）
+✅ PASS: 休眠打断：唤醒 grace 内的 aborted 不标红、不计连击
+✅ PASS: setSuspended（系统休眠通知）：暂停派发，唤醒后恢复
+✅ PASS: 休眠保持：窗口阶段有在途请求才持有；收尾后释放；清醒不持有
+
+🎉 All scheduler sleep-window integration tests passed!
+== tests/scheduler-stats.test.ts
+✅ PASS: localDayKey 本地日期键
+✅ PASS: 任务按计划时间执行，id 只用于同时间排序
+✅ PASS: stats(): processed/succeeded/failed/uniqueTasks/processedToday 口径
+✅ PASS: kick(): 立即跑一轮 tick
+🎉 All headless scheduler-stats tests passed!
+== tests/scheduler.test.ts
+✅ PASS: 限流识别 + 指数退避
+✅ PASS: lease scheduler: single leader runs jobs, takeover after crash
+✅ PASS: drain: waits for inflight executions before returning
+== tests/schema-v14.test.ts
+schema v13→v14 stable project id migration passed ✓
+== tests/sleep-hold.test.ts
+✅ PASS: supportsSleepHold：仅 macOS + 启用
+✅ PASS: macOS：setHold(true) spawn caffeinate（幂等）；false/dispose 释放
+✅ PASS: 子进程异常退出 → 归为未持有（可重新保持）
+✅ PASS: 释放延迟：跨过批间空隙（避免 spawn/kill 抖动），期间再次需要则取消释放
+✅ PASS: spawn 抛错：容忍（不抛出），退化为易抖动分类
+✅ PASS: 非 macOS / 未启用：no-op（不 spawn）
+
+🎉 All sleep-hold tests passed!
+== tests/sleep-window.test.ts
+✅ PASS: 未知阶段：未观测到休眠前不裁剪派发
+✅ PASS: 冻结检测：tick 间隔异常 → woke + 冻结时长
+✅ PASS: 窗口估计：只学短窗口（DarkWake ≈45s），不被清醒数小时污染
+✅ PASS: 窗口末尾停止派发：预算 = 估计窗口 − safety
+✅ PASS: 清醒会话：窗口远超估计 → 恢复全速派发
+✅ PASS: 外部暂停（系统休眠通知）：暂停期不派发，恢复后进入窗口模式
+✅ PASS: 休眠打断：唤醒 grace 内的瞬时错误判为打断并计数
+
+🎉 All sleep-window tests passed!
+== tests/store.test.ts
+✅ PASS: projects CRUD + upsert
+✅ PASS: persistence across reopen
+✅ PASS: snapshots add / latestByKey / prune / pruneAll
+✅ PASS: tasks upsert / all / get
+✅ PASS: lease acquire / heartbeat / takeover / release / same-id-exclusive
+✅ PASS: dual-connection concurrency + lease exclusivity
+✅ PASS: projects stable-id rename
+✅ PASS: service projects.remove deep-cascades tasks
+🎉 All headless store tests passed!
+== tests/transient-errors.test.ts
+✅ PASS: isTransientUpstreamError：抖动判定与业务错误区分
+✅ PASS: 瞬时抖动：单次不标红 + 短退避；连续 3 次才 error；成功即清零
+✅ PASS: 限流（429）：同口径不立即标红，连续 3 次才 error
+✅ PASS: 业务错误：立即标红（原样摘要，不加退化重试）
+
+🎉 All headless transient-error tests passed!
+
+> @appilot-labs/appilot-scheduler@1.2.0 test
+> for f in tests/*.test.ts; do echo "== $f"; tsx "$f" || exit 1; done
+
+== tests/cli-process.test.ts
+✓ 进程启动 + socket ping
+  second daemon exit=0 stderr:
+✓ 双 spawn 单例（第二个 exit 0）
+✓ shutdown（socket）优雅退出
+daemon 进程级冒烟全部通过 ✓
+== tests/daemon-status.test.ts
+✓ socket status：daemon 自状态字段齐全（含指纹上报）
+✓ 执行累计（status.processedExecutions=1，handle 同源）
+✓ socket runDue（立即处理到期）
+✓ status.accel/accelUntil 与 accelerate 联动
+✓ 包级客户端 sendSchedulerCommand(status)
+daemon 自状态测试全部通过 ✓
+== tests/daemon.test.ts
+✓ daemon 启动并持租约
+✓ 单例仲裁（第二 daemon acquire 失败）
+✓ socket hello ack
+✓ reconcile + 主 tick 执行（source=scheduler）
+✓ socket runNow
+✓ socket accelerate
+✓ socket accelerate off
+✓ 优雅停止
+daemon 库级测试全部通过 ✓
+== tests/hup-restart-process.test.ts
+scheduler SIGHUP 进程重启通过 ✓ (79662 → 79663)
+== tests/self-update-process.test.ts
+✓ daemon 启动（pid 79669）
+✓ 代码变更 → 旧 daemon 退出（exit 0）:
+✓ 新 daemon 接管（pid 79670 ≠ 旧 79669）——已加载新代码
+daemon 自更新进程级测试通过 ✓
+== tests/self-update.test.ts
+✓ 指纹原语（fingerprintDirs/isChanged/hasFiles/parseMonitorDirsEnv）
+✓ daemon 自重启编排（spawn 同命令 / 租约让位 / 干净退出 / 防抖）
+自更新机制测试全部通过 ✓
+== tests/signals.test.ts
+scheduler SIGHUP 信号测试全部通过 ✓
+== tests/socket-permissions.test.ts
+✓ umask 000 下 socket 权限仍为 0600
+✓ 收紧后客户端 ping 正常
+socket 权限测试全部通过 ✓
+== tests/startup-exit-codes.test.ts
+✓ 库级：让位/非让位错误分类
+✓ 进程级：租约被占 → exit 0（让位）
+✓ 进程级：DB 启动失败 → exit 1（真实失败）
+启动退出码测试全部通过 ✓
+== tests/suspend.test.ts
+✓ status.sleep 字段齐全（phase/suspended/avgWindowMs/sleepCycles/holdingSleep）
+✓ suspend：status.sleep.suspended=true / dispatchAllowed=false
+✓ resume：恢复派发（suspended=false / dispatchAllowed=true）
+✓ 休眠/唤醒日志留痕
+
+🎉 All suspend/resume tests passed!
+
+> @appilot-labs/appilot-headless-cli@1.2.0 test
+> tsx tests/*.test.ts
+
+✓ db
+✓ projects register
+✓ projects list
+✓ projects get
+✓ tasks list
+✓ run readiness (status=ok)
+✓ run github-sync:cli-test-proj 实例 (status=ok)
+✓ run 未知任务报错
+✓ projects remove
+✓ lease status（无主）
+✓ lease status（主=test-leader, ageMs=43）
+✓ snapshots history（降序/productId/limit）
+✓ snapshots prune（--before 窗口）
+✓ tasks list --source 过滤
+✓ projects products / meta（富数据查询）
+CLI 端到端测试全部通过 ✓
+
+> @appilot-labs/appilot-mcp@1.2.0 test
+> tsx tests/*.test.ts
+
+✓ initialize
+✓ tools/list (9 tools)
+✓ projects_register
+✓ projects_list
+✓ task_run (readiness)
+✓ snapshots_history（空库）
+✓ 未知工具错误
+MCP 端到端测试全部通过 ✓
