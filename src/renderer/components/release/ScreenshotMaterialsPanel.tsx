@@ -575,14 +575,14 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
                 }
               })}
               onImageChange={async (asset) => {
-                if (!asset || !projectId || !draftId) return;
+                if (!projectId || !draftId) return;
                 setError("");
                 try {
                   // Save only the selected image against the newest persisted
                   // draft. A dialog opened before translation must not write
                   // a stale whole-copy snapshot after translation completes.
                   const saved = await (window as any).appilot.release.saveScreenshotImage(
-                    projectId, draftId, item.id, activeLanguage, asset,
+                    projectId, draftId, item.id, activeLanguage, asset ?? null,
                   );
                   onGenerated?.(saved);
                 } catch (cause: any) {
