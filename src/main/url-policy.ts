@@ -17,6 +17,19 @@ export function isAllowedAppStorePage(value: unknown): boolean {
   return parsed !== null && (parsed.hostname === 'apps.apple.com' || parsed.hostname === 'itunes.apple.com');
 }
 
+/**
+ * AI 供应商端点白名单（审计 M-M2）：主进程会携带真实 API Key 请求该 URL，
+ * 必须收紧——允许 https；http 仅限本机回环（Ollama 等本地推理服务），
+ * 其余一律拒绝，防渲染层改写 endpoint 后把 Key 外带。
+ */
+export function isAllowedAiProviderUrl(value: unknown): boolean {
+  const parsed = safeHttpUrl(value);
+  if (!parsed) return false;
+  if (parsed.protocol === 'https:') return true;
+  const host = parsed.hostname.toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+}
+
 export function isAllowedRendererNavigation(value: string, devRendererUrl?: string): boolean {
   if (value.startsWith('file://')) return true;
   if (!devRendererUrl) return false;

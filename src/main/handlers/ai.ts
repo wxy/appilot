@@ -4,6 +4,7 @@ import {
   encryptApiKey,
   looksLikeEncryptedBlob,
 } from "../credentials";
+import { isAllowedAiProviderUrl } from "../url-policy";
 import { getStore } from "../store";
 
 /** 掩码展示：仅暴露首尾少量字符，供 UI 提示「已配置」，绝不回传明文。 */
@@ -49,6 +50,12 @@ export function registerAiHandlers(): void {
   });
 
   ipcMain.handle("ai:saveConfig", async (_event, config: { providerUrl: string; apiKey: string; model: string }) => {
+    // 审计 M-M2：providerUrl 是主进程携带真实 Key 发请求的目标，保存时必须
+    // 过白名单（https 或本机回环 http），否则「留空 Key 不覆盖」的组合会被
+    // 攻破的渲染层改写 endpoint 后把旧 Key 外带。
+    if (!isAllowedAiProviderUrl(config.providerUrl)) {
+      throw new Error("不支持的供应商 URL（仅允许 https，或本机回环的 http 地址）");
+    }
     const s = await getStore();
     s.set("aiProviderUrl", config.providerUrl);
     s.set("aiModel", config.model);
