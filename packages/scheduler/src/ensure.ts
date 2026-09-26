@@ -101,6 +101,14 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   });
   child.unref();
+  // 审计 M-S5：spawn 本身失败（如 node/cli 路径失效 ENOENT、EACCES）时
+  // ChildProcess 只发 'error' 不发 'exit'——缺监听会让壳进程 uncaught
+  // exception。此处记日志并置失败标记，退避循环立即判负，不再白等满窗口。
+  let spawnFailed = false;
+  child.on('error', (err) => {
+    spawnFailed = true;
+    log(`scheduler spawn failed: ${err?.message || String(err)}`);
+  });
   // 审计 H4：daemon 现以 exit 0 = 单例仲裁让位、exit 1 = 真实启动失败。
   // 只有 exit 0 视为「调度已在跑」；exit 1 不再误判成功，继续退避 ping
   // （可能只是第一次尝试撞上启动竞态），到超时仍不通则返回 false（壳回退
@@ -134,6 +142,10 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 400));
     if (gaveWay) return true;
+    if (spawnFailed) {
+      log('scheduler spawn failed; giving up ensure（壳可回退壳内调度）');
+      return false;
+    }
     if (await pingSocket(opts.socketPath)) {
       log('scheduler up');
       notifyCheckUpdate(opts.socketPath);
