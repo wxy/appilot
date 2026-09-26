@@ -24,7 +24,25 @@ assert.equal(isAllowedAiProviderUrl('not a url'), false);
 assert.equal(isAllowedAiProviderUrl(''), false);
 assert.equal(isAllowedAiProviderUrl(undefined), false);
 
-assert.equal(isAllowedRendererNavigation('file:///app/out/renderer/index.html'), true);
+// file: 导航白名单（M-M5）：只放行应用 renderer 目录前缀；缺省全拒绝。
+const rendererDir = '/app/out/renderer';
+assert.equal(isAllowedRendererNavigation('file:///app/out/renderer/index.html', undefined, rendererDir), true);
+assert.equal(
+  isAllowedRendererNavigation('file:///app/out/renderer/assets/x.html', undefined, rendererDir),
+  true,
+);
+assert.equal(isAllowedRendererNavigation('file:///etc/passwd', undefined, rendererDir), false);
+assert.equal(
+  isAllowedRendererNavigation('file:///app/out/../out/secret.html', undefined, rendererDir),
+  false,
+  '.. 归一后越出前缀 → 拒绝',
+);
+assert.equal(isAllowedRendererNavigation('file:///etc/passwd'), false, '未提供前缀 → file 全拒绝');
+assert.equal(
+  isAllowedRendererNavigation('file://evil.example/etc/passwd', undefined, rendererDir),
+  false,
+  '带 host 的 file URL → 拒绝',
+);
 assert.equal(
   isAllowedRendererNavigation('http://localhost:5173/projects', 'http://localhost:5173'),
   true,

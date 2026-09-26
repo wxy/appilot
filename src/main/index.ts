@@ -61,7 +61,17 @@ function createWindow() {
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (isAllowedRendererNavigation(url, process.env.ELECTRON_RENDERER_URL)) return;
+    // 审计 M-M5：file: 导航仅放行应用自带 renderer 目录（与 loadFile 路径
+    // 一致）；其余 file:// 一律拒绝并转交系统浏览器处理。
+    if (
+      isAllowedRendererNavigation(
+        url,
+        process.env.ELECTRON_RENDERER_URL,
+        path.join(__dirname, "../renderer"),
+      )
+    ) {
+      return;
+    }
     event.preventDefault();
     const target = safeHttpUrl(url);
     if (target) void shell.openExternal(target.toString());
