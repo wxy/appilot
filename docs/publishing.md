@@ -2,7 +2,7 @@
 
 > 适用：@appilot-labs/* npm 包发布 + DSH 宿主（profile）消费更新。
 > 首次 1.0.0 已发布（2026-09-04，NPM_TOKEN 首发）；此后一律 **OIDC Trusted Publishing**（无 token）。
-> 当前 npm 包版本为 1.3.0；最近已发布的 macOS DMG 为 1.2.0。两种分发需分别验证。
+> 当前 npm 包与 macOS DMG 版本均为 1.3.0。两种分发需分别验证。
 
 ## 1. 包结构与发布范围
 
@@ -36,12 +36,14 @@ git push origin "v${VERSION}"
 
 ### Step 3 — 分发记录
 
-本次 1.3.0 仅发布 npm 包；GitHub Releases 的 `latest` 仍指向带 DMG 的 1.2.0。只有相应安装包完成签名、公证和验证后，才创建或发布面向下载者的 GitHub Release。
+1.3.0 的 npm 包由 tag 工作流发布，macOS DMG 在本机独立完成 Developer ID 签名、Apple 公证、贴票和 Gatekeeper 验证后上传 GitHub Release。不要把 npm 工作流通过视为安装包已发布。
 
 需要同时发布 GitHub Release 时，使用对应版本的发布说明：
 ```bash
 VERSION=$(node -p "require('./package.json').version")
-gh release create "v${VERSION}" --title "Appilot ${VERSION}" --notes-file RELEASE_DRAFT.md
+gh release create "v${VERSION}" \
+  "dist/Appilot-${VERSION}-arm64.dmg" "dist/Appilot-${VERSION}-x64.dmg" \
+  --title "Appilot ${VERSION}" --notes-file RELEASE_DRAFT.md
 ```
 
 ### OIDC 现状（已配置，勿重复操作）

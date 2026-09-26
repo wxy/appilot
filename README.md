@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://github.com/wxy/appilot/actions/workflows/ci.yml"><img src="https://github.com/wxy/appilot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/wxy/appilot/actions/workflows/build.yml"><img src="https://github.com/wxy/appilot/actions/workflows/build.yml/badge.svg" alt="Build"></a>
-  <img src="https://img.shields.io/badge/npm-1.3.0-D98E2B" alt="npm packages 1.3.0">
+  <img src="https://img.shields.io/badge/version-1.3.0-D98E2B" alt="Version 1.3.0">
 </p>
 
 <p align="center"><img src="assets/readme/app-icon-rounded.png" width="96" height="96" alt="Appilot icon">&nbsp;<a href="https://github.com/wxy/appilot/releases/latest"><img src="assets/readme/download-github.svg" width="420" height="96" alt="Download Appilot from GitHub Releases"></a></p>
@@ -19,9 +19,9 @@ Appilot is built around decisions, not data accumulation. Evidence stays in the 
 
 > Appilot 围绕“决策”而不是“数据堆积”设计。证据保留在能够直接驱动行动的功能中；只有真正影响下一步判断的跨模块信号，才会进入总览或副驾。
 
-The 1.3.0 npm packages add platform-specific release revisions, an X promotion workflow, ranking comparisons, and scheduler and security fixes. The latest downloadable macOS DMG remains 1.2.0.
+Version 1.3.0 adds platform-specific release revisions, an X promotion workflow, ranking comparisons, and scheduler and security fixes. The nine npm packages and signed, notarized macOS DMGs share this version.
 
-> 1.3.0 npm 包加入按平台修订的发布文案、X 推广流程、排名对比，以及调度和安全修复。当前可下载的 macOS DMG 仍为 1.2.0。
+> 1.3.0 加入按平台修订的发布文案、X 推广流程、排名对比，以及调度和安全修复。九个 npm 包与已签名、公证的 macOS DMG 使用同一版本。
 
 Version 1.2.0 deliberately retired the low-signal Trends and Reviews modules. That milestone concentrated the product on four durable workspaces: Overview, Copilot, Release, and Rankings.
 
