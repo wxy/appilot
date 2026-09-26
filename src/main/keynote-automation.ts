@@ -395,7 +395,7 @@ function safeFilePart(value: string): string {
     .replace(/[\\/:*?"<>|\u0000-\u001F]+/g, "-")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^[.\-]+|[.\-]+$/g, "")
+    .replace(/^[.-]+|[.-]+$/g, "")
     .slice(0, 80) || "screenshot";
 }
 

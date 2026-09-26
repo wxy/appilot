@@ -10,6 +10,7 @@
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
     "preview": "electron-vite preview",
+    "lint": "eslint .",
     "typecheck": "npm run build:core && npm run build -w @appilot-labs/appilot-common && npm run build -w @appilot-labs/appilot-project && npm run build -w @appilot-labs/appilot-release && tsc --noEmit && npm run typecheck -w @appilot-labs/appilot && npm run typecheck -w @appilot-labs/appilot-headless-cli && npm run typecheck -w @appilot-labs/appilot-mcp",
     "test": "npm run build:core && npm run build:plugins && npm test -w @appilot-labs/appilot-project && npm test -w @appilot-labs/appilot-release && npm test --workspace=@appilot-labs/appilot-core && node scripts/run-tests.mjs && npm test --workspace=@appilot-labs/appilot-headless && npm test --workspace=@appilot-labs/appilot-scheduler && npm test --workspace=@appilot-labs/appilot-headless-cli && npm test --workspace=@appilot-labs/appilot-mcp",
     "test:ci": "npm test",
@@ -34,6 +35,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
@@ -41,10 +43,15 @@
     "electron": "^43.1.1",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.12.0",
     "postcss": "^8.5.0",
     "tailwindcss": "^3.4.0",
     "tsx": "^4.23.1",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.70.1"
   },
   "workspaces": [
     "packages/*",

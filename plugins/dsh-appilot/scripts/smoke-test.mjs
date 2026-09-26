@@ -21,7 +21,7 @@ const bundleSrc = readFileSync(ROOT + '/plugins/dsh-appilot/client/client.js', '
 let moduleExports = null;
 globalThis.window = globalThis.window || {};
 globalThis.window.__ModuleLoader__ = {
-  load: ({ id, factory }) => {
+  load: ({ factory }) => {
     moduleExports = factory((spec) => {
       if (spec === 'react') return require2('react');
       if (spec === 'react/jsx-runtime') return require2('react/jsx-runtime');
