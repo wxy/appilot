@@ -17,3 +17,9 @@ The frontier check uses a temporary real Git repository. The GitHub and iTunes n
 - Before implementation: `npx tsx packages/core/tests/release-watcher-frontier.test.ts`, `npx tsx packages/core/tests/github-merged-prs.test.ts`, and `npx tsx packages/core/tests/app-store-lookup-timeout.test.ts` each failed on the new assertion.
 - After implementation: all three commands passed. `npm run typecheck`, full `npm test` (including real scheduler process, CLI, and MCP checks), and `git diff --check` passed.
 - This report is the durable reproduction artifact: rerun the commands above from a clean checkout after `npm ci --ignore-scripts --no-audit --no-fund`. Public GitHub pagination beyond the first 300 Search results is still a documented partial-result boundary; the code logs a warning when it occurs. Visual release-workbench interaction and live iTunes response timing were not established by these automated checks.
+
+## Integration with #311
+
+- Combined the #314 React Hooks empty-project guard with #311's advisory rank budget. The single budget value is computed after the guard, without introducing a conditional hook.
+- Retained both new top-level test commands in `package.json` (`ai-stream-retry` and `screenshot-paths`).
+- `npm run typecheck` passed after resolving the integration conflicts. `npm test > docs/verification/pr314-integration-test.log 2>&1` exited 0, including CLI/MCP process checks. The committed log records this integrated run.

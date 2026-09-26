@@ -36,6 +36,8 @@ import { buildProjectProfileFor } from "../release-service";
 import { assertNonEmptyString } from "../util";
 import { mergePromotionCampaigns } from "../promotion-campaign-merge";
 import { releasedPromotionDrafts } from "../promotion-releases";
+import { canUsePublicStoreVersion, latestScopedAscSnapshot } from "../store-product-scope";
+import { ascStoreLiveVersion } from "@appilot-labs/appilot-core/version-status";
 import {
   defaultPromotionStoreLink,
   hydrateCampaignStoreLinks,
@@ -82,6 +84,16 @@ function storeUrlForProduct(product: any): string {
     product.storeLinks?.[0]?.url ||
     "",
   );
+}
+
+async function currentVersionForPromotionProduct(s: AppStore, project: any, product: any) {
+  const asc = latestScopedAscSnapshot(project, product, (s.get("ascCache") || {})[product.id]);
+  const ascVersion = ascStoreLiveVersion(asc?.versions);
+  if (ascVersion) return { version: ascVersion, currentVersionReleaseDate: null };
+  if (!canUsePublicStoreVersion(project, product)) return null;
+  return import("@appilot-labs/appilot-core/app-store-discovery")
+    .then(({ fetchStoreCurrentVersion }) => fetchStoreCurrentVersion(product.trackId))
+    .catch(() => null);
 }
 
 function sourceFromDraft(
@@ -200,22 +212,20 @@ export function registerPromotionHandlers(): void {
     const { project, product } = findContext(s, projectId, productId);
     const defaultLink = defaultPromotionStoreLink(promotionStoreLinkOptions(project));
     const linkProduct = (project.storeProducts || []).find((item: any) => item.id === defaultLink?.productId) || product;
-    const currentStore = linkProduct.trackId
-      ? await import("@appilot-labs/appilot-core/app-store-discovery")
-          .then(({ fetchStoreCurrentVersion }) => fetchStoreCurrentVersion(linkProduct.trackId))
-          .catch(() => null)
-      : null;
+    const currentStore = await currentVersionForPromotionProduct(s, project, linkProduct);
     const currentVersion = String(currentStore?.version || "").replace(/^v/i, "");
     const allCampaigns = mergeProjectCampaigns(s, project)
       .sort((a, b) => new Date(b.storePublishedAt).getTime() - new Date(a.storePublishedAt).getTime());
     const campaignByVersion = new Map(allCampaigns.map((item) => [item.appVersion, item]));
     const releases = releasedPromotionDrafts(project, currentVersion).map((draft) => {
       const draftVersion = String(draft.appVersion || "").replace(/^v/i, "");
+      const draftProduct = (project.storeProducts || []).find((item: any) => item.id === draft.productId) || linkProduct;
       const source = sourceFromDraft(
         project,
-        linkProduct,
+        draftProduct,
         draft,
-        draftVersion === currentVersion ? currentStore?.currentVersionReleaseDate : null,
+        draftProduct.id === linkProduct.id && draftVersion === currentVersion
+          ? currentStore?.currentVersionReleaseDate : null,
       );
       return {
         id: campaignId(projectId, source),
@@ -305,20 +315,18 @@ export function registerPromotionHandlers(): void {
       const xProfile = { ...profile, enabledPlatforms: ["x" as const] };
       const errors = validatePromotionProfile(xProfile);
       if (errors.length) throw new Error(errors[0]);
-      const currentStore = linkProduct.trackId
-        ? await import("@appilot-labs/appilot-core/app-store-discovery")
-            .then(({ fetchStoreCurrentVersion }) => fetchStoreCurrentVersion(linkProduct.trackId))
-            .catch(() => null)
-        : null;
+      const currentStore = await currentVersionForPromotionProduct(s, project, linkProduct);
       const currentVersion = String(currentStore?.version || "").replace(/^v/i, "");
       const draft = releasedPromotionDrafts(project, currentVersion).find((item) => item.releaseTag === releaseTag);
       if (!draft) throw new Error("这个版本尚未确认上架，不能创建推广活动");
       const draftVersion = String(draft.appVersion || "").replace(/^v/i, "");
+      const draftProduct = (project.storeProducts || []).find((item: any) => item.id === draft.productId) || linkProduct;
       const source = sourceFromDraft(
         project,
-        linkProduct,
+        draftProduct,
         draft,
-        draftVersion === currentVersion ? currentStore?.currentVersionReleaseDate : null,
+        draftProduct.id === linkProduct.id && draftVersion === currentVersion
+          ? currentStore?.currentVersionReleaseDate : null,
       );
       if (!source.storeUrl) throw new Error("这个产品还没有可用的 App Store 链接");
       const now = new Date().toISOString();

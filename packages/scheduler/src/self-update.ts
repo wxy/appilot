@@ -47,7 +47,14 @@ export function fingerprintDirs(dirs: string[]): CodeFingerprint {
     }
     for (const f of files) {
       const file = join(dir, f);
-      if (!statSync(file).isFile()) continue;
+      // readdir 与 stat 之间文件可能被部署删除/替换（TOCTOU）——statSync 抛错
+      // 时视为「未知」跳过（与 hashOfFile 的容错语义对齐），避免周期自检抛
+      // ENOENT 变成未捕获异常杀死 daemon（审计 2026-09-26 H5）。
+      try {
+        if (!statSync(file).isFile()) continue;
+      } catch {
+        continue;
+      }
       fp[file] = hashOfFile(file) ?? '';
     }
   }

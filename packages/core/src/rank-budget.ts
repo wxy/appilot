@@ -3,20 +3,20 @@
  *
  * 排名任务的量 = Σ 活跃关键词 × 其语言覆盖的商店数（en 全局词在**每个**
  * 本地化下都计费）。一个应用堆太多关键词 × 多商店时任务会堆积——即便采集
- * 有全局节拍也跑不完，且并非每个关键词都值得跟踪。因此在**建议/新增入口**
- * 就用预算约束，配合既有的「连续未在榜 → 待复核暂停」生命周期策略：
+ * 有全局节拍也可能积压，且并非每个关键词都值得跟踪。因此在建议/新增入口
+ * 展示采集量估算，配合既有的「连续未在榜 → 待复核暂停」生命周期策略：
  *
- * - 软上限（默认 240 实例/天）：接近采集预算，建议面板提示清理低价值词；
- * - 硬上限（默认 360 实例/天）：拒绝新增采集任务（AI 建议采纳 / 候选加入 /
- *   恢复暂停词都受限）；核心词（商店关键词/名称/副标题来源）优先保留。
+ * - 软提醒线（默认 240 实例/天）：提示关注采集量；
+ * - 高负载参考线（默认 360 实例/天）：提示可能积压，但不拒绝用户采纳、
+ *   加入或恢复的关键词。调度器会为所有活跃词创建任务。
  *
  * 预算为纯前端/主进程共用的纯函数，数字是常量，后续可暴露到设置。
  */
 import { storefrontsForLanguage } from "./storefronts";
 
-/** 软上限（实例/天）：超过后 UI 提示接近预算、建议清理。 */
+/** 软提醒线（实例/天）。 */
 export const RANK_BUDGET_SOFT_LIMIT_DAILY = 240;
-/** 硬上限（实例/天）：超过后拒绝新增采集任务。 */
+/** 高负载参考线（实例/天）；保留原有名称以兼容预算状态消费者。 */
 export const RANK_BUDGET_HARD_LIMIT_DAILY = 360;
 
 export interface RankBudgetKeywordInput {
@@ -34,7 +34,7 @@ export interface RankBudgetStatus {
   dailyInstances: number;
   softLimit: number;
   hardLimit: number;
-  /** 距硬上限的剩余额度（实例/天）。 */
+  /** 距高负载参考线的差值（实例/天），不是可采纳额度。 */
   remaining: number;
   state: "ok" | "soft" | "hard";
 }
@@ -97,48 +97,42 @@ export function rankBudgetStatus(
   };
 }
 
-export interface RankBudgetAdmissibleResult<T> {
-  /** 预算内可采纳的（按传入顺序优先保留）。 */
-  accepted: T[];
-  /** 超出硬上限被拒的。 */
-  rejected: T[];
-  /** 采纳后的每日任务数。 */
+export interface RankBudgetSelectionResult<T> {
+  /** 可采纳的非重复关键词，保持传入顺序。 */
+  selected: T[];
+  /** 已在采集或在本批次中重复的关键词。 */
+  duplicates: T[];
+  /** 采纳后的每日任务估算；允许高于参考线。 */
   dailyAfter: number;
 }
 
 /**
- * 在硬预算内按传入顺序放行新增（调用方控制优先级：核心词在前、AI 词在后）。
- * 每条新增的成本 = 其语言在产品本地化下的商店覆盖数；与现有活跃词去重。
+ * 对用户选中的新增词去重并估算采集量。参考线仅用于提示，不裁剪选择。
  */
-export function rankBudgetAdmissible<T extends { language: string; keyword: string }>(
+export function rankBudgetSelection<T extends { language: string; keyword: string }>(
   supportedLanguages: { code: string }[],
   platform: string,
   trackedKeywords: RankBudgetKeywordInput[],
   adds: T[],
-): RankBudgetAdmissibleResult<T> {
+): RankBudgetSelectionResult<T> {
   const base = rankBudgetStatus(supportedLanguages, platform, trackedKeywords);
   const existing = new Set(
     (trackedKeywords || [])
       .filter((item) => isActiveOnPlatform(item, platform))
       .map((item) => `${item.language}\u0000${item.keyword}`),
   );
-  const accepted: T[] = [];
-  const rejected: T[] = [];
+  const selected: T[] = [];
+  const duplicates: T[] = [];
   let daily = base.dailyInstances;
   for (const add of adds || []) {
     const key = `${add.language}\u0000${add.keyword}`;
     if (existing.has(key)) {
-      rejected.push(add); // 已在采集中，无需重复采纳
+      duplicates.push(add);
       continue;
     }
-    const cost = rankCostForLanguage(add.language, supportedLanguages);
-    if (daily + cost > RANK_BUDGET_HARD_LIMIT_DAILY) {
-      rejected.push(add);
-      continue;
-    }
-    daily += cost;
+    daily += rankCostForLanguage(add.language, supportedLanguages);
     existing.add(key);
-    accepted.push(add);
+    selected.push(add);
   }
-  return { accepted, rejected, dailyAfter: daily };
+  return { selected, duplicates, dailyAfter: daily };
 }

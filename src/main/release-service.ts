@@ -1,7 +1,7 @@
 import { createStoreSubmissionDraft } from "@appilot-labs/appilot-core/store-submission";
 import type { StoreSubmissionDraft } from "@appilot-labs/appilot-core/store-submission";
 import { createAiProvider } from "./ai-service";
-import { ensureProjectKeywordPool, getStoreSubmissionDrafts } from "./project-state";
+import { copyGapKeywordsForProduct, ensureProjectKeywordPool, getStoreSubmissionDrafts, submissionKeywordsForProduct } from "./project-state";
 import type { AppStore } from "./store";
 import type { ReleaseInfo } from "@appilot-labs/appilot-core/release-watcher";
 import { copyPlansForProduct } from "@appilot-labs/appilot-core/copy-plan";
@@ -162,7 +162,7 @@ export async function generateStoreSubmissionDraft(
       description,
       language,
       trackedKeywords,
-      currentSubmissionKeywords: project.submissionKeywords || [],
+      currentSubmissionKeywords: submissionKeywordsForProduct(project, product),
       recentRankings,
       release,
       reviewFeedback: existingDraft?.reviewFeedback || "",
@@ -171,7 +171,7 @@ export async function generateStoreSubmissionDraft(
       previousLocalization,
       profile,
       includedChanges,
-      copyGapKeywords: ((project as any).copyGapKeywords || [])
+      copyGapKeywords: copyGapKeywordsForProduct(project, product)
         .filter((gap: any) => gap.language === language)
         .map((gap: any) => gap.keyword),
       copyPlanItems: copyPlansForProduct(project, product.id),

@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { ascJwt, createAscClient } from "../src/asc-api";
+import { ascJwt, ascPlatformForProduct, createAscClient, scopedAscSnapshotForProduct } from "../src/asc-api";
 
 let errors = 0;
 function check(ok: boolean, msg: string) {
@@ -18,6 +18,9 @@ check((() => {
   return h.alg === "ES256" && h.kid === "key-abc" && p.iss === "issuer-123"
     && p.aud === "appstoreconnect-v1" && Buffer.from(signature, "base64url").length === 64;
 })(), "ascJwt 生成 ES256 JWT（header/payload 正确，签名 64 字节）");
+check(scopedAscSnapshotForProduct(
+  [{ id: "ios" }, { id: "mac" }], { id: "mac", platform: "macos" }, { versions: [] },
+) === null, "多平台项目拒绝旧版无平台 ASC 快照");
 
 async function run() {
   const calls: string[] = [];
@@ -39,16 +42,24 @@ async function run() {
     const client = createAscClient({ issuerId: "issuer-123", keyId: "key-abc", privateKeyPem: pem });
     const appId = await client.getAppIdByBundleId("wang.xingyu.glowalk");
     check(appId === "app-1", "getAppIdByBundleId 解析 app id");
-    const versions = await client.listAppStoreVersions("app-1");
+    const versions = await client.listAppStoreVersions("app-1", "MAC_OS");
     check(versions[0].versionString === "1.1.0" && versions[0].buildId === "b9", "listAppStoreVersions 解析版本与 buildId");
+    check(calls.some((url) => url.includes("filter[platform]=MAC_OS")), "版本请求按 macOS 平台过滤");
     const locs = await client.listVersionLocalizations("v1");
     check(locs[0].locale === "en-US" && locs[0].keywords === "k", "listVersionLocalizations 解析本地化字段");
     const appLocs = await client.listAppInfoLocalizations("app-1");
     check(appLocs[0].locale === "zh-Hans" && appLocs[0].name === "GloWalk: 智能夜行手电筒" && appLocs[0].subtitle === "五维自适应亮度", "listAppInfoLocalizations 解析 App 级名称/副标题");
     check(calls.some((c) => c.includes("/appInfos?")), "appInfos 端点被调用");
-    const builds = await client.listBuilds("app-1");
+    const builds = await client.listBuilds("app-1", "MAC_OS");
     check(builds[0].processingState === "VALID", "listBuilds 解析构建状态");
+    check(calls.some((url) => url.includes("filter[preReleaseVersion.platform]=MAC_OS")), "构建请求按 macOS 平台过滤");
+    check(calls.some((url) => url.includes("/v1/builds?filter[app]=app-1") && url.includes("filter[preReleaseVersion.platform]=MAC_OS")), "构建请求使用支持双重过滤的全局端点");
+    check(ascPlatformForProduct("ios") === "IOS" && ascPlatformForProduct("macos") === "MAC_OS", "产品平台映射到 ASC 平台");
     check(calls[0].includes("filter[bundleId]=wang.xingyu.glowalk"), "bundleId 查询参数正确");
+    globalThis.fetch = (async () => new Response(JSON.stringify({ errors: [{ detail: "Unsupported filter" }] }), { status: 400 })) as any;
+    let apiError = "";
+    try { await client.listBuilds("app-1", "MAC_OS"); } catch (cause: any) { apiError = cause?.message || ""; }
+    check(apiError.includes("Unsupported filter"), "ASC 400 返回具体错误信息供按钮展示");
   } catch (err: any) {
     check(false, `客户端调用异常: ${err.message}`);
   } finally {

@@ -1,3 +1,42 @@
+import { buildStatusForVersion } from "@appilot-labs/appilot-core/build-status";
+import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
+
+/** The same target/version/build rules power the selected and companion platform cards. */
+export function releaseStoreFacts(
+  targetVersion: string,
+  ascInfo: { versions: any[]; builds: any[] } | null,
+  publicStoreVersion: string | null,
+  ascConfigured: boolean,
+) {
+  const target = String(targetVersion || "").trim().replace(/^v/i, "");
+  const ascLiveVersion = ascStoreLiveVersion(ascInfo?.versions);
+  const storeLiveVersion = ascLiveVersion || publicStoreVersion || null;
+  const versionStatus = !target ? null
+    : ascConfigured && !ascInfo
+      ? { key: "asc-pending" as const, label: "待同步", tone: "muted" as const, source: "asc" as const }
+      : deriveVersionStatus({
+          appVersion: target,
+          ascVersions: ascInfo?.versions ?? null,
+          storeCurrentVersion: publicStoreVersion,
+        });
+  const ascVersion = target
+    ? (ascInfo?.versions || []).find((item: any) => item.versionString === target) || null
+    : null;
+  const buildInfo = ascVersion ? buildStatusForVersion(ascVersion, ascInfo?.builds || []) : null;
+  const buildTone = buildInfo?.state === "available" ? "emerald" as const
+    : buildInfo?.state === "processing" || buildInfo?.state === "inBetaReview" ? "amber" as const
+    : buildInfo?.state === "rejected" ? "red" as const
+    : "muted" as const;
+  return {
+    ascLiveVersion,
+    storeLiveVersion,
+    versionStatus,
+    buildInfo,
+    buildTone,
+    versionMatches: Boolean(target && storeLiveVersion && target === storeLiveVersion),
+  };
+}
+
 export function formatVersionDate(iso?: string | null): string {
   if (!iso) return "";
   const date = new Date(iso);
@@ -8,6 +47,19 @@ export function formatVersionDate(iso?: string | null): string {
     " " +
     date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
   );
+}
+
+/** Only pair a public Store release date with the exact live version it describes. */
+export function storeReleaseDateForVersion(
+  liveVersion?: string | null,
+  publicStoreVersion?: string | null,
+  publicStoreReleaseDate?: string | null,
+): string | null {
+  const live = String(liveVersion || "").trim().replace(/^v/i, "");
+  const current = String(publicStoreVersion || "").trim().replace(/^v/i, "");
+  return live && current && live === current && publicStoreReleaseDate
+    ? publicStoreReleaseDate
+    : null;
 }
 
 export function draftVersionLabel(item: any): string {

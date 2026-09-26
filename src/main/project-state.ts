@@ -144,6 +144,37 @@ export function getStoreSubmissionDrafts(project: any): StoreSubmissionDraft[] {
   return Array.isArray(project.storeSubmissionDrafts) ? project.storeSubmissionDrafts : [];
 }
 
+/** Store copy belongs to a product/platform even when the code release is shared. */
+export function storeSubmissionDraftsForProduct(project: any, productId: string): StoreSubmissionDraft[] {
+  return getStoreSubmissionDrafts(project).filter((draft) => draft.productId === productId);
+}
+
+/** A confirmed copy advances only its own platform's generation boundary. */
+export function releaseCursorForProduct(project: any, productId: string): string | null {
+  const latest = storeSubmissionDraftsForProduct(project, productId)
+    .filter((draft) => draft.batchConfirmedAt && draft.releaseCommitSha)
+    .sort((a, b) => String(b.batchConfirmedAt).localeCompare(String(a.batchConfirmedAt)))[0];
+  if (latest?.releaseCommitSha) return latest.releaseCommitSha;
+  return (project?.storeProducts || []).length === 1 ? project.lastReleaseSha || null : null;
+}
+
+export function submissionKeywordsForProduct(project: any, product: any): any[] {
+  if (Array.isArray(product?.submissionKeywords) && product.submissionKeywords.length > 0) {
+    return product.submissionKeywords;
+  }
+  return (project?.storeProducts || []).length === 1 && Array.isArray(project?.submissionKeywords)
+    ? project.submissionKeywords
+    : [];
+}
+
+export function copyGapKeywordsForProduct(project: any, product: any): any[] {
+  return (Array.isArray(project?.copyGapKeywords) ? project.copyGapKeywords : []).filter((gap: any) =>
+    gap.productId === product?.id ||
+    (gap.platform === product?.platform && !gap.productId) ||
+    (!gap.productId && !gap.platform && (project?.storeProducts || []).length === 1),
+  );
+}
+
 /**
  * UI history/current views intentionally carry a lightweight draft summary.
  * Before saving a partial edit (for example a Keynote assignment), restore all

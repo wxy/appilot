@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useProject } from "../../stores/project";
+import { scopedAscSnapshotForProduct } from "@appilot-labs/appilot-core/asc-api";
 import { OverviewContent } from "./OverviewContent";
 import {
   aggregateCompetitorOverview,
@@ -33,7 +34,8 @@ export function OverviewPage() {
   const project = projects.find((p) => p.id === currentProjectId);
   const product = project?.storeProducts?.find((item) => item.id === currentProductId) || project?.storeProducts?.[0] || null;
   const [releaseOverview, setReleaseOverview] = useState<{
-    draft: { name: string | null; tag: string; publishedAt: string; commitCount: number } | null;
+    draft: { name: string | null; tag: string; publishedAt: string; commitCount: number | null } | null;
+    sinceCopyCommitCount: number | null;
     submission: any | null;
   } | null>(null);
   // ② 发布卡（文案）状态上下文：当前候选 tag + 已发布 tag 集合（release:list 判定）。
@@ -156,16 +158,18 @@ export function OverviewPage() {
   useEffect(() => {
     if (!project) return;
     let cancelled = false;
+    setReleaseOverview(null);
     const load = async () => {
       try {
-        const result = await (window as any).appilot?.release?.list(project.id);
+        const result = await (window as any).appilot?.release?.list(project.id, product?.id);
         if (cancelled) return;
         const latest = result?.latestDraft || null;
         const release = (result?.releases || [])[0] || null;
-        const submission =
-          (release?.submissionDrafts || []).find(
-            (item: any) => item?.productId === product?.id,
-          ) || null;
+        const submission = (release?.submissionDrafts || [])
+          .filter((item: any) => item?.productId === product?.id)
+          .sort((a: any, b: any) =>
+            String(b.batchConfirmedAt || b.updatedAt || "").localeCompare(String(a.batchConfirmedAt || a.updatedAt || "")),
+          )[0] || null;
         setReleaseOverview(
           latest
             ? {
@@ -173,10 +177,13 @@ export function OverviewPage() {
                   name: latest.name,
                   tag: latest.tag,
                   publishedAt: latest.publishedAt,
-                  commitCount: Array.isArray(latest.material?.commits)
-                    ? latest.material.commits.length
-                    : 0,
+                  commitCount: typeof result?.sinceReleaseCommitCount === "number"
+                    ? result.sinceReleaseCommitCount
+                    : null,
                 },
+                sinceCopyCommitCount: typeof result?.sinceCopyCommitCount === "number"
+                  ? result.sinceCopyCommitCount
+                  : null,
                 submission,
               }
             : null,
@@ -229,8 +236,10 @@ export function OverviewPage() {
   useEffect(() => {
     if (!product?.id) return;
     let cancelled = false;
+    setAscInfo(null);
+    setStoreCurrentVersion(null);
     (window as any).appilot?.asc?.status(product.id)
-      .then((info: any) => { if (!cancelled) setAscInfo(info); })
+      .then((info: any) => { if (!cancelled) setAscInfo(scopedAscSnapshotForProduct(project?.storeProducts || [], product, info)); })
       .catch(() => { if (!cancelled) setAscInfo(null); });
     (window as any).appilot?.store?.currentVersion(product.id)
       .then((info: any) => { if (!cancelled) setStoreCurrentVersion(info?.version || null); })

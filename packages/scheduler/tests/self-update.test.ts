@@ -5,7 +5,7 @@
  *    （注入 spawn + exit，进程不真退出）：spawn 收到同命令、租约让位、
  *    stop 干净退出、防抖阻止连发。
  */
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -43,6 +43,18 @@ async function main(): Promise<void> {
   assert.equal(isChanged(fp2, fingerprintDirs([mon])), false, '删除文件不算变更');
   assert.equal(hasFiles(fp1), true, '有文件 → hasFiles true');
   assert.equal(hasFiles(fingerprintDirs([join(dir, 'no-such-dir')])), false, '空目录 → false');
+  // TOCTOU 容错（审计 H5）：目录中出现悬空条目（模拟部署窗口内文件被删的
+  // readdir→stat 竞态），fingerprintDirs 应跳过而不是抛 ENOENT 杀死 daemon。
+  const raceDir = join(dir, 'race');
+  mkdirSync(raceDir, { recursive: true });
+  writeFileSync(join(raceDir, 'real.js'), 'v1');
+  symlinkSync(join(raceDir, 'vanished.js'), join(raceDir, 'dangling.js'));
+  const fpRace = fingerprintDirs([raceDir]);
+  assert.deepEqual(
+    Object.keys(fpRace),
+    [join(raceDir, 'real.js')],
+    '悬空条目应被跳过且不抛错',
+  );
   assert.deepEqual(parseMonitorDirsEnv(' /a/x ,/b/y;'), ['/a/x', '/b/y'], 'env 目录解析');
   console.log('✓ 指纹原语（fingerprintDirs/isChanged/hasFiles/parseMonitorDirsEnv）');
 

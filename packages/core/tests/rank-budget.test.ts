@@ -1,7 +1,7 @@
 import {
   RANK_BUDGET_HARD_LIMIT_DAILY,
   RANK_BUDGET_SOFT_LIMIT_DAILY,
-  rankBudgetAdmissible,
+  rankBudgetSelection,
   rankBudgetStatus,
   rankCostForLanguage,
 } from "../src/rank-budget";
@@ -52,26 +52,32 @@ function main() {
   );
   check(status.state === "ok" && status.remaining === RANK_BUDGET_HARD_LIMIT_DAILY - status.dailyInstances, "预算内状态 ok");
 
-  // 采纳门控：预算内全收；超硬上限拒收尾部；与现有词去重。
+  // 采纳只去重，超过参考线也不能丢弃用户选择。
   const adds = Array.from({ length: 200 }, (_, i) => ({
     language: "de",
     keyword: `new-de-${i}`,
   }));
-  const admissible = rankBudgetAdmissible(LANGS, "ios", keywords as any, adds);
-  check(admissible.accepted.length + admissible.rejected.length === adds.length, "采纳+拒绝 = 总数");
+  const selection = rankBudgetSelection(LANGS, "ios", keywords as any, adds);
+  check(selection.selected.length === adds.length && selection.duplicates.length === 0, "超参考线仍采纳所有非重复词");
   check(
-    admissible.dailyAfter <= RANK_BUDGET_HARD_LIMIT_DAILY,
-    "采纳后不超过硬上限",
+    selection.dailyAfter === status.dailyInstances + adds.length * deCost,
+    "采纳后采集量估算包含全部所选词",
   );
-  check(admissible.rejected.length > 0, "大批量新增会被硬上限裁剪");
+  check(selection.dailyAfter > RANK_BUDGET_HARD_LIMIT_DAILY, "采集量可以超过高负载参考线");
 
-  const duplicate = rankBudgetAdmissible(LANGS, "ios", keywords as any, [
+  const duplicate = rankBudgetSelection(LANGS, "ios", keywords as any, [
     { language: "en", keyword: "global walk" },
+    { language: "de", keyword: "new term" },
+    { language: "de", keyword: "new term" },
   ]);
-  check(duplicate.accepted.length === 0 && duplicate.rejected.length === 1, "与现有活跃词重复 → 拒收");
+  check(duplicate.selected.length === 1 && duplicate.duplicates.length === 2, "只过滤已有词和本批重复词");
 
-  // 软上限仅提示、硬上限才拦截（常量契约）。
-  check(RANK_BUDGET_SOFT_LIMIT_DAILY < RANK_BUDGET_HARD_LIMIT_DAILY, "软上限 < 硬上限");
+  const overBudget = rankBudgetStatus(LANGS, "ios", [
+    ...keywords,
+    ...selection.selected,
+  ]);
+  check(overBudget.state === "hard" && overBudget.dailyInstances === selection.dailyAfter, "超参考线仍完整计入状态");
+  check(RANK_BUDGET_SOFT_LIMIT_DAILY < RANK_BUDGET_HARD_LIMIT_DAILY, "软提醒线 < 高负载参考线");
 
   console.log(`\n${errors === 0 ? "🎉 All rank budget tests passed!" : `❌ ${errors} test(s) failed`}`);
   process.exit(errors > 0 ? 1 : 0);

@@ -1,8 +1,9 @@
 import { ipcMain } from "electron";
 import { runReadinessChecks, type ReadinessCheckItem } from "@appilot-labs/appilot-core/readiness-check";
 import { runBuildStatusNow } from "../scheduler";
-import { findStoreSubmissionDraft, upsertStoreSubmissionDraft } from "../project-state";
+import { findProductContext, findStoreSubmissionDraft, upsertStoreSubmissionDraft } from "../project-state";
 import { getStore } from "../store";
+import { canUsePublicStoreVersion, latestScopedAscSnapshot } from "../store-product-scope";
 import { sharedStore } from "../registry-sync";
 import { blobGet } from "../db-blob-read";
 import { assertNonEmptyString } from "../util";
@@ -64,7 +65,7 @@ async function fetchAlignmentStoreCopy(
   if (hasAsc && product.bundleId && targetVersion) {
     try {
       const fs = await import("fs");
-      const { createAscClient } = await import("@appilot-labs/appilot-core/asc-api");
+      const { ascPlatformForProduct, createAscClient } = await import("@appilot-labs/appilot-core/asc-api");
       const client = createAscClient({
         issuerId: creds.ascIssuerId,
         keyId: creds.ascKeyId,
@@ -72,7 +73,9 @@ async function fetchAlignmentStoreCopy(
       });
       const appId = await client.getAppIdByBundleId(product.bundleId);
       if (appId) {
-        const versions = await client.listAppStoreVersions(appId);
+        const platform = ascPlatformForProduct(product.platform);
+        if (!platform) return { mode: "asc", versionMatched: false, storeByLanguage: [] };
+        const versions = await client.listAppStoreVersions(appId, platform);
         const version = versions.find(
           (v: any) =>
             String(v.versionString || "").trim().replace(/^v/i, "") ===
@@ -124,6 +127,9 @@ async function fetchAlignmentStoreCopy(
   const { STOREFRONTS_BY_LANGUAGE } = await import("@appilot-labs/appilot-core/storefronts");
   const { fetchStoreLocalizedCopy } = await import("@appilot-labs/appilot-core/app-store-discovery");
   const storeByLanguage: { language: string; fields: Record<string, string | null> }[] = [];
+  if (!canUsePublicStoreVersion(project, product)) {
+    return { mode: "public", versionMatched: false, storeByLanguage };
+  }
   let versionMatched = false;
   for (const loc of draft.localizations || []) {
     const country = STOREFRONTS_BY_LANGUAGE[String(loc.language || "")]?.[0];
@@ -162,8 +168,15 @@ export function registerOpsHandlers(): void {
   ipcMain.handle("asc:status", async (_event, productId: string) => {
     productId = assertNonEmptyString(productId, "productId");
     const s = await getStore();
+    const context = findProductContext(s.get("projects") || [], productId);
+    if (!context) return null;
     const kvAsc = (s.get("ascCache") || {})[productId];
-    return (blobGet(sharedStore(), "ascCache", productId) as any) ?? kvAsc ?? null;
+    return latestScopedAscSnapshot(
+      context.project,
+      context.product,
+      kvAsc,
+      blobGet(sharedStore(), "ascCache", productId),
+    );
   });
 
   // Public iTunes lookup — the no-ASC fallback: only confirms the current
@@ -176,7 +189,7 @@ export function registerOpsHandlers(): void {
       const product = (project.storeProducts || []).find(
         (item: any) => item.id === productId,
       );
-      if (product?.trackId) {
+      if (canUsePublicStoreVersion(project, product)) {
         const { fetchStoreCurrentVersion } = await import("@appilot-labs/appilot-core/app-store-discovery");
         return fetchStoreCurrentVersion(product.trackId);
       }
@@ -189,28 +202,52 @@ export function registerOpsHandlers(): void {
   ipcMain.handle("store:check", async (_event, productId: string) => {
     productId = assertNonEmptyString(productId, "productId");
     const s = await getStore();
-    await runBuildStatusNow(productId);
+    const ascSynced = await runBuildStatusNow(productId);
     const projects: any[] = s.get("projects") || [];
+    const context = findProductContext(projects, productId);
+    if (!context) throw new Error("Store product not found");
+    if (!ascSynced && !canUsePublicStoreVersion(context.project, context.product)) {
+      throw new Error("此 App ID 由多个平台共用；请配置并启用该平台的 App Store Connect 构建检查");
+    }
     let currentVersion = null;
     for (const project of projects) {
       const product = (project.storeProducts || []).find((item: any) => item.id === productId);
-      if (!product?.trackId) continue;
+      if (!canUsePublicStoreVersion(project, product)) continue;
       const { fetchStoreCurrentVersion } = await import("@appilot-labs/appilot-core/app-store-discovery");
       currentVersion = await fetchStoreCurrentVersion(product.trackId);
       break;
+    }
+    if (!ascSynced && !currentVersion) {
+      throw new Error("未取得该平台的商店状态；请检查 App Store Connect 凭证、产品信息或网络后重试");
     }
     const checkedAt = new Date().toISOString();
     const checks: Record<string, string> = s.get("releaseStoreChecks") || {};
     checks[productId] = checkedAt;
     s.set("releaseStoreChecks", checks);
     const kvAsc = (s.get("ascCache") || {})[productId];
-    const ascInfo = (blobGet(sharedStore(), "ascCache", productId) as any) ?? kvAsc ?? null;
+    const ascInfo = context ? latestScopedAscSnapshot(
+      context.project,
+      context.product,
+      kvAsc,
+      blobGet(sharedStore(), "ascCache", productId),
+    ) : null;
     return { currentVersion, ascInfo, checkedAt };
   });
 
   ipcMain.handle("store:lastCheckedAt", async (_event, productId: string) => {
     productId = assertNonEmptyString(productId, "productId");
     const s = await getStore();
+    const context = findProductContext(s.get("projects") || [], productId);
+    if (!context) return null;
+    if (!canUsePublicStoreVersion(context.project, context.product)) {
+      const asc = latestScopedAscSnapshot(
+        context.project,
+        context.product,
+        (s.get("ascCache") || {})[productId],
+        blobGet(sharedStore(), "ascCache", productId),
+      );
+      if (!asc) return null;
+    }
     return (s.get<Record<string, string>>("releaseStoreChecks") || {})[productId] || null;
   });
 
@@ -234,15 +271,17 @@ export function registerOpsHandlers(): void {
     const draft = findStoreSubmissionDraft(project, productId, releaseTag);
     if (!draft) throw new Error("Draft not found");
     const product = (project.storeProducts || []).find((item: any) => item.id === productId);
-    const asc =
-      (blobGet(sharedStore(), "ascCache", productId) as any) ??
-      (s.get("ascCache") || {})[productId] ??
-      null;
+    const asc = latestScopedAscSnapshot(
+      project,
+      product,
+      (s.get("ascCache") || {})[productId],
+      blobGet(sharedStore(), "ascCache", productId),
+    );
     // No ASC data (no credentials / not synced): fall back to per-language
     // public storefront copy so the live version's description/what's-new can
     // still be aligned after release. Only applies when the storefront's
     // current version matches the draft's target version.
-    if (!asc && draft.appVersion && product?.trackId) {
+    if (!asc && draft.appVersion && canUsePublicStoreVersion(project, product)) {
       const { STOREFRONTS_BY_LANGUAGE } = await import("@appilot-labs/appilot-core/storefronts");
       const { fetchStoreLocalizedCopy } = await import("@appilot-labs/appilot-core/app-store-discovery");
       const { applyStorePublicSnapshotToDraft } = await import("@appilot-labs/appilot-core/store-submission");
