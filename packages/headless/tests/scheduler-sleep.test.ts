@@ -204,7 +204,7 @@ async function main(): Promise<void> {
 
   await runCase('setSuspended（系统休眠通知）：暂停派发，唤醒后恢复', async () => {
     const store = openStore(join(mkdtempSync(join(tmpdir(), 'sched-susp-')), 'appilot.db'));
-    let clock = 0;
+    const clock = 0;
     let runs = 0;
     const exec: TaskExecutor = {
       title: '网络任务',

@@ -37,7 +37,10 @@ results.push(check(fx, 'fixture(商店+排名)', [
 const meta = fx.store?.metadata;
 if (meta) {
   for (const f of ['trackName', 'bundleId', 'artworkUrl', 'version']) {
-    if (!(f in meta)) results.push(false), console.log('  缺 store.metadata.' + f);
+    if (!(f in meta)) {
+      results.push(false);
+      console.log('  缺 store.metadata.' + f);
+    }
   }
 }
 

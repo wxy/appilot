@@ -16,7 +16,25 @@ on:
       - "v*"
 
 jobs:
+  # 审计 E5：tag 可以从任意 commit 打出——发布前在本 workflow 内强制跑
+  # typecheck + 全量测试，杜绝「从未验证的 commit 直接发布 npm 包」。
+  preflight:
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
   publish:
+    needs: preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -22,8 +22,10 @@ mac:
   icon: resources/icon.icns
   hardenedRuntime: true
   gatekeeperAssess: false
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # entitlements 位于 packaging/（源码配置，勿删）：build/ 是 electron-builder
+  # 的 buildResources 目录，名字容易被当成构建临时产物清理掉（2026-09 实际误删过）。
+  entitlements: packaging/entitlements.mac.plist
+  entitlementsInherit: packaging/entitlements.mac.inherit.plist
   extendInfo:
     NSAppleEventsUsageDescription: Appilot 使用 Keynote 生成多语言商店截图文稿。
 

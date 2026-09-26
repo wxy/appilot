@@ -12,6 +12,11 @@ on:
   push:
     branches: [master]
 
+# 审计 E5：master 连续合入时取消旧的全量验证（最新 commit 才是有效的）。
+concurrency:
+  group: build-master
+  cancel-in-progress: true
+
 jobs:
   typecheck:
     name: Type Check
@@ -25,6 +30,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - run: npm run lint
       - run: npm run typecheck
 
   test:
