@@ -79,7 +79,7 @@ export function patchScreenshotImage(
   copy: ScreenshotCopySet,
   itemId: string,
   language: string,
-  asset: ScreenshotImageAsset,
+  asset: ScreenshotImageAsset | undefined,
   updatedAt: string,
 ): ScreenshotCopySet {
   if (copy.batchConfirmedAt) throw new Error("整批截图文案已确定，不能修改图片");
@@ -90,9 +90,17 @@ export function patchScreenshotImage(
     updatedAt,
     items: copy.items.map((item) => {
       if (item.id !== itemId) return item;
-      return language === copy.sourceLanguage
-        ? { ...item, sourceImage: asset }
-        : { ...item, imageOverrides: { ...(item.imageOverrides || {}), [language]: asset } };
+      if (language === copy.sourceLanguage) {
+        if (asset) return { ...item, sourceImage: asset };
+        const { sourceImage: _removed, ...withoutSource } = item;
+        return withoutSource;
+      }
+      const imageOverrides = { ...(item.imageOverrides || {}) };
+      if (asset) imageOverrides[language] = asset;
+      else delete imageOverrides[language];
+      if (Object.keys(imageOverrides).length > 0) return { ...item, imageOverrides };
+      const { imageOverrides: _removed, ...withoutOverrides } = item;
+      return withoutOverrides;
     }),
   };
 }

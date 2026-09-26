@@ -253,8 +253,24 @@ export function registerReleaseHandlers(): void {
     draftId = assertNonEmptyString(draftId, "draftId");
     itemId = assertNonEmptyString(itemId, "itemId");
     language = assertNonEmptyString(language, "language");
-    if (!asset?.path || !fs.existsSync(asset.path)) throw new Error("选择的截图图片已不可用");
     const s = await getStore();
+    let selectedImage;
+    if (asset != null) {
+      const knownPaths: string[] = s.get(KNOWN_SCREENSHOT_IMAGE_PATHS_KEY) || [];
+      if (!isKnownImagePath(knownPaths, asset.path) || !fs.existsSync(asset.path)) {
+        throw new Error("选择的截图图片未获授权或已不可用");
+      }
+      const image = nativeImage.createFromPath(asset.path);
+      if (image.isEmpty()) throw new Error("无法读取所选图片");
+      const size = image.getSize();
+      selectedImage = {
+        path: path.resolve(asset.path),
+        fileName: path.basename(asset.path),
+        width: size.width,
+        height: size.height,
+        selectedAt: new Date().toISOString(),
+      };
+    }
     const projects: any[] = s.get("projects") || [];
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
@@ -264,7 +280,7 @@ export function registerReleaseHandlers(): void {
     if (!product) throw new Error("Store product not found");
     const supported = (product.supportedLanguages || []).map((item: any) => String(item.code || "").trim()).filter(Boolean);
     const latestCopy = normalizeScreenshotCopySet(draft.screenshotCopy, draft.screenshotCopy.sourceLanguage, supported);
-    draft.screenshotCopy = patchScreenshotImage(latestCopy, itemId, language, asset, new Date().toISOString());
+    draft.screenshotCopy = patchScreenshotImage(latestCopy, itemId, language, selectedImage, new Date().toISOString());
     draft.updatedAt = draft.screenshotCopy.updatedAt;
     upsertStoreSubmissionDraft(project, draft);
     s.set("projects", projects);
