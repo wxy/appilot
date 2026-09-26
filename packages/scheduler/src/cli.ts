@@ -32,7 +32,10 @@ function installLaunchAgent(): void {
   <key>ProgramArguments</key>
   <array><string>${nodeBin}</string><string>${cli}</string></array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <!-- KeepAlive 仅在异常退出时保活（审计 M-S8）：让位（exit 0）与正常
+       shutdown 不再被 launchd 反复拉起空转；启动失败（exit 1，审计 H4
+       语义）仍会重启。 -->
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ProcessType</key><string>Background</string>
   <key>EnvironmentVariables</key>
   <dict><key>APPILOT_DB_FILE</key><string>${process.env.APPILOT_DB_FILE || ''}</string></dict>
