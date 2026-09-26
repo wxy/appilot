@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeynoteScreenshotTheme, ScreenshotCopySet, ScreenshotImageAsset, ScreenshotMaterialItem } from "@appilot-labs/appilot-core/screenshot-material";
 import {
   normalizeScreenshotCopySet,
@@ -77,7 +77,7 @@ function ScreenshotPreview({ asset, disabled, inherited, onSelect }: {
   );
 }
 
-function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageReadOnly, typeReadOnly, themes, themeId, layoutName, layoutReadOnly, onThemeChange, onLayoutChange, onChange, onImageChange, onCommit, onRemove }: {
+function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageReadOnly, typeReadOnly, themes, themeId, layoutName, layoutReadOnly, onThemeChange, onLayoutChange, onChange, onImageChange, onError, onCommit, onRemove }: {
   item: ScreenshotMaterialItem;
   language: string;
   sourceLanguage: string;
@@ -91,7 +91,8 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
   onThemeChange: (themeId: string, defaultLayout: string) => void;
   onLayoutChange: (layoutName: string) => void;
   onChange: (field: "name" | "title" | "description", value: string) => void;
-  onImageChange: (asset?: ScreenshotImageAsset) => void;
+  onImageChange: (asset?: ScreenshotImageAsset) => Promise<void> | void;
+  onError: (message: string) => void;
   onCommit: () => void;
   onRemove: () => void;
 }) {
@@ -103,8 +104,12 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
   const selectedTheme = themes.find((theme) => theme.id === themeId) || null;
   const layouts = selectedTheme?.layouts.map((layout) => layout.name) || [];
   const selectImage = async () => {
-    const asset = await (window as any).appilot.release.selectScreenshotImage();
-    if (asset) onImageChange(asset);
+    try {
+      const asset = await (window as any).appilot.release.selectScreenshotImage();
+      if (asset) await onImageChange(asset);
+    } catch (cause: any) {
+      onError(cause?.message || "选择截图图片失败。");
+    }
   };
   return (
     <article className="flex min-w-0 flex-col rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-700 dark:bg-zinc-900">
@@ -223,6 +228,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
   const [failed, setFailed] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [operationId, setOperationId] = useState("");
+  const activeOperationIdRef = useRef("");
   const [progress, setProgress] = useState<{ chars: number; phase: "reasoning" | "content" } | null>(null);
   const [error, setError] = useState("");
   const [artifactRunning, setArtifactRunning] = useState(false);
@@ -291,7 +297,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
 
   useEffect(() => {
     const off = (window as any).appilot?.release?.onGenerateProgress?.((event: any) => {
-      if (!running) return;
+      if (!running || !activeOperationIdRef.current || event?.operationId !== activeOperationIdRef.current) return;
       if (event?.kind === "retry") setRetrying(true);
       if (event?.kind === "chars" && typeof event.chars === "number") setProgress({ chars: event.chars, phase: event.phase === "content" ? "content" : "reasoning" });
     });
@@ -320,6 +326,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
   const masterConfirmed = Boolean(screenshotCopy.masterConfirmedAt);
   const batchConfirmed = Boolean(screenshotCopy.batchConfirmedAt);
   const update = (mutate: (next: ScreenshotCopySet) => void, commit = false) => {
+    if (running) return screenshotCopy;
     const next = cloneSet(screenshotCopy);
     mutate(next);
     next.updatedAt = new Date().toISOString();
@@ -328,6 +335,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
     return next;
   };
   const commitCurrent = () => {
+    if (running) return;
     const next = cloneSet(screenshotCopy);
     next.items = next.items
       .map((item) => ({ ...item, name: item.name.trim() }))
@@ -397,6 +405,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
     if (mode === "generate" && screenshotCopy.items.length === 0) return setError("请先添加截图类型。");
     setError(""); setRunning(true); setFailed(false); setRetrying(false); setProgress(null);
     const id = globalThis.crypto?.randomUUID?.() || `screenshot-ai-${Date.now()}`;
+    activeOperationIdRef.current = id;
     setOperationId(id);
     try {
       await onCommit?.(screenshotCopy);
@@ -416,6 +425,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
     } catch (reason: any) {
       if (!String(reason?.message || "").includes("已取消")) { setFailed(true); setError(reason?.message || "截图文案 AI 操作失败。"); }
     } finally {
+      activeOperationIdRef.current = "";
       setRunning(false); setRetrying(false); setOperationId("");
     }
   };
@@ -564,18 +574,22 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
                   delete next.batchConfirmedAt;
                 }
               })}
-              onImageChange={(asset) => update((next) => {
-                const target = next.items.find((entry) => entry.id === item.id);
-                if (!target) return;
-                if (activeLanguage === next.sourceLanguage) {
-                  if (asset) target.sourceImage = asset;
-                  else delete target.sourceImage;
-                } else {
-                  target.imageOverrides = { ...(target.imageOverrides || {}) };
-                  if (asset) target.imageOverrides[activeLanguage] = asset;
-                  else delete target.imageOverrides[activeLanguage];
+              onImageChange={async (asset) => {
+                if (!projectId || !draftId) return;
+                setError("");
+                try {
+                  // Save only the selected image against the newest persisted
+                  // draft. A dialog opened before translation must not write
+                  // a stale whole-copy snapshot after translation completes.
+                  const saved = await (window as any).appilot.release.saveScreenshotImage(
+                    projectId, draftId, item.id, activeLanguage, asset ?? null,
+                  );
+                  onGenerated?.(saved);
+                } catch (cause: any) {
+                  setError(cause?.message || "截图图片保存失败。");
                 }
-              }, true)}
+              }}
+              onError={setError}
               onCommit={commitCurrent}
               onRemove={() => update((next) => {
                 next.items = next.items.filter((entry) => entry.id !== item.id);

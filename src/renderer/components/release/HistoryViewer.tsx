@@ -12,6 +12,7 @@ export function HistoryViewer({
   projectId,
   productTrackName,
   onSaveScreenshotCopy,
+  onCreateRevision,
   onBack,
   backLabel = "返回文案列表",
 }: {
@@ -19,6 +20,7 @@ export function HistoryViewer({
   projectId?: string;
   productTrackName?: string | null;
   onSaveScreenshotCopy?: (screenshotCopy: any) => Promise<any>;
+  onCreateRevision?: (draft: any) => void;
   onBack?: () => void;
   backLabel?: string;
 }) {
@@ -60,10 +62,21 @@ export function HistoryViewer({
             {draftVersionLabel(viewerDraft)} · 修订 {Math.max(1, Number(viewerDraft.revisionNumber) || 1)} · 更新于 {formatHumanTime(viewerDraft.updatedAt)}
           </span>
         </div>
-        <div className="inline-flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
+        <div className="flex shrink-0 items-center gap-2">
+          {onCreateRevision && viewerDraft.batchConfirmedAt && (
+            <button
+              type="button"
+              onClick={() => onCreateRevision(viewerDraft)}
+              className={btnSmSecondary}
+            >
+              创建修订稿
+            </button>
+          )}
+          <div className="inline-flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
             {([['store', '商店文案'], ['screenshots', '截图文案']] as const).map(([key, label]) => (
               <button key={key} type="button" onClick={() => setSection(key)} className={cn("rounded-md px-3 py-1.5 text-xs transition-colors", section === key ? "bg-white font-medium text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400")}>{label}</button>
             ))}
+          </div>
         </div>
       </div>
       <div className="p-6 space-y-6">

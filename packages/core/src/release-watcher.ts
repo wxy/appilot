@@ -81,6 +81,8 @@ export interface ReleaseMaterial {
 /** Pre-warmed GitHub API data produced by the background sync task. */
 export interface GithubApiCache {
   tag: string | null;
+  /** Generation boundary used for the cached PR material. */
+  lastSeenSha?: string | null;
   release: GitHubReleaseInfo | null;
   pullRequests: ReleasePullRequest[];
   /** Pre-warmed GitHub releases listing (drafts included). */
@@ -133,6 +135,23 @@ async function isAncestor(localPath: string, ancestor: string, descendant: strin
   } catch {
     return false;
   }
+}
+
+/** Prefer the published branch over a local feature checkout for release counts. */
+async function releaseTipAfter(localPath: string, boundary: string): Promise<string | null> {
+  for (const ref of ["refs/remotes/origin/HEAD", "refs/remotes/origin/master", "refs/remotes/origin/main", "HEAD"]) {
+    const tip = await git(localPath, ["rev-parse", "--verify", `${ref}^{commit}`]).catch(() => "");
+    if (tip && await isAncestor(localPath, boundary, tip)) return tip;
+  }
+  return null;
+}
+
+/** Exact content count since a known commit; null means the range is unverified. */
+export async function countContentCommitsSince(localPath: string, boundary: string): Promise<number | null> {
+  const tip = await releaseTipAfter(localPath, boundary);
+  if (!tip) return null;
+  const output = await git(localPath, ["log", "--no-merges", "--format=%H", `${boundary}..${tip}`]).catch(() => null);
+  return output === null ? null : output ? output.split("\n").length : 0;
 }
 
 /**
@@ -620,6 +639,7 @@ export async function checkForRelease(
   // so it is only a fallback for untagged/local workflows or when the
   // published tag cannot be resolved locally.
   let materialBoundary = lastSeenSha || null;
+  let materialEndRefs = frontierShas;
   if (sortedGithubItems?.[0]?.draft) {
     for (const item of sortedGithubItems) {
       if (item.draft || !item.tag) continue;
@@ -641,7 +661,21 @@ export async function checkForRelease(
     }
   }
 
-  let material = await collectReleaseMaterial(localPath, materialBoundary, frontierShas);
+  if (!materialBoundary && sortedGithubItems?.[0] && !sortedGithubItems[0].draft && sortedGithubItems[0].tag) {
+    const publishedTagSha = await git(
+      localPath,
+      ["rev-parse", "--verify", `${sortedGithubItems[0].tag}^{commit}`],
+    ).catch(() => "");
+    if (publishedTagSha) {
+      const publishedTip = await releaseTipAfter(localPath, publishedTagSha);
+      if (publishedTip) {
+        materialBoundary = publishedTagSha;
+        materialEndRefs = [publishedTip];
+      }
+    }
+  }
+
+  let material = await collectReleaseMaterial(localPath, materialBoundary, materialEndRefs);
 
   // The release identity is the newest main-line tag (or the head when there
   // are no tags). It stays stable across the generation boundary, so the
@@ -676,7 +710,9 @@ export async function checkForRelease(
   // 导致缓存永远匹配不上、每次视图加载都重新走 GitHub API。
   const frontierTag = sortedGithubItems?.[0]?.tag || releaseTag?.name || null;
   const cacheMatches =
-    Boolean(frontierTag) && options.githubCache?.tag === frontierTag;
+    Boolean(frontierTag) &&
+    options.githubCache?.tag === frontierTag &&
+    (options.githubCache?.lastSeenSha ?? null) === (lastSeenSha || null);
   // Only trust cached PR lists that actually carry data. An empty cached list
   // usually means the sync ran before PR enrichment existed (or the API was
   // down), so refetch instead of showing a blank summary.
@@ -694,7 +730,7 @@ export async function checkForRelease(
             githubToken,
             options.onApiStats,
           )
-        : options.githubCache?.pullRequests || [];
+        : cacheMatches ? options.githubCache?.pullRequests || [] : material.pullRequests;
 
   if (githubItems) {
     const coveredTags = new Set(

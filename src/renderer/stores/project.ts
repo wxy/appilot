@@ -500,7 +500,13 @@ export const useProject = create<ProjectState>((set, get) => ({
     set((s) => ({
       projects: s.projects.map((project) =>
         project.storeProducts.some((product) => product.id === productId)
-          ? { ...project, submissionKeywords: submission }
+          ? {
+              ...project,
+              storeProducts: project.storeProducts.map((product) =>
+                product.id === productId ? { ...product, submissionKeywords: submission } : product,
+              ),
+              ...(project.storeProducts[0]?.id === productId ? { submissionKeywords: submission } : {}),
+            }
           : project,
       ),
     }));

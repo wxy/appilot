@@ -3,11 +3,15 @@ import {
   formatVersionDate,
   groupHistoryDrafts,
   mergeHistoryDrafts,
+  releaseStoreFacts,
+  storeReleaseDateForVersion,
 } from "../src/renderer/components/release/releaseFormat";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HistoryViewer } from "../src/renderer/components/release/HistoryViewer";
 import { HistoryPanel } from "../src/renderer/components/release/HistoryPanel";
+import { ReleaseReadinessPanel } from "../src/renderer/components/release/ReleaseReadinessPanel";
+import "./store-product-scope.test";
 
 let errors = 0;
 function assert(condition: boolean, msg: string) {
@@ -32,6 +36,24 @@ async function runTests() {
   assert(draftVersionLabel({ appVersion: "2.0" }) === "v2.0", "draftVersionLabel from appVersion");
   assert(draftVersionLabel({ releaseTag: "some-tag", updatedAt: "2026-08-23T10:30:00Z" }) !== "未知版本", "tag fallback to date");
   assert(draftVersionLabel({}) === "未知版本", "draftVersionLabel unknown");
+  assert(
+    storeReleaseDateForVersion("2.0.0", "2.0.0", "2026-09-22T00:00:00Z") === "2026-09-22T00:00:00Z",
+    "上架日期仅与它所属的当前商店版本配对",
+  );
+  assert(
+    storeReleaseDateForVersion("2.0.0", "1.9.0", "2026-09-01T00:00:00Z") === null,
+    "不同版本的公开商店日期不会被误标为当前版本上架时间",
+  );
+  const iosStoreFacts = releaseStoreFacts("2.0.0", {
+    versions: [{ id: "ios-v2", platform: "IOS", versionString: "2.0.0", appStoreState: "READY_FOR_SALE", buildId: "ios-b2" }],
+    builds: [{ id: "ios-b2", version: "2", processingState: "VALID" }],
+  }, null, true);
+  const macStoreFacts = releaseStoreFacts("2.0.0", {
+    versions: [{ id: "mac-v2", platform: "MAC_OS", versionString: "2.0.0", appStoreState: "IN_REVIEW", buildId: "mac-b2" }],
+    builds: [{ id: "mac-b2", version: "2", processingState: "PROCESSING" }],
+  }, null, true);
+  assert(iosStoreFacts.versionStatus?.label === "已上架" && iosStoreFacts.buildInfo?.label === "构建可用", "iOS 使用本平台的版本和构建状态");
+  assert(macStoreFacts.versionStatus?.label === "审核中" && macStoreFacts.buildInfo?.label === "构建处理中", "macOS 不复用 iOS 的上架和构建状态");
 
   const earlier = { releaseTag: "v1.0", updatedAt: "2026-01-01T00:00:00Z", localizations: [{ language: "en", name: "a" }] };
   const laterSameTag = {
@@ -87,6 +109,27 @@ async function runTests() {
     (historyMarkup.match(/text-emerald-500/g) || []).length === 2,
     "历史商店文案为每个已有翻译显示勾选标记",
   );
+
+  const finalizedMarkup = renderToStaticMarkup(createElement(HistoryViewer, {
+    draft: {
+      id: "draft-final",
+      releaseTag: "v2.0.0",
+      updatedAt: "2026-09-22T00:00:00Z",
+      batchConfirmedAt: "2026-09-22T00:00:00Z",
+      localizations: [{ language: "en", name: "App", description: "Final" }],
+    },
+    onCreateRevision: () => undefined,
+  }));
+  assert(finalizedMarkup.includes("创建修订稿"), "只读定稿页提供创建修订稿入口");
+
+  const flowMarkup = renderToStaticMarkup(createElement(ReleaseReadinessPanel, {
+    githubNode: createElement("span", null, "GitHub ready"),
+    platformFlows: [
+      { key: "ios", label: "iOS", copyNode: createElement("span", null, "iOS copy") },
+      { key: "macos", label: "macOS", copyNode: createElement("span", null, "macOS copy") },
+    ],
+  }));
+  assert(flowMarkup.includes("iOS") && flowMarkup.includes("macOS"), "多平台发布流程同时展示每个平台线路");
 
   if (errors === 0) console.log("\n🎉 All release-format tests passed!");
   else process.exitCode = 1;

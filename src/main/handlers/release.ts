@@ -11,6 +11,8 @@ import {
   findDraftByVersion,
   findStoreSubmissionDraft,
   getStoreSubmissionDrafts,
+  copyGapKeywordsForProduct,
+  releaseCursorForProduct,
   prepareStoreSubmissionDraftForSave,
   upsertStoreSubmissionDraft,
 } from "../project-state";
@@ -43,6 +45,7 @@ import {
 import {
   generateScreenshotMaterialMaster,
   normalizeScreenshotCopySet,
+  patchScreenshotImage,
   screenshotImageForLanguage,
   screenshotMaterialsForProduct,
   translateScreenshotMaterialMaster,
@@ -88,8 +91,14 @@ function setScreenshotThemesForProduct(project: any, productId: string, themes: 
 }
 
 function inheritSharedAppIdentity(project: any, draft: StoreSubmissionDraft): void {
+  const target = (project.storeProducts || []).find((item: any) => item.id === draft.productId);
+  if (!target) return;
   const source = getStoreSubmissionDrafts(project)
-    .filter((item) => item.id !== draft.id && Array.isArray(item.localizations) && item.localizations.length > 0)
+    .filter((item) => {
+      if (item.id === draft.id || !Array.isArray(item.localizations) || item.localizations.length === 0) return false;
+      const other = (project.storeProducts || []).find((product: any) => product.id === item.productId);
+      return other && target.trackId && String(other.trackId || "") === String(target.trackId);
+    })
     .sort((a, b) => new Date(b.updatedAt || "").getTime() - new Date(a.updatedAt || "").getTime())[0];
   if (!source) return;
   for (const localization of draft.localizations || []) {
@@ -237,6 +246,46 @@ export function registerReleaseHandlers(): void {
       height: size.height,
       selectedAt: new Date().toISOString(),
     };
+  });
+
+  ipcMain.handle("release:saveScreenshotImage", async (_event, projectId: string, draftId: string, itemId: string, language: string, asset: any) => {
+    projectId = assertNonEmptyString(projectId, "projectId");
+    draftId = assertNonEmptyString(draftId, "draftId");
+    itemId = assertNonEmptyString(itemId, "itemId");
+    language = assertNonEmptyString(language, "language");
+    const s = await getStore();
+    let selectedImage;
+    if (asset != null) {
+      const knownPaths: string[] = s.get(KNOWN_SCREENSHOT_IMAGE_PATHS_KEY) || [];
+      if (!isKnownImagePath(knownPaths, asset.path) || !fs.existsSync(asset.path)) {
+        throw new Error("选择的截图图片未获授权或已不可用");
+      }
+      const image = nativeImage.createFromPath(asset.path);
+      if (image.isEmpty()) throw new Error("无法读取所选图片");
+      const size = image.getSize();
+      selectedImage = {
+        path: path.resolve(asset.path),
+        fileName: path.basename(asset.path),
+        width: size.width,
+        height: size.height,
+        selectedAt: new Date().toISOString(),
+      };
+    }
+    const projects: any[] = s.get("projects") || [];
+    const project = projects.find((item: any) => item.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const draft = getStoreSubmissionDrafts(project).find((item) => item.id === draftId);
+    if (!draft?.screenshotCopy) throw new Error("截图文案不存在");
+    const product = (project.storeProducts || []).find((item: any) => item.id === draft.productId);
+    if (!product) throw new Error("Store product not found");
+    const supported = (product.supportedLanguages || []).map((item: any) => String(item.code || "").trim()).filter(Boolean);
+    const latestCopy = normalizeScreenshotCopySet(draft.screenshotCopy, draft.screenshotCopy.sourceLanguage, supported);
+    draft.screenshotCopy = patchScreenshotImage(latestCopy, itemId, language, selectedImage, new Date().toISOString());
+    draft.updatedAt = draft.screenshotCopy.updatedAt;
+    upsertStoreSubmissionDraft(project, draft);
+    s.set("projects", projects);
+    notifyDataChanged("release-drafts");
+    return draft;
   });
 
   ipcMain.handle("release:screenshotImagePreview", async (_event, imagePath: string) => {
@@ -583,12 +632,12 @@ export function registerReleaseHandlers(): void {
             signal,
             onProgress: (progress) => {
               if (!event.sender.isDestroyed()) {
-                event.sender.send("release:generateProgress", { kind: "chars", ...progress });
+                event.sender.send("release:generateProgress", { kind: "chars", operationId, ...progress });
               }
             },
             onRetry: () => {
               if (!event.sender.isDestroyed()) {
-                event.sender.send("release:generateProgress", { kind: "retry" });
+                event.sender.send("release:generateProgress", { kind: "retry", operationId });
               }
             },
           },
@@ -676,11 +725,11 @@ export function registerReleaseHandlers(): void {
             signal,
             onProgress: (received) => {
               if (!event.sender.isDestroyed()) {
-                event.sender.send("release:generateProgress", { kind: "chars", ...received });
+                event.sender.send("release:generateProgress", { kind: "chars", operationId, ...received });
               }
             },
             onRetry: () => {
-              if (!event.sender.isDestroyed()) event.sender.send("release:generateProgress", { kind: "retry" });
+              if (!event.sender.isDestroyed()) event.sender.send("release:generateProgress", { kind: "retry", operationId });
             },
           },
         ),
@@ -745,7 +794,7 @@ export function registerReleaseHandlers(): void {
     const project = projects.find((item: any) => item.id === projectId);
     if (!project) throw new Error("Project not found");
 
-    const { checkForRelease } = await import("@appilot-labs/appilot-core/release-watcher");
+    const { checkForRelease, countContentCommitsSince } = await import("@appilot-labs/appilot-core/release-watcher");
     const token = resolveEffectiveCredentials(s, project.id).githubToken;
     const savedGithub = githubSyncCacheSnapshot(s, project);
     const githubReleases = await githubReleaseCandidates(
@@ -756,7 +805,7 @@ export function registerReleaseHandlers(): void {
     );
     const result = await checkForRelease(
       project.localPath,
-      project.lastReleaseSha || null,
+      typeof productId === "string" ? releaseCursorForProduct(project, productId) : project.lastReleaseSha || null,
       token,
       {
         sync: Boolean(force),
@@ -766,6 +815,20 @@ export function registerReleaseHandlers(): void {
         githubCache: savedGithub ?? undefined,
       },
     );
+    const latestPublishedTag = result.releases.find(
+      (item) => item.githubDraft === false && item.tag,
+    )?.tag || null;
+    const latestConfirmedCopy = productId
+      ? getStoreSubmissionDrafts(project)
+          .filter((item) => item.productId === productId && item.batchConfirmedAt && item.releaseCommitSha)
+          .sort((a, b) => String(b.batchConfirmedAt).localeCompare(String(a.batchConfirmedAt)))[0] || null
+      : null;
+    const [sinceReleaseCommitCount, sinceCopyCommitCount] = await Promise.all([
+      latestPublishedTag ? countContentCommitsSince(project.localPath, latestPublishedTag) : Promise.resolve(null),
+      latestConfirmedCopy?.releaseCommitSha
+        ? countContentCommitsSince(project.localPath, latestConfirmedCopy.releaseCommitSha)
+        : Promise.resolve(null),
+    ]);
     // Draft-release visibility depends on the token's write access to
     // releases. Check it live only on the explicit manual action; initial
     // workbench loading reuses the last saved capability result.
@@ -817,6 +880,8 @@ export function registerReleaseHandlers(): void {
         })(),
       })),
       latestDraft: result.releases.find((release) => release.draft) || null,
+      sinceReleaseCommitCount,
+      sinceCopyCommitCount,
       githubCapabilities,
       githubLastCheckedAt,
     };
@@ -849,7 +914,7 @@ export function registerReleaseHandlers(): void {
       );
       const result = await checkForRelease(
         project.localPath,
-        project.lastReleaseSha || null,
+        releaseCursorForProduct(project, productId),
         token,
         {
           sync: false,
@@ -915,7 +980,7 @@ export function registerReleaseHandlers(): void {
         drafts: draftSummaries,
         previousDescription: previous?.description || "",
         previousUpdatedAt: previous?.updatedAt || "",
-        copyGapKeywords: project.copyGapKeywords || [],
+        copyGapKeywords: copyGapKeywordsForProduct(project, product),
         copyPlans: copyPlansForProduct(project, productId),
         release,
       };
@@ -965,7 +1030,7 @@ export function registerReleaseHandlers(): void {
     });
     const result = await checkForRelease(
       project.localPath,
-      project.lastReleaseSha || null,
+      releaseCursorForProduct(project, productId),
       token,
       {
         sync: false,
@@ -1029,21 +1094,21 @@ export function registerReleaseHandlers(): void {
             existing,
             (progress) => {
               if (!_event.sender.isDestroyed()) {
-                _event.sender.send("release:generateProgress", progress);
+                _event.sender.send("release:generateProgress", { ...progress, operationId });
               }
             },
             language,
             appVersion,
             (received) => {
               if (!_event.sender.isDestroyed()) {
-                _event.sender.send("release:generateProgress", { kind: "chars", ...received });
+                _event.sender.send("release:generateProgress", { kind: "chars", operationId, ...received });
               }
             },
             includedChanges,
             signal,
             () => {
               if (!_event.sender.isDestroyed()) {
-                _event.sender.send("release:generateProgress", { kind: "retry" });
+                _event.sender.send("release:generateProgress", { kind: "retry", operationId });
               }
             },
           ),
@@ -1121,7 +1186,7 @@ export function registerReleaseHandlers(): void {
           trackedKeywordsByLanguage[lang] || []).push(String(k.keyword || ""));
       }
       const copyGapKeywordsByLanguage: Record<string, string[]> = {};
-      for (const g of project.copyGapKeywords || []) {
+      for (const g of copyGapKeywordsForProduct(project, product)) {
         const lang = String(g.language || "");
         if (!lang) continue;
         (copyGapKeywordsByLanguage[lang] =
@@ -1144,18 +1209,18 @@ export function registerReleaseHandlers(): void {
           targetLanguages,
           (progress) => {
             if (!_event.sender.isDestroyed()) {
-              _event.sender.send("release:generateProgress", progress);
+              _event.sender.send("release:generateProgress", { ...progress, operationId });
             }
           },
           (received) => {
             if (!_event.sender.isDestroyed()) {
-              _event.sender.send("release:generateProgress", { kind: "chars", ...received });
+              _event.sender.send("release:generateProgress", { kind: "chars", operationId, ...received });
             }
           },
           signal,
           () => {
             if (!_event.sender.isDestroyed()) {
-              _event.sender.send("release:generateProgress", { kind: "retry" });
+              _event.sender.send("release:generateProgress", { kind: "retry", operationId });
             }
           },
         ),
@@ -1306,10 +1371,14 @@ export function registerReleaseHandlers(): void {
       draft.storeCopyCreatedAt || (draft.localizations || []).length > 0,
     );
     if (context && storeCopyExists) {
-      ensureProjectKeywordPool(context.project).submissionKeywords = (draft.localizations || []).map((item) => ({
+      const submissionKeywords = (draft.localizations || []).map((item) => ({
         language: item.language,
         text: item.keywords,
       }));
+      context.product.submissionKeywords = submissionKeywords;
+      if (context.project.storeProducts?.[0]?.id === context.product.id) {
+        ensureProjectKeywordPool(context.project).submissionKeywords = submissionKeywords;
+      }
     }
     s.set("projects", projects);
     // Draft content/status changed, but the GitHub release list did not.
@@ -1363,7 +1432,7 @@ export function registerReleaseHandlers(): void {
       if (!targetVersion) throw new Error("无法确定目标版本，请先生成文案后再重建");
 
       const fs = await import("fs");
-      const { createAscClient } = await import("@appilot-labs/appilot-core/asc-api");
+      const { ascPlatformForProduct, createAscClient } = await import("@appilot-labs/appilot-core/asc-api");
       const { buildStoreRebuildDraft } = await import("@appilot-labs/appilot-core/store-submission");
       const client = createAscClient({
         issuerId: creds.ascIssuerId,
@@ -1372,7 +1441,9 @@ export function registerReleaseHandlers(): void {
       });
       const appId = await client.getAppIdByBundleId(product.bundleId);
       if (!appId) throw new Error("App Store 中未找到该应用");
-      const versions = await client.listAppStoreVersions(appId);
+      const platform = ascPlatformForProduct(product.platform);
+      if (!platform) throw new Error("无法确定产品平台，不能从 App Store 重建文案");
+      const versions = await client.listAppStoreVersions(appId, platform);
       const version = versions.find((v: any) => v.versionString === targetVersion) || null;
       if (!version) throw new Error(`App Store 中未找到版本 ${targetVersion}`);
       const [versionLocalizations, appInfoLocalizations] = await Promise.all([

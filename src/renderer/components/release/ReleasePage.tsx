@@ -2,10 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useProject } from "../../stores/project";
 import { cn } from "../../lib/utils";
-import { buildStatusForVersion } from "@appilot-labs/appilot-core/build-status";
 import { inferAppVersion } from "@appilot-labs/appilot-core/store-submission";
+import { scopedAscSnapshotForProduct } from "@appilot-labs/appilot-core/asc-api";
 import { findStoreFieldLimitIssues } from "@appilot-labs/appilot-core/readiness-check";
-import { ascStoreLiveVersion, deriveVersionStatus } from "@appilot-labs/appilot-core/version-status";
 import {
   formatHumanTime,
   languageLabel,
@@ -38,7 +37,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { HistoryViewer } from "./HistoryViewer";
 import { CopyTabPage } from "./CopyTabPage";
 import { ReferenceSection } from "./ReferenceSection";
-import { draftVersionLabel } from "./releaseFormat";
+import { draftVersionLabel, releaseStoreFacts, storeReleaseDateForVersion } from "./releaseFormat";
 import { ValueFlash } from "../ui/ValueFlash";
 import { KeywordRuby } from "../ui/KeywordRuby";
 import { CopyFeedbackProvider } from "../ui/CopyFeedback";
@@ -58,6 +57,7 @@ export function ReleasePage() {
   const urlTag = searchParams.get("tag") || "";
   const project = projects.find((item) => item.id === currentProjectId);
   const products = project?.storeProducts || [];
+  const productIdsKey = products.map((item) => item.id).join("|");
   const [productId, setProductId] = useState(currentProductId || products[0]?.id || "");
   const [releases, setReleases] = useState<any[]>([]);
   const [githubCapabilities, setGithubCapabilities] = useState<{
@@ -93,6 +93,7 @@ export function ReleasePage() {
   const translatingRef = useRef<Set<string>>(new Set());
   const [translateOpId, setTranslateOpId] = useState("");
   const [generateOpId, setGenerateOpId] = useState("");
+  const generateOpIdRef = useRef("");
   const [failedTranslation, setFailedTranslation] = useState("");
   const [generateFailed, setGenerateFailed] = useState(false);
   const [summaryChecked, setSummaryChecked] = useState<Set<string>>(new Set());
@@ -119,9 +120,15 @@ export function ReleasePage() {
   const [retrying, setRetrying] = useState(false);
   const [confirmingMaster, setConfirmingMaster] = useState(false);
   const [confirmingBatch, setConfirmingBatch] = useState(false);
+  const [platformSnapshots, setPlatformSnapshots] = useState<Record<string, any>>({});
+  const [platformSnapshotRevision, setPlatformSnapshotRevision] = useState(0);
+  const [platformRefreshing, setPlatformRefreshing] = useState<Set<string>>(new Set());
+  const platformRefreshingRef = useRef(new Set<string>());
+  const [platformCheckFeedback, setPlatformCheckFeedback] = useState<Record<string, { tone: "success" | "error"; message: string }>>({});
 
   useEffect(() => {
     const off = (window as any).appilot?.release?.onGenerateProgress?.((progress: any) => {
+      if (!generateOpIdRef.current || progress?.operationId !== generateOpIdRef.current) return;
       if (progress?.kind === "retry") {
         // 自动修复/强制重写开始：运行按钮变黄提示用户。
         setRetrying(true);
@@ -138,39 +145,84 @@ export function ReleasePage() {
   useEffect(() => {
     if (!productId) return;
     let cancelled = false;
+    setAscInfo(null);
     (window as any).appilot?.asc?.status(productId)
-      .then((info: any) => { if (!cancelled) setAscInfo(info); })
+      .then((info: any) => { if (!cancelled) setAscInfo(scopedAscSnapshotForProduct(products, products.find((item) => item.id === productId), info)); })
       .catch(() => { if (!cancelled) setAscInfo(null); });
     return () => { cancelled = true; };
-  }, [productId]);
+  }, [productId, productIdsKey]);
 
   // Public store lookup: the no-ASC fallback for version status. It can only
   // confirm the *current* live version; everything else stays "未确认".
-  const loadStoreCurrentVersion = async () => {
-    if (!productId) return;
-    try {
-      const info = await (window as any).appilot?.store?.currentVersion(productId);
-      setStoreCurrentVersion(info?.version || null);
-      setStoreReleaseDate(info?.currentVersionReleaseDate || null);
-    } catch {
-      setStoreCurrentVersion(null);
-      setStoreReleaseDate(null);
-    }
-  };
   useEffect(() => {
     if (!productId) return;
-    void loadStoreCurrentVersion();
+    let cancelled = false;
+    setStoreCurrentVersion(null);
+    setStoreReleaseDate(null);
+    setStoreLastCheckedAt(null);
+    (window as any).appilot?.store?.currentVersion(productId)
+      .then((info: any) => {
+        if (cancelled) return;
+        setStoreCurrentVersion(info?.version || null);
+        setStoreReleaseDate(info?.currentVersionReleaseDate || null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStoreCurrentVersion(null);
+        setStoreReleaseDate(null);
+      });
     (window as any).appilot?.store?.lastCheckedAt(productId)
-      .then((value: string | null) => setStoreLastCheckedAt(value || null))
-      .catch(() => setStoreLastCheckedAt(null));
+      .then((value: string | null) => { if (!cancelled) setStoreLastCheckedAt(value || null); })
+      .catch(() => { if (!cancelled) setStoreLastCheckedAt(null); });
+    return () => { cancelled = true; };
   }, [productId]);
+
+  useEffect(() => {
+    if (!project?.id || products.length === 0) {
+      setPlatformSnapshots({});
+      return;
+    }
+    let cancelled = false;
+    Promise.all(products.map(async (product) => {
+      const [releaseResult, productAscInfo, publicStore, lastCheckedAt] = await Promise.all([
+        (window as any).appilot.release.list(project.id, product.id, false).catch(() => null),
+        (window as any).appilot?.asc?.status(product.id).catch(() => null),
+        (window as any).appilot?.store?.currentVersion(product.id).catch(() => null),
+        (window as any).appilot?.store?.lastCheckedAt(product.id).catch(() => null),
+      ]);
+      const productReleases = releaseResult?.releases || [];
+      const selected = productReleases.find((item: any) => item.tag === selectedTag)
+        || productReleases[0]
+        || null;
+      const drafts = productReleases.flatMap((item: any) => item.submissionDrafts || []);
+      const current = drafts
+        .filter((item: any) => Boolean(item.batchConfirmedAt))
+        .sort((a: any, b: any) => new Date(b.batchConfirmedAt).getTime() - new Date(a.batchConfirmedAt).getTime())[0]
+        || null;
+      const working = (selected?.submissionDrafts || [])
+        .filter((item: any) => !item.batchConfirmedAt)
+        .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0]
+        || null;
+      return [product.id, {
+        release: selected,
+        current,
+        working,
+        ascInfo: scopedAscSnapshotForProduct(products, product, productAscInfo),
+        publicStore,
+        lastCheckedAt,
+      }] as const;
+    })).then((entries) => {
+      if (!cancelled) setPlatformSnapshots(Object.fromEntries(entries));
+    });
+    return () => { cancelled = true; };
+  }, [project?.id, productIdsKey, selectedTag, contextRevision, platformSnapshotRevision]);
 
   const handleAscRefresh = async () => {
     if (!productId || ascRefreshing) return;
     setAscRefreshing(true);
     try {
       const result = await (window as any).appilot?.store?.check(productId);
-      setAscInfo(result?.ascInfo || null);
+      setAscInfo(scopedAscSnapshotForProduct(products, products.find((item) => item.id === productId), result?.ascInfo));
       setStoreCurrentVersion(result?.currentVersion?.version || null);
       setStoreReleaseDate(result?.currentVersion?.currentVersionReleaseDate || null);
       setStoreLastCheckedAt(result?.checkedAt || null);
@@ -346,13 +398,13 @@ export function ReleasePage() {
         setContextRevision((revision) => revision + 1);
       } else if (scope === "asc" && productId) {
         (window as any).appilot?.asc?.status(productId)
-          .then(setAscInfo)
+          .then((info: any) => setAscInfo(scopedAscSnapshotForProduct(products, products.find((item) => item.id === productId), info)))
           .catch(() => undefined);
       }
     };
     window.addEventListener("appilot:data-changed", handler);
     return () => window.removeEventListener("appilot:data-changed", handler);
-  }, [productId]);
+  }, [productId, productIdsKey]);
 
   // Keep the selected product valid when the project or its products change
   // (e.g. switching project, or products arriving after the initial load).
@@ -435,26 +487,14 @@ export function ReleasePage() {
   const versionQuery = String(
     viewDraft?.appVersion || inferredVersion || "",
   ).trim();
-  const ascVersion = viewDraft?.appVersion
-    ? (ascInfo?.versions || []).find((v: any) => v.versionString === viewDraft.appVersion) || null
-    : null;
-  const versionStatus = deriveVersionStatus({
-    appVersion: versionQuery,
-    ascVersions: ascInfo?.versions ?? null,
+  const storeFacts = releaseStoreFacts(versionQuery, ascInfo, storeCurrentVersion, ascConfigured);
+  const { ascLiveVersion, storeLiveVersion, buildInfo, buildTone } = storeFacts;
+  const verifiedStoreReleaseDate = storeReleaseDateForVersion(
+    storeLiveVersion,
     storeCurrentVersion,
-  });
-  const storeLiveVersion = ascStoreLiveVersion(ascInfo?.versions);
-  const ascStoreLiveDate = [...(ascInfo?.versions || [])]
-    .filter((item: any) => item?.appStoreState === "READY_FOR_SALE")
-    .sort((a: any, b: any) => String(b?.createdDate || "").localeCompare(String(a?.createdDate || "")))[0]
-    ?.createdDate || null;
-  // ASC configured but not synced yet → "待同步", never "未配置".
-  const ascPending = ascConfigured && !ascInfo && versionQuery;
-  const effectiveVersionStatus = ascPending
-    ? { key: "asc-pending" as const, label: "待同步", tone: "muted" as const, source: "asc" as const }
-    : versionQuery
-      ? versionStatus
-      : null;
+    storeReleaseDate,
+  );
+  const effectiveVersionStatus = storeFacts.versionStatus;
   // 只有“已上架且已按商店冻结”的文案才是完全只读（D2）。整批确定但尚未
   // 上架时，仍允许填写驳回意见并重新生成；没有草稿（或未确认的新草稿）时
   // 允许从头新建，即使版本已上架——发布状态只是信息，不阻断新建。
@@ -468,14 +508,6 @@ export function ReleasePage() {
       : release
         ? { label: "本地标签", tone: "muted" as const, source: "本地" as const }
         : null;
-  const buildInfo = ascVersion ? buildStatusForVersion(ascVersion, ascInfo?.builds || []) : null;
-  const buildTone: "muted" | "emerald" | "amber" | "red" = buildInfo?.state === "available"
-    ? "emerald"
-    : buildInfo?.state === "processing" || buildInfo?.state === "inBetaReview"
-      ? "amber"
-      : buildInfo?.state === "rejected"
-        ? "red"
-        : "muted";
   const localizations = draft ? localizationList(draft) : [];
   const storeCopyExists = Boolean(draft && (draft.storeCopyCreatedAt || localizations.length > 0));
   const activeLocalization =
@@ -593,6 +625,10 @@ export function ReleasePage() {
     btnPrimary,
     "min-h-11 w-full justify-between px-3.5 disabled:bg-zinc-300 dark:disabled:bg-zinc-700",
   );
+  const flowInternalButtonClass = cn(
+    btnSecondary,
+    "min-h-11 w-full justify-between px-3.5 disabled:bg-zinc-100 dark:disabled:bg-zinc-800",
+  );
   const githubPrimaryAction = (
     <button
       type="button"
@@ -635,7 +671,7 @@ export function ReleasePage() {
     <button
       type="button"
       onClick={() => setShowCurrentDetails(true)}
-      className={flowPrimaryButtonClass}
+      className={flowInternalButtonClass}
       title={currentWorkspaceDraft ? "打开该版本的商店文案" : "打开商店文案工作区"}
     >
       <span className="truncate">
@@ -650,7 +686,7 @@ export function ReleasePage() {
       </span>
     </button>
   );
-  const storeVersionMatches = Boolean(versionQuery && storeLiveVersion && storeLiveVersion === versionQuery);
+  const storeVersionMatches = storeFacts.versionMatches;
   const storeNode = effectiveVersionStatus || buildInfo || (viewDraft?.appVersion && storeLiveVersion) ? (
     <>
       {effectiveVersionStatus && (
@@ -684,7 +720,7 @@ export function ReleasePage() {
         <span className="truncate">打开商店页面</span>
       </span>
       <span className="shrink-0 text-[11px] font-semibold">
-        {storeLiveVersion ? `v${storeLiveVersion}` : storePageUrl ? "当前版本" : "不可用"}（{storeReleaseDate || ascStoreLiveDate ? `上架于${formatHumanTime(storeReleaseDate || ascStoreLiveDate)}` : "上架时间未知"}）{storePageUrl ? " ↗" : ""}
+        {storeLiveVersion ? `v${storeLiveVersion}` : storePageUrl ? "当前版本" : "不可用"}（{verifiedStoreReleaseDate ? `上架于${formatHumanTime(verifiedStoreReleaseDate)}` : ascLiveVersion ? "ASC 已确认上架" : "上架时间未知"}）{storePageUrl ? " ↗" : ""}
       </span>
     </button>
   );
@@ -1090,11 +1126,13 @@ export function ReleasePage() {
     }
   };
 
-  const checklist = (project as any).preReleaseChecklist || null;
+  const savedChecklist = (project as any).preReleaseChecklist || null;
+  const checklist = savedChecklist?.byProductId?.[productId] ||
+    (products.length === 1 && !savedChecklist?.byProductId ? savedChecklist : null);
 
   useEffect(() => {
     setChecklistResult(checklist);
-  }, [project?.id, checklist?.updatedAt]);
+  }, [project?.id, productId, checklist?.updatedAt]);
 
   useEffect(() => {
     if (!draft?.id) {
@@ -1371,6 +1409,7 @@ export function ReleasePage() {
     if (!project || !productId || !selectedTag) return;
     const operationId = crypto.randomUUID();
     if (force) {
+      generateOpIdRef.current = operationId;
       setGenerateOpId(operationId);
       setGenerating(true);
       setGenerationProgress(null);
@@ -1410,6 +1449,7 @@ export function ReleasePage() {
         if (force) setGenerateFailed(true);
       }
     } finally {
+      generateOpIdRef.current = "";
       setGenerateOpId("");
       setRetrying(false);
       setGenerating(false);
@@ -1425,7 +1465,7 @@ export function ReleasePage() {
     if (generateOpId) void (window as any).appilot?.ai?.cancel(generateOpId);
   };
 
-  const handleProductChange = async (value: string) => {
+  async function handleProductChange(value: string) {
     setProductId(value);
     selectProduct(value);
     setActive(null);
@@ -1444,7 +1484,55 @@ export function ReleasePage() {
     } finally {
       setLoadingDraft(false);
     }
-  };
+  }
+
+  async function handlePlatformStoreRefresh(targetProductId: string) {
+    if (platformRefreshingRef.current.has(targetProductId)) return;
+    platformRefreshingRef.current.add(targetProductId);
+    setPlatformRefreshing(new Set(platformRefreshingRef.current));
+    setPlatformCheckFeedback((current) => {
+      const next = { ...current };
+      delete next[targetProductId];
+      return next;
+    });
+    try {
+      const result = await (window as any).appilot?.store?.check(targetProductId);
+      if (!result) throw new Error("商店检查没有返回结果，请重试");
+      const targetProduct = products.find((item) => item.id === targetProductId);
+      const sharedStoreId = products.some((item) =>
+        item.id !== targetProductId && item.trackId && String(item.trackId) === String(targetProduct?.trackId || ""),
+      );
+      const expectedPlatform = targetProduct?.platform === "macos" ? "MAC_OS" : targetProduct?.platform === "ios" ? "IOS" : null;
+      if (sharedStoreId && result.ascInfo?.platform !== expectedPlatform) {
+        throw new Error("检查结果没有平台标记；请完全退出并重启 Appilot，再重新检查");
+      }
+      if (targetProductId === productId) {
+        setAscInfo(scopedAscSnapshotForProduct(products, targetProduct, result?.ascInfo));
+        setStoreCurrentVersion(result?.currentVersion?.version || null);
+        setStoreReleaseDate(result?.currentVersion?.currentVersionReleaseDate || null);
+        setStoreLastCheckedAt(result?.checkedAt || null);
+      }
+      const versionCount = result.ascInfo?.versions?.length || 0;
+      setPlatformCheckFeedback((current) => ({
+        ...current,
+        [targetProductId]: {
+          tone: "success",
+          message: versionCount > 0 || result.currentVersion?.version
+            ? "检查完成，状态已更新"
+            : "检查完成，但此平台尚无可查询的商店版本",
+        },
+      }));
+      setPlatformSnapshotRevision((revision) => revision + 1);
+    } catch (cause: any) {
+      setPlatformCheckFeedback((current) => ({
+        ...current,
+        [targetProductId]: { tone: "error", message: cause?.message || "商店检查失败，请重试" },
+      }));
+    } finally {
+      platformRefreshingRef.current.delete(targetProductId);
+      setPlatformRefreshing(new Set(platformRefreshingRef.current));
+    }
+  }
 
   const attachSavedDraft = (saved: any) => {
     if (!saved?.id) return;
@@ -1652,6 +1740,150 @@ export function ReleasePage() {
       : <p className="text-xs text-zinc-400 dark:text-zinc-500">先确定母本语言，再翻译其他语言。</p>
     : null;
 
+  const storeCheckAction = (targetProductId: string, lastCheckedAt: string | null) => {
+    const feedback = platformCheckFeedback[targetProductId];
+    return (
+      <div className="space-y-1.5">
+        <button
+          type="button"
+          onClick={() => void handlePlatformStoreRefresh(targetProductId)}
+          disabled={platformRefreshing.has(targetProductId)}
+          className={cn(btnSmSecondary, "disabled:cursor-not-allowed disabled:opacity-50")}
+        >
+          <AppleIcon className="h-3 w-3" />
+          {platformRefreshing.has(targetProductId)
+            ? "检查中…"
+            : `检查商店状态（${lastCheckedAt ? `上次：${formatHumanTime(lastCheckedAt)}` : "尚未检查"}）`}
+        </button>
+        {feedback && (
+          <p role={feedback.tone === "error" ? "alert" : "status"} className={cn(
+            "max-w-64 text-[11px] leading-relaxed",
+            feedback.tone === "error" ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400",
+          )}>{feedback.message}</p>
+        )}
+      </div>
+    );
+  };
+
+  const platformFlows = products.map((product) => {
+    const isActive = product.id === productId;
+    if (isActive) {
+      return {
+        key: product.id,
+        label: platformLabel(product.platform),
+        active: true,
+        copyNode,
+        copyPrimaryAction,
+        copyActions,
+        storeNode,
+        storePrimaryAction,
+        storeActions: storeCheckAction(product.id, storeLastCheckedAt),
+      };
+    }
+
+    const snapshot = platformSnapshots[product.id];
+    const snapshotDraft = snapshot?.working || snapshot?.current || null;
+    const snapshotVersion = String(
+      snapshotDraft?.appVersion || (snapshot?.release ? inferAppVersion(snapshot.release) : ""),
+    ).replace(/^v/i, "");
+    const snapshotLocalizations = snapshotDraft?.localizations || [];
+    const snapshotCopyExists = Boolean(snapshotDraft?.storeCopyCreatedAt || snapshotLocalizations.length > 0);
+    const snapshotCopyStatus = !snapshotCopyExists
+      ? { label: "商店文案 · 未创建", tone: "muted" as const }
+      : snapshotDraft?.batchConfirmedAt
+        ? { label: "商店文案 · 已定稿", tone: "emerald" as const }
+        : snapshotDraft?.masterConfirmedAt
+          ? { label: "商店文案 · 翻译中", tone: "amber" as const }
+          : { label: "商店文案 · 编辑中", tone: "amber" as const };
+    const snapshotScreenshotStatus = !snapshotDraft?.screenshotCopy
+      ? { label: "截图文案 · 未创建", tone: "muted" as const }
+      : snapshotDraft.screenshotCopy.batchConfirmedAt
+        ? { label: "截图文案 · 已定稿", tone: "emerald" as const }
+        : snapshotDraft.screenshotCopy.masterConfirmedAt
+          ? { label: "截图文案 · 翻译中", tone: "amber" as const }
+          : { label: "截图文案 · 编辑中", tone: "amber" as const };
+    const snapshotStoreFacts = releaseStoreFacts(
+      snapshotVersion,
+      snapshot?.ascInfo || null,
+      snapshot?.publicStore?.version || null,
+      ascConfigured,
+    );
+    const {
+      ascLiveVersion: snapshotAscLiveVersion,
+      storeLiveVersion: snapshotStoreVersion,
+      versionStatus: snapshotVersionStatus,
+      buildInfo: snapshotBuildInfo,
+      buildTone: snapshotBuildTone,
+      versionMatches: snapshotVersionMatches,
+    } = snapshotStoreFacts;
+    const snapshotStoreUrl = product.storeLinks?.[0]?.url
+      || (product.trackId ? `https://apps.apple.com/app/id${product.trackId}` : "");
+    const snapshotReleaseDate = storeReleaseDateForVersion(
+      snapshotStoreVersion,
+      snapshot?.publicStore?.version,
+      snapshot?.publicStore?.currentVersionReleaseDate,
+    );
+
+    return {
+      key: product.id,
+      label: platformLabel(product.platform),
+      copyNode: snapshot ? (
+        <>
+          <StatusChip label={snapshotCopyStatus.label} tone={snapshotCopyStatus.tone} />
+          <StatusChip label={snapshotScreenshotStatus.label} tone={snapshotScreenshotStatus.tone} />
+        </>
+      ) : <span className="text-[11px] text-zinc-400">载入中…</span>,
+      copyPrimaryAction: (
+        <button
+          type="button"
+          onClick={() => {
+            void handleProductChange(product.id);
+            setShowCurrentDetails(true);
+          }}
+          className={flowInternalButtonClass}
+        >
+          <span className="truncate">
+            {snapshot?.working ? "打开编辑中的文案" : "打开当前商店文案"}
+          </span>
+          <span className="shrink-0 text-[11px] font-semibold">
+            {snapshotVersion ? `v${snapshotVersion}` : "未定版本"}（{snapshotDraft?.updatedAt ? `更新于${formatHumanTime(snapshotDraft.updatedAt)}` : "尚未更新"}） →
+          </span>
+        </button>
+      ),
+      storeNode: snapshot ? (
+        <>
+          {snapshotVersionStatus && (
+            <StatusChip
+              label={`${snapshotVersionStatus.label}${snapshotVersionMatches ? " · 版本一致" : ""}`}
+              tone={snapshotVersionStatus.tone}
+            />
+          )}
+          {snapshotBuildInfo && <StatusChip label={snapshotBuildInfo.label} tone={snapshotBuildTone} />}
+          {snapshotVersion && snapshotStoreVersion && !snapshotVersionMatches && (
+            <StatusChip label={`商店 v${snapshotStoreVersion} ≠ 目标 v${snapshotVersion}`} tone="amber" />
+          )}
+        </>
+      ) : <span className="text-[11px] text-zinc-400">载入中…</span>,
+      storePrimaryAction: (
+        <button
+          type="button"
+          onClick={() => snapshotStoreUrl && (window as any).appilot?.openExternal?.(snapshotStoreUrl)}
+          disabled={!snapshotStoreUrl}
+          className={flowPrimaryButtonClass}
+        >
+          <span className="inline-flex min-w-0 items-center gap-2">
+            <AppleIcon className="h-4 w-4 text-white" />
+            <span className="truncate">打开商店页面</span>
+          </span>
+          <span className="shrink-0 text-[11px] font-semibold">
+            {snapshotStoreVersion ? `v${snapshotStoreVersion}` : snapshotStoreUrl ? "当前版本" : "不可用"}（{snapshotReleaseDate ? `上架于${formatHumanTime(snapshotReleaseDate)}` : snapshotAscLiveVersion ? "ASC 已确认上架" : "上架时间未知"}）{snapshotStoreUrl ? " ↗" : ""}
+          </span>
+        </button>
+      ),
+      storeActions: storeCheckAction(product.id, snapshot?.lastCheckedAt || null),
+    };
+  });
+
   return (
     <CopyFeedbackProvider scopeKey={copyFeedbackScope}>
     <div className="p-8 max-w-6xl mx-auto">
@@ -1664,7 +1896,7 @@ export function ReleasePage() {
         </div>
         <div className="flex items-center gap-3">
           {/* 凭据设置状态已收拢到底部状态栏的凭据标志，页面不再重复展示 */}
-          {products.length > 0 && (
+          {products.length > 0 && !isCurrentReleaseMode && (
             <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-zinc-800/80 p-1 gap-1">
               {products.map((product) => (
                 <button
@@ -1748,15 +1980,8 @@ export function ReleasePage() {
           <ReleaseReadinessPanel
             githubNode={githubNode}
             githubPrimaryAction={githubPrimaryAction}
-            copyNode={copyNode}
-            copyPrimaryAction={copyPrimaryAction}
-            copyActions={copyActions}
-            storeNode={storeNode}
-            storePrimaryAction={storePrimaryAction}
+            platformFlows={platformFlows}
             alerts={alerts}
-            onAscRefresh={handleAscRefresh}
-            ascRefreshing={ascRefreshing}
-            storeLastCheckedAt={storeLastCheckedAt}
             onCheckGithub={() => void loadReleases(true, false)}
             checkingGithub={checking}
             githubLastCheckedAt={githubLastCheckedAt}
@@ -2155,12 +2380,13 @@ export function ReleasePage() {
               )
             ) : showChecklist ? null
             : isCurrentReleaseMode && currentWorkspacePhase === "official" && currentCopyFullyFinalized && showCurrentDetails && currentCopy ? (
-              <HistoryViewer
-                draft={currentCopy}
-                projectId={project.id}
-                productTrackName={selectedProduct?.trackName}
-                onSaveScreenshotCopy={(screenshotCopy) =>
-                  persistReadOnlyScreenshotCopy(currentCopy, screenshotCopy)
+                <HistoryViewer
+                  draft={currentCopy}
+                  projectId={project.id}
+                  productTrackName={selectedProduct?.trackName}
+                  onCreateRevision={(item) => void handleCreateRevision(item)}
+                  onSaveScreenshotCopy={(screenshotCopy) =>
+                    persistReadOnlyScreenshotCopy(currentCopy, screenshotCopy)
                 }
                 onBack={() => setShowCurrentDetails(false)}
                 backLabel="返回发布流程"
@@ -2341,7 +2567,11 @@ export function ReleasePage() {
                         draft: { ...prev.draft, screenshotCopy: value },
                       } : prev)}
                       onCommit={persistScreenshotCopy}
-                      onGenerated={(next) => setActive((prev: any) => ({ ...prev, draft: next }))}
+                      onGenerated={(next) => setActive((prev: any) => {
+                        if (!prev?.draft || prev.draft.id !== next?.id) return prev;
+                        if (String(prev.draft.updatedAt || "") > String(next.updatedAt || "")) return prev;
+                        return { ...prev, draft: next };
+                      })}
                       onDelete={() => persistScreenshotCopy(undefined)}
                     />
                   )}

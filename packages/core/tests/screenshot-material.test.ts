@@ -3,6 +3,7 @@ import {
   generateScreenshotMaterialMaster,
   normalizeScreenshotCopySet,
   normalizeScreenshotMaterialDraft,
+  patchScreenshotImage,
   screenshotImageForLanguage,
   screenshotMaterialsForProduct,
   translateScreenshotMaterialMaster,
@@ -59,6 +60,34 @@ async function main() {
   assert.equal(screenshotImageForLanguage(withImages.items[0], "zh-Hans", "en")?.path, "/tmp/home-zh.png");
   assert.equal(withImages.items[0].imageOverrides?.en, undefined, "the source language never stores an override");
   assert.equal(withImages.items[0].imageOverrides?.xx, undefined, "unsupported language images are dropped");
+  const translatedCopy = normalizeScreenshotCopySet({
+    sourceLanguage: "en",
+    selectedLanguages: ["en", "zh-Hans"],
+    masterUpdatedAt: "2026-09-01T00:00:00Z",
+    items: [{ id: "home", name: "首页", copies: {
+      en: { title: "Home", description: "Original" },
+      "zh-Hans": { title: "首页", description: "翻译结果", sourceUpdatedAt: "2026-09-01T00:00:00Z" },
+    } }],
+  }, "en", ["en", "zh-Hans"]);
+  const patchedImage = patchScreenshotImage(translatedCopy, "home", "zh-Hans", {
+    path: "/tmp/home-zh-new.png", fileName: "home-zh-new.png", width: 100, height: 200, selectedAt: "2026-09-02T00:00:00Z",
+  }, "2026-09-02T00:00:00Z");
+  assert.equal(patchedImage.items[0].copies["zh-Hans"].description, "翻译结果", "选图不覆盖已完成的翻译");
+  assert.equal(patchedImage.items[0].imageOverrides?.["zh-Hans"].path, "/tmp/home-zh-new.png");
+  assert.equal(translatedCopy.items[0].imageOverrides?.["zh-Hans"], undefined, "选图不原位修改旧快照");
+  const inheritedAgain = patchScreenshotImage(patchedImage, "home", "zh-Hans", undefined, "2026-09-03T00:00:00Z");
+  assert.equal(inheritedAgain.items[0].imageOverrides?.["zh-Hans"], undefined, "移除本地化图片后继承母本");
+  assert.equal(Object.hasOwn(inheritedAgain.items[0].imageOverrides || {}, "zh-Hans"), false, "移除覆盖时删除键而非存入空值");
+  assert.equal(inheritedAgain.items[0].copies["zh-Hans"].description, "翻译结果", "移除图片不覆盖已完成的翻译");
+  const sourceImage = { path: "/tmp/source.png", fileName: "source.png", width: 100, height: 200, selectedAt: "2026-09-02T00:00:00Z" };
+  const withSource = patchScreenshotImage(inheritedAgain, "home", "en", sourceImage, "2026-09-04T00:00:00Z");
+  assert.equal(screenshotImageForLanguage(withSource.items[0], "zh-Hans", "en")?.path, sourceImage.path);
+  const withoutSource = patchScreenshotImage(withSource, "home", "en", undefined, "2026-09-05T00:00:00Z");
+  assert.equal(withoutSource.items[0].sourceImage, undefined, "移除母本图片应持久生效");
+  assert.equal(Object.hasOwn(withoutSource.items[0], "sourceImage"), false, "移除母本时删除字段而非存入空值");
+  assert.equal(screenshotImageForLanguage(withoutSource.items[0], "zh-Hans", "en"), undefined, "移除母本后本地化不再继承旧图片");
+  assert.equal(withSource.items[0].sourceImage?.path, sourceImage.path, "移除操作不原位修改先前快照");
+  assert.throws(() => patchScreenshotImage({ ...withSource, batchConfirmedAt: "2026-09-06T00:00:00Z" }, "home", "en", undefined, "2026-09-07T00:00:00Z"));
   delete withImages.items[0].imageOverrides?.["zh-Hans"];
   assert.equal(
     screenshotImageForLanguage(withImages.items[0], "zh-Hans", "en")?.path,

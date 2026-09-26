@@ -16,15 +16,15 @@
  * - GitHub ↗ 外部链接 + GitHub 凭证就绪/去设置只在 ①开发 标题行右侧（顶部）；
  *   repo 分支/工作区状态归 ①开发卡底（仓库侧，
  *   一行小字无分隔横线；提交 sha 不重复展示，已在上次提交指标副注/tooltip）。
- * - ①开发「指标卡优先」：四枚等宽小指标 = 自上次发布以来提交（draft.commitCount）
+ * - ①开发「指标卡优先」：四枚等宽小指标 = 自上次发布以来提交（完整 tag 范围计数）
  *   / PR（repoMetrics.pullsSince）/ 开放 Issue（repoMetrics.issues.open）/
  *   上次提交（repo.headDate 只显示天粒度「今天/N 天」，完整时间在 tooltip；
  *   副注含 headSha 短值）。下方 GitHub 活跃为
  *   ProjectActivityCard 同款近 4 个月（120 天）热力图（activityHeatmap 纯函数，
  *   activityData.commits + 发布日黄框标注），横向铺满卡宽；无数据 → 「无活跃数据」。
  * - ②发布卡：每个「文案」（project.storeSubmissionDrafts 一条）一行、按 updatedAt
- *   倒序；顶部一句话小结「最新文案后又 +N 提交 · +M PR」（与 ① 同源同值，但以
- *   一句话而非指标卡呈现，避免视觉重复）只出现在 ②；语言进度 n/total 只在 ② 行内。
+ *   倒序；顶部仅在有新增提交时显示「最新文案后又 +N 提交」，以当前平台最新
+ *   定稿文案的代码提交为边界，和 ① 的发布 tag 边界分开；语言进度只在 ② 行内。
  * - ③上架：顶部版本不一致提示（商店已上架 vX ≠ 草稿目标 vY → 黄/红条）+ 一行式
  *   紧凑小格（横向 wrap，每格 title 说明）：商店当前版本 / 目标+审核状态
  *   （deriveVersionStatus）/ 最新构建状态与时间 / App 商店 ↗（storeLinks[0]）/
@@ -89,7 +89,8 @@ export interface OverviewContentProps {
   project: Project | null;
   product: StoreProduct | null;
   releaseOverview: {
-    draft: { name: string | null; tag: string; publishedAt: string; commitCount: number } | null;
+    draft: { name: string | null; tag: string; publishedAt: string; commitCount: number | null } | null;
+    sinceCopyCommitCount?: number | null;
     submission: any | null;
   } | null;
   ascInfo: { versions: any[]; builds: any[]; fetchedAt?: string } | null;
@@ -659,6 +660,7 @@ export function OverviewContent(props: OverviewContentProps) {
 
   // ── ① 开发：四枚等宽小指标（自上次发布以来提交/PR + 开放 Issue + 上次提交）──
   const pendingCommits = releaseDraft ? releaseDraft.commitCount : null;
+  const sinceCopyCommitCount = releaseOverview?.sinceCopyCommitCount ?? null;
   const repoPulls = repoMetrics?.ok ? repoMetrics.pullsSince : null;
   const repoIssues = repoMetrics?.ok ? repoMetrics.issues : null;
   const repoSinceTag = repoMetrics?.ok ? repoMetrics.sinceTag : null;
@@ -680,19 +682,14 @@ export function OverviewContent(props: OverviewContentProps) {
 
   // ── ② 发布：文案行（宿主聚合，按 updatedAt 倒序）+ 顶部一句话小结 ──
   const draftRows: SubmissionDraftRow[] = Array.isArray(drafts) ? drafts : [];
-  // 小结与 ①「自上次发布以来提交/PR」同源同值，这里以一句话（非指标卡）呈现，
-  // 避免两个数字并排重复：最新文案行之上的「距上次发布后又 +N 提交 · +M PR」。
+  // 文案提示以当前平台最新定稿的 releaseCommitSha 为边界；开发卡以发布 tag 为边界。
   const latestCopyNote = (() => {
-    if (draftRows.length === 0 || !releaseDraft) return null;
-    const parts: string[] = [];
-    if (pendingCommits && pendingCommits > 0) parts.push(`+${pendingCommits} 提交`);
-    if (repoPulls && repoPulls > 0) parts.push(`+${repoPulls} PR`);
-    if (parts.length === 0) return null;
-    return `最新文案后又 ${parts.join(" · ")}`;
+    if (draftRows.length === 0 || !releaseDraft || !sinceCopyCommitCount) return null;
+    return `最新文案后又 +${sinceCopyCommitCount} 提交`;
   })();
 
   // ── ③ 上架：版本不一致提示 + 一行式（商店版本/目标审核/构建/商店链接/更新于）──
-  const liveStoreVersion = storeCurrentVersion || storeLiveVersion || null;
+  const liveStoreVersion = storeLiveVersion || storeCurrentVersion || null;
   const targetVersion = submissionDraft?.appVersion || null;
   const storeUnconfigured = !product.trackId && storeLinks.length === 0;
   const latestBuild = (ascInfo?.builds || [])
@@ -887,9 +884,9 @@ export function OverviewContent(props: OverviewContentProps) {
           "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-medium ring-1 transition-colors",
           budgetTone,
         )}
-        title={`每日采集任务数 / 硬上限（活跃关键词 × 语言覆盖的商店数）`}
+        title="预计每日采集任务数 / 高负载参考线；超出仍可添加关键词"
       >
-        采集预算 {rankBudget.dailyInstances}/{rankBudget.hardLimit}
+        采集量 {rankBudget.dailyInstances} · 参考 {rankBudget.hardLimit}
       </LinkComponent>
     </div>
   );
@@ -1344,7 +1341,7 @@ export function OverviewContent(props: OverviewContentProps) {
                 muted={pendingCommits == null}
                 title={
                   pendingCommits != null
-                    ? `自上次发布（${releaseDraft?.tag || "当前候选"}）以来收集的提交数`
+                    ? "自最近一次已发布版本以来的新内容提交数"
                     : "暂无发布素材（生成文案后统计）"
                 }
               />
@@ -1458,9 +1455,9 @@ export function OverviewContent(props: OverviewContentProps) {
             <LinkComponent
               to="/keywords"
               className={cn(CHIP_BASE, "px-2.5 py-0.5 ring-1 transition-colors", budgetTone)}
-              title="每日采集任务数 / 硬上限"
+              title="预计每日采集任务数 / 高负载参考线；超出仍可添加关键词"
             >
-              采集预算 {rankBudget.dailyInstances}/{rankBudget.hardLimit}
+              采集量 {rankBudget.dailyInstances} · 参考 {rankBudget.hardLimit}
             </LinkComponent>
               {repoMetricError && (
                 <p
@@ -1550,7 +1547,7 @@ export function OverviewContent(props: OverviewContentProps) {
             {latestCopyNote && (
               <p
                 className="text-[11px] font-medium text-amber-600 dark:text-amber-500"
-                title="统计自最近发布/最新文案边界（与①同源）；提交数来自当前发布候选素材"
+                title="自当前平台最新定稿文案对应的代码提交以来"
               >
                 {latestCopyNote}
               </p>
