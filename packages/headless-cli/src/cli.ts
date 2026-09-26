@@ -67,7 +67,7 @@ function usage(): never {
       '  appilot-headless projects release-cache <name>  # 发布页缓存（M4）',
       '  appilot-headless snapshots latest <project> [--product <id>]',
       '  appilot-headless snapshots history <project> [--product <id>] [--keyword <kw>] [--limit <n>]',
-      '  appilot-headless snapshots prune <project> [--before <iso>]   # 默认清 90 天前',
+      '  appilot-headless snapshots prune <project> [--before <iso>] [--dry-run] [--force]  # 默认清 90 天前；删除量超存量 50% 需 --force',
       '  appilot-headless tasks list [--source dsh|electron|cli]',
       '  appilot-headless tasks rank-progress [project] [--product <id>]',
       '  appilot-headless lease status        # 当前租约主（多壳调度验证）',
@@ -233,8 +233,15 @@ export async function main(argv: string[]): Promise<void> {
           if (!project) return usage();
           // 默认清理 90 天前的快照（与 core RANK_SNAPSHOT_WINDOW_MS 一致）
           const before = flags.get('before') || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-          const removed = svc.snapshots.prune(project, before);
-          process.stdout.write(JSON.stringify({ project, beforeIso: before, removed }, null, 2) + '\n');
+          // 审计 H7：dry-run 预览 / force 显式确认（服务层同时做 ISO 校验、
+          // 未知项目报错与 50% 删除量拦截）。
+          const res = svc.snapshots.prune(project, before, {
+            dryRun: flags.has('dry-run'),
+            force: flags.has('force'),
+          });
+          process.stdout.write(
+            JSON.stringify({ project, beforeIso: before, dryRun: flags.has('dry-run'), ...res }, null, 2) + '\n',
+          );
           return;
         }
         return usage();

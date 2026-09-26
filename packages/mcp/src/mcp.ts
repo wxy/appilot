@@ -162,21 +162,25 @@ async function serve(): Promise<void> {
     },
     {
       name: 'snapshots_prune',
-      description: '清理某项目早于指定时间（ISO）的排名快照；返回删除行数（数据生命周期维护，默认窗口 90 天由调用方给出 before）。',
+      description: '清理某项目早于指定时间（ISO 8601）的排名快照；返回 { matched, removed, total }。破坏性操作防护：before 非法或项目不存在会报错；删除量超过存量 50% 需 force:true；建议先 dry_run 预览影响面。',
       inputSchema: {
         type: 'object',
         properties: {
           project: { type: 'string' },
-          before: { type: 'string', description: 'ISO 时间：只删除 checkedAt 早于它的行' },
+          before: { type: 'string', description: 'ISO 8601 时间：只删除 checkedAt 早于它的行' },
+          dry_run: { type: 'boolean', description: '只预览将删除的条数，不执行删除' },
+          force: { type: 'boolean', description: '删除量超过存量 50% 时的显式确认' },
         },
         required: ['project', 'before'],
         additionalProperties: false,
       },
-      execute: (a) => ({
-        project: a.project,
-        beforeIso: a.before,
-        removed: svc.snapshots.prune(String(a.project), String(a.before)),
-      }),
+      execute: (a) => {
+        const res = svc.snapshots.prune(String(a.project), String(a.before), {
+          dryRun: a.dry_run === true,
+          force: a.force === true,
+        });
+        return { project: a.project, beforeIso: a.before, dryRun: a.dry_run === true, ...res };
+      },
     },
     {
       name: 'tasks_list',

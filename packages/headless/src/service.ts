@@ -25,8 +25,17 @@ export interface HeadlessService {
       projectName: string,
       opts?: { productId?: string | null; keyword?: string; limit?: number },
     ): RankSnapshotRow[];
-    /** 清理某项目早于 beforeIso 的旧快照；返回删除行数。 */
-    prune(projectName: string, beforeIso: string): number;
+    /**
+     * 清理某项目早于 beforeIso 的旧快照；返回 { matched, removed, total }。
+     * 破坏性命令防护（审计 H7）：before 必须 ISO 8601（字典序陷阱——传 "z"
+     * 等字符串会删光全部快照）；未知项目抛错（不再静默 0）；dryRun 只预览；
+     * 单次删除超过存量 50% 需显式 force:true。
+     */
+    prune(
+      projectName: string,
+      beforeIso: string,
+      opts?: { dryRun?: boolean; force?: boolean },
+    ): { matched: number; removed: number; total: number };
   };
   tasks: {
     list(): TaskRow[];
@@ -88,7 +97,34 @@ export function createHeadlessService(store: AppilotStore): HeadlessService {
       latest: (projectName, productId) =>
         store.snapshots.latestByKey(projectName, productId ?? undefined),
       recent: (projectName, opts) => store.snapshots.recent(projectName, opts),
-      prune: (projectName, beforeIso) => store.snapshots.pruneOlderThan(projectName, beforeIso),
+      prune: (projectName, beforeIso, opts = {}) => {
+        // 审计 H7：checkedAt 是 TEXT，prune 按字典序比较——非 ISO 字符串
+        // （如 "z"）会删光项目全部快照且静默返回成功。入口先做格式强校验。
+        if (
+          !/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:?\d{2})?)?$/.test(
+            String(beforeIso).trim(),
+          )
+        ) {
+          throw new Error(
+            `before 必须是 ISO 8601 时间（如 2026-01-01T00:00:00Z），收到："${String(beforeIso).slice(0, 40)}"`,
+          );
+        }
+        const preview = store.snapshots.prunePreview(projectName, beforeIso);
+        if (!preview) {
+          throw new Error(`项目不存在：${projectName}`);
+        }
+        if (opts.dryRun) {
+          return { matched: preview.matched, removed: 0, total: preview.total };
+        }
+        if (preview.total > 0 && preview.matched * 2 > preview.total && !opts.force) {
+          throw new Error(
+            `将删除 ${preview.matched}/${preview.total} 条快照（超过存量的 50%）。` +
+              '如确认无误请传 force:true；建议先用 dryRun 预览影响面。',
+          );
+        }
+        const removed = store.snapshots.pruneOlderThan(projectName, beforeIso);
+        return { matched: preview.matched, removed, total: preview.total };
+      },
     },
     tasks: {
       list: () => store.tasks.all(),

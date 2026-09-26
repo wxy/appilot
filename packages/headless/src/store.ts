@@ -114,6 +114,14 @@ export interface AppilotStore {
     ): RankSnapshotRow[];
     /** 清理某项目早于 checkedAt 的旧快照（保留最近 N 天）。 */
     pruneOlderThan(projectName: string, beforeIso: string): number;
+    /**
+     * prune 影响面预览（不删除）：项目快照总数 + 将被删除的条数。
+     * 项目不存在返回 null（审计 H7：未知项目必须显式报错，不能静默 0）。
+     */
+    prunePreview(
+      projectName: string,
+      beforeIso: string,
+    ): { total: number; matched: number } | null;
     /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
     pruneAllOlderThan(beforeIso: string): number;
     /**
@@ -522,6 +530,19 @@ export function openStore(dbPath: string): AppilotStore {
           .prepare('DELETE FROM rank_snapshots WHERE projectId = ? AND checkedAt < ?')
           .run(identity.id, beforeIso);
         return Number(res.changes);
+      },
+      prunePreview(projectName, beforeIso) {
+        const identity = projectIdentity(projectName);
+        if (!identity) return null;
+        const total = Number(
+          (db.prepare('SELECT COUNT(*) AS n FROM rank_snapshots WHERE projectId = ?').get(identity.id) as any).n,
+        );
+        const matched = Number(
+          (db
+            .prepare('SELECT COUNT(*) AS n FROM rank_snapshots WHERE projectId = ? AND checkedAt < ?')
+            .get(identity.id, beforeIso) as any).n,
+        );
+        return { total, matched };
       },
       /** 全库清理早于 checkedAt 的旧快照（数据管理/保留策略用）。返回删除行数。 */
       pruneAllOlderThan(beforeIso) {

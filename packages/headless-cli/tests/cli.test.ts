@@ -115,7 +115,7 @@ async function main(): Promise<void> {
   assert.equal(JSON.parse(histKw.stdout).count, 1);
   console.log('✓ snapshots history（降序/productId/limit）');
 
-  // snapshots prune：清 90 天前（seed 里 2026-08 距今不足 90 天 → 保留？用显式 before 清全部）
+  // snapshots prune：dry-run 预览（审计 H7）+ --before 窗口（1/2 = 50% 恰好无需 force）
   const seedStore = openStore(dbPath);
   seedStore.projects.save({ id: 'old-proj-id', name: 'old-proj', path: '/old-proj', githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
   seedStore.snapshots.add([
@@ -123,11 +123,16 @@ async function main(): Promise<void> {
     { projectName: 'old-proj', productId: null, keyword: 'k', language: 'en', storefront: 'us', rank: 8, totalResults: 10, checkedAt: '2026-08-15T00:00:00Z' },
   ]);
   seedStore.close();
+  const pruneDry = await run(['snapshots', 'prune', 'old-proj', '--before', '2025-01-01T00:00:00Z', '--dry-run'], dbPath);
+  const pruneDryJson = JSON.parse(pruneDry.stdout);
+  assert.equal(pruneDryJson.dryRun, true, 'dry-run 标志回显');
+  assert.equal(pruneDryJson.matched, 1, 'dry-run 预览命中 1 条');
+  assert.equal(pruneDryJson.removed, 0, 'dry-run 不删除');
   const prune = await run(['snapshots', 'prune', 'old-proj', '--before', '2025-01-01T00:00:00Z'], dbPath);
   const pruneJson = JSON.parse(prune.stdout);
   assert.equal(pruneJson.removed, 1, '只清早于 before 的行');
   assert.equal(pruneJson.beforeIso, '2025-01-01T00:00:00Z');
-  console.log('✓ snapshots prune（--before 窗口）');
+  console.log('✓ snapshots prune（--dry-run 预览 + --before 窗口）');
 
   // tasks list --source：seed 不同来源行 → 过滤正确
   const tStore = openStore(dbPath);
