@@ -57,6 +57,10 @@ async function main() {
     assert.equal(JSON.parse(store.kv.get('aiApiKey')!), 'sk-test');
     assert.equal(JSON.parse(store.kv.get('note')!), '中文与 Unicode ✓');
     assert.ok(store.kv.get(KV_MIGRATE_MARK), '完成标记应已写入');
+    if (process.platform !== 'win32') {
+      const mode = fs.statSync(outcome.archivedTo as string).mode & 0o777;
+      assert.equal(mode, 0o600, `归档含明文凭据应仅本用户可读写（实际 ${mode.toString(8)}）`);
+    }
     store.close();
     console.log('✅ 首次导入：全量键入库 + 归档 + 完成标记');
   }
@@ -76,6 +80,25 @@ async function main() {
     assert.equal(JSON.parse(store.kv.get('k')!), 1, '值保持首次导入的内容');
     store.close();
     console.log('✅ 幂等：完成标记后跳过');
+  }
+
+  // Permission failure must not turn the old config into an insecure archive.
+  if (process.platform !== 'win32') {
+    const dir = tempDir();
+    const store = openStore(dbPath(dir));
+    const configPath = path.join(dir, 'config.json');
+    fs.writeFileSync(configPath, JSON.stringify({ aiApiKey: 'private-key' }));
+    const failingFs = {
+      existsSync: fs.existsSync,
+      readFileSync: fs.readFileSync,
+      renameSync: fs.renameSync,
+      chmodSync: () => { throw new Error('injected chmod failure'); },
+    };
+    assert.throws(() => migrateConfigJsonIntoKv(store.kv, configPath, failingFs));
+    assert.equal(fs.existsSync(configPath), true, 'chmod failure retains source config');
+    assert.equal(store.kv.get(KV_MIGRATE_MARK), undefined, 'chmod failure does not mark migration complete');
+    assert.equal(fs.readdirSync(dir).some((name) => name.startsWith('config.json.migrated-')), false);
+    store.close();
   }
 
   // 3. 无 config.json：直接置完成标记，不抛错

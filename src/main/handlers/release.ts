@@ -29,6 +29,7 @@ import {
 } from "../release-service";
 import { assertNonEmptyString, assertStringArray } from "../util";
 import { notifyDataChanged } from "../data-sync";
+import { isKnownImagePath, rememberKnownImagePath } from "../screenshot-paths";
 import { log } from "@appilot-labs/appilot-core/logger";
 import type { GitHubRepoCapabilities } from "@appilot-labs/appilot-core/github-api";
 import { cancelAiRequest, withAiOperation } from "../ai-cancel";
@@ -53,6 +54,8 @@ import { buildProjectProfileFor } from "../release-service";
 import { fillKeynoteFromTemplate, inspectKeynoteTemplate } from "../keynote-automation";
 
 const LAST_SCREENSHOT_IMAGE_DIRECTORY_KEY = "lastScreenshotImageDirectory";
+/** 已知截图图片路径（审计 M-M4）：dialog 选择时登记，预览时校验。 */
+const KNOWN_SCREENSHOT_IMAGE_PATHS_KEY = "screenshotKnownImagePaths";
 
 function existingDirectory(value: unknown): string | undefined {
   const candidate = String(value || "").trim();
@@ -230,6 +233,11 @@ export function registerReleaseHandlers(): void {
     const image = nativeImage.createFromPath(imagePath);
     if (image.isEmpty()) throw new Error("无法读取所选图片");
     s.set(LAST_SCREENSHOT_IMAGE_DIRECTORY_KEY, path.dirname(imagePath));
+    // 审计 M-M4：登记进「已知路径」集合（持久化），预览通道只放行集合内路径。
+    s.set(
+      KNOWN_SCREENSHOT_IMAGE_PATHS_KEY,
+      rememberKnownImagePath(s.get(KNOWN_SCREENSHOT_IMAGE_PATHS_KEY) || [], imagePath),
+    );
     const size = image.getSize();
     return {
       path: imagePath,
@@ -264,14 +272,44 @@ export function registerReleaseHandlers(): void {
     return draft;
   });
 
-  ipcMain.handle("release:screenshotImagePreview", (_event, imagePath: string) => {
+  ipcMain.handle("release:screenshotImagePreview", async (_event, imagePath: string) => {
     imagePath = assertNonEmptyString(imagePath, "imagePath");
+    // 审计 M-M4：只放行经主进程 dialog 选择并登记的「已知路径」——被攻破的
+    // 渲染层无法自行注入路径，不能再把磁盘任意图片读回为 dataURL。集合外的
+    // 路径与文件不存在同样返回 null（UI 显示为无预览，不区分原因）。
+    const s = await getStore();
+    const knownPaths: string[] = s.get(KNOWN_SCREENSHOT_IMAGE_PATHS_KEY) || [];
+    if (!isKnownImagePath(knownPaths, imagePath)) return null;
     if (!fs.existsSync(imagePath)) return null;
     const image = nativeImage.createFromPath(imagePath);
     if (image.isEmpty()) return null;
     const size = image.getSize();
     const preview = size.width > 520 ? image.resize({ width: 520, quality: "good" }) : image;
     return preview.toDataURL();
+  });
+
+  // Old drafts predate the path allowlist. Let the user reauthorize the exact
+  // existing file through a native picker, including from read-only history.
+  // A renderer-supplied path alone never enters the allowlist.
+  ipcMain.handle("release:authorizeScreenshotImagePreview", async (_event, imagePath: string) => {
+    imagePath = assertNonEmptyString(imagePath, "imagePath");
+    const defaultPath = existingDirectory(path.dirname(imagePath));
+    const result = await dialog.showOpenDialog({
+      title: "选择原截图以授权预览",
+      properties: ["openFile"],
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "heic"] }],
+      ...(defaultPath ? { defaultPath } : {}),
+    });
+    if (result.canceled || result.filePaths.length === 0) return false;
+    const selected = result.filePaths[0];
+    if (path.resolve(selected) !== path.resolve(imagePath)) return false;
+    if (nativeImage.createFromPath(selected).isEmpty()) return false;
+    const s = await getStore();
+    s.set(
+      KNOWN_SCREENSHOT_IMAGE_PATHS_KEY,
+      rememberKnownImagePath(s.get(KNOWN_SCREENSHOT_IMAGE_PATHS_KEY) || [], selected),
+    );
+    return true;
   });
 
   ipcMain.handle("release:getScreenshotThemes", async (_event, projectId: string, productId: string) => {

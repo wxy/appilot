@@ -25,6 +25,18 @@ import {
 } from './self-update.js';
 
 export const SCHEDULER_LEADER_ID = 'scheduler';
+
+/**
+ * 单例仲裁让位（已有调度者在跑）：与「真实启动失败」区分退出码（审计 H4）。
+ * bin 入口捕获本错误 → exit 0（让位，调度已有人在跑）；其余启动失败 → exit 1，
+ * 壳 ensure 与 launchd 据此判定失败，不再误判为「让位成功、调度在跑」。
+ */
+export class YieldToActiveSchedulerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'YieldToActiveSchedulerError';
+  }
+}
 export const RECONCILE_INTERVAL_MS = 60_000;
 export const DEFAULT_HEARTBEAT_MS = 15_000;
 export const DEFAULT_TTL_MS = 60_000;
@@ -146,7 +158,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     store.close();
     // 能走到这里 = 持主心跳新鲜**且进程存活**（崩溃主的租约已在 acquire 里按
     // leaderPid 存活检测立即接管，不再空等 TTL）。
-    throw new Error(
+    throw new YieldToActiveSchedulerError(
       `已有调度主在跑（leader=${info?.leaderId ?? '?'} pid=${info?.leaderPid ?? '?'} @ ${info?.heartbeatAt ?? '?'}，heartbeat 新鲜且进程存活）——` +
         'daemon 单例仲裁退出（若刚重启壳，是壳调度先抢到租约的启动竞态，属正常让位）',
     );
@@ -294,7 +306,9 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   try {
     await server.start();
   } catch (err: any) {
-    // socket 占用（已有 daemon 在服务）→ 仲裁退出。
+    // 持主后 socket 仍启动失败 = 真实启动失败（残留 socket 已在上面清理，
+    // 常见为目录权限/占用问题）——按审计 H4 语义向 bin 传非让位错误（exit 1），
+    // 壳 ensure 与 launchd 据此判定失败，而不是误读为「已有 daemon 让位」。
     clearInterval(reconcileTimer);
     scheduler.dispose();
     try {
@@ -303,7 +317,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       /* TTL 兜底 */
     }
     store.close();
-    throw new Error(`socket 启动失败（已有 daemon？）: ${err?.message || String(err)}`);
+    throw new Error(`socket 启动失败: ${err?.message || String(err)}`);
   }
 
   // 任务事件 → socket 广播（活动中心实时性；无客户端时无开销）。
