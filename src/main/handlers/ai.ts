@@ -5,6 +5,7 @@ import {
   looksLikeEncryptedBlob,
 } from "../credentials";
 import { isAllowedAiProviderUrl } from "../url-policy";
+import { resolveAiKeyForRequest, shouldPreserveSavedAiKey } from "../ai-key-policy";
 import { getStore } from "../store";
 
 /** 掩码展示：仅暴露首尾少量字符，供 UI 提示「已配置」，绝不回传明文。 */
@@ -20,12 +21,18 @@ function maskApiKey(key: string): string {
  * useStoredKey 时取主进程内解密的已存 Key（审计 M-M1：明文 Key 不回传渲染层，
  * 「测试连接 / 拉取模型列表」等要用到已存 Key 的场景在主进程内解析）。
  */
-async function resolveRequestApiKey(config: { apiKey?: string; useStoredKey?: boolean }): Promise<string> {
+async function resolveRequestApiKey(config: { providerUrl: string; apiKey?: string; useStoredKey?: boolean }): Promise<string> {
   const typed = String(config?.apiKey || "").trim();
   if (typed) return typed;
   if (!config?.useStoredKey) return "";
   const s = await getStore();
-  return decryptApiKey(s.get("aiApiKey") || "").trim();
+  return resolveAiKeyForRequest(
+    config.providerUrl,
+    "",
+    true,
+    s.get("aiProviderUrl"),
+    decryptApiKey(s.get("aiApiKey") || ""),
+  );
 }
 
 export function registerAiHandlers(): void {
@@ -57,13 +64,16 @@ export function registerAiHandlers(): void {
       throw new Error("不支持的供应商 URL（仅允许 https，或本机回环的 http 地址）");
     }
     const s = await getStore();
+    const apiKey = String(config.apiKey || "").trim();
+    if (apiKey) {
+      s.set("aiApiKey", encryptApiKey(apiKey));
+    } else if (!shouldPreserveSavedAiKey(s.get("aiProviderUrl"), config.providerUrl, apiKey)) {
+      // Switching providers with a blank Key must not carry the old secret
+      // into subsequent generation requests to the new endpoint.
+      s.set("aiApiKey", "");
+    }
     s.set("aiProviderUrl", config.providerUrl);
     s.set("aiModel", config.model);
-    const currentStored = s.get("aiApiKey") || "";
-    const apiKey = config.apiKey || "";
-    if (apiKey && apiKey !== currentStored) {
-      s.set("aiApiKey", encryptApiKey(apiKey));
-    }
     return true;
   });
 
@@ -89,7 +99,7 @@ export function registerAiHandlers(): void {
     if (!isAllowedAiProviderUrl(providerUrl)) {
       return { models: [], error: "不支持的供应商 URL（仅允许 https，或本机回环的 http 地址）" };
     }
-    const apiKey = await resolveRequestApiKey(config);
+    const apiKey = await resolveRequestApiKey({ ...config, providerUrl });
     try {
       const res = await fetch(`${providerUrl}/models`, {
         headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},

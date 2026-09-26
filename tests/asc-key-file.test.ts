@@ -73,6 +73,36 @@ async function runTests() {
       "dedupe hit again",
     );
     assert(modeOf(first) === 0o600, "dedupe hit re-tightens loose permission to 0600");
+
+    // Already-managed paths and dedupe hits must also fail closed when the
+    // operating system refuses to tighten permissions.
+    fs.chmodSync(first, 0o644);
+    assert(importAscKeyFileTo(keysDir, first, "project-1") === first, "already-managed path reused");
+    assert(modeOf(first) === 0o600, "already-managed path re-tightens loose permission");
+
+    const originalChmod = fs.chmodSync;
+    fs.chmodSync = (() => { throw new Error("injected chmod failure"); }) as typeof fs.chmodSync;
+    try {
+      let managedRejected = false;
+      try { importAscKeyFileTo(keysDir, first, "project-1"); } catch { managedRejected = true; }
+      assert(managedRejected, "already-managed path rejects chmod failure");
+
+      let dedupeRejected = false;
+      try { importAscKeyFileTo(keysDir, keyARestored, "project-1"); } catch { dedupeRejected = true; }
+      assert(dedupeRejected, "dedupe hit rejects chmod failure");
+
+      const before = fs.readdirSync(keysDir).filter((f) => f.endsWith(".p8")).length;
+      const newKey = writeP8(srcDir, "AuthKey_NEW.p8", "-----BEGIN PRIVATE KEY-----\nDDDD\n-----END PRIVATE KEY-----\n");
+      let newCopyRejected = false;
+      try { importAscKeyFileTo(keysDir, newKey, "project-3"); } catch { newCopyRejected = true; }
+      assert(newCopyRejected, "new copy rejects chmod failure");
+      assert(
+        fs.readdirSync(keysDir).filter((f) => f.endsWith(".p8")).length === before,
+        "new copy leaves no partial managed key after chmod failure",
+      );
+    } finally {
+      fs.chmodSync = originalChmod;
+    }
   }
 
   if (errors === 0) console.log("\n🎉 All asc-key-file tests passed!");

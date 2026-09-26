@@ -82,6 +82,25 @@ async function main() {
     console.log('✅ 幂等：完成标记后跳过');
   }
 
+  // Permission failure must not turn the old config into an insecure archive.
+  if (process.platform !== 'win32') {
+    const dir = tempDir();
+    const store = openStore(dbPath(dir));
+    const configPath = path.join(dir, 'config.json');
+    fs.writeFileSync(configPath, JSON.stringify({ aiApiKey: 'private-key' }));
+    const failingFs = {
+      existsSync: fs.existsSync,
+      readFileSync: fs.readFileSync,
+      renameSync: fs.renameSync,
+      chmodSync: () => { throw new Error('injected chmod failure'); },
+    };
+    assert.throws(() => migrateConfigJsonIntoKv(store.kv, configPath, failingFs));
+    assert.equal(fs.existsSync(configPath), true, 'chmod failure retains source config');
+    assert.equal(store.kv.get(KV_MIGRATE_MARK), undefined, 'chmod failure does not mark migration complete');
+    assert.equal(fs.readdirSync(dir).some((name) => name.startsWith('config.json.migrated-')), false);
+    store.close();
+  }
+
   // 3. 无 config.json：直接置完成标记，不抛错
   {
     const dir = tempDir();
