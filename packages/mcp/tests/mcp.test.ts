@@ -62,6 +62,7 @@ async function main(): Promise<void> {
   // 1. initialize
   const init = await s.send({ jsonrpc: '2.0', method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '0.0.0' } } });
   assert.equal(init.result?.serverInfo?.name, 'appilot-mcp', 'serverInfo.name');
+  assert.equal(init.result?.serverInfo?.version, require('../package.json').version, 'serverInfo.version must match the published package');
   assert.ok(init.result?.capabilities?.tools, 'tools capability');
   console.log('✓ initialize');
 

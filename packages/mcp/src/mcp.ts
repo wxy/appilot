@@ -23,7 +23,7 @@ import {
 import type { HeadlessService } from '@appilot-labs/appilot-headless';
 
 const PROTOCOL_VERSION = '2025-03-26';
-const SERVER_INFO = { name: 'appilot-mcp', version: '0.1.0' };
+const SERVER_INFO = { name: 'appilot-mcp', version: String(require('../package.json').version) };
 
 interface McpTool {
   name: string;

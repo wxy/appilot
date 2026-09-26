@@ -1,4 +1,6 @@
-# macOS DMG 发布流程（当前里程碑 1.2.0）
+# macOS DMG 发布流程（最近已发布安装包：1.2.0）
+
+> 1.3.0 是 npm 包版本；本次未制作或发布新的 DMG。下面的 1.2.0 命令保留为已完成的安装包发布记录。下一次 DMG 发布应重新设定版本并独立完成签名、公证及人工安装验证。
 
 > 构建环境说明：Appilot 是 Electron 应用（TypeScript + React + electron-vite），
 > 不是 Xcode 工程。日常开发用 VS Code，打包用 npm + electron-builder 在本机完成，
