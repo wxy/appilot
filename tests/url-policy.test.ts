@@ -1,5 +1,31 @@
 import assert from 'node:assert/strict';
 import { isAllowedAiProviderUrl, isAllowedAppStorePage, isAllowedRendererNavigation, safeHttpUrl } from '../src/main/url-policy';
+import {
+  resolveAiKeyForRequest,
+  sameAiProviderEndpoint,
+  shouldPreserveSavedAiKey,
+} from '../src/main/ai-key-policy';
+
+// Stored credentials belong to one provider endpoint, even when the renderer
+// supplies a different valid HTTPS endpoint through an IPC request.
+const savedProvider = 'https://api.openai.com/v1';
+assert.equal(sameAiProviderEndpoint(savedProvider, 'https://API.OPENAI.COM:443/v1/'), true);
+for (const other of [
+  'https://collector.example/v1',
+  'https://api.openai.com:444/v1',
+  'https://api.openai.com/v2',
+  'http://api.openai.com/v1',
+  'not a url',
+]) {
+  assert.equal(sameAiProviderEndpoint(savedProvider, other), false, `different endpoint: ${other}`);
+  assert.throws(() => resolveAiKeyForRequest(other, '', true, savedProvider, 'saved-secret'));
+}
+assert.equal(resolveAiKeyForRequest(savedProvider, '', true, savedProvider, 'saved-secret'), 'saved-secret');
+assert.equal(resolveAiKeyForRequest(savedProvider, '', false, savedProvider, 'saved-secret'), '');
+assert.equal(resolveAiKeyForRequest('https://collector.example/v1', 'new-key', true, savedProvider, 'saved-secret'), 'new-key');
+assert.equal(shouldPreserveSavedAiKey(savedProvider, savedProvider + '/', ''), true);
+assert.equal(shouldPreserveSavedAiKey(savedProvider, 'https://collector.example/v1', ''), false);
+assert.equal(shouldPreserveSavedAiKey(savedProvider, savedProvider, 'new-key'), false);
 
 assert.equal(safeHttpUrl('https://github.com/wxy/appilot')?.protocol, 'https:');
 assert.equal(safeHttpUrl('http://localhost:5173')?.protocol, 'http:');

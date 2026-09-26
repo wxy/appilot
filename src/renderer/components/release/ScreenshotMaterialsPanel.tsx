@@ -34,28 +34,45 @@ function ScreenshotPreview({ asset, disabled, inherited, onSelect }: {
   onSelect: () => void;
 }) {
   const [preview, setPreview] = useState("");
+  const [previewChecked, setPreviewChecked] = useState(false);
   useEffect(() => {
     let active = true;
     setPreview("");
-    if (!asset?.path) return () => { active = false; };
+    setPreviewChecked(false);
+    if (!asset?.path) {
+      setPreviewChecked(true);
+      return () => { active = false; };
+    }
     void (window as any).appilot.release.screenshotImagePreview(asset.path)
-      .then((value: string | null) => { if (active) setPreview(value || ""); })
-      .catch(() => { if (active) setPreview(""); });
+      .then((value: string | null) => { if (active) { setPreview(value || ""); setPreviewChecked(true); } })
+      .catch(() => { if (active) { setPreview(""); setPreviewChecked(true); } });
     return () => { active = false; };
   }, [asset?.path, asset?.selectedAt]);
+  const authorizePreview = async () => {
+    if (!asset?.path) return;
+    try {
+      const authorized = await (window as any).appilot.release.authorizeScreenshotImagePreview(asset.path);
+      if (!authorized) return;
+      const value = await (window as any).appilot.release.screenshotImagePreview(asset.path);
+      setPreview(value || "");
+    } catch {
+      setPreview("");
+    }
+  };
+  const canAuthorize = Boolean(disabled && asset?.path && previewChecked && !preview);
   return (
     <button
       type="button"
-      onClick={onSelect}
-      disabled={disabled}
-      aria-label={asset ? "更换截图图片" : "选择截图图片"}
+      onClick={canAuthorize ? () => void authorizePreview() : onSelect}
+      disabled={disabled && !canAuthorize}
+      aria-label={canAuthorize ? "选择原截图以授权预览" : asset ? "更换截图图片" : "选择截图图片"}
       className={cn(
         "group relative flex aspect-[9/16] w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:border-zinc-700 dark:bg-zinc-800",
-        disabled ? "cursor-default" : "cursor-pointer hover:border-amber-400 dark:hover:border-amber-500",
+        disabled && !canAuthorize ? "cursor-default" : "cursor-pointer hover:border-amber-400 dark:hover:border-amber-500",
       )}
     >
-      {preview ? <img src={preview} alt="截图预览" className={cn("h-full w-full object-contain transition", inherited && "grayscale opacity-55")} /> : <span className="px-3 text-center text-xs text-zinc-400">{asset ? "图片无法读取" : "点击选择本地图片"}</span>}
-      {!disabled && <span className="absolute inset-x-2 bottom-2 rounded-md bg-black/65 px-2 py-1.5 text-center text-[11px] text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus:opacity-100">{asset ? "点击更换图片" : "点击选择图片"}</span>}
+      {preview ? <img src={preview} alt="截图预览" className={cn("h-full w-full object-contain transition", inherited && "grayscale opacity-55")} /> : <span className="px-3 text-center text-xs text-zinc-400">{asset ? !previewChecked ? "加载预览…" : canAuthorize ? "点击选择原图以授权预览" : "图片无法预览 · 点击重新选择" : "点击选择本地图片"}</span>}
+      {(!disabled || canAuthorize) && <span className="absolute inset-x-2 bottom-2 rounded-md bg-black/65 px-2 py-1.5 text-center text-[11px] text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus:opacity-100">{canAuthorize ? "选择原截图" : asset ? "点击更换图片" : "点击选择图片"}</span>}
     </button>
   );
 }

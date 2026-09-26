@@ -41,6 +41,13 @@ export function migrateConfigJsonIntoKv(
     kv.set(KV_MIGRATE_MARK, new Date().toISOString());
     return { imported: 0, archivedTo: null, alreadyDone: false };
   }
+  // The source may contain plaintext credentials. Tighten it before reading
+  // or renaming so a chmod failure leaves the source and migration marker
+  // untouched instead of producing a broadly readable archive.
+  if (process.platform !== "win32") {
+    if (!fsApi.chmodSync) throw new Error("无法收紧 config.json 文件权限");
+    fsApi.chmodSync(configPath, 0o600);
+  }
   const raw = JSON.parse(fsApi.readFileSync(configPath, "utf8")) as Record<string, unknown>;
   if (!raw || typeof raw !== "object") {
     throw new Error(`config.json 顶层不是对象（内容: ${String(raw).slice(0, 80)}）`);
@@ -54,13 +61,8 @@ export function migrateConfigJsonIntoKv(
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const archivedTo = `${configPath}.migrated-${stamp}`;
   fsApi.renameSync(configPath, archivedTo);
-  // 审计 2026-09-26 L2：归档可能含迁移前明文凭据——立即收紧为仅本用户可读写，
-  // 并把保留期缩到 3 天（见 MIGRATION_ARTIFACT_RETENTION_DAYS）。
-  try {
-    fsApi.chmodSync?.(archivedTo, 0o600);
-  } catch {
-    // 非 POSIX 文件系统等场景忽略
-  }
+  // POSIX rename preserves the source mode, now 0600. Keep the shorter
+  // retention window below for the archived copy.
   kv.set(KV_MIGRATE_MARK, new Date().toISOString());
   return { imported, archivedTo, alreadyDone: false };
 }

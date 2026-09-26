@@ -72,7 +72,7 @@ export function SettingsPage() {
     } finally {
       setModelsLoading(false);
     }
-  }, []);
+  }, [hasStoredKey]);
 
   // Discover the provider's supported models whenever URL or key changes
   // (debounced; the very first render with defaults is skipped).
@@ -111,7 +111,12 @@ export function SettingsPage() {
     try {
       await (window as any).appilot?.ai?.saveConfig({ providerUrl, apiKey, model });
       const refreshed = await (window as any).appilot?.ai?.getConfig().catch(() => null);
-      if (refreshed) setApiKeyBroken(Boolean(refreshed.apiKeyBroken));
+      if (refreshed) {
+        setHasStoredKey(Boolean(refreshed.hasApiKey));
+        setStoredKeyMask(String(refreshed.apiKeyMasked || ""));
+        setApiKeyBroken(Boolean(refreshed.apiKeyBroken));
+      }
+      setApiKey("");
       setStatus("success"); setStatusMsg("已保存");
       setTimeout(() => setStatus("idle"), 2000);
     } catch (e: any) { setStatus("error"); setStatusMsg(e.message || "保存失败"); }

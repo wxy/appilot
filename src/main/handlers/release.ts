@@ -255,6 +255,30 @@ export function registerReleaseHandlers(): void {
     return preview.toDataURL();
   });
 
+  // Old drafts predate the path allowlist. Let the user reauthorize the exact
+  // existing file through a native picker, including from read-only history.
+  // A renderer-supplied path alone never enters the allowlist.
+  ipcMain.handle("release:authorizeScreenshotImagePreview", async (_event, imagePath: string) => {
+    imagePath = assertNonEmptyString(imagePath, "imagePath");
+    const defaultPath = existingDirectory(path.dirname(imagePath));
+    const result = await dialog.showOpenDialog({
+      title: "选择原截图以授权预览",
+      properties: ["openFile"],
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "heic"] }],
+      ...(defaultPath ? { defaultPath } : {}),
+    });
+    if (result.canceled || result.filePaths.length === 0) return false;
+    const selected = result.filePaths[0];
+    if (path.resolve(selected) !== path.resolve(imagePath)) return false;
+    if (nativeImage.createFromPath(selected).isEmpty()) return false;
+    const s = await getStore();
+    s.set(
+      KNOWN_SCREENSHOT_IMAGE_PATHS_KEY,
+      rememberKnownImagePath(s.get(KNOWN_SCREENSHOT_IMAGE_PATHS_KEY) || [], selected),
+    );
+    return true;
+  });
+
   ipcMain.handle("release:getScreenshotThemes", async (_event, projectId: string, productId: string) => {
     projectId = assertNonEmptyString(projectId, "projectId");
     productId = assertNonEmptyString(productId, "productId");
