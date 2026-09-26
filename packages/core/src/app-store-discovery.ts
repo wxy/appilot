@@ -11,6 +11,20 @@ import fs from "fs";
 import path from "path";
 import { log } from "./logger";
 
+/** iTunes Lookup 请求超时（审计 M-C4：与其他客户端对齐，防止主进程被挂起）。 */
+const LOOKUP_TIMEOUT_MS = 15_000;
+
+/** lookup 系列统一带超时的 fetch（全库其余 fetch 均有 AbortController，唯此处曾缺失）。 */
+async function fetchWithTimeout(url: string, timeoutMs = LOOKUP_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface AppMetadata {
   trackId: string;
   trackName: string;
@@ -389,7 +403,10 @@ export function discoverAppStoreTrackId(
 /** Resolve a trackId to app metadata via the free iTunes Lookup API. */
 export async function lookupApp(trackId: string): Promise<AppMetadata | null> {
   try {
-    const res = await fetch(`https://itunes.apple.com/lookup?id=${trackId}`);
+    // trackId 一并编码（审计 M-C4）：公共导出，调用方传非数字串时不得篡改查询。
+    const res = await fetchWithTimeout(
+      `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}`,
+    );
     if (!res.ok) return null;
     const data: any = await res.json();
     const r = data?.results?.[0];
@@ -424,7 +441,7 @@ export async function fetchStoreCurrentVersion(
   country = "us",
 ): Promise<{ version: string; currentVersionReleaseDate: string | null } | null> {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
     );
     if (!res.ok) return null;
@@ -454,7 +471,7 @@ export async function fetchStoreLocalizedCopy(
   country = "us",
 ): Promise<{ version: string; trackName: string; description: string; releaseNotes: string } | null> {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
     );
     if (!res.ok) return null;
