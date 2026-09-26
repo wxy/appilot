@@ -1,6 +1,6 @@
-# Appilot v1.3.0 — npm packages
+# Appilot v1.3.0 — macOS and npm
 
-This release publishes the nine public `@appilot-labs/*` packages. It does not include a new desktop installer; the latest downloadable macOS DMG remains v1.2.0.
+This release includes the nine public `@appilot-labs/*` packages and separate Apple Silicon (arm64) and Intel (x64) macOS DMGs. The DMGs are Developer ID signed, Apple notarized, and stapled.
 
 ## What's New
 
@@ -19,13 +19,13 @@ This release publishes the nine public `@appilot-labs/*` packages. It does not i
 
 - All nine public packages and their internal dependency ranges move together to `1.3.0` / `^1.3.0`.
 - Shared SQLite schema 16 adds `lease.leaderPid`; migration runs when the shared store opens.
-- No new signed, notarized, or downloadable desktop build is part of this npm release.
+- Download `Appilot-1.3.0-arm64.dmg` for Apple Silicon or `Appilot-1.3.0-x64.dmg` for Intel Macs. Each DMG and its enclosed app was verified separately before publication.
 
 ---
 
-# Appilot v1.3.0 — npm 包
+# Appilot v1.3.0 — macOS 与 npm
 
-本次发布九个公开的 `@appilot-labs/*` 包，不包含新的桌面安装包；目前可下载的 macOS DMG 仍是 v1.2.0。
+本次发布九个公开的 `@appilot-labs/*` 包，并提供 Apple Silicon（arm64）和 Intel（x64）两个 macOS DMG。DMG 已经 Developer ID 签名、Apple 公证和贴票。
 
 ## 新增功能
 
@@ -44,4 +44,4 @@ This release publishes the nine public `@appilot-labs/*` packages. It does not i
 
 - 九个公开包统一升级到 `1.3.0`，内部依赖范围同步为 `^1.3.0`。
 - 共享 SQLite schema 16 新增 `lease.leaderPid`，打开存储时自动迁移。
-- 本次 npm 发布不包含新的已签名、公证或可下载的桌面安装包。
+- Apple Silicon Mac 下载 `Appilot-1.3.0-arm64.dmg`，Intel Mac 下载 `Appilot-1.3.0-x64.dmg`；两个 DMG 及其内含 App 均在发布前分别验证。
