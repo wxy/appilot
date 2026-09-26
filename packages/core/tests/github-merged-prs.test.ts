@@ -3,7 +3,7 @@
  *
  * 旧实现 /pulls?sort=updated 分页 + merged_at 本地过滤：只覆盖最近更新的
  * 300 个 PR，窗口内合并但此后无更新的 PR 会被静默挤出。修复后带 cutoff 时
- * 走 Search API（服务端 merged:>= 过滤 + created 排序）。
+ * 走 Search API（服务端 merged:>= 过滤 + updated 排序），再按实际 merged_at 排序。
  *
  * 通过替换全局 fetch 注入响应，断言请求契约与结果映射。纯 node。
  */
@@ -27,6 +27,7 @@ async function main() {
   execFileSync("git", ["remote", "add", "origin", "https://github.com/owner/repo.git"], { cwd: dir });
 
   const requestedUrls: string[] = [];
+  let denseWindow = false;
   globalThis.fetch = (async (url: string | URL): Promise<Response> => {
     const href = String(url);
     requestedUrls.push(href);
@@ -36,6 +37,28 @@ async function main() {
       return json({ default_branch: "main" });
     }
     if (href.includes("/search/issues?")) {
+      if (denseWindow) {
+        const newerCreated = Array.from({ length: 59 }, (_, index) => ({
+          number: 200 + index,
+          title: `ordinary ${index}`,
+          body: "",
+          html_url: `https://github.com/owner/repo/pull/${200 + index}`,
+          pull_request: { merged_at: "2026-09-18T00:00:00Z" },
+        }));
+        return json({
+          total_count: 60,
+          items: [
+            ...newerCreated,
+            {
+              number: 999,
+              title: "long-running PR merged most recently",
+              body: "",
+              html_url: "https://github.com/owner/repo/pull/999",
+              pull_request: { merged_at: "2026-09-25T00:00:00Z" },
+            },
+          ],
+        });
+      }
       // PR #101：窗口内合并（新）；#102：合并时间早于 cutoff（应被服务端过滤
       // 语义之外再本地兜底排除）；#103：无 pull_request.merged_at 但有 closed_at。
       return json({
@@ -83,7 +106,7 @@ async function main() {
       searchUrls[0].includes("merged%3A%3E%3D2026-09-15T00%3A00%3A00.000Z"),
       "查询应含服务端 merged:>=cutoff 窗口",
     );
-    assert.ok(searchUrls[0].includes("sort=created"), "应按 created 排序（窗口内合并时间序）");
+    assert.ok(searchUrls[0].includes("sort=updated"), "应优先按更新排序，再以实际合并时间排序结果");
 
     const numbers = prs.map((pr) => pr.number).sort((a, b) => a - b);
     assert.deepEqual(numbers, [101, 103], "早于 cutoff 的 #102 应被排除");
@@ -91,6 +114,11 @@ async function main() {
     assert.equal(pr101.title, "new feature");
     assert.equal(pr101.url, "https://github.com/owner/repo/pull/101");
     assert.equal(pr101.mergedAt, "2026-09-20T00:00:00Z");
+
+    denseWindow = true;
+    const dense = await fetchMergedPullRequests(dir, "2026-09-16T00:00:00Z", null);
+    assert.equal(dense.length, 50, "变更摘要仍限制 50 条");
+    assert.equal(dense[0].number, 999, "较早创建但最近合并的 PR 应优先入选");
   } finally {
     globalThis.fetch = realFetch;
     fs.rmSync(dir, { recursive: true, force: true });

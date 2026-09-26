@@ -6,7 +6,7 @@
  * 纯 node。
  */
 import assert from "node:assert/strict";
-import { lookupApp } from "../src/app-store-discovery";
+import { fetchJsonWithTimeout, lookupApp } from "../src/app-store-discovery";
 
 const realFetch = globalThis.fetch;
 
@@ -45,15 +45,34 @@ async function main() {
     assert.ok(seen[0].signal instanceof AbortSignal, "lookup 请求应携带 AbortSignal（超时控制）");
     assert.equal(meta?.trackName, "Demo App", "成功路径元数据映射不变");
 
-    // 2) 请求失败（网络错误/超时中止）→ 降级 null，不抛出
+    // 2) Headers 已到，但 JSON body 挂起：超时须持续到 body 解析结束。
+    globalThis.fetch = (async (_url: string | URL, init?: RequestInit): Promise<Response> => {
+      return {
+        ok: true,
+        json: () => new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("body aborted")));
+        }),
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const bodyStarted = Date.now();
+    await assert.rejects(fetchJsonWithTimeout("https://itunes.apple.com/lookup?id=123", 25));
+    assert.ok(Date.now() - bodyStarted < 1000, "body 挂起应在测试时限内中止");
+
+    // 3) Headers 前挂起同样应超时。
     globalThis.fetch = (async (_url: string | URL, init?: RequestInit): Promise<Response> => {
       return new Promise((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new Error("This operation was aborted")));
       }) as unknown as Promise<Response>;
     }) as unknown as typeof fetch;
+    await assert.rejects(fetchJsonWithTimeout("https://itunes.apple.com/lookup?id=123", 25));
+
+    // 4) 网络错误与异常 JSON 仍由 lookupApp 降级为 null。
+    globalThis.fetch = (async () => { throw new Error("network failure"); }) as unknown as typeof fetch;
     seen.length = 0;
     const failed = await lookupApp("123");
-    assert.equal(failed, null, "中止/失败应降级为 null");
+    assert.equal(failed, null, "网络失败应降级为 null");
+    globalThis.fetch = (async () => ({ ok: true, json: async () => { throw new Error("invalid JSON"); } })) as unknown as typeof fetch;
+    assert.equal(await lookupApp("123"), null, "异常 JSON 应降级为 null");
   } finally {
     globalThis.fetch = realFetch;
   }

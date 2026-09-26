@@ -7,8 +7,8 @@
  * 带 3 个 ref 时直接失败并被 catch 静默清空。
  *
  * 修复语义：
- * 1) 有边界 + 多 ref → 逐 ref 取 `since..ref` 按 sha 并集，diff 用并集 tip 的
- *    单一区间；
+ * 1) 有边界 + 多 ref → 逐 ref 取 `since..ref` 按 sha 并集，diff 按最终保留的
+ *    提交逐个汇总；
  * 2) 分叉线上边界之前的旧提交按边界日期过滤（可达性无法表达「边界前」）；
  * 3) 无边界（since=null）保持可达并集语义，不过滤日期。
  * 用临时 git 仓库驱动真实 git，纯 node。
@@ -62,7 +62,20 @@ async function main() {
   assert.deepEqual(subjects, ["feature two"], `应只含边界后主线提交（实际 ${JSON.stringify(subjects)}）`);
   assert.ok(!subjects.includes("stale side commit"), "边界前旧提交不得泄漏");
   assert.equal(material.sinceDate != null, true, "sinceDate 应解析");
-  assert.ok(material.diffStat.length > 0, "diff --stat 应用单一区间成功（非静默空）");
+  assert.ok(material.diffStat.length > 0, "diff 摘要不应静默为空");
+  assert.ok(material.diffStat.includes("c.txt"), "diff 应包含主线新文件 c.txt");
+  assert.ok(!material.diffStat.includes("s.txt"), "diff 不应只展示已过滤的旧 side 文件");
+
+  // 两条分叉线在边界后各有新提交时，摘要不得只取最后一个 tip。
+  run(dir, ["checkout", "-q", "side"]);
+  const s2 = commit(dir, "d.txt", "new side feature");
+  run(dir, ["checkout", "-q", "master"]);
+  const twoFrontiers = await collectReleaseMaterial(dir, b1, [b2, s2]);
+  assert.ok(twoFrontiers.commits.some((item) => item.subject === "feature two"));
+  assert.ok(twoFrontiers.commits.some((item) => item.subject === "new side feature"));
+  assert.ok(twoFrontiers.diffStat.includes("c.txt"), "diff 应包含主线新文件");
+  assert.ok(twoFrontiers.diffStat.includes("d.txt"), "diff 应包含另一分叉的新文件");
+  assert.ok(!twoFrontiers.diffStat.includes("s.txt"), "diff 不应包含已过滤的旧提交");
 
   // 2) 单 ref + 边界：基线行为不变。
   const single = await collectReleaseMaterial(dir, b1, b2);

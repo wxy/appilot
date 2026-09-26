@@ -275,16 +275,16 @@ export async function fetchMergedPullRequests(
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
     // 审计 M-C1：带 cutoff（生成边界）时改用 Search API——服务端 merged 过滤
-    // + created 排序。旧 /pulls?sort=updated 只能覆盖「最近更新」的 300 个
+    // + updated 排序。旧 /pulls?sort=updated 只能覆盖「最近更新」的 300 个
     // PR，窗口内合并但此后无更新的 PR 会被静默挤出变更摘要。
     if (cutoff > 0) {
       const mergedSince = new Date(cutoff).toISOString();
       for (const base of bases) {
         if (prs.length > 0) break;
-        for (let page = 1; page <= 3 && prs.length < 50; page += 1) {
+        for (let page = 1; page <= 3; page += 1) {
           const params = new URLSearchParams({
             q: `repo:${ownerRepo} is:pr is:merged merged:>=${mergedSince} base:${base}`,
-            sort: "created",
+            sort: "updated",
             order: "desc",
             per_page: "100",
             page: String(page),
@@ -310,9 +310,11 @@ export async function fetchMergedPullRequests(
           );
           const data: any = JSON.parse(raw);
           const items: any[] = Array.isArray(data?.items) ? data.items : [];
+          if (page === 3 && Number(data?.total_count) > 300) {
+            log.warn(`fetchMergedPullRequests search window exceeds 300 results for ${ownerRepo}; result may be partial`);
+          }
           if (items.length === 0) break;
           for (const item of items) {
-            if (prs.length >= 50) break;
             const mergedAt =
               typeof item?.pull_request?.merged_at === "string"
                 ? item.pull_request.merged_at
@@ -390,6 +392,12 @@ export async function fetchMergedPullRequests(
       if (seenNumbers.has(pr.number)) continue;
       seenNumbers.add(pr.number);
       deduped.push(pr);
+    }
+    if (cutoff > 0) {
+      deduped.sort((a, b) =>
+        new Date(b.mergedAt || 0).getTime() - new Date(a.mergedAt || 0).getTime(),
+      );
+      deduped.length = Math.min(deduped.length, 50);
     }
 
     // Per-PR commit shas let the workbench map checked PRs to real commits for
