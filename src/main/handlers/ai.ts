@@ -68,6 +68,11 @@ export function registerAiHandlers(): void {
   });
 
   ipcMain.handle("ai:testConnection", async (_event, config: { providerUrl: string; apiKey: string; model: string; useStoredKey?: boolean }) => {
+    // 审计 M-M3：testConnection 是主进程代理 fetch（携带 Key），入口同样过
+    // 白名单，防渲染层借道探测任意 http(s) 端点。
+    if (!isAllowedAiProviderUrl(config.providerUrl)) {
+      throw new Error("不支持的供应商 URL（仅允许 https，或本机回环的 http 地址）");
+    }
     const { AIProvider } = await import("@appilot-labs/appilot-core/ai/ai-provider");
     const provider = new AIProvider({
       baseURL: config.providerUrl,
@@ -80,16 +85,20 @@ export function registerAiHandlers(): void {
   ipcMain.handle("ai:listModels", async (_event, config: { providerUrl: string; apiKey: string; useStoredKey?: boolean }) => {
     const providerUrl = String(config?.providerUrl || "").trim().replace(/\/+$/, "");
     if (!providerUrl) return { models: [], error: "缺少供应商 URL" };
+    // 审计 M-M3：同 testConnection——主进程代理 fetch 前先过端点白名单。
+    if (!isAllowedAiProviderUrl(providerUrl)) {
+      return { models: [], error: "不支持的供应商 URL（仅允许 https，或本机回环的 http 地址）" };
+    }
     const apiKey = await resolveRequestApiKey(config);
     try {
       const res = await fetch(`${providerUrl}/models`, {
         headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
       });
       if (!res.ok) {
-        const detail = await res.text().catch(() => "");
+        // 审计 M-M3：不回显远端响应体（防内网内容 oracle），仅返回状态码。
         return {
           models: [],
-          error: `模型列表请求失败（${res.status}）：${detail.slice(0, 200) || res.statusText}`,
+          error: `模型列表请求失败（${res.status}）：${res.statusText || "请求未成功"}`,
         };
       }
       const data: any = await res.json();
