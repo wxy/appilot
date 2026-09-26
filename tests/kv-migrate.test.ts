@@ -57,6 +57,10 @@ async function main() {
     assert.equal(JSON.parse(store.kv.get('aiApiKey')!), 'sk-test');
     assert.equal(JSON.parse(store.kv.get('note')!), '中文与 Unicode ✓');
     assert.ok(store.kv.get(KV_MIGRATE_MARK), '完成标记应已写入');
+    if (process.platform !== 'win32') {
+      const mode = fs.statSync(outcome.archivedTo as string).mode & 0o777;
+      assert.equal(mode, 0o600, `归档含明文凭据应仅本用户可读写（实际 ${mode.toString(8)}）`);
+    }
     store.close();
     console.log('✅ 首次导入：全量键入库 + 归档 + 完成标记');
   }

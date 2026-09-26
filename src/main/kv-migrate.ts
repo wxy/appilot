@@ -31,6 +31,7 @@ export function migrateConfigJsonIntoKv(
     existsSync(p: string): boolean;
     readFileSync(p: string, enc: "utf8"): string;
     renameSync(from: string, to: string): void;
+    chmodSync?(p: string, mode: number): void;
   } = fs,
 ): KvMigrationOutcome {
   if (kv.get(KV_MIGRATE_MARK)) {
@@ -53,12 +54,22 @@ export function migrateConfigJsonIntoKv(
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const archivedTo = `${configPath}.migrated-${stamp}`;
   fsApi.renameSync(configPath, archivedTo);
+  // 审计 2026-09-26 L2：归档可能含迁移前明文凭据——立即收紧为仅本用户可读写，
+  // 并把保留期缩到 3 天（见 MIGRATION_ARTIFACT_RETENTION_DAYS）。
+  try {
+    fsApi.chmodSync?.(archivedTo, 0o600);
+  } catch {
+    // 非 POSIX 文件系统等场景忽略
+  }
   kv.set(KV_MIGRATE_MARK, new Date().toISOString());
   return { imported, archivedTo, alreadyDone: false };
 }
 
-/** 迁移产物保留期（默认 14 天）：过期后启动时自动清理。 */
-export const MIGRATION_ARTIFACT_RETENTION_DAYS = 14;
+/**
+ * 迁移产物保留期（默认 3 天；审计 L2 前 14 天）：归档可能含迁移前明文凭据，
+ * 迁移验证窗口足够即可，过期后启动时自动清理。
+ */
+export const MIGRATION_ARTIFACT_RETENTION_DAYS = 3;
 
 /** config.json 迁移产物（.bak-* / .migrated-*）——可能含迁移前明文凭据，到期即清。 */
 export function cleanupMigrationArtifacts(
