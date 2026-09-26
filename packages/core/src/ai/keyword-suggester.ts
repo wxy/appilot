@@ -9,6 +9,7 @@ import type { AIProvider } from "./ai-provider";
 import { parseJsonObject, requestJson, buildArchiveMessages, MAX_OUTPUT_TOKENS } from "./ai-request";
 import type { ProjectProfile } from "../project-profile";
 import { log } from "../logger";
+import type { RankSnapshotLike } from "../rank-snapshots";
 
 export interface KeywordSuggestion {
   language: string;
@@ -194,6 +195,67 @@ export interface KeywordCuration {
   adds: KeywordSuggestion[];
 }
 
+export interface KeywordCurationEvidence {
+  keyword: string;
+  language: string;
+  bestRank: number | null;
+  lastSeenAt: string | null;
+  lastCheckedAt: string | null;
+  checkCount: number;
+  rankedCheckCount: number;
+  status: string;
+  source: string;
+  pendingReview: boolean;
+}
+
+/** 仅从当前商店产品的快照取证，避免共享词池中的跨平台排名影响整理。 */
+export function buildKeywordCurationEvidence(
+  tracked: Array<{
+    keyword: string;
+    language: string;
+    status?: string;
+    source?: string;
+    pendingPausePlatforms?: string[];
+    pausedPlatforms?: string[];
+  }>,
+  snapshots: RankSnapshotLike[],
+  language: string,
+  platform: string,
+): KeywordCurationEvidence[] {
+  const evidence = new Map<string, KeywordCurationEvidence>();
+  for (const item of tracked) {
+    if (item.language !== language || evidence.has(item.keyword)) continue;
+    evidence.set(item.keyword, {
+      keyword: item.keyword,
+      language,
+      bestRank: null,
+      lastSeenAt: null,
+      lastCheckedAt: null,
+      checkCount: 0,
+      rankedCheckCount: 0,
+      status: item.status === "paused" || (item.pausedPlatforms || []).includes(platform) ? "paused" : "active",
+      source: item.source || "unknown",
+      pendingReview: (item.pendingPausePlatforms || []).includes(platform),
+    });
+  }
+  for (const snapshot of snapshots) {
+    if (snapshot.language !== language) continue;
+    const item = evidence.get(snapshot.keyword);
+    if (!item) continue;
+    item.checkCount += 1;
+    if (snapshot.checkedAt && (!item.lastCheckedAt || snapshot.checkedAt > item.lastCheckedAt)) {
+      item.lastCheckedAt = snapshot.checkedAt;
+    }
+    if (snapshot.rank == null) continue;
+    item.rankedCheckCount += 1;
+    item.bestRank = item.bestRank == null ? snapshot.rank : Math.min(item.bestRank, snapshot.rank);
+    if (snapshot.checkedAt && (!item.lastSeenAt || snapshot.checkedAt > item.lastSeenAt)) {
+      item.lastSeenAt = snapshot.checkedAt;
+    }
+  }
+  return [...evidence.values()];
+}
+
 export function parseKeywordCuration(raw: string, fallbackLanguage = "en"): KeywordCuration {
   return normalizeKeywordCuration(parseJsonObject(raw), fallbackLanguage);
 }
@@ -231,7 +293,8 @@ export async function curateKeywords(
     description: string;
     language: string;
     uiLanguage: string;
-    existingKeywords: { keyword: string; language: string; bestRank: number | null; lastSeenAt: string | null; status: string }[];
+    existingKeywords: KeywordCurationEvidence[];
+    collectionLoad?: { dailyInstances: number; referenceLine: number; costPerKeyword: number };
     submissionKeywords: string[];
     removedKeywords: string[];
     profile?: ProjectProfile;
@@ -243,8 +306,9 @@ export async function curateKeywords(
     context.profile,
     [
       "You are Appilot's ASO keyword curator. Review the existing tracking keywords for one localization and produce a curated suggestion set.",
-      "1. `removals`: keywords that are badly chosen or clearly ineffective. Common reasons: never ranked after many checks, irrelevant to the app, too generic, or competitor brands. Give one short reason each.",
+      "1. `removals`: suggest low-value EXISTING keywords from the target language for human review, especially when collection load is near/above the reference line. Use the platform-specific check count, ranked check count, recency, and pending-review status as evidence. To reduce active collection load, prioritize weak ACTIVE keywords: paused and pending-review keywords are already excluded from that estimate. A keyword with no/few checks has unknown effectiveness, not proven poor performance. Do not remove a useful app-name, subtitle, or submitted-metadata term solely to make room. Give a short evidence-based reason; if evidence is insufficient, return fewer or no removals.",
       "2. `adds`: NEW keywords to track. Especially track terms that appear in the app name, subtitle, or submission keywords — those are high-value because they verify whether the submitted metadata helps ranking. Also cover high-value scenarios from the description and similar variants of keywords that HAVE ranked before. Never repeat existing or removed keywords.",
+      "The collection reference line is advisory, not a cap. Recommend high-value adds even if the projected load exceeds it; never silently discard them. Removal suggestions are optional and require user confirmation.",
       "Keep removals ≤20 and adds ≤30. Do not include competitor brand names.",
       "Respond ONLY with JSON: {\"removals\":[{\"keyword\":\"...\",\"reason\":\"...\"}],\"adds\":[{\"language\":\"...\",\"keyword\":\"...\",\"translation\":\"...\",\"rationale\":\"...\"}]}",
     ].join("\n"),
@@ -252,8 +316,9 @@ export async function curateKeywords(
       `Target localization: ${context.language}`,
       `UI language (write rationale in this language): ${context.uiLanguage}`,
       `Submission keywords: ${context.submissionKeywords.join(", ") || "N/A"}`,
-      `Existing tracked keywords (keyword|bestRank|lastSeenAt|status):\n${context.existingKeywords
-        .map((k) => `${k.keyword}|${k.bestRank ?? "—"}|${k.lastSeenAt ?? "—"}|${k.status}`)
+      `Collection load for this platform (estimated daily instances/reference line; each active keyword in target language adds the stated instances): ${context.collectionLoad ? `${context.collectionLoad.dailyInstances}/${context.collectionLoad.referenceLine}; +${context.collectionLoad.costPerKeyword} per keyword` : "unknown"}`,
+      `Existing tracked keywords for this platform (keyword|bestRank|rankedChecks/checks|lastSeenAt|lastCheckedAt|status|source|pendingReview):\n${context.existingKeywords
+        .map((k) => `${k.keyword}|${k.bestRank ?? "unknown"}|${k.rankedCheckCount}/${k.checkCount}|${k.lastSeenAt ?? "unknown"}|${k.lastCheckedAt ?? "unknown"}|${k.status}|${k.source}|${k.pendingReview}`)
         .join("\n") || "N/A"}`,
       `Removed keywords (do not re-suggest): ${context.removedKeywords.join(", ") || "N/A"}`,
     ],

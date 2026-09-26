@@ -4,6 +4,7 @@ import path from "path";
 import { log } from "@appilot-labs/appilot-core/logger";
 import { appendRankSnapshots } from "@appilot-labs/appilot-core/rank-snapshots";
 import { evaluatePause, normalizeTrackedKeyword } from "@appilot-labs/appilot-core/rank-keywords";
+import { rankBudgetStatus, rankCostForLanguage } from "@appilot-labs/appilot-core/rank-budget";
 import {
   isItunesSearchForbidden,
   itunesSearchBlockFriendlyMessage,
@@ -26,7 +27,10 @@ import { emitProjectsChanged } from "../project-events";
 import {
   ensureProjectKeywordPool,
   findProductContext,
-  getStoreSubmissionDrafts,
+  storeSubmissionDraftsForProduct,
+  submissionKeywordsForProduct,
+  copyGapKeywordsForProduct,
+  releaseCursorForProduct,
   migrateLegacyStoreProducts,
   syncKeywordPoolToProducts as syncPoolToProducts,
   updateProjectInProjects,
@@ -262,12 +266,12 @@ function buildBriefContextDigest(
 function submissionReferenceFor(product: any, project: any, language: string) {
   ensureProjectKeywordPool(project);
   // The copy is bound to the software: take the latest draft in the project.
-  const drafts = getStoreSubmissionDrafts(project)
+  const drafts = storeSubmissionDraftsForProduct(project, product.id)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const latest = drafts[0];
   const loc = latest?.localizations?.find((item: any) => item.language === language)
     || latest?.localizations?.[0];
-  const fallbackSubmission = (project.submissionKeywords || []).find(
+  const fallbackSubmission = submissionKeywordsForProduct(project, product).find(
     (item: any) => item.language === language,
   );
   return {
@@ -321,11 +325,11 @@ async function buildOverviewBriefPayload(
   const profile = await buildProjectProfileFor(project, product, undefined, description);
   const releaseResult = await checkForRelease(
     project.localPath,
-    project.lastReleaseSha || null,
+    releaseCursorForProduct(project, product.id),
     resolveEffectiveCredentials(s, project.id).githubToken,
     { githubCache: githubSyncCacheEntry(s, project) ?? undefined },
   );
-  const drafts = getStoreSubmissionDrafts(project)
+  const drafts = storeSubmissionDraftsForProduct(project, product.id)
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   const submissionDraft = drafts[0] || null;
 
@@ -374,7 +378,7 @@ async function buildOverviewBriefPayload(
       ? { name: releaseResult.latest.name, tag: releaseResult.latest.tag }
       : null,
     submissionDraft,
-    submissionKeywords: project.submissionKeywords || [],
+    submissionKeywords: submissionKeywordsForProduct(project, product),
     competitorDeltas: (() => {
       const competitors = (s.get("competitors") || {})[project.id] || [];
       const snapshots = (s.get("competitorSnapshots") || {})[project.id] || {};
@@ -911,8 +915,8 @@ export function registerProjectsHandlers(): void {
         lookupApp,
         localizedStoreLinks,
       } = await import("@appilot-labs/appilot-core/app-store-discovery");
-      const languages = detectLocalizedLanguages(localPath);
-      project.supportedLanguages = languages.map((code) => ({ code, name: languageDisplayName(code) }));
+      const detectedLanguages = detectLocalizedLanguages(localPath)
+        .map((code) => ({ code, name: languageDisplayName(code) }));
       const discovery = discoverAppStoreLinks(localPath);
       const detectedPlatform = detectApplePlatform(localPath);
       const products: any[] = [];
@@ -943,7 +947,9 @@ export function registerProjectsHandlers(): void {
             bundleId: meta?.bundleId ?? null,
             trackName: meta?.trackName ?? null,
             artworkUrl: meta?.artworkUrl ?? null,
-            supportedLanguages: project.supportedLanguages,
+            // Repository-wide localization detection cannot prove which app
+            // target owns a language in a multi-platform project.
+            supportedLanguages: existingProduct?.supportedLanguages || (byPlatform.size === 1 ? detectedLanguages : []),
             storeLinks: links,
             trackedKeywords: existingProduct?.trackedKeywords || [],
             submissionKeywords: existingProduct?.submissionKeywords || [],
@@ -966,7 +972,7 @@ export function registerProjectsHandlers(): void {
           bundleId: null,
           trackName: null,
           artworkUrl: null,
-          supportedLanguages: project.supportedLanguages,
+          supportedLanguages: existingProduct?.supportedLanguages || detectedLanguages,
           storeLinks: [],
           trackedKeywords: existingProduct?.trackedKeywords || [],
           submissionKeywords: existingProduct?.submissionKeywords || [],
@@ -978,6 +984,7 @@ export function registerProjectsHandlers(): void {
 
       project.storeProducts = products;
       const primary = products[0];
+      project.supportedLanguages = primary.supportedLanguages;
       project.productType = primary.platform === "unknown" ? null : primary.platform;
       project.trackId = primary.trackId;
       project.bundleId = primary.bundleId;
@@ -1123,28 +1130,30 @@ export function registerProjectsHandlers(): void {
     const { project, product } = context;
 
     const provider = await createAiProvider(s);
-    const { curateKeywords } = await import("@appilot-labs/appilot-core/ai/keyword-suggester");
+    const { buildKeywordCurationEvidence, curateKeywords } = await import("@appilot-labs/appilot-core/ai/keyword-suggester");
     const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
 
-    const drafts = getStoreSubmissionDrafts(project)
+    const drafts = storeSubmissionDraftsForProduct(project, product.id)
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     const latest = drafts[0];
     const loc = latest?.localizations?.find((item: any) => item.language === language)
       || latest?.localizations?.[0];
-    const submission = (project.submissionKeywords || []).find((item: any) => item.language === language);
+    const submission = submissionKeywordsForProduct(project, product).find((item: any) => item.language === language);
     const submissionKeywords = (submission?.text || "")
       .split(",")
       .map((item: string) => item.trim())
       .filter(Boolean);
-    const existingKeywords = (project.trackedKeywords || [])
-      .filter((item: any) => item.language === language)
-      .map((item: any) => ({
-        keyword: item.keyword,
-        language: item.language,
-        bestRank: item.bestRank ?? null,
-        lastSeenAt: item.lastSeenAt ?? null,
-        status: item.status || "active",
-      }));
+    const existingKeywords = buildKeywordCurationEvidence(
+      project.trackedKeywords || [],
+      product.rankSnapshots || [],
+      language,
+      product.platform || "unknown",
+    );
+    const budget = rankBudgetStatus(
+      product.supportedLanguages || [],
+      product.platform || "unknown",
+      project.trackedKeywords || [],
+    );
     const removedKeywords = (project.removedKeywords || [])
       .filter((item: any) => item.language === language)
       .map((item: any) => item.keyword);
@@ -1158,6 +1167,11 @@ export function registerProjectsHandlers(): void {
         language,
         uiLanguage: "zh-Hans",
         existingKeywords,
+        collectionLoad: {
+          dailyInstances: budget.dailyInstances,
+          referenceLine: budget.hardLimit,
+          costPerKeyword: rankCostForLanguage(language, product.supportedLanguages || []),
+        },
         submissionKeywords,
         removedKeywords,
         profile,
@@ -1201,7 +1215,7 @@ export function registerProjectsHandlers(): void {
     const { localizeKeywords } = await import("@appilot-labs/appilot-core/ai/keyword-suggester");
     const { readRepoDescription } = await import("@appilot-labs/appilot-core/app-store-discovery");
 
-    const drafts = getStoreSubmissionDrafts(project)
+    const drafts = storeSubmissionDraftsForProduct(project, product.id)
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     const latest = drafts[0];
     const loc = latest?.localizations?.find((item: any) => item.language === language)
@@ -1335,8 +1349,11 @@ export function registerProjectsHandlers(): void {
     const projects: any[] = s.get("projects") || [];
     const context = findProductContext(projects, productId);
     if (!context) throw new Error("Store product not found");
-    const nextProjects = updateProjectInProjects(projects, context.project.id, (_project) => ({
-      submissionKeywords,
+    const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => ({
+      storeProducts: (project.storeProducts || []).map((product: any) =>
+        product.id === productId ? { ...product, submissionKeywords } : product,
+      ),
+      ...(project.storeProducts?.[0]?.id === productId ? { submissionKeywords } : {}),
     }));
     s.set("projects", nextProjects);
     void schedulerTick();
@@ -1439,35 +1456,22 @@ export function registerProjectsHandlers(): void {
       );
       const platforms = Array.from(new Set([...pending, ...pausedLegacy]));
       if (platforms.length === 0) continue;
-      // 文案字段（跨产品草稿 + trackName）用于“是否已覆盖”判断。
-      const copyTexts: string[] = [];
-      for (const product of project.storeProducts || []) {
-        copyTexts.push(String(product.trackName || ""));
-        for (const draft of project.storeSubmissionDrafts || []) {
-          for (const loc of draft.localizations || []) {
-            for (const field of [
-              "name",
-              "subtitle",
-              "promotionalText",
-              "description",
-              "whatsNew",
-              "keywords",
-            ]) {
-              if (String(loc[field] || "")) copyTexts.push(String(loc[field]));
-            }
-          }
-        }
-      }
       const needle = String(keyword.keyword || "").trim().toLowerCase();
-      const covered = needle
-        ? copyTexts.some((text) => String(text).toLowerCase().includes(needle))
-        : false;
       const inReadme = needle ? readme.toLowerCase().includes(needle) : false;
       for (const platform of platforms) {
         // 用当前快照重新生成原因（商店显示名称），而不是历史缩写。
         const product = (project.storeProducts || []).find(
           (p: any) => (p.platform || "unknown") === platform,
         );
+        const copyTexts = [String(product?.trackName || "")];
+        for (const draft of product ? storeSubmissionDraftsForProduct(project, product.id) : []) {
+          for (const loc of draft.localizations || []) {
+            for (const field of ["name", "subtitle", "promotionalText", "description", "whatsNew", "keywords"]) {
+              if (String((loc as any)[field] || "")) copyTexts.push(String((loc as any)[field]));
+            }
+          }
+        }
+        const covered = needle ? copyTexts.some((text) => text.toLowerCase().includes(needle)) : false;
         const evaluated = evaluatePause(
           keyword,
           product?.rankSnapshots || [],
@@ -1623,7 +1627,7 @@ export function registerProjectsHandlers(): void {
       const context = findProductContext(projects, productId);
       if (!context) throw new Error("Store product not found");
       const { project, product } = context;
-      const drafts = (project.storeSubmissionDrafts || [])
+      const drafts = storeSubmissionDraftsForProduct(project, product.id)
         .sort(
           (a: any, b: any) =>
             new Date(b.updatedAt || 0).getTime() -
@@ -1637,7 +1641,7 @@ export function registerProjectsHandlers(): void {
         ]),
       );
       const gapsByLanguage: Record<string, string[]> = {};
-      for (const gap of project.copyGapKeywords || []) {
+      for (const gap of copyGapKeywordsForProduct(project, product)) {
         const lang = String(gap.language || "");
         if (!lang) continue;
         (gapsByLanguage[lang] = gapsByLanguage[lang] || []).push(
@@ -1702,6 +1706,7 @@ export function registerProjectsHandlers(): void {
             (item: any) => item.language === input.language,
           ) || null;
         return {
+          productId: product.id,
           language: input.language,
           currentName: input.currentName,
           currentSubtitle: input.currentSubtitle,
@@ -1714,7 +1719,10 @@ export function registerProjectsHandlers(): void {
           createdAt: now,
         };
       });
-      project.nameSubtitleSuggestions = next;
+      project.nameSubtitleSuggestions = [
+        ...(project.nameSubtitleSuggestions || []).filter((item: any) => item.productId !== product.id),
+        ...next,
+      ];
       s.set("projects", projects);
       notifyDataChanged("projects");
       return next;
@@ -1786,6 +1794,9 @@ export function registerProjectsHandlers(): void {
       };
       let codeVersion: string | null = null;
       let codeBuildNumber: string | null = null;
+      const candidateVersions = new Set<string>();
+      const candidateBuildNumbers = new Set<string>();
+      const multiPlatform = (project.storeProducts || []).length > 1;
       const permissionKeys: string[] = [];
       const capabilityKeys: string[] = [];
       const xcstringsFiles: string[] = [];
@@ -1793,12 +1804,25 @@ export function registerProjectsHandlers(): void {
         try {
           const content = fs.readFileSync(filePath, "utf8");
           if (filePath.endsWith(".plist")) {
-            codeVersion = codeVersion || parsePlistVersion(content);
+            if (!multiPlatform || parsePlistBundleId(content) === product.bundleId) {
+              const version = parsePlistVersion(content);
+              const build = parsePlistBundleVersion(content);
+              if (version) candidateVersions.add(version);
+              if (build) candidateBuildNumbers.add(build);
+              if (!multiPlatform) codeVersion = codeVersion || version;
+            }
             permissionKeys.push(...plistPermissionKeys(content));
           } else if (filePath.endsWith(".pbxproj")) {
-            codeVersion = codeVersion || parsePbxprojVersion(content);
-            codeBuildNumber =
-              codeBuildNumber || parsePbxprojBuildNumber(content);
+            for (const match of content.matchAll(/MARKETING_VERSION\s*=\s*["']?([\d.]+)["']?\s*;/g)) {
+              candidateVersions.add(match[1]);
+            }
+            for (const match of content.matchAll(/CURRENT_PROJECT_VERSION\s*=\s*["']?([\d.]+)["']?\s*;/g)) {
+              candidateBuildNumbers.add(match[1]);
+            }
+            if (!multiPlatform) {
+              codeVersion = codeVersion || parsePbxprojVersion(content);
+              codeBuildNumber = codeBuildNumber || parsePbxprojBuildNumber(content);
+            }
             permissionKeys.push(...pbxprojPermissionKeys(content));
           } else if (filePath.endsWith(".entitlements")) {
             capabilityKeys.push(...entitlementKeys(content));
@@ -1809,7 +1833,11 @@ export function registerProjectsHandlers(): void {
           // 单个文件读取失败忽略
         }
       }
-      const drafts = (project.storeSubmissionDrafts || [])
+      if (multiPlatform) {
+        codeVersion = candidateVersions.size === 1 ? [...candidateVersions][0] : null;
+        codeBuildNumber = candidateBuildNumbers.size === 1 ? [...candidateBuildNumbers][0] : null;
+      }
+      const drafts = storeSubmissionDraftsForProduct(project, product.id)
         .sort(
           (a: any, b: any) =>
             new Date(b.updatedAt || 0).getTime() -
@@ -1833,6 +1861,12 @@ export function registerProjectsHandlers(): void {
         if (count > 0) coverage[key] = count;
       }
       const permCheck = permissionsCheck(uniquePermissionKeys, coverage);
+      if (multiPlatform) {
+        // Files in a shared repository are not proof of target membership. A
+        // permission or entitlement from the other app must not pass this one.
+        permCheck.status = "warn";
+        permCheck.detail += "；多平台仓库无法确认这些声明属于当前构建目标，请人工核对";
+      }
       if (capabilityKeys.length > 0) {
         permCheck.items.push(
           ...Array.from(new Set(capabilityKeys)).map((key) => ({
@@ -1912,6 +1946,8 @@ export function registerProjectsHandlers(): void {
                 path.join(appDir, "Info.plist"),
                 path.join(appDir, "Contents", "Info.plist"),
               ]) {
+                if (multiPlatform && product.platform === "macos" && !plistPath.includes(`${path.sep}Contents${path.sep}`)) continue;
+                if (multiPlatform && product.platform === "ios" && plistPath.includes(`${path.sep}Contents${path.sep}`)) continue;
                 try {
                   const content = fs.readFileSync(plistPath, "utf8");
                   if (parsePlistBundleId(content) === product.bundleId) {
@@ -1964,7 +2000,7 @@ export function registerProjectsHandlers(): void {
               (k: any) =>
                 (k.pendingPausePlatforms || []).includes(product.platform),
             ).length;
-            const copyGapCount = (project.copyGapKeywords || []).length;
+            const copyGapCount = copyGapKeywordsForProduct(project, product).length;
             const openCount = pendingPauseCount + copyGapCount;
             return {
               status: (openCount > 0 ? "warn" : "pass") as "warn" | "pass",
@@ -1987,7 +2023,8 @@ export function registerProjectsHandlers(): void {
         const { detectLocalizedLanguages, languageDisplayName } = await import(
           "@appilot-labs/appilot-core/app-store-discovery"
         );
-        detectedLanguages = detectLocalizedLanguages(project.localPath) || [];
+        // Repository-wide discovery cannot assign a locale to one platform.
+        detectedLanguages = multiPlatform ? [] : detectLocalizedLanguages(project.localPath) || [];
         languageDisplayNameFn = languageDisplayName;
         log.info(
           `Checklist language detection: ${detectedLanguages.length} languages detected for ${project.localPath}`,
@@ -2005,16 +2042,28 @@ export function registerProjectsHandlers(): void {
           code,
           name: languageDisplayNameFn(code),
         }));
-        project.supportedLanguages = product.supportedLanguages;
+        if (project.storeProducts?.[0]?.id === product.id) {
+          project.supportedLanguages = product.supportedLanguages;
+        }
       }
       const now = new Date().toISOString();
-      project.preReleaseChecklist = {
+      const checklist = {
+        productId,
         updatedAt: now,
         checks,
       };
+      const previousChecklist = project.preReleaseChecklist || {};
+      project.preReleaseChecklist = {
+        ...previousChecklist,
+        updatedAt: now,
+        byProductId: {
+          ...(previousChecklist.byProductId || {}),
+          [productId]: checklist,
+        },
+      };
       s.set("projects", projects);
       notifyDataChanged("projects");
-      return project.preReleaseChecklist;
+      return checklist;
     },
   );
 
@@ -2034,6 +2083,7 @@ export function registerProjectsHandlers(): void {
       const projects: any[] = s.get("projects") || [];
       const context = findProductContext(projects, productId);
       if (!context) throw new Error("Store product not found");
+      if (context.product.platform !== platform) throw new Error("Product platform mismatch");
       const nextProjects = updateProjectInProjects(projects, context.project.id, (project) => {
         const keyword = (project.trackedKeywords || []).find(
           (item: any) =>
@@ -2073,10 +2123,13 @@ export function registerProjectsHandlers(): void {
             if (
               !gaps.some(
                 (item: any) =>
-                  item.language === language && item.keyword === keywordText,
+                  item.language === language && item.keyword === keywordText &&
+                  (item.productId === productId || (!item.productId && item.platform === platform)),
               )
             ) {
               gaps.push({
+                productId,
+                platform,
                 language,
                 keyword: keywordText,
                 translation: keyword.translation || "",

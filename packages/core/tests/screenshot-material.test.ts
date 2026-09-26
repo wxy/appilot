@@ -3,6 +3,7 @@ import {
   generateScreenshotMaterialMaster,
   normalizeScreenshotCopySet,
   normalizeScreenshotMaterialDraft,
+  patchScreenshotImage,
   screenshotImageForLanguage,
   screenshotMaterialsForProduct,
   translateScreenshotMaterialMaster,
@@ -59,6 +60,21 @@ async function main() {
   assert.equal(screenshotImageForLanguage(withImages.items[0], "zh-Hans", "en")?.path, "/tmp/home-zh.png");
   assert.equal(withImages.items[0].imageOverrides?.en, undefined, "the source language never stores an override");
   assert.equal(withImages.items[0].imageOverrides?.xx, undefined, "unsupported language images are dropped");
+  const translatedCopy = normalizeScreenshotCopySet({
+    sourceLanguage: "en",
+    selectedLanguages: ["en", "zh-Hans"],
+    masterUpdatedAt: "2026-09-01T00:00:00Z",
+    items: [{ id: "home", name: "首页", copies: {
+      en: { title: "Home", description: "Original" },
+      "zh-Hans": { title: "首页", description: "翻译结果", sourceUpdatedAt: "2026-09-01T00:00:00Z" },
+    } }],
+  }, "en", ["en", "zh-Hans"]);
+  const patchedImage = patchScreenshotImage(translatedCopy, "home", "zh-Hans", {
+    path: "/tmp/home-zh-new.png", fileName: "home-zh-new.png", width: 100, height: 200, selectedAt: "2026-09-02T00:00:00Z",
+  }, "2026-09-02T00:00:00Z");
+  assert.equal(patchedImage.items[0].copies["zh-Hans"].description, "翻译结果", "选图不覆盖已完成的翻译");
+  assert.equal(patchedImage.items[0].imageOverrides?.["zh-Hans"].path, "/tmp/home-zh-new.png");
+  assert.equal(translatedCopy.items[0].imageOverrides?.["zh-Hans"], undefined, "选图不原位修改旧快照");
   delete withImages.items[0].imageOverrides?.["zh-Hans"];
   assert.equal(
     screenshotImageForLanguage(withImages.items[0], "zh-Hans", "en")?.path,

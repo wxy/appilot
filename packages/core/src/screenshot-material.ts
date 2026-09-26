@@ -74,6 +74,29 @@ export interface ScreenshotCopySet {
   updatedAt: string;
 }
 
+/** Apply an image-only edit to the newest saved copy, preserving in-flight AI text. */
+export function patchScreenshotImage(
+  copy: ScreenshotCopySet,
+  itemId: string,
+  language: string,
+  asset: ScreenshotImageAsset,
+  updatedAt: string,
+): ScreenshotCopySet {
+  if (copy.batchConfirmedAt) throw new Error("整批截图文案已确定，不能修改图片");
+  if (!copy.selectedLanguages.includes(language)) throw new Error("截图语言不属于当前文案");
+  if (!copy.items.some((item) => item.id === itemId)) throw new Error("截图类型不存在");
+  return {
+    ...copy,
+    updatedAt,
+    items: copy.items.map((item) => {
+      if (item.id !== itemId) return item;
+      return language === copy.sourceLanguage
+        ? { ...item, sourceImage: asset }
+        : { ...item, imageOverrides: { ...(item.imageOverrides || {}), [language]: asset } };
+    }),
+  };
+}
+
 export interface ScreenshotMaterialDraft {
   projectId: string;
   productId: string;

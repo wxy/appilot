@@ -87,6 +87,21 @@ async function runTests() {
       "cached PR info is used",
     );
 
+    const otherPlatformCache = await checkForRelease(dir, null, undefined, {
+      sync: false,
+      allowNetwork: false,
+      githubCache: {
+        tag: "v1.0.0",
+        lastSeenSha: "another-platform-cursor",
+        release: null,
+        pullRequests: [{ number: 99, title: "another platform PR" }],
+      },
+    });
+    assert(
+      !(otherPlatformCache.latest?.material?.pullRequests || []).some((pr) => pr.number === 99),
+      "另一平台游标的 PR 缓存不混入当前平台",
+    );
+
     // 2. No cache ⇒ fetch with Authorization header.
     const withToken = await checkForRelease(dir, null, "ghp_secret", { sync: false });
     const prCall = calls.find((c) => c.url.includes("/pulls/1"));
