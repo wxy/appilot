@@ -143,7 +143,12 @@ export function createSchedulerServer(socketPath: string, handlers: ServerHandle
             try {
               chmodSync(socketPath, 0o600);
             } catch (err: any) {
-              log(`socket chmod 0600 失败（继续，权限保持默认）: ${err?.message || String(err)}`);
+              // 控制接口没有额外鉴权；权限无法收紧时必须关闭监听。
+              // 继续启动会把 shutdown/runNow 等操作暴露给其他本地用户。
+              const failure = new Error(`socket chmod 0600 失败: ${err?.message || String(err)}`);
+              for (const client of clients) client.destroy();
+              server.close(() => reject(failure));
+              return;
             }
           }
           log(`scheduler socket listening at ${socketPath}`);

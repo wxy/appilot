@@ -109,17 +109,13 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
     spawnFailed = true;
     log(`scheduler spawn failed: ${err?.message || String(err)}`);
   });
-  // 审计 H4：daemon 现以 exit 0 = 单例仲裁让位、exit 1 = 真实启动失败。
-  // 只有 exit 0 视为「调度已在跑」；exit 1 不再误判成功，继续退避 ping
-  // （可能只是第一次尝试撞上启动竞态），到超时仍不通则返回 false（壳回退
-  // 壳内调度），避免「显示正常但无人调度」的静默停摆。
-  let gaveWay = false;
+  // daemon exit 0 仅表示它让出了租约，不能证明持主者的 socket 可用。
+  // 无论退出码如何，只有实际 ping 成功才报告调度器可用。
   child.on('exit', (code) => {
     if (code !== 0) {
       log(`scheduler exited ${code}（启动失败，详见 scheduler-daemon.log）`);
       return;
     }
-    gaveWay = true;
     // 让位信息带上当前调度主：让「谁在跑」可读（避免误读为残留调度器）。
     let leader: string | null = null;
     try {
@@ -141,15 +137,14 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
   // 3) 退避重试 ping（daemon 启动 + lease 仲裁；冲突输家退出后可能需重连已存在的）
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 400));
-    if (gaveWay) return true;
-    if (spawnFailed) {
-      log('scheduler spawn failed; giving up ensure（壳可回退壳内调度）');
-      return false;
-    }
     if (await pingSocket(opts.socketPath)) {
       log('scheduler up');
       notifyCheckUpdate(opts.socketPath);
       return true;
+    }
+    if (spawnFailed) {
+      log('scheduler spawn failed; giving up ensure（壳可回退壳内调度）');
+      return false;
     }
   }
   log('scheduler did not come up within timeout');
