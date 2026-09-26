@@ -3,6 +3,7 @@
  * 用 node:net Unix socket；Windows 走 named pipe 路径（\\\\.\\pipe\\...）。
  */
 import { createServer, type Socket } from 'node:net';
+import { chmodSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import type { ClientRequest, ServerMessage } from './protocol.js';
 import { decodeLine, encode } from './protocol.js';
@@ -134,6 +135,17 @@ export function createSchedulerServer(socketPath: string, handlers: ServerHandle
         server.once('error', reject);
         server.listen(socketPath, () => {
           server.removeListener('error', reject);
+          // 权限收紧（审计 2026-09-26 H3）：socket 文件权限 = 内核默认 & ~umask，
+          // umask 宽松时（002 → 0775）组内/其他本地用户可连上控制面执行
+          // shutdown/runNow/accelerate。listen 成功后强制 0600（仅本用户可连）；
+          // win32 named pipe 无文件权限语义，跳过。
+          if (process.platform !== 'win32') {
+            try {
+              chmodSync(socketPath, 0o600);
+            } catch (err: any) {
+              log(`socket chmod 0600 失败（继续，权限保持默认）: ${err?.message || String(err)}`);
+            }
+          }
           log(`scheduler socket listening at ${socketPath}`);
           resolve();
         });
