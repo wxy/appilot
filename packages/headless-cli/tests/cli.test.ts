@@ -134,6 +134,26 @@ async function main(): Promise<void> {
   assert.equal(pruneJson.beforeIso, '2025-01-01T00:00:00Z');
   console.log('✓ snapshots prune（--dry-run 预览 + --before 窗口）');
 
+  const offsetStore = openStore(dbPath);
+  offsetStore.projects.save({ id: 'offset-proj-id', name: 'offset-proj', path: '/offset-proj', githubUrl: null, platform: null, languages: [], lastResolvedAt: new Date().toISOString(), artworkUrl: null, updatedAt: new Date().toISOString() });
+  offsetStore.snapshots.add([
+    { projectName: 'offset-proj', productId: null, keyword: 'k', language: 'en', storefront: 'us', rank: 9, totalResults: 10, checkedAt: '2026-08-31T23:00:00.000Z' },
+    { projectName: 'offset-proj', productId: null, keyword: 'k', language: 'en', storefront: 'us', rank: 8, totalResults: 10, checkedAt: '2026-09-01T00:00:00Z' },
+  ]);
+  offsetStore.close();
+  const offsetPreview = await run(['snapshots', 'prune', 'offset-proj', '--before', '2026-09-01T00:00:00+08:00', '--dry-run'], dbPath);
+  assert.equal(offsetPreview.code, 0, offsetPreview.stderr);
+  assert.equal(JSON.parse(offsetPreview.stdout).matched, 0, 'UTC+08 边界对应前一天 16:00Z，不应命中 23:00Z');
+  const mixedPrecision = await run(['snapshots', 'prune', 'offset-proj', '--before', '2026-09-01T00:00:00.500Z', '--dry-run'], dbPath);
+  assert.equal(JSON.parse(mixedPrecision.stdout).matched, 2, '秒精度旧快照应早于同秒的 500 毫秒边界');
+  for (const invalid of ['2026-02-30T00:00:00Z', '2026-09-01T00:00:00']) {
+    const rejected = await run(['snapshots', 'prune', 'offset-proj', '--before', invalid, '--force'], dbPath);
+    assert.notEqual(rejected.code, 0, `无效或无时区边界 ${invalid} 应拒绝`);
+  }
+  const offsetHistory = await run(['snapshots', 'history', 'offset-proj'], dbPath);
+  assert.equal(JSON.parse(offsetHistory.stdout).count, 2, '被拒绝的清理未删除任何快照');
+  console.log('✓ snapshots prune（时区归一、无效日期拒绝）');
+
   // tasks list --source：seed 不同来源行 → 过滤正确
   const tStore = openStore(dbPath);
   tStore.tasks.upsert({ id: 'release-sync', title: '发布同步', intervalMinutes: 60, lastRunAt: null, nextRunAt: null, lastStatus: 'never', lastSummary: null, runCount: 0, source: 'dsh' });

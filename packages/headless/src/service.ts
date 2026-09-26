@@ -7,6 +7,23 @@
 import type { AppilotStore } from './store.js';
 import type { ProjectRow, RankSnapshotRow, TaskRow, ProjectMetaRow, ProductRecordRow, ReleaseCacheRow } from './schema.js';
 
+/** A prune boundary is an instant, never a locale-dependent or lexical string. */
+function normalizePruneBefore(value: string): string {
+  const input = String(value).trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:?\d{2}))?$/.exec(input);
+  const invalid = () => new Error(`before 必须是有效的 ISO 8601 时间（如 2026-01-01T00:00:00Z），收到："${input.slice(0, 40)}"`);
+  if (!match) throw invalid();
+  const [, year, month, day, hour, minute, second] = match;
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (y < 1 || m < 1 || m > 12 || d < 1 || d > new Date(Date.UTC(y, m, 0)).getUTCDate()) throw invalid();
+  if (hour && (Number(hour) > 23 || Number(minute) > 59 || Number(second || 0) > 59)) throw invalid();
+  const instant = new Date(input);
+  if (!Number.isFinite(instant.getTime())) throw invalid();
+  return instant.toISOString();
+}
+
 export interface HeadlessService {
   projects: {
     /** 注册/更新（stamp updatedAt）。 */
@@ -27,9 +44,8 @@ export interface HeadlessService {
     ): RankSnapshotRow[];
     /**
      * 清理某项目早于 beforeIso 的旧快照；返回 { matched, removed, total }。
-     * 破坏性命令防护（审计 H7）：before 必须 ISO 8601（字典序陷阱——传 "z"
-     * 等字符串会删光全部快照）；未知项目抛错（不再静默 0）；dryRun 只预览；
-     * 单次删除超过存量 50% 需显式 force:true。
+     * 破坏性命令防护：before 必须是有确定时区的有效 ISO 8601 时间；未知项目报错；
+     * dryRun 只预览；单次删除超过存量 50% 需显式 force:true。
      */
     prune(
       projectName: string,
@@ -98,32 +114,12 @@ export function createHeadlessService(store: AppilotStore): HeadlessService {
         store.snapshots.latestByKey(projectName, productId ?? undefined),
       recent: (projectName, opts) => store.snapshots.recent(projectName, opts),
       prune: (projectName, beforeIso, opts = {}) => {
-        // 审计 H7：checkedAt 是 TEXT，prune 按字典序比较——非 ISO 字符串
-        // （如 "z"）会删光项目全部快照且静默返回成功。入口先做格式强校验。
-        if (
-          !/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:?\d{2})?)?$/.test(
-            String(beforeIso).trim(),
-          )
-        ) {
-          throw new Error(
-            `before 必须是 ISO 8601 时间（如 2026-01-01T00:00:00Z），收到："${String(beforeIso).slice(0, 40)}"`,
-          );
-        }
-        const preview = store.snapshots.prunePreview(projectName, beforeIso);
-        if (!preview) {
+        const cutoff = normalizePruneBefore(beforeIso);
+        const result = store.snapshots.pruneChecked(projectName, cutoff, opts);
+        if (!result) {
           throw new Error(`项目不存在：${projectName}`);
         }
-        if (opts.dryRun) {
-          return { matched: preview.matched, removed: 0, total: preview.total };
-        }
-        if (preview.total > 0 && preview.matched * 2 > preview.total && !opts.force) {
-          throw new Error(
-            `将删除 ${preview.matched}/${preview.total} 条快照（超过存量的 50%）。` +
-              '如确认无误请传 force:true；建议先用 dryRun 预览影响面。',
-          );
-        }
-        const removed = store.snapshots.pruneOlderThan(projectName, beforeIso);
-        return { matched: preview.matched, removed, total: preview.total };
+        return result;
       },
     },
     tasks: {
