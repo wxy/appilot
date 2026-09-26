@@ -20,6 +20,10 @@ export function SettingsPage() {
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiKeyBroken, setApiKeyBroken] = useState(false);
+  // 已存 Key 的掩码与有无标记（审计 M-M1：明文 Key 不回传渲染层，输入框留空
+  // = 保持现有 Key 不变；「测试连接 / 模型列表」经 useStoredKey 在主进程内取用）。
+  const [hasStoredKey, setHasStoredKey] = useState(false);
+  const [storedKeyMask, setStoredKeyMask] = useState("");
   const [model, setModel] = useState("gpt-4o");
   const [models, setModels] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -47,7 +51,8 @@ export function SettingsPage() {
   useEffect(() => {
     (window as any).appilot?.ai?.getConfig().then((c: any) => {
       if (c?.providerUrl) setProviderUrl(c.providerUrl);
-      if (c?.apiKey) setApiKey(c.apiKey);
+      setHasStoredKey(Boolean(c?.hasApiKey));
+      setStoredKeyMask(String(c?.apiKeyMasked || ""));
       if (c?.model) setModel(c.model);
       setApiKeyBroken(Boolean(c?.apiKeyBroken));
     }).catch(() => {});
@@ -58,7 +63,7 @@ export function SettingsPage() {
     setModelsLoading(true);
     setModelsError("");
     try {
-      const result = await (window as any).appilot?.ai?.listModels({ providerUrl: url, apiKey: key });
+      const result = await (window as any).appilot?.ai?.listModels({ providerUrl: url, apiKey: key, useStoredKey: hasStoredKey });
       const list = Array.isArray(result?.models) ? result.models : [];
       setModels(list);
       if (list.length === 0 && result?.error) setModelsError(result.error);
@@ -80,7 +85,7 @@ export function SettingsPage() {
     if (!providerUrl.trim()) return;
     const timer = window.setTimeout(() => void listModels(providerUrl, apiKey), 400);
     return () => window.clearTimeout(timer);
-  }, [providerUrl, apiKey, listModels]);
+  }, [providerUrl, apiKey, hasStoredKey, listModels]);
 
   // Keep the preset selector in sync with the actual URL + model: prefer an
   // exact URL+model match, fall back to a URL match, otherwise Custom.
@@ -115,7 +120,7 @@ export function SettingsPage() {
   const handleTest = async () => {
     setTesting(true); setStatus("idle");
     try {
-      const result = await (window as any).appilot?.ai?.testConnection({ providerUrl, apiKey, model });
+      const result = await (window as any).appilot?.ai?.testConnection({ providerUrl, apiKey, model, useStoredKey: hasStoredKey });
       const ok = result?.ok ?? false;
       setStatus(ok ? "success" : "error");
       setStatusMsg(ok ? "连接成功" : result?.error ? `连接失败：${result.error}` : "连接失败");
@@ -177,7 +182,7 @@ export function SettingsPage() {
                   setApiKeyBroken(false);
                 }}
                 className={inputClass + " pr-10"}
-                placeholder="sk-..."
+                placeholder={hasStoredKey ? `已保存（${storedKeyMask}）· 留空保持不变` : "sk-..."}
                 autoComplete="off"
               />
               <button
