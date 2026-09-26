@@ -33,7 +33,10 @@ export function importAscKeyFileTo(
     if (!file.toLowerCase().endsWith(".p8")) continue;
     const candidate = path.join(keysDir, file);
     try {
-      if (fileHash(candidate) === srcHash) return candidate;
+      if (fileHash(candidate) === srcHash) {
+        tightenKeyFilePermissions(candidate);
+        return candidate;
+      }
     } catch {
       // Unreadable file — ignore and keep scanning.
     }
@@ -46,5 +49,19 @@ export function importAscKeyFileTo(
     `asc-${tag}-${base}-${srcHash.slice(0, 8)}.p8`,
   );
   fs.copyFileSync(src, dest);
+  tightenKeyFilePermissions(dest);
   return dest;
+}
+
+/**
+ * ASC 私钥副本仅本用户可读写（审计 2026-09-26 L1）：copyFileSync 产物继承
+ * 默认权限（通常 0644，组/其他用户可读）。对新副本与命中的已有副本都幂等
+ * 收紧到 0600；失败不阻塞导入（非 POSIX 文件系统等场景忽略）。
+ */
+function tightenKeyFilePermissions(filePath: string): void {
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // 权限收紧失败不阻塞导入流程
+  }
 }

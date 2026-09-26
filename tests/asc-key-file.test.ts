@@ -57,6 +57,24 @@ async function runTests() {
     "already-managed path: returned as-is without copying",
   );
 
+  // Permissions (audit L1): managed key copies must be owner-only (0600).
+  if (process.platform !== "win32") {
+    const modeOf = (p: string) => fs.statSync(p).mode & 0o777;
+    assert(modeOf(first) === 0o600, `new copy permission is 0600 (got ${modeOf(first).toString(8)})`);
+    assert(modeOf(third) === 0o600, `replacement copy permission is 0600 (got ${modeOf(third).toString(8)})`);
+    assert(modeOf(other) === 0o600, `different key copy permission is 0600 (got ${modeOf(other).toString(8)})`);
+    // Dedupe hit on a pre-existing loose-permission copy must also tighten it.
+    // 注意：keyA 的路径在上文已被 replaced 覆盖为 CCCC 内容，这里用一份新的
+    // AAAA 内容文件触发与 first 的内容去重。
+    fs.chmodSync(first, 0o644);
+    const keyARestored = writeP8(srcDir, "AuthKey_ABC_restore.p8", "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n");
+    assert(
+      importAscKeyFileTo(keysDir, keyARestored, "project-1") === first,
+      "dedupe hit again",
+    );
+    assert(modeOf(first) === 0o600, "dedupe hit re-tightens loose permission to 0600");
+  }
+
   if (errors === 0) console.log("\n🎉 All asc-key-file tests passed!");
   else process.exitCode = 1;
 }
