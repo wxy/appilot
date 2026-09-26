@@ -31,6 +31,7 @@ export function migrateConfigJsonIntoKv(
     existsSync(p: string): boolean;
     readFileSync(p: string, enc: "utf8"): string;
     renameSync(from: string, to: string): void;
+    chmodSync?(p: string, mode: number): void;
   } = fs,
 ): KvMigrationOutcome {
   if (kv.get(KV_MIGRATE_MARK)) {
@@ -39,6 +40,13 @@ export function migrateConfigJsonIntoKv(
   if (!fsApi.existsSync(configPath)) {
     kv.set(KV_MIGRATE_MARK, new Date().toISOString());
     return { imported: 0, archivedTo: null, alreadyDone: false };
+  }
+  // The source may contain plaintext credentials. Tighten it before reading
+  // or renaming so a chmod failure leaves the source and migration marker
+  // untouched instead of producing a broadly readable archive.
+  if (process.platform !== "win32") {
+    if (!fsApi.chmodSync) throw new Error("无法收紧 config.json 文件权限");
+    fsApi.chmodSync(configPath, 0o600);
   }
   const raw = JSON.parse(fsApi.readFileSync(configPath, "utf8")) as Record<string, unknown>;
   if (!raw || typeof raw !== "object") {
@@ -53,12 +61,17 @@ export function migrateConfigJsonIntoKv(
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const archivedTo = `${configPath}.migrated-${stamp}`;
   fsApi.renameSync(configPath, archivedTo);
+  // POSIX rename preserves the source mode, now 0600. Keep the shorter
+  // retention window below for the archived copy.
   kv.set(KV_MIGRATE_MARK, new Date().toISOString());
   return { imported, archivedTo, alreadyDone: false };
 }
 
-/** 迁移产物保留期（默认 14 天）：过期后启动时自动清理。 */
-export const MIGRATION_ARTIFACT_RETENTION_DAYS = 14;
+/**
+ * 迁移产物保留期（默认 3 天；审计 L2 前 14 天）：归档可能含迁移前明文凭据，
+ * 迁移验证窗口足够即可，过期后启动时自动清理。
+ */
+export const MIGRATION_ARTIFACT_RETENTION_DAYS = 3;
 
 /** config.json 迁移产物（.bak-* / .migrated-*）——可能含迁移前明文凭据，到期即清。 */
 export function cleanupMigrationArtifacts(
