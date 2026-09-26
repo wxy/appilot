@@ -3,10 +3,11 @@
  * appilot-scheduler 守护进程入口。
  * - 默认：DB 用 APPILOT_DB_FILE 或 headless 默认路径；socket 与 DB 同目录。
  * - install / uninstall：注册/移除 launchd LaunchAgent（macOS 常驻保活）。
- * - 退出：SIGTERM/SIGINT 优雅退出（升级/关机让位）；单例冲突安静退出(exit 0)。
+ * - 退出：SIGTERM/SIGINT 优雅退出（升级/关机让位）；单例仲裁让位 exit 0，
+ *   真实启动失败 exit 1（审计 H4：供壳 ensure 与 launchd 判定）。
  */
 import { reportStartup } from './startup-report.js';
-import { runDaemon, type DaemonOptions } from './daemon.js';
+import { runDaemon, YieldToActiveSchedulerError, type DaemonOptions } from './daemon.js';
 import { installSchedulerHupRestart } from './signals.js';
 import { defaultDbPath } from '@appilot-labs/appilot-headless';
 import { parseMonitorDirsEnv } from './self-update.js';
@@ -209,13 +210,27 @@ async function main(): Promise<void> {
     handle = await runDaemon(opts);
     reportStartup({ ok: true, pid: process.pid });
   } catch (err: any) {
-    reportStartup({ ok: false, pid: process.pid, error: err?.message || String(err) });
-    logDaemonLine(`startup failed: ${err?.message || String(err)}`);
-    // 单例仲裁退出：已有调度者（另一 daemon / Electron / DSH 壳内调度）。若持主者
-    // 刚退出，租约 TTL（默认 60s）未过也会拒绝——提示等 TTL 或查 status。
-    console.log(`[appilot-scheduler] ${err?.message || String(err)}`);
-    console.log(`[appilot-scheduler] 提示：若刚停止其他调度者（Electron/DSH），租约 TTL（60s）内会拒绝新主——稍候重试，或用 status 查看当前调度者。`);
-    process.exit(0);
+    // 审计 H4：区分「单例仲裁让位」（exit 0）与「真实启动失败」（exit 1）。
+    // 旧实现一律 exit 0，壳 ensure 会把 socket/DB 等启动失败误判为
+    // 「让位成功、调度在跑」，造成无人调度的静默停摆。
+    const yielded = err instanceof YieldToActiveSchedulerError;
+    reportStartup(
+      yielded
+        ? { ok: true, pid: process.pid }
+        : { ok: false, pid: process.pid, error: err?.message || String(err) },
+    );
+    logDaemonLine(
+      `${yielded ? 'startup yield' : 'startup failed'}: ${err?.message || String(err)}`,
+    );
+    if (yielded) {
+      // 单例仲裁退出：已有调度者（另一 daemon / Electron / DSH 壳内调度）。若持主者
+      // 刚退出，租约 TTL（默认 60s）未过也会拒绝——提示等 TTL 或查 status。
+      console.log(`[appilot-scheduler] ${err?.message || String(err)}`);
+      console.log(`[appilot-scheduler] 提示：若刚停止其他调度者（Electron/DSH），租约 TTL（60s）内会拒绝新主——稍候重试，或用 status 查看当前调度者。`);
+      process.exit(0);
+    }
+    console.error(`[appilot-scheduler] 启动失败: ${err?.message || String(err)}`);
+    process.exit(1);
   }
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.on(sig, () => {
