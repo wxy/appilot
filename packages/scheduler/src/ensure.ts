@@ -101,39 +101,50 @@ export async function ensureScheduler(opts: EnsureOptions): Promise<boolean> {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   });
   child.unref();
-  // daemon 快速 exit 0 = 单例仲裁让位（已有调度者——壳/其他 daemon 持主）：
-  // 调度已在跑，ensure 视为成功，无需继续等待/报错。
-  let gaveWay = false;
+  // 审计 M-S5：spawn 本身失败（如 node/cli 路径失效 ENOENT、EACCES）时
+  // ChildProcess 只发 'error' 不发 'exit'——缺监听会让壳进程 uncaught
+  // exception。此处记日志并置失败标记，退避循环立即判负，不再白等满窗口。
+  let spawnFailed = false;
+  child.on('error', (err) => {
+    spawnFailed = true;
+    log(`scheduler spawn failed: ${err?.message || String(err)}`);
+  });
+  // daemon exit 0 仅表示它让出了租约，不能证明持主者的 socket 可用。
+  // 无论退出码如何，只有实际 ping 成功才报告调度器可用。
   child.on('exit', (code) => {
-    if (code === 0) {
-      gaveWay = true;
-      // 让位信息带上当前调度主：让「谁在跑」可读（避免误读为残留调度器）。
-      let leader: string | null = null;
-      try {
-        const { openStore, defaultDbPath } = require('@appilot-labs/appilot-headless') as typeof import('@appilot-labs/appilot-headless');
-        // socket 与 DB 同目录（默认约定：dirname(db)/scheduler.sock）→ 反推 DB 路径
-        const dbPath = join(dirname(opts.socketPath), 'appilot.db');
-        const s = openStore(dbPath);
-        leader = s.lease.leader();
-        s.close();
-      } catch {
-        /* leader 读取失败不阻塞 */
-      }
-      log(
-        leader
-          ? `scheduler exited 0（单例仲裁让位——调度主在跑：${leader}；启动竞态时壳会先抢主，属正常）`
-          : 'scheduler exited 0（单例仲裁让位）',
-      );
+    if (code !== 0) {
+      log(`scheduler exited ${code}（启动失败，详见 scheduler-daemon.log）`);
+      return;
     }
+    // 让位信息带上当前调度主：让「谁在跑」可读（避免误读为残留调度器）。
+    let leader: string | null = null;
+    try {
+      const { openStore } = require('@appilot-labs/appilot-headless') as typeof import('@appilot-labs/appilot-headless');
+      // socket 与 DB 同目录（默认约定：dirname(db)/scheduler.sock）→ 反推 DB 路径
+      const dbPath = join(dirname(opts.socketPath), 'appilot.db');
+      const s = openStore(dbPath);
+      leader = s.lease.leader();
+      s.close();
+    } catch {
+      /* leader 读取失败不阻塞 */
+    }
+    log(
+      leader
+        ? `scheduler exited 0（单例仲裁让位——调度主在跑：${leader}；启动竞态时壳会先抢主，属正常）`
+        : 'scheduler exited 0（单例仲裁让位）',
+    );
   });
   // 3) 退避重试 ping（daemon 启动 + lease 仲裁；冲突输家退出后可能需重连已存在的）
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 400));
-    if (gaveWay) return true;
     if (await pingSocket(opts.socketPath)) {
       log('scheduler up');
       notifyCheckUpdate(opts.socketPath);
       return true;
+    }
+    if (spawnFailed) {
+      log('scheduler spawn failed; giving up ensure（壳可回退壳内调度）');
+      return false;
     }
   }
   log('scheduler did not come up within timeout');

@@ -97,6 +97,32 @@ async function runTests() {
         },
       );
     }
+    if (url.includes("/search/issues?")) {
+      // M-C1：带 cutoff 的 fetchMergedPullRequests 走 Search API（服务端
+      // merged 过滤）。item 形状为 search issue：merged_at 在 pull_request 下。
+      return new Response(
+        JSON.stringify({
+          total_count: 2,
+          items: [
+            {
+              number: 1,
+              title: "PR #1 merged",
+              body: "body",
+              html_url: "https://github.com/owner/repo/pull/1",
+              pull_request: { merged_at: "2026-02-01T00:00:00Z" },
+            },
+            {
+              number: 2,
+              title: "PR #2 merged",
+              body: "body2",
+              html_url: "https://github.com/owner/repo/pull/2",
+              pull_request: { merged_at: "2025-12-01T00:00:00Z" },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     if (url.includes("/pulls?")) {
       if (url.includes("page=2") || url.includes("page=3")) {
         return new Response("[]", {

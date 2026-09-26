@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeynoteScreenshotTheme, ScreenshotCopySet, ScreenshotImageAsset, ScreenshotMaterialItem } from "@appilot-labs/appilot-core/screenshot-material";
 import {
   normalizeScreenshotCopySet,
@@ -34,33 +34,50 @@ function ScreenshotPreview({ asset, disabled, inherited, onSelect }: {
   onSelect: () => void;
 }) {
   const [preview, setPreview] = useState("");
+  const [previewChecked, setPreviewChecked] = useState(false);
   useEffect(() => {
     let active = true;
     setPreview("");
-    if (!asset?.path) return () => { active = false; };
+    setPreviewChecked(false);
+    if (!asset?.path) {
+      setPreviewChecked(true);
+      return () => { active = false; };
+    }
     void (window as any).appilot.release.screenshotImagePreview(asset.path)
-      .then((value: string | null) => { if (active) setPreview(value || ""); })
-      .catch(() => { if (active) setPreview(""); });
+      .then((value: string | null) => { if (active) { setPreview(value || ""); setPreviewChecked(true); } })
+      .catch(() => { if (active) { setPreview(""); setPreviewChecked(true); } });
     return () => { active = false; };
   }, [asset?.path, asset?.selectedAt]);
+  const authorizePreview = async () => {
+    if (!asset?.path) return;
+    try {
+      const authorized = await (window as any).appilot.release.authorizeScreenshotImagePreview(asset.path);
+      if (!authorized) return;
+      const value = await (window as any).appilot.release.screenshotImagePreview(asset.path);
+      setPreview(value || "");
+    } catch {
+      setPreview("");
+    }
+  };
+  const canAuthorize = Boolean(disabled && asset?.path && previewChecked && !preview);
   return (
     <button
       type="button"
-      onClick={onSelect}
-      disabled={disabled}
-      aria-label={asset ? "更换截图图片" : "选择截图图片"}
+      onClick={canAuthorize ? () => void authorizePreview() : onSelect}
+      disabled={disabled && !canAuthorize}
+      aria-label={canAuthorize ? "选择原截图以授权预览" : asset ? "更换截图图片" : "选择截图图片"}
       className={cn(
         "group relative flex aspect-[9/16] w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:border-zinc-700 dark:bg-zinc-800",
-        disabled ? "cursor-default" : "cursor-pointer hover:border-amber-400 dark:hover:border-amber-500",
+        disabled && !canAuthorize ? "cursor-default" : "cursor-pointer hover:border-amber-400 dark:hover:border-amber-500",
       )}
     >
-      {preview ? <img src={preview} alt="截图预览" className={cn("h-full w-full object-contain transition", inherited && "grayscale opacity-55")} /> : <span className="px-3 text-center text-xs text-zinc-400">{asset ? "图片无法读取" : "点击选择本地图片"}</span>}
-      {!disabled && <span className="absolute inset-x-2 bottom-2 rounded-md bg-black/65 px-2 py-1.5 text-center text-[11px] text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus:opacity-100">{asset ? "点击更换图片" : "点击选择图片"}</span>}
+      {preview ? <img src={preview} alt="截图预览" className={cn("h-full w-full object-contain transition", inherited && "grayscale opacity-55")} /> : <span className="px-3 text-center text-xs text-zinc-400">{asset ? !previewChecked ? "加载预览…" : canAuthorize ? "点击选择原图以授权预览" : "图片无法预览 · 点击重新选择" : "点击选择本地图片"}</span>}
+      {(!disabled || canAuthorize) && <span className="absolute inset-x-2 bottom-2 rounded-md bg-black/65 px-2 py-1.5 text-center text-[11px] text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus:opacity-100">{canAuthorize ? "选择原截图" : asset ? "点击更换图片" : "点击选择图片"}</span>}
     </button>
   );
 }
 
-function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageReadOnly, typeReadOnly, themes, themeId, layoutName, layoutReadOnly, onThemeChange, onLayoutChange, onChange, onImageChange, onCommit, onRemove }: {
+function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageReadOnly, typeReadOnly, themes, themeId, layoutName, layoutReadOnly, onThemeChange, onLayoutChange, onChange, onImageChange, onError, onCommit, onRemove }: {
   item: ScreenshotMaterialItem;
   language: string;
   sourceLanguage: string;
@@ -74,7 +91,8 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
   onThemeChange: (themeId: string, defaultLayout: string) => void;
   onLayoutChange: (layoutName: string) => void;
   onChange: (field: "name" | "title" | "description", value: string) => void;
-  onImageChange: (asset?: ScreenshotImageAsset) => void;
+  onImageChange: (asset?: ScreenshotImageAsset) => Promise<void> | void;
+  onError: (message: string) => void;
   onCommit: () => void;
   onRemove: () => void;
 }) {
@@ -86,8 +104,12 @@ function ScreenshotCard({ item, language, sourceLanguage, textReadOnly, imageRea
   const selectedTheme = themes.find((theme) => theme.id === themeId) || null;
   const layouts = selectedTheme?.layouts.map((layout) => layout.name) || [];
   const selectImage = async () => {
-    const asset = await (window as any).appilot.release.selectScreenshotImage();
-    if (asset) onImageChange(asset);
+    try {
+      const asset = await (window as any).appilot.release.selectScreenshotImage();
+      if (asset) await onImageChange(asset);
+    } catch (cause: any) {
+      onError(cause?.message || "选择截图图片失败。");
+    }
   };
   return (
     <article className="flex min-w-0 flex-col rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-700 dark:bg-zinc-900">
@@ -206,6 +228,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
   const [failed, setFailed] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [operationId, setOperationId] = useState("");
+  const activeOperationIdRef = useRef("");
   const [progress, setProgress] = useState<{ chars: number; phase: "reasoning" | "content" } | null>(null);
   const [error, setError] = useState("");
   const [artifactRunning, setArtifactRunning] = useState(false);
@@ -274,7 +297,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
 
   useEffect(() => {
     const off = (window as any).appilot?.release?.onGenerateProgress?.((event: any) => {
-      if (!running) return;
+      if (!running || !activeOperationIdRef.current || event?.operationId !== activeOperationIdRef.current) return;
       if (event?.kind === "retry") setRetrying(true);
       if (event?.kind === "chars" && typeof event.chars === "number") setProgress({ chars: event.chars, phase: event.phase === "content" ? "content" : "reasoning" });
     });
@@ -303,6 +326,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
   const masterConfirmed = Boolean(screenshotCopy.masterConfirmedAt);
   const batchConfirmed = Boolean(screenshotCopy.batchConfirmedAt);
   const update = (mutate: (next: ScreenshotCopySet) => void, commit = false) => {
+    if (running) return screenshotCopy;
     const next = cloneSet(screenshotCopy);
     mutate(next);
     next.updatedAt = new Date().toISOString();
@@ -311,6 +335,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
     return next;
   };
   const commitCurrent = () => {
+    if (running) return;
     const next = cloneSet(screenshotCopy);
     next.items = next.items
       .map((item) => ({ ...item, name: item.name.trim() }))
@@ -380,6 +405,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
     if (mode === "generate" && screenshotCopy.items.length === 0) return setError("请先添加截图类型。");
     setError(""); setRunning(true); setFailed(false); setRetrying(false); setProgress(null);
     const id = globalThis.crypto?.randomUUID?.() || `screenshot-ai-${Date.now()}`;
+    activeOperationIdRef.current = id;
     setOperationId(id);
     try {
       await onCommit?.(screenshotCopy);
@@ -399,6 +425,7 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
     } catch (reason: any) {
       if (!String(reason?.message || "").includes("已取消")) { setFailed(true); setError(reason?.message || "截图文案 AI 操作失败。"); }
     } finally {
+      activeOperationIdRef.current = "";
       setRunning(false); setRetrying(false); setOperationId("");
     }
   };
@@ -547,18 +574,22 @@ export function ScreenshotMaterialsPanel({ projectId, productId, draftId, value,
                   delete next.batchConfirmedAt;
                 }
               })}
-              onImageChange={(asset) => update((next) => {
-                const target = next.items.find((entry) => entry.id === item.id);
-                if (!target) return;
-                if (activeLanguage === next.sourceLanguage) {
-                  if (asset) target.sourceImage = asset;
-                  else delete target.sourceImage;
-                } else {
-                  target.imageOverrides = { ...(target.imageOverrides || {}) };
-                  if (asset) target.imageOverrides[activeLanguage] = asset;
-                  else delete target.imageOverrides[activeLanguage];
+              onImageChange={async (asset) => {
+                if (!projectId || !draftId) return;
+                setError("");
+                try {
+                  // Save only the selected image against the newest persisted
+                  // draft. A dialog opened before translation must not write
+                  // a stale whole-copy snapshot after translation completes.
+                  const saved = await (window as any).appilot.release.saveScreenshotImage(
+                    projectId, draftId, item.id, activeLanguage, asset ?? null,
+                  );
+                  onGenerated?.(saved);
+                } catch (cause: any) {
+                  setError(cause?.message || "截图图片保存失败。");
                 }
-              }, true)}
+              }}
+              onError={setError}
               onCommit={commitCurrent}
               onRemove={() => update((next) => {
                 next.items = next.items.filter((entry) => entry.id !== item.id);

@@ -81,6 +81,8 @@ export interface ReleaseMaterial {
 /** Pre-warmed GitHub API data produced by the background sync task. */
 export interface GithubApiCache {
   tag: string | null;
+  /** Generation boundary used for the cached PR material. */
+  lastSeenSha?: string | null;
   release: GitHubReleaseInfo | null;
   pullRequests: ReleasePullRequest[];
   /** Pre-warmed GitHub releases listing (drafts included). */
@@ -133,6 +135,46 @@ async function isAncestor(localPath: string, ancestor: string, descendant: strin
   } catch {
     return false;
   }
+}
+
+/** Prefer the published branch over a local feature checkout for release counts. */
+async function releaseTipAfter(localPath: string, boundary: string): Promise<string | null> {
+  for (const ref of ["refs/remotes/origin/HEAD", "refs/remotes/origin/master", "refs/remotes/origin/main", "HEAD"]) {
+    const tip = await git(localPath, ["rev-parse", "--verify", `${ref}^{commit}`]).catch(() => "");
+    if (tip && await isAncestor(localPath, boundary, tip)) return tip;
+  }
+  return null;
+}
+
+/** Exact content count since a known commit; null means the range is unverified. */
+export async function countContentCommitsSince(localPath: string, boundary: string): Promise<number | null> {
+  const tip = await releaseTipAfter(localPath, boundary);
+  if (!tip) return null;
+  const output = await git(localPath, ["log", "--no-merges", "--format=%H", `${boundary}..${tip}`]).catch(() => null);
+  return output === null ? null : output ? output.split("\n").length : 0;
+}
+
+/**
+ * 按 sha 并集合并多段 `git log --format` 输出（\x1e 分隔记录）。
+ * sortByDateDesc 时按 %cI（第 5 个字段）倒序，近似单区间 git log 的时序。
+ */
+function dedupeLogRecords(logs: string[], sortByDateDesc = false): string {
+  const seen = new Set<string>();
+  const records: string[] = [];
+  for (const log of logs) {
+    for (const record of log.split("\x1e").filter(Boolean)) {
+      const sha = record.split("\x1f")[0];
+      if (!sha || seen.has(sha)) continue;
+      seen.add(sha);
+      records.push(record);
+    }
+  }
+  if (sortByDateDesc) {
+    records.sort((a, b) =>
+      String(b.split("\x1f")[4] || "").localeCompare(String(a.split("\x1f")[4] || "")),
+    );
+  }
+  return records.join("\x1e");
 }
 
 /**
@@ -267,28 +309,42 @@ export async function collectReleaseMaterial(
   end: string | string[] = "HEAD",
 ): Promise<ReleaseMaterial> {
   const endRefs = Array.isArray(end) ? end : [end];
-  const rangeArgs = since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs;
-  const [logOut, diffOut] = await Promise.all([
-    git(localPath, [
-      "log",
-      ...rangeArgs,
-      `--max-count=${MAX_MATERIAL_COMMITS}`,
-      // \x1e record separator keeps multi-line bodies from corrupting records.
-      "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
-    ]).catch(() => ""),
-    git(localPath, ["diff", "--stat", ...rangeArgs]).catch(() => ""),
+  const formatArgs = [
+    `--max-count=${MAX_MATERIAL_COMMITS}`,
+    // \x1e record separator keeps multi-line bodies from corrupting records.
+    "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
+  ];
+  // 审计 H2：带边界（since）且有多个 frontier ref 时，`git log since..ref0
+  // ref1 …` 的排除集只作用于 ref0——ref1/refN 上「边界之前」的分叉旧提交会
+  // 被泄漏进发布素材。改为对每个 ref 单独取 `since..ref`，再按 sha 并集去重；
+  // 无边界时 `git log ref0 ref1 …` 本就是可达并集，保持原语义。
+  const multiRefWithBoundary = Boolean(since) && endRefs.length > 1;
+  const logArgSets: string[][] = multiRefWithBoundary
+    ? endRefs.map((ref) => ["log", `${since}..${ref}`, ...formatArgs])
+    : [
+        [
+          "log",
+          ...(since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs),
+          ...formatArgs,
+        ],
+      ];
+  const [logs, mergeLogs] = await Promise.all([
+    Promise.all(logArgSets.map((args) => git(localPath, args).catch(() => ""))),
+    Promise.all(
+      logArgSets.map((args) => {
+        const mergesArgs = args.filter(
+          (item) => item !== formatArgs[0] && !item.startsWith("--format="),
+        );
+        return git(localPath, [...mergesArgs, "--merges", "--max-count=20", "--format=%H%x1f%P%x1f%s%x1e"]).catch(() => "");
+      }),
+    ),
   ]);
+  const logOut = dedupeLogRecords(logs, true);
+  const mergeLog = dedupeLogRecords(mergeLogs);
   // Merge commits ("Merge pull request #N …") are excluded from the content
   // commits, but their subjects identify PRs. For each merge commit we also
   // derive the PR's own commits (second-parent range) so the change summary
   // can map PR rows to real commits even when the branch commits carry no #N.
-  const mergeLog = await git(localPath, [
-    "log",
-    ...rangeArgs,
-    "--merges",
-    "--max-count=20",
-    "--format=%H%x1f%P%x1f%s%x1e",
-  ]).catch(() => "");
   const mergePrShas = new Map<number, string[]>();
   for (const record of mergeLog.split("\x1e").filter(Boolean)) {
     const [sha, parents, subject] = record.split("\x1f");
@@ -324,7 +380,41 @@ export async function collectReleaseMaterial(
         date: date || "",
       };
     })
-    .filter((commit) => commit.sha && !isMergeCommit(commit.subject));
+    .filter((commit) => commit.sha && !isMergeCommit(commit.subject))
+    // 审计 H2：分叉的 frontier（废弃分支/改写历史）上「边界之前」的旧提交
+    // 无法用可达性排除（它们不是边界的祖先），按边界提交日期过滤——这些
+    // 提交在边界落tag之前就已存在，不属于「自上次发布以来的变更」。日期
+    // 解析失败（空）时保守保留，不丢真实提交。
+    .filter(
+      (commit) =>
+        !sinceDate ||
+        !commit.date ||
+        commit.date >= sinceDate,
+    );
+
+  // Derive the stat from the exact commits retained above. A single guessed
+  // frontier tip can omit another branch or describe a stale branch that was
+  // filtered out of commits. One git show handles all refs without that loss.
+  const numstat = commits.length > 0
+    ? await git(localPath, ["show", "--numstat", "--format=", "--no-renames", ...commits.map((commit) => commit.sha)], 20_000).catch(() => "")
+    : "";
+  const fileStats = new Map<string, { added: number; deleted: number; binary: boolean }>();
+  for (const line of numstat.split("\n")) {
+    const [added, deleted, ...nameParts] = line.split("\t");
+    const name = nameParts.join("\t");
+    if (!name || !added || !deleted) continue;
+    const previous = fileStats.get(name) || { added: 0, deleted: 0, binary: false };
+    if (added === "-" || deleted === "-") previous.binary = true;
+    else {
+      previous.added += Number(added) || 0;
+      previous.deleted += Number(deleted) || 0;
+    }
+    fileStats.set(name, previous);
+  }
+  const diffOut = [...fileStats.entries()]
+    .sort((a, b) => (b[1].added + b[1].deleted) - (a[1].added + a[1].deleted))
+    .map(([name, stats]) => `${name} | ${stats.binary ? "binary" : `+${stats.added} -${stats.deleted}`}`)
+    .join("\n");
 
   const shasByPr = new Map<number, string[]>();
   const addShas = (number: number, shas: string[]) => {
@@ -620,6 +710,7 @@ export async function checkForRelease(
   // so it is only a fallback for untagged/local workflows or when the
   // published tag cannot be resolved locally.
   let materialBoundary = lastSeenSha || null;
+  let materialEndRefs = frontierShas;
   if (sortedGithubItems?.[0]?.draft) {
     for (const item of sortedGithubItems) {
       if (item.draft || !item.tag) continue;
@@ -641,7 +732,21 @@ export async function checkForRelease(
     }
   }
 
-  let material = await collectReleaseMaterial(localPath, materialBoundary, frontierShas);
+  if (!materialBoundary && sortedGithubItems?.[0] && !sortedGithubItems[0].draft && sortedGithubItems[0].tag) {
+    const publishedTagSha = await git(
+      localPath,
+      ["rev-parse", "--verify", `${sortedGithubItems[0].tag}^{commit}`],
+    ).catch(() => "");
+    if (publishedTagSha) {
+      const publishedTip = await releaseTipAfter(localPath, publishedTagSha);
+      if (publishedTip) {
+        materialBoundary = publishedTagSha;
+        materialEndRefs = [publishedTip];
+      }
+    }
+  }
+
+  let material = await collectReleaseMaterial(localPath, materialBoundary, materialEndRefs);
 
   // The release identity is the newest main-line tag (or the head when there
   // are no tags). It stays stable across the generation boundary, so the
@@ -676,7 +781,9 @@ export async function checkForRelease(
   // 导致缓存永远匹配不上、每次视图加载都重新走 GitHub API。
   const frontierTag = sortedGithubItems?.[0]?.tag || releaseTag?.name || null;
   const cacheMatches =
-    Boolean(frontierTag) && options.githubCache?.tag === frontierTag;
+    Boolean(frontierTag) &&
+    options.githubCache?.tag === frontierTag &&
+    (options.githubCache?.lastSeenSha ?? null) === (lastSeenSha || null);
   // Only trust cached PR lists that actually carry data. An empty cached list
   // usually means the sync ran before PR enrichment existed (or the API was
   // down), so refetch instead of showing a blank summary.
@@ -694,7 +801,7 @@ export async function checkForRelease(
             githubToken,
             options.onApiStats,
           )
-        : options.githubCache?.pullRequests || [];
+        : cacheMatches ? options.githubCache?.pullRequests || [] : material.pullRequests;
 
   if (githubItems) {
     const coveredTags = new Set(

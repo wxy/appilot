@@ -1,0 +1,22 @@
+{
+  "available": false,
+  "socketPath": "/var/folders/1z/j4_f6yy56bs74cwpnfm_wnhc0000gn/T/appilot-pr312-e2e-7bon5K/scheduler.sock",
+  "logs": [
+    "spawning scheduler: /Users/xingyuwang/.nvm/versions/node/v26.7.0/bin/node /Users/xingyuwang/.codex/worktrees/audit-pr-312-review/appilot/packages/scheduler/dist/cli.js",
+    "scheduler exited 0（单例仲裁让位——调度主在跑：review-holder；启动竞态时壳会先抢主，属正常）",
+    "scheduler did not come up within timeout"
+  ]
+}
+{
+  "spawnFailure": false
+}
+{
+  "mode": "600",
+  "reachable": true,
+  "healthy": true
+}
+{
+  "chmodFailureExitCode": 1,
+  "faultSocketExists": false,
+  "stderr": "[appilot-scheduler] 启动失败: socket 启动失败: socket chmod 0600 失败: injected chmod failure"
+}

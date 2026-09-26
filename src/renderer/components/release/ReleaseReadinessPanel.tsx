@@ -6,15 +6,8 @@ import { btnSmSecondary } from "../ui/styles";
 export function ReleaseReadinessPanel({
   githubNode,
   githubPrimaryAction,
-  copyNode,
-  copyPrimaryAction,
-  copyActions,
-  storeNode,
-  storePrimaryAction,
+  platformFlows,
   alerts,
-  onAscRefresh,
-  ascRefreshing,
-  storeLastCheckedAt,
   onCheckGithub,
   checkingGithub,
   githubLastCheckedAt,
@@ -26,21 +19,20 @@ export function ReleaseReadinessPanel({
   githubNode?: ReactNode;
   /** GitHub 节点的主要打开动作。 */
   githubPrimaryAction?: ReactNode;
-  /** 商店文案节点内容。 */
-  copyNode?: ReactNode;
-  /** 商店文案节点的主要打开动作。 */
-  copyPrimaryAction?: ReactNode;
-  /** 商店文案节点中的查看、创建与维护动作。 */
-  copyActions?: ReactNode;
-  /** 商店版本节点内容。 */
-  storeNode?: ReactNode;
-  /** 商店节点的主要打开动作。 */
-  storePrimaryAction?: ReactNode;
+  /** GitHub 之后的各平台发布线。 */
+  platformFlows: Array<{
+    key: string;
+    label: string;
+    active?: boolean;
+    copyNode?: ReactNode;
+    copyPrimaryAction?: ReactNode;
+    copyActions?: ReactNode;
+    storeNode?: ReactNode;
+    storePrimaryAction?: ReactNode;
+    storeActions?: ReactNode;
+  }>;
   /** 动态提醒与警告（未创建版本、上架提醒等）。 */
   alerts?: ReactNode;
-  onAscRefresh?: () => Promise<void>;
-  ascRefreshing?: boolean;
-  storeLastCheckedAt?: string | null;
   onCheckGithub?: () => void;
   checkingGithub?: boolean;
   githubLastCheckedAt?: string | null;
@@ -103,74 +95,71 @@ export function ReleaseReadinessPanel({
             </button>
           )}
         </div>
-        <div className="flex flex-col items-stretch gap-2 lg:flex-row">
-          <FlowNode
-            title="GitHub 发布"
-            icon={<GithubIcon className="w-3 h-3" />}
-            primaryAction={githubPrimaryAction}
-            actions={
-              <>
-                {onCheckGithub && (
-                  <button
-                    type="button"
-                    onClick={onCheckGithub}
-                    disabled={checkingGithub}
-                    className={actionButtonClass}
-                    title="从 GitHub 检测新的发布草案、已发布或提交变化"
-                  >
-                    <GithubIcon className="w-3 h-3" />
-                    {checkingGithub
-                      ? "检查中…"
-                      : `检查 GitHub 发布（${githubLastCheckedAt ? `上次：${formatHumanTime(githubLastCheckedAt)}` : "尚未检查"}）`}
-                  </button>
-                )}
-              </>
-            }
-          >
-            {githubNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
-            {githubWarning && (
-              <span className="w-full text-[10px] text-amber-600 dark:text-amber-400">
-                {githubWarning}
-              </span>
-            )}
-          </FlowNode>
+        <div className="grid items-stretch gap-2 lg:grid-cols-[minmax(0,0.9fr)_auto_minmax(0,2fr)]">
+          <div className="min-w-0 self-center">
+            <FlowNode
+              title="GitHub 发布"
+              icon={<GithubIcon className="w-3 h-3" />}
+              primaryAction={githubPrimaryAction}
+              actions={
+                <>
+                  {onCheckGithub && (
+                    <button
+                      type="button"
+                      onClick={onCheckGithub}
+                      disabled={checkingGithub}
+                      className={actionButtonClass}
+                      title="从 GitHub 检测新的发布草案、已发布或提交变化"
+                    >
+                      <GithubIcon className="w-3 h-3" />
+                      {checkingGithub
+                        ? "检查中…"
+                        : `检查 GitHub 发布（${githubLastCheckedAt ? `上次：${formatHumanTime(githubLastCheckedAt)}` : "尚未检查"}）`}
+                    </button>
+                  )}
+                </>
+              }
+            >
+              {githubNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+              {githubWarning && (
+                <span className="w-full text-[10px] text-amber-600 dark:text-amber-400">
+                  {githubWarning}
+                </span>
+              )}
+            </FlowNode>
+          </div>
           <div className="flex rotate-90 items-center justify-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0 lg:rotate-0" aria-hidden="true">
             →
           </div>
-          <FlowNode
-            title="商店文案"
-            primaryAction={copyPrimaryAction}
-            actions={copyActions}
-          >
-            {copyNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
-          </FlowNode>
-          <div className="flex rotate-90 items-center justify-center text-zinc-300 dark:text-zinc-600 text-sm shrink-0 lg:rotate-0" aria-hidden="true">
-            →
+          <div className="space-y-2">
+            {platformFlows.map((flow) => (
+              <div
+                key={flow.key}
+                className="rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-2 dark:border-zinc-800 dark:bg-zinc-800/15"
+              >
+                <div className="mb-2 flex items-center gap-2 px-1">
+                  <AppleIcon className="h-3 w-3 text-zinc-400" />
+                  <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">{flow.label}</span>
+                  {flow.active && (
+                    <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                      当前编辑
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-col items-stretch gap-2 xl:flex-row">
+                  <FlowNode title="商店文案" primaryAction={flow.copyPrimaryAction} actions={flow.copyActions}>
+                    {flow.copyNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+                  </FlowNode>
+                  <div className="flex rotate-90 items-center justify-center text-sm text-zinc-300 dark:text-zinc-600 xl:rotate-0" aria-hidden="true">
+                    →
+                  </div>
+                  <FlowNode title="商店版本" icon={<AppleIcon className="h-3 w-3" />} primaryAction={flow.storePrimaryAction} actions={flow.storeActions}>
+                    {flow.storeNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
+                  </FlowNode>
+                </div>
+              </div>
+            ))}
           </div>
-          <FlowNode
-            title="商店版本"
-            icon={<AppleIcon className="w-3 h-3" />}
-            primaryAction={storePrimaryAction}
-            actions={
-              <>
-                {onAscRefresh && (
-                  <button
-                    type="button"
-                    onClick={() => void onAscRefresh()}
-                    disabled={ascRefreshing}
-                    className={actionButtonClass}
-                  >
-                    <AppleIcon className="w-3 h-3" />
-                    {ascRefreshing
-                      ? "检查中…"
-                      : `检查商店状态（${storeLastCheckedAt ? `上次：${formatHumanTime(storeLastCheckedAt)}` : "尚未检查"}）`}
-                  </button>
-                )}
-              </>
-            }
-          >
-            {storeNode || <span className="text-[11px] text-zinc-400 dark:text-zinc-500">—</span>}
-          </FlowNode>
         </div>
         {/* 固定站位：切换视图/发布时提醒内容变化，但占位高度不变，
             避免流程图下方布局抖动。 */}

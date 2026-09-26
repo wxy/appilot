@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { storefrontDisplayName, storefrontsForLanguage } from "@appilot-labs/appilot-core/storefronts";
-import { rankBudgetAdmissible, rankBudgetStatus } from "@appilot-labs/appilot-core/rank-budget";
+import { rankBudgetSelection, rankBudgetStatus } from "@appilot-labs/appilot-core/rank-budget";
 import { languageLabel, platformLabel, UI_SOURCE_LANGUAGE } from "../../lib/format";
 import {
   buildCellIndex,
@@ -293,47 +293,40 @@ export function KeywordsPage() {
     }
   }, [product?.id, urlKeyword, urlLang, urlScope, urlTab]);
 
-  if (!project || !product) {
-    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
-  }
-
+  // 审计 H6：所有 hooks（含派生 useMemo 链）必须在任何条件 return 之前调用。
+  // 空项目/产品时的早退守卫统一放在本函数全部 hooks 之后（见下方 guard），
+  // 派生 memo 对 project/product 做空安全兜底。
   const currentLang = isGlobalView ? "en" : rawViewLang;
   // 每张卡只查自己的语言：全局卡 = en（× 全部商店）；语言卡 = 该语言（× 该语言商店）。
   // en 全局词不再跟随语言卡查询——它们只在全局卡出现。
   const queryLanguages = [currentLang];
   // —— 派生链全部 memo 化：勾选/切标签只改轻量状态，不应重扫全量排名快照 ——
   const tracked = useMemo(
-    () => (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language)),
-    [project.trackedKeywords, currentLang],
+    () => ((project?.trackedKeywords) || []).filter((k) => queryLanguages.includes(k.language)),
+    [project?.trackedKeywords, currentLang],
   );
   const trackedActive = useMemo(() => tracked.filter((k) => k.status !== "paused"), [tracked]);
   const pausedForCurrent = useMemo(
     () =>
       tracked.filter(
-        (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
+        // product 为空时 tracked 已为空，?? "" 仅满足 includes 的类型签名
+        (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product?.platform ?? ""),
       ),
-    [tracked, product.platform],
+    [tracked, product?.platform],
   );
   const pendingForCurrent = useMemo(
-    () => tracked.filter((k) => (k.pendingPausePlatforms || []).includes(product.platform)),
-    [tracked, product.platform],
+    () => tracked.filter((k) => (k.pendingPausePlatforms || []).includes(product?.platform ?? "")),
+    [tracked, product?.platform],
   );
-  const missingTranslationCount = (project.trackedKeywords || []).filter(
+  const missingTranslationCount = (project?.trackedKeywords || []).filter(
     (k) =>
       k.language !== "zh-Hans" &&
       k.language !== "zh-Hant" &&
       !(k.translation && String(k.translation).trim()),
   ).length;
   const removedForCurrent = useMemo(
-    () => (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language)),
-    [project.removedKeywords, currentLang],
-  );
-  // 采集预算：任务量 = 活跃关键词 × 语言覆盖的商店数（en 全局词按全部本地化计）。
-  // 建议采纳 / 候选加入 / 恢复暂停词都会受硬上限约束，软上限起提示作用。
-  const rankBudget = rankBudgetStatus(
-    product.supportedLanguages || [],
-    product.platform,
-    project.trackedKeywords || [],
+    () => (project?.removedKeywords || []).filter((item) => queryLanguages.includes(item.language)),
+    [project?.removedKeywords, currentLang],
   );
   // 产品全部本地化覆盖的商店（去重）：全局卡列序与分布页签共用。
   const productStorefronts = useMemo(
@@ -372,7 +365,7 @@ export function KeywordsPage() {
   }, [isGlobalView, storefronts, enStorefronts]);
   // 快照索引：一次 O(快照数) 预计算每格 cell，渲染期 O(1) 查询（matrixCellState
   // 每次全量过滤快照，行×列 次调用在快照上万后是纯卡顿来源）。
-  const rankSnapshots = useMemo(() => product.rankSnapshots || [], [product]);
+  const rankSnapshots = useMemo(() => product?.rankSnapshots || [], [product]);
   const cellIndex = useMemo(() => buildCellIndex(rankSnapshots), [rankSnapshots]);
   const matrixRows = useMemo(
     () => matrixFilterKeywords(trackedActive, currentLang),
@@ -419,12 +412,12 @@ export function KeywordsPage() {
   // 把“未采集”虚构成“未进榜”。仅在该页签激活时计算（逐格查快照较重）。
   const distributionKeywords = useMemo(
     () =>
-      (project.trackedKeywords || []).filter(
+      (project?.trackedKeywords || []).filter(
         (k: any) =>
           k.status !== "paused" &&
-          !(k.pausedPlatforms || []).includes(product.platform),
+          !(k.pausedPlatforms || []).includes(product?.platform),
       ),
-    [project.trackedKeywords, product.platform],
+    [project?.trackedKeywords, product?.platform],
   );
   const distributionData: {
     storefront: string;
@@ -788,7 +781,7 @@ export function KeywordsPage() {
     ? `${STAGE_LABELS[batch.stage]} ${languageLabel(batch.lang)} · ${batch.index + 1}/${batch.total}`
     : undefined;
   const trackedCandidateKeywords = new Set(
-    (project.trackedKeywords || [])
+    (project?.trackedKeywords || [])
       .filter((k) => k.language === currentLang)
       .map((k) => k.keyword),
   );
@@ -800,6 +793,24 @@ export function KeywordsPage() {
       })
       .map((candidate) => candidate.keyword),
   ).size;
+  // ── 审计 H6：空项目/产品的早退守卫 ──
+  // 必须位于本组件全部 hooks（useMemo 派生链，compareChart 为最后一个）之后、
+  // 所有引用 product/project 的 handler 与 JSX 之前：旧实现把守卫放在派生链
+  // 之前，早退分支与就绪分支的 hook 数量不一致，「停在 /keywords 时添加/
+  // 删除项目」会触发 React hooks 数量不一致崩溃。守卫后 project/product 类型
+  // 收窄为非空，后续 handler 与 JSX 无需再判空。
+  if (!project || !product) {
+    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
+  }
+
+  // 采集预算：任务量 = 活跃关键词 × 语言覆盖的商店数（en 全局词按全部本地化计）。
+  // 高负载参考线仅提示采集压力，不裁剪用户选择。普通派生值在空态守卫后计算。
+  const rankBudget = rankBudgetStatus(
+    product.supportedLanguages || [],
+    product.platform,
+    project.trackedKeywords || [],
+  );
+
   const cellTitle = (cell: MatrixCell) =>
     cell.checkedAt
       ? `最近查询 ${new Date(cell.checkedAt).toLocaleString()} · 结果量 ${cell.totalResults ?? "—"}`
@@ -1143,31 +1154,28 @@ export function KeywordsPage() {
       ),
     );
     let changed = false;
-    // 采集预算：先按语言顺序收集待采纳新增，整体过一遍硬上限（超出的自动
-    // 不采纳并提示）——AI 建议一次可能给 11 种语言各 10-20 条，不做预算
-    // 约束会把任务量瞬间翻倍。
+    // 对本批选中的新增词去重；采集量参考线不应丢弃用户明确采纳的词。
     const pendingAdds: { lang: string; item: (typeof resolved)[string]["adds"][number] }[] = [];
     for (const [lang, data] of Object.entries(resolved)) {
       for (const item of data.adds) {
         if (item.choice === "accept") pendingAdds.push({ lang, item });
       }
     }
-    const budget = rankBudgetAdmissible(
+    const selection = rankBudgetSelection(
       product.supportedLanguages || [],
       product.platform,
       currentKeywords,
       pendingAdds.map(({ lang, item }) => ({ language: lang, keyword: item.keyword })),
     );
-    const admissibleKeys = new Set(
-      budget.accepted.map((item) => `${item.language}\u0000${item.keyword}`),
+    const selectedKeys = new Set(
+      selection.selected.map((item) => `${item.language}\u0000${item.keyword}`),
     );
-    const rejectedByBudget = budget.rejected.length;
     for (const [lang, data] of Object.entries(resolved)) {
       for (const item of data.adds) {
         if (item.choice !== "accept") continue;
         const key = `${lang}\u0000${item.keyword}`;
         if (keys.has(key) || removedKeys.has(key)) continue;
-        if (!admissibleKeys.has(key)) continue; // 预算外：不采纳
+        if (!selectedKeys.has(key)) continue;
         currentKeywords.push({
           language: lang,
           keyword: item.keyword,
@@ -1203,12 +1211,6 @@ export function KeywordsPage() {
     updateTrackedKeywords(product.id, currentKeywords);
     setCuration({});
     setCurationOpen(false);
-    if (rejectedByBudget > 0) {
-      setError(
-        `已采纳 ${admissibleKeys.size} 条；${rejectedByBudget} 条超出采集预算（每日 ${rankBudget.hardLimit} 实例）未采纳——` +
-          "建议先清理低价值关键词（连续未在榜会进入待复核），再重新生成建议。",
-      );
-    }
   };
 
   const discardCuration = () => {
@@ -1295,24 +1297,16 @@ export function KeywordsPage() {
         return !existingKeys.has(`${currentLang}\u0000${candidate.keyword}`);
       });
     if (toAdd.length === 0) return;
-    // 采集预算硬上限：核心词（商店关键词/名称/副标题）已按来源优先排序放行，
-    // 超出部分拒收并提示——任务堆积不如预算治理。
-    const admissible = rankBudgetAdmissible(
+    // 与 AI 采纳一致：只去重，不以采集参考线裁剪用户要加入的候选词。
+    const selection = rankBudgetSelection(
       product.supportedLanguages || [],
       product.platform,
       current.trackedKeywords || [],
       toAdd.map((candidate) => ({ language: currentLang, keyword: candidate.keyword })),
     );
-    const rejectedCount = admissible.rejected.length;
-    const acceptedKeys = new Set(admissible.accepted.map((item) => item.keyword));
+    const acceptedKeys = new Set(selection.selected.map((item) => item.keyword));
     const acceptedToAdd = toAdd.filter((candidate) => acceptedKeys.has(candidate.keyword));
-    if (acceptedToAdd.length === 0) {
-      setError(
-        `已达采集预算上限（每日 ${rankBudget.hardLimit} 实例，当前 ${rankBudget.dailyInstances}）——` +
-          "请先清理低价值关键词（连续未在榜的词会进入待复核）再添加。",
-      );
-      return;
-    }
+    if (acceptedToAdd.length === 0) return;
     setCandidatesAdding(true);
     try {
       const next = [
@@ -1331,11 +1325,6 @@ export function KeywordsPage() {
       const addedKeywords = new Set(acceptedToAdd.map((candidate) => candidate.keyword));
       setCandidates((prev) => prev.filter((candidate) => !addedKeywords.has(candidate.keyword)));
       setRemovedCandidateKeys(new Set());
-      if (rejectedCount > 0) {
-        setError(
-          `已加入 ${acceptedToAdd.length} 个，${rejectedCount} 个超出采集预算（每日 ${rankBudget.hardLimit} 实例）未加入——请先清理低价值关键词。`,
-        );
-      }
     } catch (e: any) {
       setError(e.message || "一键加入失败。");
     } finally {
@@ -1448,24 +1437,7 @@ export function KeywordsPage() {
 
 
   const restoreTracked = async (language: string, kw: string) => {
-    // 恢复 = 重新参与采集：受采集预算硬上限约束。
-    if (!canReactivateKeyword(language)) return;
     await restoreTrackedKeyword(product.id, language, kw);
-  };
-
-  /** 恢复/重启采集前检查：该语言的商店成本是否还在硬预算内。 */
-  const canReactivateKeyword = (language: string): boolean => {
-    const { accepted } = rankBudgetAdmissible(
-      product.supportedLanguages || [],
-      product.platform,
-      project.trackedKeywords || [],
-      [{ language, keyword: "__budget_probe__" }],
-    );
-    if (accepted.length > 0) return true;
-    setError(
-      `已达采集预算上限（每日 ${rankBudget.hardLimit} 实例）——请先清理或忽略低价值关键词，再恢复采集。`,
-    );
-    return false;
   };
 
   const clearRemoved = async () => {
@@ -1787,13 +1759,13 @@ export function KeywordsPage() {
                   )}
                   title={
                     rankBudget.state === "hard"
-                      ? "已达采集预算硬上限：新增/恢复采集任务将被拒绝，请清理低价值关键词"
+                      ? "采集量已超过高负载参考线；仍可加入或恢复关键词，任务可能排队"
                       : rankBudget.state === "soft"
-                        ? "接近采集预算：建议先清理低价值关键词（连续未在榜会进入待复核）再加新的"
-                        : "采集预算（每日排名任务数 = 活跃关键词 × 语言覆盖的商店数）"
+                        ? "采集量接近参考线；可视需要清理低价值关键词"
+                        : "预计每日排名任务数 = 活跃关键词 × 语言覆盖的商店数"
                   }
                 >
-                  每日采集 {rankBudget.dailyInstances}/{rankBudget.hardLimit} · 关键词 {rankBudget.activeKeywords}
+                  每日采集估算 {rankBudget.dailyInstances} · 参考线 {rankBudget.hardLimit} · 关键词 {rankBudget.activeKeywords}
                 </span>
               </p>
               <div className="mt-1.5 flex flex-wrap gap-2">
@@ -1959,9 +1931,7 @@ export function KeywordsPage() {
                                 {item.keyword}
                                 <button
                                   onClick={() => {
-                                    if (canReactivateKeyword(item.language)) {
-                                      void resumePausedKeyword(product.id, item.language, item.keyword);
-                                    }
+                                    void resumePausedKeyword(product.id, item.language, item.keyword);
                                   }}
                                   className="text-amber-600 dark:text-amber-400 hover:underline"
                                   title="恢复采集"
@@ -2440,7 +2410,7 @@ export function KeywordsPage() {
                       <button
                         onClick={() => restoreTracked(item.language, item.keyword)}
                         className="text-amber-600 dark:text-amber-400 hover:underline"
-                        title="恢复到关键词列表并重新参与采集（受采集预算硬上限检查）"
+                        title="恢复到关键词列表并重新参与采集"
                       >
                         恢复
                       </button>
@@ -2449,7 +2419,7 @@ export function KeywordsPage() {
                 </div>
               )}
               <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">
-                已删除的词不再参与采集与排名统计；「恢复」会重新过一遍采集预算硬上限。
+                已删除的词不再参与采集与排名统计；「恢复」后会重新参与采集。
               </p>
             </div>
           </div>
@@ -2634,7 +2604,7 @@ export function KeywordsPage() {
         curation={curation}
         curationOpen={curationOpen}
         curationConfirm={curationConfirm}
-        budgetHint={`采集预算：每日 ${rankBudget.dailyInstances}/${rankBudget.hardLimit} 实例 · 剩余可采纳 ${rankBudget.remaining}（超限建议确认时会被自动裁剪）`}
+        budgetHint={`预计每日采集 ${rankBudget.dailyInstances} 实例 · 高负载参考线 ${rankBudget.hardLimit}；超出仍可采纳，采集可能排队`}
         onApply={(resolved) => void applyCuration(resolved)}
         onDiscard={() => discardCuration()}
         onSetConfirm={setCurationConfirm}

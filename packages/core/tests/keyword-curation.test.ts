@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { parseKeywordCuration } from "../src/ai/keyword-suggester";
+import { buildKeywordCurationEvidence, curateKeywords, parseKeywordCuration } from "../src/ai/keyword-suggester";
+import type { AIProvider, ChatMessage } from "../src/ai/ai-provider";
 
 console.log("✅ PASS: parseKeywordCuration reads removals and adds");
 const c1 = parseKeywordCuration(
@@ -25,4 +26,51 @@ assert.equal(c3.adds.length, 30);
 console.log("✅ PASS: parseKeywordCuration tolerates missing fields");
 assert.deepEqual(parseKeywordCuration("{}"), { removals: [], adds: [] });
 
-console.log("🎉 All keyword-curation tests passed!");
+const tracked = [
+  { language: "en", keyword: "weak term", source: "ai", pendingPausePlatforms: ["ios"] },
+  { language: "en", keyword: "unknown term", source: "submission" },
+  { language: "de", keyword: "anderes wort", source: "ai" },
+];
+const iosEvidence = buildKeywordCurationEvidence(tracked, [
+  { keyword: "weak term", language: "en", storefront: "us", rank: null, totalResults: 0, checkedAt: "2026-09-21T00:00:00Z" },
+  { keyword: "weak term", language: "en", storefront: "us", rank: null, totalResults: 0, checkedAt: "2026-09-22T00:00:00Z" },
+  { keyword: "anderes wort", language: "de", storefront: "de", rank: 12, totalResults: 100, checkedAt: "2026-09-22T00:00:00Z" },
+], "en", "ios");
+assert.equal(iosEvidence.length, 2);
+assert.deepEqual(iosEvidence.map(({ keyword, checkCount, rankedCheckCount, pendingReview }) => ({ keyword, checkCount, rankedCheckCount, pendingReview })), [
+  { keyword: "weak term", checkCount: 2, rankedCheckCount: 0, pendingReview: true },
+  { keyword: "unknown term", checkCount: 0, rankedCheckCount: 0, pendingReview: false },
+]);
+const macEvidence = buildKeywordCurationEvidence(tracked, [
+  { keyword: "weak term", language: "en", storefront: "us", rank: 7, totalResults: 100, checkedAt: "2026-09-22T00:00:00Z" },
+], "en", "macos");
+assert.equal(macEvidence[0].bestRank, 7);
+assert.equal(macEvidence[0].pendingReview, false);
+console.log("✅ PASS: curation evidence is scoped to product snapshots and platform review state");
+
+let prompt = "";
+void curateKeywords({
+  chat: async (messages: ChatMessage[]) => {
+    prompt = messages.map((message) => message.content).join("\n");
+    return '{"removals":[],"adds":[]}';
+  },
+} as AIProvider, {
+  name: "Test App",
+  description: "A test product",
+  language: "en",
+  uiLanguage: "zh-Hans",
+  existingKeywords: iosEvidence,
+  collectionLoad: { dailyInstances: 376, referenceLine: 360, costPerKeyword: 12 },
+  submissionKeywords: [],
+  removedKeywords: [],
+}).then(() => {
+  assert.match(prompt, /376\/360; \+12 per keyword/);
+  assert.match(prompt, /weak term\|unknown\|0\/2/);
+  assert.match(prompt, /no\/few checks has unknown effectiveness/i);
+  assert.match(prompt, /reference line is advisory/i);
+  console.log("✅ PASS: high-load curation prompt requests evidence-based cleanup without blocking adds");
+  console.log("🎉 All keyword-curation tests passed!");
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
