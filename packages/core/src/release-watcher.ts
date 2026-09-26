@@ -136,6 +136,42 @@ async function isAncestor(localPath: string, ancestor: string, descendant: strin
 }
 
 /**
+ * frontier refs 的并集 tip（启发式）：从首个 ref 出发，凡「不是当前 tip 的
+ * 祖先」的候选即成为新 tip。用于把多 ref 的 diff 收敛成单一合法区间。
+ */
+async function unionTipOf(localPath: string, refs: string[]): Promise<string | null> {
+  let tip: string | null = refs[0] ?? null;
+  for (const candidate of refs.slice(1)) {
+    if (!candidate || candidate === tip) continue;
+    if (!tip || !(await isAncestor(localPath, candidate, tip))) tip = candidate;
+  }
+  return tip;
+}
+
+/**
+ * 按 sha 并集合并多段 `git log --format` 输出（\x1e 分隔记录）。
+ * sortByDateDesc 时按 %cI（第 5 个字段）倒序，近似单区间 git log 的时序。
+ */
+function dedupeLogRecords(logs: string[], sortByDateDesc = false): string {
+  const seen = new Set<string>();
+  const records: string[] = [];
+  for (const log of logs) {
+    for (const record of log.split("\x1e").filter(Boolean)) {
+      const sha = record.split("\x1f")[0];
+      if (!sha || seen.has(sha)) continue;
+      seen.add(sha);
+      records.push(record);
+    }
+  }
+  if (sortByDateDesc) {
+    records.sort((a, b) =>
+      String(b.split("\x1f")[4] || "").localeCompare(String(a.split("\x1f")[4] || "")),
+    );
+  }
+  return records.join("\x1e");
+}
+
+/**
  * Sync remote tags into the local repo. Read-only: only adds/updates refs,
  * never touches the user's branches or working tree. Silent no-op when the
  * repo has no remote or the network is unavailable.
@@ -267,28 +303,54 @@ export async function collectReleaseMaterial(
   end: string | string[] = "HEAD",
 ): Promise<ReleaseMaterial> {
   const endRefs = Array.isArray(end) ? end : [end];
-  const rangeArgs = since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs;
-  const [logOut, diffOut] = await Promise.all([
-    git(localPath, [
-      "log",
-      ...rangeArgs,
-      `--max-count=${MAX_MATERIAL_COMMITS}`,
-      // \x1e record separator keeps multi-line bodies from corrupting records.
-      "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
-    ]).catch(() => ""),
-    git(localPath, ["diff", "--stat", ...rangeArgs]).catch(() => ""),
+  const formatArgs = [
+    `--max-count=${MAX_MATERIAL_COMMITS}`,
+    // \x1e record separator keeps multi-line bodies from corrupting records.
+    "--format=%h%x1f%s%x1f%b%x1f%an%x1f%cI%x1e",
+  ];
+  // 审计 H2：带边界（since）且有多个 frontier ref 时，`git log since..ref0
+  // ref1 …` 的排除集只作用于 ref0——ref1/refN 上「边界之前」的分叉旧提交会
+  // 被泄漏进发布素材。改为对每个 ref 单独取 `since..ref`，再按 sha 并集去重；
+  // 无边界时 `git log ref0 ref1 …` 本就是可达并集，保持原语义。
+  const multiRefWithBoundary = Boolean(since) && endRefs.length > 1;
+  const logArgSets: string[][] = multiRefWithBoundary
+    ? endRefs.map((ref) => ["log", `${since}..${ref}`, ...formatArgs])
+    : [
+        [
+          "log",
+          ...(since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs),
+          ...formatArgs,
+        ],
+      ];
+  const [logs, mergeLogs, diffOut] = await Promise.all([
+    Promise.all(logArgSets.map((args) => git(localPath, args).catch(() => ""))),
+    Promise.all(
+      logArgSets.map((args) => {
+        const mergesArgs = args.filter(
+          (item) => item !== formatArgs[0] && !item.startsWith("--format="),
+        );
+        return git(localPath, [...mergesArgs, "--merges", "--max-count=20", "--format=%H%x1f%P%x1f%s%x1e"]).catch(() => "");
+      }),
+    ),
+    (async () => {
+      // diff 需要单一合法区间：多 ref 时用并集 tip（旧实现 `diff --stat
+      // since..ref0 ref1 ref2` 对 3 个 ref 直接失败并被 catch 静默清空）。
+      let range: string[];
+      if (multiRefWithBoundary) {
+        const tip = await unionTipOf(localPath, endRefs);
+        range = [`${since}..${tip || endRefs[0]}`];
+      } else {
+        range = since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs;
+      }
+      return git(localPath, ["diff", "--stat", ...range]).catch(() => "");
+    })(),
   ]);
+  const logOut = dedupeLogRecords(logs, true);
+  const mergeLog = dedupeLogRecords(mergeLogs);
   // Merge commits ("Merge pull request #N …") are excluded from the content
   // commits, but their subjects identify PRs. For each merge commit we also
   // derive the PR's own commits (second-parent range) so the change summary
   // can map PR rows to real commits even when the branch commits carry no #N.
-  const mergeLog = await git(localPath, [
-    "log",
-    ...rangeArgs,
-    "--merges",
-    "--max-count=20",
-    "--format=%H%x1f%P%x1f%s%x1e",
-  ]).catch(() => "");
   const mergePrShas = new Map<number, string[]>();
   for (const record of mergeLog.split("\x1e").filter(Boolean)) {
     const [sha, parents, subject] = record.split("\x1f");
@@ -324,7 +386,17 @@ export async function collectReleaseMaterial(
         date: date || "",
       };
     })
-    .filter((commit) => commit.sha && !isMergeCommit(commit.subject));
+    .filter((commit) => commit.sha && !isMergeCommit(commit.subject))
+    // 审计 H2：分叉的 frontier（废弃分支/改写历史）上「边界之前」的旧提交
+    // 无法用可达性排除（它们不是边界的祖先），按边界提交日期过滤——这些
+    // 提交在边界落tag之前就已存在，不属于「自上次发布以来的变更」。日期
+    // 解析失败（空）时保守保留，不丢真实提交。
+    .filter(
+      (commit) =>
+        !sinceDate ||
+        !commit.date ||
+        commit.date >= sinceDate,
+    );
 
   const shasByPr = new Map<number, string[]>();
   const addShas = (number: number, shas: string[]) => {
