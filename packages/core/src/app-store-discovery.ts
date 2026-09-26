@@ -14,12 +14,14 @@ import { log } from "./logger";
 /** iTunes Lookup 请求超时（审计 M-C4：与其他客户端对齐，防止主进程被挂起）。 */
 const LOOKUP_TIMEOUT_MS = 15_000;
 
-/** lookup 系列统一带超时的 fetch（全库其余 fetch 均有 AbortController，唯此处曾缺失）。 */
-async function fetchWithTimeout(url: string, timeoutMs = LOOKUP_TIMEOUT_MS): Promise<Response> {
+/** Keep the timeout active through JSON decoding; headers alone are not a completed lookup. */
+export async function fetchJsonWithTimeout(url: string, timeoutMs = LOOKUP_TIMEOUT_MS): Promise<{ ok: boolean; data: any }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return { ok: false, data: null };
+    return { ok: true, data: await response.json() };
   } finally {
     clearTimeout(timer);
   }
@@ -404,11 +406,11 @@ export function discoverAppStoreTrackId(
 export async function lookupApp(trackId: string): Promise<AppMetadata | null> {
   try {
     // trackId 一并编码（审计 M-C4）：公共导出，调用方传非数字串时不得篡改查询。
-    const res = await fetchWithTimeout(
+    const result = await fetchJsonWithTimeout(
       `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}`,
     );
-    if (!res.ok) return null;
-    const data: any = await res.json();
+    if (!result.ok) return null;
+    const data: any = result.data;
     const r = data?.results?.[0];
     if (!r) return null;
     return {
@@ -441,11 +443,11 @@ export async function fetchStoreCurrentVersion(
   country = "us",
 ): Promise<{ version: string; currentVersionReleaseDate: string | null } | null> {
   try {
-    const res = await fetchWithTimeout(
+    const result = await fetchJsonWithTimeout(
       `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
     );
-    if (!res.ok) return null;
-    const data: any = await res.json();
+    if (!result.ok) return null;
+    const data: any = result.data;
     const r = Array.isArray(data?.results) ? data.results[0] : null;
     if (!r) return null;
     return {
@@ -471,11 +473,11 @@ export async function fetchStoreLocalizedCopy(
   country = "us",
 ): Promise<{ version: string; trackName: string; description: string; releaseNotes: string } | null> {
   try {
-    const res = await fetchWithTimeout(
+    const result = await fetchJsonWithTimeout(
       `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}&country=${encodeURIComponent(country)}`,
     );
-    if (!res.ok) return null;
-    const data: any = await res.json();
+    if (!result.ok) return null;
+    const data: any = result.data;
     const r = Array.isArray(data?.results) ? data.results[0] : null;
     if (!r) return null;
     return {

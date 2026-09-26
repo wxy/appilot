@@ -136,19 +136,6 @@ async function isAncestor(localPath: string, ancestor: string, descendant: strin
 }
 
 /**
- * frontier refs 的并集 tip（启发式）：从首个 ref 出发，凡「不是当前 tip 的
- * 祖先」的候选即成为新 tip。用于把多 ref 的 diff 收敛成单一合法区间。
- */
-async function unionTipOf(localPath: string, refs: string[]): Promise<string | null> {
-  let tip: string | null = refs[0] ?? null;
-  for (const candidate of refs.slice(1)) {
-    if (!candidate || candidate === tip) continue;
-    if (!tip || !(await isAncestor(localPath, candidate, tip))) tip = candidate;
-  }
-  return tip;
-}
-
-/**
  * 按 sha 并集合并多段 `git log --format` 输出（\x1e 分隔记录）。
  * sortByDateDesc 时按 %cI（第 5 个字段）倒序，近似单区间 git log 的时序。
  */
@@ -322,7 +309,7 @@ export async function collectReleaseMaterial(
           ...formatArgs,
         ],
       ];
-  const [logs, mergeLogs, diffOut] = await Promise.all([
+  const [logs, mergeLogs] = await Promise.all([
     Promise.all(logArgSets.map((args) => git(localPath, args).catch(() => ""))),
     Promise.all(
       logArgSets.map((args) => {
@@ -332,18 +319,6 @@ export async function collectReleaseMaterial(
         return git(localPath, [...mergesArgs, "--merges", "--max-count=20", "--format=%H%x1f%P%x1f%s%x1e"]).catch(() => "");
       }),
     ),
-    (async () => {
-      // diff 需要单一合法区间：多 ref 时用并集 tip（旧实现 `diff --stat
-      // since..ref0 ref1 ref2` 对 3 个 ref 直接失败并被 catch 静默清空）。
-      let range: string[];
-      if (multiRefWithBoundary) {
-        const tip = await unionTipOf(localPath, endRefs);
-        range = [`${since}..${tip || endRefs[0]}`];
-      } else {
-        range = since ? [`${since}..${endRefs[0]}`, ...endRefs.slice(1)] : endRefs;
-      }
-      return git(localPath, ["diff", "--stat", ...range]).catch(() => "");
-    })(),
   ]);
   const logOut = dedupeLogRecords(logs, true);
   const mergeLog = dedupeLogRecords(mergeLogs);
@@ -397,6 +372,30 @@ export async function collectReleaseMaterial(
         !commit.date ||
         commit.date >= sinceDate,
     );
+
+  // Derive the stat from the exact commits retained above. A single guessed
+  // frontier tip can omit another branch or describe a stale branch that was
+  // filtered out of commits. One git show handles all refs without that loss.
+  const numstat = commits.length > 0
+    ? await git(localPath, ["show", "--numstat", "--format=", "--no-renames", ...commits.map((commit) => commit.sha)], 20_000).catch(() => "")
+    : "";
+  const fileStats = new Map<string, { added: number; deleted: number; binary: boolean }>();
+  for (const line of numstat.split("\n")) {
+    const [added, deleted, ...nameParts] = line.split("\t");
+    const name = nameParts.join("\t");
+    if (!name || !added || !deleted) continue;
+    const previous = fileStats.get(name) || { added: 0, deleted: 0, binary: false };
+    if (added === "-" || deleted === "-") previous.binary = true;
+    else {
+      previous.added += Number(added) || 0;
+      previous.deleted += Number(deleted) || 0;
+    }
+    fileStats.set(name, previous);
+  }
+  const diffOut = [...fileStats.entries()]
+    .sort((a, b) => (b[1].added + b[1].deleted) - (a[1].added + a[1].deleted))
+    .map(([name, stats]) => `${name} | ${stats.binary ? "binary" : `+${stats.added} -${stats.deleted}`}`)
+    .join("\n");
 
   const shasByPr = new Map<number, string[]>();
   const addShas = (number: number, shas: string[]) => {
