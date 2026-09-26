@@ -293,47 +293,40 @@ export function KeywordsPage() {
     }
   }, [product?.id, urlKeyword, urlLang, urlScope, urlTab]);
 
-  if (!project || !product) {
-    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
-  }
-
+  // 审计 H6：所有 hooks（含派生 useMemo 链）必须在任何条件 return 之前调用。
+  // 空项目/产品时的早退守卫统一放在本函数全部 hooks 之后（见下方 guard），
+  // 派生 memo 对 project/product 做空安全兜底。
   const currentLang = isGlobalView ? "en" : rawViewLang;
   // 每张卡只查自己的语言：全局卡 = en（× 全部商店）；语言卡 = 该语言（× 该语言商店）。
   // en 全局词不再跟随语言卡查询——它们只在全局卡出现。
   const queryLanguages = [currentLang];
   // —— 派生链全部 memo 化：勾选/切标签只改轻量状态，不应重扫全量排名快照 ——
   const tracked = useMemo(
-    () => (project.trackedKeywords || []).filter((k) => queryLanguages.includes(k.language)),
-    [project.trackedKeywords, currentLang],
+    () => ((project?.trackedKeywords) || []).filter((k) => queryLanguages.includes(k.language)),
+    [project?.trackedKeywords, currentLang],
   );
   const trackedActive = useMemo(() => tracked.filter((k) => k.status !== "paused"), [tracked]);
   const pausedForCurrent = useMemo(
     () =>
       tracked.filter(
-        (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product.platform),
+        // product 为空时 tracked 已为空，?? "" 仅满足 includes 的类型签名
+        (k) => k.status === "paused" || (k.pausedPlatforms || []).includes(product?.platform ?? ""),
       ),
-    [tracked, product.platform],
+    [tracked, product?.platform],
   );
   const pendingForCurrent = useMemo(
-    () => tracked.filter((k) => (k.pendingPausePlatforms || []).includes(product.platform)),
-    [tracked, product.platform],
+    () => tracked.filter((k) => (k.pendingPausePlatforms || []).includes(product?.platform ?? "")),
+    [tracked, product?.platform],
   );
-  const missingTranslationCount = (project.trackedKeywords || []).filter(
+  const missingTranslationCount = (project?.trackedKeywords || []).filter(
     (k) =>
       k.language !== "zh-Hans" &&
       k.language !== "zh-Hant" &&
       !(k.translation && String(k.translation).trim()),
   ).length;
   const removedForCurrent = useMemo(
-    () => (project.removedKeywords || []).filter((item) => queryLanguages.includes(item.language)),
-    [project.removedKeywords, currentLang],
-  );
-  // 采集预算：任务量 = 活跃关键词 × 语言覆盖的商店数（en 全局词按全部本地化计）。
-  // 建议采纳 / 候选加入 / 恢复暂停词都会受硬上限约束，软上限起提示作用。
-  const rankBudget = rankBudgetStatus(
-    product.supportedLanguages || [],
-    product.platform,
-    project.trackedKeywords || [],
+    () => (project?.removedKeywords || []).filter((item) => queryLanguages.includes(item.language)),
+    [project?.removedKeywords, currentLang],
   );
   // 产品全部本地化覆盖的商店（去重）：全局卡列序与分布页签共用。
   const productStorefronts = useMemo(
@@ -372,7 +365,7 @@ export function KeywordsPage() {
   }, [isGlobalView, storefronts, enStorefronts]);
   // 快照索引：一次 O(快照数) 预计算每格 cell，渲染期 O(1) 查询（matrixCellState
   // 每次全量过滤快照，行×列 次调用在快照上万后是纯卡顿来源）。
-  const rankSnapshots = useMemo(() => product.rankSnapshots || [], [product]);
+  const rankSnapshots = useMemo(() => product?.rankSnapshots || [], [product]);
   const cellIndex = useMemo(() => buildCellIndex(rankSnapshots), [rankSnapshots]);
   const matrixRows = useMemo(
     () => matrixFilterKeywords(trackedActive, currentLang),
@@ -419,12 +412,12 @@ export function KeywordsPage() {
   // 把“未采集”虚构成“未进榜”。仅在该页签激活时计算（逐格查快照较重）。
   const distributionKeywords = useMemo(
     () =>
-      (project.trackedKeywords || []).filter(
+      (project?.trackedKeywords || []).filter(
         (k: any) =>
           k.status !== "paused" &&
-          !(k.pausedPlatforms || []).includes(product.platform),
+          !(k.pausedPlatforms || []).includes(product?.platform),
       ),
-    [project.trackedKeywords, product.platform],
+    [project?.trackedKeywords, product?.platform],
   );
   const distributionData: {
     storefront: string;
@@ -788,7 +781,7 @@ export function KeywordsPage() {
     ? `${STAGE_LABELS[batch.stage]} ${languageLabel(batch.lang)} · ${batch.index + 1}/${batch.total}`
     : undefined;
   const trackedCandidateKeywords = new Set(
-    (project.trackedKeywords || [])
+    (project?.trackedKeywords || [])
       .filter((k) => k.language === currentLang)
       .map((k) => k.keyword),
   );
@@ -800,6 +793,25 @@ export function KeywordsPage() {
       })
       .map((candidate) => candidate.keyword),
   ).size;
+  // ── 审计 H6：空项目/产品的早退守卫 ──
+  // 必须位于本组件全部 hooks（useMemo 派生链，compareChart 为最后一个）之后、
+  // 所有引用 product/project 的 handler 与 JSX 之前：旧实现把守卫放在派生链
+  // 之前，早退分支与就绪分支的 hook 数量不一致，「停在 /keywords 时添加/
+  // 删除项目」会触发 React hooks 数量不一致崩溃。守卫后 project/product 类型
+  // 收窄为非空，后续 handler 与 JSX 无需再判空。
+  if (!project || !product) {
+    return <EmptyState title="还没有项目" desc="添加一个项目后，这里会展示关键词。" />;
+  }
+
+  // 采集预算：任务量 = 活跃关键词 × 语言覆盖的商店数（en 全局词按全部本地化计）。
+  // 建议采纳 / 候选加入 / 恢复暂停词都会受硬上限约束，软上限起提示作用。
+  // （普通派生值，非 hook——守卫后计算即可安全解引用。）
+  const rankBudget = rankBudgetStatus(
+    product.supportedLanguages || [],
+    product.platform,
+    project.trackedKeywords || [],
+  );
+
   const cellTitle = (cell: MatrixCell) =>
     cell.checkedAt
       ? `最近查询 ${new Date(cell.checkedAt).toLocaleString()} · 结果量 ${cell.totalResults ?? "—"}`
